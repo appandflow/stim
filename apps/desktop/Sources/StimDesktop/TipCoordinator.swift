@@ -8,7 +8,10 @@ import StimStores
 final class TipCoordinator: ObservableObject {
   @Published private(set) var topic: TipTopic?
   @Published private(set) var hasNext = false
-  @Published private(set) var usageGate = false
+  @Published private(set) var established = false
+  var suppressed = false {
+    didSet { if suppressed != oldValue { evaluate() } }
+  }
   private let status: StatusStore
   private let machines: BuildMachinesModel
   private let persistence: TipStore
@@ -101,17 +104,21 @@ final class TipCoordinator: ObservableObject {
     let now = Date()
     let calendar = Calendar.current
     let inputs = inputs
+    let ready = status.payload != nil && status.error == nil
+    let established =
+      ready && Tips.established(usage: persistence.usage, setupCompleted: discovery.setupCompleted)
+    if self.established != established { self.established = established }
     let gate =
-      status.payload != nil && status.error == nil
+      ready
       && Tips.gate(
         usage: persistence.usage, setupCompleted: discovery.setupCompleted,
-        workspaces: inputs.workspaces, enabled: true)
-    if usageGate != gate { usageGate = gate }
+        workspaces: inputs.workspaces, enabled: persistence.enabled)
+      && !suppressed && MainWindow.isOpen
     var state = persistence.state
     var selected: TipTopic?
     var showsNext = false
     if Tips.visible(
-      gate: gate && persistence.enabled, noticeCount: NoticeCenter.shared.notices.count, closedDay: state.closedDay, now: now,
+      gate: gate, noticeCount: NoticeCenter.shared.notices.count, closedDay: state.closedDay, now: now,
       calendar: calendar)
     {
       selected =
@@ -138,7 +145,7 @@ final class TipCoordinator: ObservableObject {
     switch topic {
     case .buildMachine, .hostedSimulators:
       OpenRequests.shared.addMachine = AddMachineRequest(
-        machineID: machines.macs?.first?.id, hostedSimulators: topic == .hostedSimulators)
+        machineID: Tips.firstMac(machines.macs)?.id, hostedSimulators: topic == .hostedSimulators)
     case .phone: OpenRequests.shared.pairsPhone = true
     case .tutorial: OpenRequests.shared.showTutorial()
     case .replay:

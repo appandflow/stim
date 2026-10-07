@@ -204,7 +204,8 @@ final class BuildMachinesModel {
 
   func refreshTailnet() async {
     let environment = await cli.value.environment
-    macs = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
+    let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
+    macs = found ?? []
   }
 
   func load(checkout: String?) async {

@@ -217,6 +217,8 @@ final class DiscoveryCoordinator: ObservableObject {
     {
       candidates.append(prompt)
     }
+    let tipsShown = TipStore(defaults: .standard).state.lastShown
+    candidates.removeAll { Tips.suppressesDiscovery($0.type, lastShown: tipsShown) }
     guard !delivering, allowed(now: now),
       let prompt = Discovery.select(candidates, states: persistence.states, now: now, bannersAvailable: MainWindow.isOpen)
     else { return }

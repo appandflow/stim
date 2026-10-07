@@ -52,13 +52,13 @@ struct MachineView: View {
           .buttonStyle(.stim())
         }
         if let variant = Tips.emptyState(
-          gate: tips.usageGate, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
+          gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
           selectedMachine: machine, macs: buildMachines.macs)
         {
           BuildMachinesEmptyState(
             add: {
               OpenRequests.shared.addMachine = AddMachineRequest(
-                machineID: buildMachines.macs?.first?.id, hostedSimulators: false)
+                machineID: Tips.firstMac(buildMachines.macs)?.id, hostedSimulators: false)
             }, needsTailscale: variant == .tailscale)
         }
         if let failure = buildMachines.settingsFailure {

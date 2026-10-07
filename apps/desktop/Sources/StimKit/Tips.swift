@@ -41,7 +41,7 @@ public enum NudgeTopic: Sendable {
 
   public var discoveryTypes: [DiscoveryType] {
     switch self {
-    case .buildMachine: [.slowCold, .newMac, .slotWait, .lowWithCaches]
+    case .buildMachine: [.slowCold, .newMac, .slotWait]
     case .phone: [.away]
     case .hostedSimulators: [.capHit]
     }
@@ -52,6 +52,7 @@ public struct UsageRecord: Codable, Equatable, Sendable {
   public var days: [String] = []
   public var workspaces: [String] = []
   public var builds: [String] = []
+  public var since: Date?
 
   public init() {}
 
@@ -60,22 +61,28 @@ public struct UsageRecord: Codable, Equatable, Sendable {
       && (Set(workspaces).count >= Tips.minRunningWorkspaces || Set(builds).count >= Tips.minBuilds)
   }
 
+  /// Records one status update. Once the usage is real nothing changes, and the workspace and build lists stop at their
+  /// thresholds, so repeated updates never rewrite an unchanged record. Builds that started before the first
+  /// observation do not count.
   public mutating func observe(_ workspaces: [Workspace], now: Date, calendar: Calendar) {
+    guard !isReal else { return }
+    let since = since ?? now
+    self.since = since
     let today = Tips.day(now, calendar: calendar)
-    days = Array(Set(days + [today]).sorted().suffix(30))
+    if !days.contains(today) { days = Array((days + [today]).sorted().suffix(30)) }
     for workspace in workspaces {
-      if workspace.live, !self.workspaces.contains(workspace.path) { self.workspaces.append(workspace.path) }
+      if workspace.live, self.workspaces.count < Tips.minRunningWorkspaces, !self.workspaces.contains(workspace.path) {
+        self.workspaces.append(workspace.path)
+      }
       var starts: [String] = []
       if let build = workspace.build, build.isRunning { starts.append(build.startedAt) }
       starts += [workspace.lastBuilds?.ios, workspace.lastBuilds?.android].compactMap { $0?.startedAt }
       starts += ((workspace.builds?.ios ?? []) + (workspace.builds?.android ?? [])).map { $0.build.startedAt }
-      for start in starts {
+      for start in starts where parseTimestamp(start).map({ $0 >= since }) == true {
         let id = workspace.path + "|" + start
-        if !builds.contains(id) { builds.append(id) }
+        if builds.count < Tips.minBuilds, !builds.contains(id) { builds.append(id) }
       }
     }
-    self.workspaces = Array(self.workspaces.suffix(50))
-    builds = Array(builds.suffix(200))
   }
 }
 
@@ -96,8 +103,6 @@ public struct TipState: Codable, Equatable, Sendable {
   public struct Current: Codable, Equatable, Sendable {
     public var topic: TipTopic
     public var day: String
-    /// Discovery types marked by this pick; their shown states keep this tip visible on its own day.
-    public var markedDiscoveries: [String]
   }
 
   public var current: Current?
@@ -112,7 +117,7 @@ public enum BuildMachineEmptyState: CaseIterable, Sendable {
 }
 
 public enum Tips {
-  /// Calendar days of Desktop use, retaining the latest 30 observed days.
+  /// Calendar days on which Desktop observed a status update.
   public static let minActiveDays = 3
   /// Distinct workspace paths observed live, as an alternative to the build threshold.
   public static let minRunningWorkspaces = 3
@@ -125,8 +130,22 @@ public enum Tips {
     return String(format: "%04d-%02d-%02d", parts.year!, parts.month!, parts.day!)
   }
 
+  public static func established(usage: UsageRecord, setupCompleted: Bool) -> Bool {
+    usage.isReal && setupCompleted
+  }
+
   public static func gate(usage: UsageRecord, setupCompleted: Bool, workspaces: [Workspace], enabled: Bool) -> Bool {
-    usage.isReal && setupCompleted && enabled && !workspaces.contains { $0.build?.isRunning == true }
+    established(usage: usage, setupCompleted: setupCompleted) && enabled
+      && !workspaces.contains { $0.build?.isRunning == true }
+  }
+
+  public static func firstMac(_ macs: [TailnetMac]?) -> TailnetMac? {
+    macs?.sorted { $0.dnsName < $1.dnsName }.first
+  }
+
+  /// A discovery prompt is skipped once the tip for its topic has been shown, so one nudge never comes from both.
+  public static func suppressesDiscovery(_ type: DiscoveryType, lastShown: [TipTopic: Date]) -> Bool {
+    lastShown.contains { topic, _ in topic.nudgeTopic?.discoveryTypes.contains(type) == true }
   }
 
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
@@ -145,22 +164,10 @@ public enum Tips {
     topic.nudgeTopic?.discoveryTypes.contains { !Discovery.eligible(states[$0], now: now) } ?? false
   }
 
-  public static func markingShown(_ topic: TipTopic, states: [DiscoveryType: DiscoveryState]) -> [DiscoveryType] {
-    topic.nudgeTopic?.discoveryTypes.filter { states[$0] == nil } ?? []
-  }
-
   public static func available(
     inputs: TipInputs, state: TipState, discoveries: [DiscoveryType: DiscoveryState], now: Date, calendar: Calendar
   ) -> [TipTopic] {
-    TipTopic.allCases.filter { topic in
-      var states = discoveries
-      if let current = state.current, current.topic == topic, current.day == day(now, calendar: calendar) {
-        for raw in current.markedDiscoveries {
-          if let type = DiscoveryType(rawValue: raw), states[type] == .shown { states[type] = nil }
-        }
-      }
-      return applicable(topic, inputs: inputs) && !taken(topic, states: states, now: now)
-    }
+    TipTopic.allCases.filter { applicable($0, inputs: inputs) && !taken($0, states: discoveries, now: now) }
   }
 
   public static func select(
@@ -173,7 +180,7 @@ public enum Tips {
     let topic = topics.min {
       (state.lastShown[$0] ?? .distantPast) < (state.lastShown[$1] ?? .distantPast)
     }
-    if let topic { pick(topic, state: &state, discoveries: discoveries, now: now, calendar: calendar) }
+    if let topic { pick(topic, state: &state, now: now, calendar: calendar) }
     return topic
   }
 
@@ -190,7 +197,7 @@ public enum Tips {
     for offset in 1..<catalog.count {
       let topic = catalog[(index + offset) % catalog.count]
       if topics.contains(topic) {
-        pick(topic, state: &state, discoveries: discoveries, now: now, calendar: calendar)
+        pick(topic, state: &state, now: now, calendar: calendar)
         return topic
       }
     }
@@ -198,11 +205,9 @@ public enum Tips {
   }
 
   private static func pick(
-    _ topic: TipTopic, state: inout TipState, discoveries: [DiscoveryType: DiscoveryState], now: Date, calendar: Calendar
+    _ topic: TipTopic, state: inout TipState, now: Date, calendar: Calendar
   ) {
-    state.current = .init(
-      topic: topic, day: day(now, calendar: calendar), markedDiscoveries: markingShown(topic, states: discoveries).map(\.rawValue)
-    )
+    state.current = .init(topic: topic, day: day(now, calendar: calendar))
     state.lastShown[topic] = now
   }
 
@@ -213,8 +218,8 @@ public enum Tips {
   public static func emptyState(
     gate: Bool, machines: [String]?, settingsError: String?, selectedMachine: String?, macs: [TailnetMac]?
   ) -> BuildMachineEmptyState? {
-    guard gate, machines?.isEmpty == true, settingsError == nil, selectedMachine == nil else { return nil }
-    return macs?.isEmpty == false ? .addMachine : .tailscale
+    guard gate, machines?.isEmpty == true, settingsError == nil, selectedMachine == nil, let macs else { return nil }
+    return macs.isEmpty ? .tailscale : .addMachine
   }
 }
 
@@ -253,10 +258,6 @@ public struct TipStore {
       defaults.set(try? JSONEncoder().encode(newValue.current), forKey: "tips.current")
       defaults.set(newValue.closedDay, forKey: "tips.closedDay")
       defaults.set(try? JSONEncoder().encode(newValue.lastShown), forKey: "tips.lastShown")
-      let discovery = DiscoveryStore(defaults: defaults)
-      for raw in newValue.current?.markedDiscoveries ?? [] {
-        if let type = DiscoveryType(rawValue: raw), discovery.state(type) == nil { discovery.set(.shown, for: type) }
-      }
     }
   }
 

@@ -69,7 +69,7 @@ struct Sidebar: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
-        if let topic = tips.topic, !onboarding.showsGuide {
+        if let topic = tips.topic {
           TipCard(
             topic: topic, hasNext: tips.hasNext,
             perform: {

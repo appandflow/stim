@@ -1375,26 +1375,29 @@ build, and appear at most once per day.
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct
 workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs or any notice is showing. Usage is stored locally in Desktop preferences,
-retaining the latest 30 active days, 50 workspace paths, and 200 build IDs.
+runs, the setup guide or tutorial is open, the main window is closed, or any
+notice is showing. Only builds that start after Desktop first sees status count.
+Usage is stored locally in Desktop preferences: the latest 30 active days and,
+until the thresholds are met, the workspace paths and build IDs counted.
 
-Tips cover build machines, phone pairing, the tutorial, hiding projects when
-there are more than 10 workspace rows, status filters, replay, and hosted
+Tips cover build machines, phone pairing, the tutorial, hiding workspaces when
+there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
 simulators. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next tip** cycles through the remaining choices. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
 
-Tips and suggestions share seen state for build machines, phone pairing, and
+Tips and suggestions share state for build machines, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Showing a tip marks that topic's unseen
-suggestions as shown, so they do not repeat it. Suggestions keep their own
-once-per-day limit.
+suggestion suppresses the matching tip. Once that tip has been shown, the
+matching suggestions (new Mac, slow cold builds, build slot waits, away
+builds, device limit) no longer appear. Disk-pressure suggestions are
+unaffected. Suggestions keep their own once-per-day limit.
 
 **File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no build machine is configured. With another Mac on the tailnet it
-offers **Add a build machine**; otherwise it explains how to connect both Macs
+offers **Add Build Machine…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link machine** button is also available. Build
 machines are not a step in the first-run setup guide.
 

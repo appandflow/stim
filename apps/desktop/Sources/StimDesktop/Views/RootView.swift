@@ -198,6 +198,7 @@ struct RootView: View {
     }
     .onDisappear { notices.removeAll() }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
+    .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
     .onReceive(openRequests.$addMachine) { request in
       guard request != nil else { return }

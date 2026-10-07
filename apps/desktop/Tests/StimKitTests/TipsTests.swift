@@ -109,6 +109,7 @@ struct TipsTests {
         "result":"succeeded","slot":"default","phases":{}}]}
         """)
     var usage = UsageRecord()
+    usage.since = Date(timeIntervalSince1970: 0)
     usage.observe([building, last, try workspace("/idle")], now: now, calendar: calendar)
     let first = usage
     usage.observe([building, last], now: now.addingTimeInterval(60), calendar: calendar)
@@ -124,18 +125,35 @@ struct TipsTests {
     #expect(local.days == ["2026-10-06"])
   }
 
-  @Test func usageRetainsOnlyThirtyDaysFiftyLivePathsAndTwoHundredBuildIDs() throws {
+  @Test func observingNeverRewritesTheRecordOnceItsListsReachTheThresholds() throws {
+    let entries = try (0..<12).map { try workspace("/\($0)", live: true, fields: runningBuild) }
     var usage = UsageRecord()
-    for index in 0..<201 {
-      let entry = try workspace("/\(index)", live: true, fields: runningBuild)
-      usage.observe([entry], now: now.addingTimeInterval(Double(index) * 86400), calendar: calendar)
+    usage.since = Date(timeIntervalSince1970: 0)
+    usage.observe(entries, now: now, calendar: calendar)
+    #expect(usage.workspaces.count == Tips.minRunningWorkspaces)
+    #expect(usage.builds.count == Tips.minBuilds)
+    let settled = usage
+    for minute in 1...5 {
+      usage.observe(entries, now: now.addingTimeInterval(Double(minute) * 60), calendar: calendar)
+      #expect(usage == settled)
+    }
+  }
+
+  @Test func buildsThatStartedBeforeTheFirstObservationDoNotCount() throws {
+    let old = try workspace(live: false, fields: runningBuild)
+    var usage = UsageRecord()
+    usage.observe([old], now: now.addingTimeInterval(60), calendar: calendar)
+    #expect(usage.since == now.addingTimeInterval(60))
+    #expect(usage.builds.isEmpty)
+  }
+
+  @Test func usageKeepsOnlyTheLastThirtyDays() {
+    var usage = UsageRecord()
+    for index in 0..<45 {
+      usage.observe([], now: now.addingTimeInterval(Double(index) * 86400), calendar: calendar)
     }
     #expect(usage.days.count == 30)
-    #expect(usage.days.first == Tips.day(now.addingTimeInterval(171 * 86400), calendar: calendar))
-    #expect(usage.workspaces.first == "/151")
-    #expect(usage.workspaces.count == 50)
-    #expect(usage.builds.first == "/1|2026-10-05T12:00:00Z")
-    #expect(usage.builds.count == 200)
+    #expect(usage.days.last == Tips.day(now.addingTimeInterval(44 * 86400), calendar: calendar))
   }
 
   @Test func selectionKeepsTheDailyTipAndRotatesToTheOldestTopicTomorrow() {
@@ -197,7 +215,7 @@ struct TipsTests {
 
   @Test func discoveryStatesTakeTheirMatchingTipsUntilASnoozeExpires() {
     for (topic, types) in [
-      (TipTopic.buildMachine, [DiscoveryType.slowCold, .newMac, .slotWait, .lowWithCaches]), (.phone, [.away]),
+      (TipTopic.buildMachine, [DiscoveryType.slowCold, .newMac, .slotWait]), (.phone, [.away]),
       (.hostedSimulators, [.capHit]),
     ] {
       for type in types {
@@ -212,36 +230,28 @@ struct TipsTests {
     }
   }
 
-  @Test func showingATipMarksOnlyNilDiscoveryTypesAndKeepsItsOwnDailyCardVisible() {
-    withDefaults { defaults in
-      let store = TipStore(defaults: defaults)
-      let discovery = DiscoveryStore(defaults: defaults)
-      discovery.set(.snoozed(until: now), for: .slotWait)
-      var inputs = TipInputs()
-      inputs.machines = []
-      inputs.macs = [mac]
-      var state = store.state
-      #expect(
-        Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar) == .buildMachine)
-      store.state = state
-      #expect(discovery.state(.slowCold) == .shown)
-      #expect(discovery.state(.newMac) == .shown)
-      #expect(discovery.state(.lowWithCaches) == .shown)
-      #expect(discovery.state(.slotWait) == .snoozed(until: now))
-      #expect(discovery.state(.away) == nil)
-      #expect(discovery.lastShown == nil)
-      state = TipStore(defaults: defaults).state
-      #expect(
-        Tips.select(
-          inputs: inputs, state: &state, discoveries: discovery.states, now: now.addingTimeInterval(60), calendar: calendar)
-          == .buildMachine)
-      #expect(
-        Tips.select(
-          inputs: inputs, state: &state, discoveries: discovery.states, now: now.addingTimeInterval(86400), calendar: calendar)
-          == .tutorial)
-      store.state = state
-      #expect(discovery.state(.away) == nil)
+  @Test func aShownTipSuppressesOnlyDiscoveryTypesOfItsOwnTopic() {
+    let shown: [TipTopic: Date] = [.buildMachine: now]
+    for type in [DiscoveryType.slowCold, .newMac, .slotWait] {
+      #expect(Tips.suppressesDiscovery(type, lastShown: shown))
     }
+    for type in [DiscoveryType.lowWithCaches, .away, .capHit] {
+      #expect(!Tips.suppressesDiscovery(type, lastShown: shown))
+    }
+    #expect(Tips.suppressesDiscovery(.away, lastShown: [.phone: now]))
+    #expect(Tips.suppressesDiscovery(.capHit, lastShown: [.hostedSimulators: now]))
+    #expect(!Tips.suppressesDiscovery(.away, lastShown: [.tutorial: now]))
+    #expect(!Tips.suppressesDiscovery(.away, lastShown: [:]))
+  }
+
+  @Test func nextTipDoesNotRetireTopicsThatShareStateWithDiscovery() {
+    var inputs = TipInputs()
+    inputs.pairedPhones = 0
+    var state = TipState()
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .phone)
+    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    let later = now.addingTimeInterval(30 * 86400)
+    #expect(Tips.available(inputs: inputs, state: state, discoveries: [:], now: later, calendar: calendar).contains(.phone))
   }
 
   @Test func aDiscoveryTakenTopicIsSkippedAndAnyNoticeHidesTheCard() {
@@ -263,7 +273,7 @@ struct TipsTests {
     }
     #expect(variant(macs: [mac]) == .addMachine)
     #expect(variant(macs: []) == .tailscale)
-    #expect(variant(macs: nil) == .tailscale)
+    #expect(variant(macs: nil) == nil)
     #expect(variant(gate: false, macs: [mac]) == nil)
     #expect(variant(machines: ["mini"]) == nil)
     #expect(variant(machines: nil) == nil)
@@ -279,40 +289,6 @@ struct TipsTests {
       #expect(!store.completed)
       store.record = TutorialRecord(version: 1, startedAt: now, step: "done")
       #expect(store.completed)
-    }
-  }
-
-  @Test func showingPhoneAndHostingTipsMarksOnlyTheirMatchingDiscoveryTypes() {
-    for topic in [TipTopic.phone, .hostedSimulators, .tutorial] {
-      withDefaults { defaults in
-        var inputs = TipInputs()
-        inputs.pairedPhones = topic == .phone ? 0 : nil
-        inputs.tutorialCompleted = topic != .tutorial
-        inputs.sidebar.statuses = [.live]
-        inputs.hosting = topic == .hostedSimulators ? [] : nil
-        inputs.macs = [mac]
-        var state = TipState()
-        #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == topic)
-        TipStore(defaults: defaults).state = state
-        let states = DiscoveryStore(defaults: defaults).states
-        switch topic {
-        case .phone: #expect(states == [.away: .shown])
-        case .hostedSimulators: #expect(states == [.capHit: .shown])
-        default: #expect(states.isEmpty)
-        }
-      }
-    }
-  }
-
-  @Test func usageAndDisabledPreferenceSurviveAStoreReload() {
-    withDefaults { defaults in
-      let store = TipStore(defaults: defaults)
-      #expect(store.enabled)
-      store.usage = realUsage(workspaces: 0, builds: 5)
-      defaults.set(false, forKey: AppPreferences.Key.tipsEnabled)
-      let reloaded = TipStore(defaults: defaults)
-      #expect(reloaded.usage == realUsage(workspaces: 0, builds: 5))
-      #expect(!reloaded.enabled)
     }
   }
 }
