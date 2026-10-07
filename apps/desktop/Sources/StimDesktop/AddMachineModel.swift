@@ -13,30 +13,34 @@ final class AddMachineModel {
     var writeSetting: (String, String?) async throws -> Void
     var version: () async -> String?
     var toolsDoctor: ((String, String) async throws -> DoctorReport)? = nil
+    var tailscaleInstall: () async -> Tailnet.Install = { .none }
     var now: () -> Date = Date.init
     var ticket: (Date) -> SetupTicket = { SetupTicket.generate(now: $0) }
   }
 
-  enum Page { case setup, tools, test, summary }
+  typealias Page = SetupPage
   var page: Page = .setup
   var mode: WizardMode = .off
   private(set) var toolsStatus: BuildMachineStatus?
   private(set) var androidStatus: BuildMachineStatus?
   private(set) var toolFindings: [DoctorReport.Finding] = []
   private(set) var androidFindings: [DoctorReport.Finding] = []
-  private(set) var checksAndroid = false
+  var checksAndroid: Bool { wizard.capabilities.contains(.build) }
   let sample: SampleBuildModel?
   var preparingSample: Bool { sample?.preparing == true }
   var testOutcome: BuildTest.Outcome {
     wizard.capabilities.contains(.build) ? sample?.test.outcome ?? .notRun : .notRun
   }
   var machines: BuildMachinesModel?
-  private(set) var summary: [String] = []
+  /// Where hosted simulators run for this Mac; nil keeps a current value the wizard does not offer, like `eas`.
+  var simulators: SimulatorPlacement? = .auto
+  private(set) var simulatorsCurrent: [String: String?] = [:]
   private(set) var finished = false
   private(set) var wizard: SetupWizard
   private(set) var peers: [Tailnet.Peer] = []
   private(set) var selfNode: TailnetMac?
   private(set) var statusJSON: Data?
+  private(set) var tailscaleInstall: Tailnet.Install = .none
   private(set) var health: [String: Tailnet.Health] = [:]
   private(set) var healthChecked: Set<String> = []
   private(set) var version: String?
@@ -60,7 +64,7 @@ final class AddMachineModel {
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var checkingJournal = false
   @ObservationIgnored private var checkingTools = false
-  @ObservationIgnored private var lastToolsPoll = Date.distantPast
+  @ObservationIgnored private var clock = SetupRefreshClock()
 
   init(checkout: String?, dependencies: Dependencies, wizard: SetupWizard? = nil, sample: SampleBuildModel? = nil) {
     self.sample = sample
@@ -103,6 +107,10 @@ final class AddMachineModel {
         toolsDoctor: { cwd, platform in
           let output = try await WizardToolsDoctor.read(cli: await cli.value, cwd: cwd, platform: platform)
           return output
+        },
+        tailscaleInstall: {
+          let environment = await cli.value.environment
+          return Tailnet.Install.detect(environment: environment)
         }
       ), sample: SampleBuildModel(cli: cli))
   }
@@ -123,7 +131,10 @@ final class AddMachineModel {
   }
 
   var selected: Tailnet.Peer? { peers.first { $0.id == selectedId } }
-  var reachability: Tailnet.Reachability { Tailnet.reachability(statusJSON: statusJSON, peer: selected) }
+  var reachability: Tailnet.Reachability {
+    Tailnet.reachability(statusJSON: statusJSON, peer: selected, install: tailscaleInstall)
+  }
+  var tailscaleRunning: Bool { reachability != .tailscaleMissing && reachability != .tailscaleStopped }
   var known: SetupKnown {
     var known = wizard.known
     known.serverVersion = wizard.mac.flatMap { health[$0.id]?.version }
@@ -149,38 +160,53 @@ final class AddMachineModel {
     stopped = false
     version = await dependencies.version()
     await refreshPeers()
+    clock.ran(.peers, now: dependencies.now())
     polling = Task { [weak self] in
-      var lastPeerPoll = self?.dependencies.now() ?? Date()
-      var lastDoctorPoll = Date.distantPast
       while !Task.isCancelled {
         guard let self, !self.stopped else { return }
-        self.now = self.dependencies.now()
-        if self.wizard.phase == .choose, let draft = self.draftTicket, self.now >= draft.expiresAt {
-          self.draftTicket = self.dependencies.ticket(self.now)
-        }
-        if !self.busy {
-          if self.page == .tools {
-            if self.now.timeIntervalSince(self.lastToolsPoll) >= 30 {
-              await self.refreshTools()
-            }
-          } else if self.page != .setup {
-          } else if self.wizard.phase == .pick {
-            if self.now.timeIntervalSince(lastPeerPoll) >= 5 {
-              lastPeerPoll = self.now
-              await self.refreshPeers()
-            }
-          } else if self.wizard.ticket != nil, self.wizard.phase != .cancelled {
-            if self.doctorPath != nil { self.wizard.hasWorkspace = true }
-            await self.checkJournal()
-            if self.now.timeIntervalSince(lastDoctorPoll) >= 5, self.wizard.journal != nil, self.wizard.entriesWritten {
-              lastDoctorPoll = self.now
-              await self.reportDoctor(ask: false)
-            }
-            await self.send(.tick)
-          }
-        }
+        await self.poll()
         try? await Task.sleep(for: .seconds(1))
       }
+    }
+  }
+
+  private func poll() async {
+    now = dependencies.now()
+    if wizard.phase == .choose, let draft = draftTicket, now >= draft.expiresAt {
+      draftTicket = dependencies.ticket(now)
+    }
+    await refresh(dueOnly: true)
+  }
+
+  /// Runs the reads the current step keeps fresh: only those whose interval has passed when `dueOnly`, as the
+  /// background poll does, or all of them.
+  func refresh(dueOnly: Bool = false) async {
+    guard !busy else { return }
+    if doctorPath != nil, wizard.ticket != nil { wizard.hasWorkspace = true }
+    if dueOnly {
+      for read in clock.due(wizard.refreshes(page: page), now: now) { await refresh(read) }
+    } else {
+      var done: Set<SetupRefresh> = []
+      while let read = wizard.refreshes(page: page).first(where: { !done.contains($0) }) {
+        done.insert(read)
+        clock.ran(read, now: now)
+        await refresh(read)
+      }
+    }
+    if page == .setup, wizard.ticket != nil, wizard.phase != .cancelled { await send(.tick) }
+  }
+
+  private func refresh(_ read: SetupRefresh) async {
+    switch read {
+    case .peers: await refreshPeers()
+    case .approvals:
+      if version == nil { version = await dependencies.version() }
+      await reportDoctor(ask: false)
+    case .journal:
+      if doctorPath != nil { wizard.hasWorkspace = true }
+      await checkJournal()
+    case .doctor: await reportDoctor(ask: false)
+    case .tools: await refreshTools()
     }
   }
 
@@ -206,6 +232,7 @@ final class AddMachineModel {
   func refreshPeers() async {
     guard !isFixture else { return }
     statusJSON = await dependencies.status()
+    tailscaleInstall = await dependencies.tailscaleInstall()
     peers = statusJSON.map(Tailnet.peers) ?? []
     applyPreselection()
     selfNode = statusJSON.flatMap(Tailnet.selfNode)
@@ -232,6 +259,7 @@ final class AddMachineModel {
       setCapability(.build, enabled: false)
     }
     draftTicket = dependencies.ticket(dependencies.now())
+    clock.ran(.approvals, now: dependencies.now())
     if let checkout {
       do {
         let report = try await dependencies.doctor(checkout, false, [:])
@@ -280,29 +308,6 @@ final class AddMachineModel {
   func newCommand() async {
     commandKnown = known
     await send(.newCommand(dependencies.ticket(dependencies.now())))
-  }
-
-  func checkAgain() async {
-    if page == .tools {
-      await refreshTools()
-      return
-    }
-    if doctorPath != nil { wizard.hasWorkspace = true }
-    if wizard.phase == .cancelled {
-      await send(.cancel)
-      return
-    }
-    if wizard.phase == .pick {
-      await refreshPeers()
-      return
-    }
-    if wizard.phase == .choose {
-      if version == nil { version = await dependencies.version() }
-      await reportDoctor(ask: false)
-      return
-    }
-    await checkJournal()
-    if wizard.entriesWritten { await reportDoctor(ask: false) }
   }
 
   func useManualPort() async {
@@ -372,16 +377,16 @@ final class AddMachineModel {
       ?? statuses?.first { ($0.machine == mac.machine || $0.machine.hasPrefix(mac.machine + ":")) && sameMac($0) }
   }
 
-  private func runDoctor(ask: Bool, ticket: String? = nil) async throws {
-    guard !isFixture, let checkout = doctorPath else { return }
+  @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
+    guard !isFixture, let checkout = doctorPath else { return false }
     let report = try await dependencies.doctor(checkout, ask, ticket.map { ["STIM_ACCESS_TICKET": $0] } ?? [:])
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
+    return true
   }
 
   private func reportDoctor(ask: Bool) async {
     do {
-      try await runDoctor(ask: ask)
-      error = nil
+      if try await runDoctor(ask: ask) { error = nil }
     } catch { self.error = error.localizedDescription }
   }
 
@@ -390,6 +395,7 @@ final class AddMachineModel {
     defer { if case .cancel = event { cancelling = false } }
     if case .cancel = event {
       cancelling = true
+      error = nil
       await sample?.end()
       page = .setup
     }
@@ -413,9 +419,9 @@ final class AddMachineModel {
   var tools: [WizardTool] {
     var rows = toolsReport(
       journal: wizard.journal, status: toolsStatus, capabilities: wizard.capabilities, findings: toolFindings)
-    if checksAndroid {
+    if checksAndroid, androidStatus != nil || wizard.journal != nil {
       let androidRows = toolsReport(
-        journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: true,
+        journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: androidStatus != nil,
         findings: androidFindings)
       let codes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
       rows.removeAll { codes.contains($0.id) }
@@ -437,46 +443,49 @@ final class AddMachineModel {
     checkingTools = true
     defer {
       checkingTools = false
-      lastToolsPoll = dependencies.now()
+      clock.ran(.tools, now: dependencies.now())
     }
     do {
       let report = try await doctor(cwd, "ios")
       toolsStatus = match(report.remoteMachines)
       toolFindings = report.findings
-      if checksAndroid {
-        let report = try await doctor(cwd, "android")
-        androidStatus = match(report.remoteMachines)
-        androidFindings = report.findings
-      }
       error = nil
-    } catch { self.error = error.localizedDescription }
-  }
-  func checkAndroid() async {
-    checksAndroid = true
-    await refreshTools()
+    } catch {
+      self.error = error.localizedDescription
+      return
+    }
+    if checksAndroid, let report = try? await doctor(cwd, "android") {
+      androidStatus = match(report.remoteMachines)
+      androidFindings = report.findings
+    }
   }
   func openTest() {
-    guard !toolsBlock else { return }
     page = .test
     if wizard.capabilities.contains(.build), let entry = machineEntry {
       sample?.run(entry: entry)
     }
+  }
+  func closeTest() async {
+    await sample?.end()
+    page = .summary
   }
   func openSummary() async {
     await sample?.end()
     do {
       let payload = try await dependencies.readSettings()
       mode = WizardMode.defaultChoice(
-        passed: sample?.test.passed == true, changedMode: wizard.modeChanged,
-        current: payload.entry("remote.buildMode")?.value.string
-      )
-      updateSummary()
+        changedMode: wizard.modeChanged, current: payload.entry("remote.buildMode")?.value.string)
+      if choosesSimulators, let entry = machineEntry {
+        let ios = payload.entry("ios.remote")?.value.string
+        let android = payload.entry("android.remote")?.value.string
+        simulatorsCurrent = ["ios.remote": ios, "android.remote": android]
+        simulators = ios != android ? nil : ios == nil ? .auto : SimulatorPlacement(current: ios, machine: entry)
+      }
       page = .summary
     } catch { self.error = error.localizedDescription }
   }
-  private func updateSummary() {
-    summary = summaryLines(addedEntries: addedEntries, mode: mode)
-  }
+  /// Whether the summary sets this Mac's `ios.remote` and `android.remote` (machine scope).
+  var choosesSimulators: Bool { wizard.capabilities.contains(.deviceHost) }
   func finish() async {
     guard page == .summary, wizard.phase == .approved, !busy else { return }
     busy = true
@@ -486,7 +495,12 @@ final class AddMachineModel {
       if payload.entry("remote.buildMode")?.value.string != mode.rawValue {
         try await dependencies.writeSetting("remote.buildMode", mode.rawValue)
       }
-      updateSummary()
+      if choosesSimulators, let entry = machineEntry, let simulators {
+        let value = simulators.value(machine: entry)
+        for key in ["ios.remote", "android.remote"] where payload.entry(key)?.value.string != value {
+          try await dependencies.writeSetting(key, value)
+        }
+      }
       error = nil
       finished = true
       stop()
@@ -551,7 +565,7 @@ final class AddMachineModel {
             """
             {"machine":"mini","state":"approved","offloadable":false,"problems":[
             {"code":"xcode","reason":"Xcode 26.0 there, Xcode 27.0 here"},
-            {"code":"bundler","reason":"no Bundler there to run the CocoaPods this project's Gemfile.lock pins"},
+            {"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"},
             {"code":"stim-build","reason":"Stim build old there, current here"}]}
             """.utf8))
         toolFindings = try! JSONDecoder().decode(
@@ -574,8 +588,12 @@ final class AddMachineModel {
             """.utf8))
       case .toolsAndroid:
         page = .tools
-        checksAndroid = true
-        androidStatus = status
+        androidStatus = try! JSONDecoder().decode(
+          BuildMachineStatus.self,
+          from: Data(
+            """
+            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"jdk","reason":"no JDK there, 17 here"}]}
+            """.utf8))
       default:
         page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
         var events: [BuildTest.Event] = [
@@ -617,12 +635,14 @@ final class AddMachineModel {
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
         mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
-        summary = summaryLines(addedEntries: ["remote.machines": "mini"], mode: mode)
       }
     }
 
-    func configureFixture(status: Data?, health: [String: Tailnet.Health], selfNode: TailnetMac, ticket: SetupTicket) {
+    func configureFixture(
+      status: Data?, health: [String: Tailnet.Health], selfNode: TailnetMac, ticket: SetupTicket, install: Tailnet.Install
+    ) {
       isFixture = true
+      tailscaleInstall = install
       statusJSON = status
       peers = status.map(Tailnet.peers) ?? []
       self.selfNode = selfNode

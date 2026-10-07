@@ -1047,53 +1047,96 @@ shows an assumed endpoint when the route is missing or unknown.
 
 ## Remote Macs
 
-**Add...** in **Settings > Remote Macs** opens the six-step setup wizard:
-pick a Mac on the tailnet, choose Builds and/or Hosted simulators, mirror setup
-live, compare tools, test a sample build, and choose when to offload. Run the
-generated command in Terminal while signed in at the build Mac; answering each
-y/N request there approves access. Permission prompts appear on that Mac's screen.
-There is no SSH option. Tool fixes come from setup or doctor. Shell commands have
-Copy buttons; prose fixes appear as text. Desktop never runs these fixes.
-**Install This Mac's Build** updates a mismatched Stim build through the existing
-machine update action. Tools are checked on entry, with **Check again**, and at
-most every 30 seconds while step 4 is open. Any missing or mismatched
-row for the chosen capabilities (Xcode, runtime, CocoaPods / Bundler, Stim build,
-CPU, checkout, disk, access) blocks Next.
-**Check Android** adds an informational Android tool comparison that never blocks Next.
+**Add Remote Mac...** in **Settings > Remote Macs** opens the five-step
+setup wizard. Each step has an illustration in the first-run guide's style. The
+wizard refreshes in the background and has no Check again button: tailnet peers
+every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
+setup journal every second and doctor every 5 seconds on step 3, and tools every
+10 seconds on step 4. `SetupWizard.refreshes(page:)` and
+`SetupRefreshClock` decide what is due.
 
-From step 2, Desktop prepares a pinned Expo blank SDK 58 app in
+1. **Pick a Mac.** The Tailscale check comes first. `Tailnet.Install` tells the
+   Tailscale app (`/Applications/Tailscale.app`) from a CLI-only install. Its
+   `status` fails while the app is quit, so an installed app with no answer is
+   off, not missing.
+   - App off: art of the menu bar switch turning on.
+   - CLI only: `tailscale up`.
+   - Not installed: a **Download Tailscale** button.
+   - Running: the macOS peers, each marked **Reachable** or **Offline**. It does
+     not show stim-server state, which setup installs later.
+2. **What it does.** Builds and Hosted simulators checkboxes and the animated
+   preview of what setup will do. Both can be off. Then Next is disabled and
+   the preview holds only `$ stim-server setup` and a cursor.
+3. **Set it up.**
+   - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
+     Terminal while signed in there; answering each y/N request approves
+     access. Permission prompts appear on that Mac's screen. There is no SSH
+     option.
+   - A live mirror in the preview's wording: no node or request ids, and no
+     tool details or JSON. It shows skipped and failed steps as recorded.
+   - When setup finishes with no failed step and every chosen capability is
+     approved, a success view replaces the mirror; a failed step keeps the
+     mirror and its fix. It lists the approvals and the current
+     Screen recording and Device control permissions (with the fix for a
+     skipped one), and keeps the log behind **Show setup log**. The expiry
+     line hides after completion.
+4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
+   the setup journal. When Builds is chosen, Android tools are always compared
+   and never block Next. Only a problem that stops the chosen capability blocks
+   Next (red): a Stim build mismatch, no Xcode, a different CPU or an
+   unreachable or unapproved Mac for Builds, and no iOS simulator runtime for
+   Hosted simulators when doctor reports it. With only Hosted simulators, setup
+   records no tool checks, so rows without data read "Checked when a hosted
+   simulator starts" and never block. **Install This Mac's Build** updates a mismatched Stim build
+   through the existing machine update action. Every other problem is an amber
+   warning that names its cost, such as a different Xcode or runtime, missing
+   Android tools or a different global CocoaPods. Doctor compares the global
+   `pod --version` only for projects whose `Gemfile.lock` does not pin
+   CocoaPods. The CocoaPods row offers `bundle add cocoapods --version <here>`
+   with `bundle install`, or `gem install cocoapods -v <here>` on the build
+   Mac. Shell commands have Copy buttons; prose fixes appear as text. Desktop
+   never runs these fixes.
+5. **Done.**
+   - The approvals.
+   - A **Try it** card with a copyable agent prompt and
+     `stim ios --remote-build <machine>`.
+   - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
+     Auto when the wizard added the first remote Mac, and otherwise keeps the
+     current mode.
+   - **Simulators**, shown when Hosted simulators was chosen: This Mac / Auto /
+     Always on the Mac. Done writes `ios.remote` and `android.remote` at machine
+     scope (unset, `auto`, or the `remote.machines` entry with its port), and
+     only the keys whose value changes. When the two keys differ or hold a
+     value the wizard does not offer, such as `eas`, no choice is selected and
+     Done keeps them unless you choose one.
+   - A pointer to **Remove** for undo.
+
+**Run a test build with a sample app** on the last step still runs the
+optional sample test. Desktop prepares a pinned Expo blank SDK 58 app in
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58/`, outside
 user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. In that case preparation starts when a Mac
 is picked, and Next waits for the sample and checks existing approvals before
-generating the setup command. Already-approved capabilities skip new approval
-requests. Failed preparation shows **Retry sample** without a setup command.
-The test requires a build on the selected
-Mac and a verified launch, then forces a local build to prove the fallback path.
-Both runs bypass the build cache. Live output shows both runs; phase timings
-describe the offloaded run, and the local run shows its total time. The optional
-hosted-simulator check is not part of this wizard. Desktop
-stops the sample workspace when the test ends or the sheet closes; its folder
-stays for **Run again**. **Delete sample app** in Remote Macs stops it and
-removes its Stim workspace and sample folder after confirmation, and
-releases its owned simulator (parked for reuse within the parked-simulator limit,
-deleted otherwise).
-If cleanup fails, the folder stays for a retry and Desktop shows the failure.
+generating the setup command. Failed preparation shows **Retry sample** without
+a setup command. The test requires a build on the selected Mac and a verified
+launch, then forces a local build to prove the fallback path. Both runs bypass
+the build cache. **Delete sample app** in Remote Macs stops it and removes its
+Stim workspace and sample folder after confirmation, and releases its owned
+simulator (parked for reuse within the parked-simulator limit, deleted
+otherwise).
 
 Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
-wizard changed it, and runs doctor to forget the pairing. It shows revoke
-commands for grants created during this run, preserving pre-existing approvals.
-When the pre-state is unknown, only grants recorded in the setup journal appear.
-Done keeps the entries and writes the selected
-Auto / Always / Never mode only when it differs. If the wizard turned offloading
-off, Auto is the default after both builds pass; skipping or failing keeps Never
-selected unless you choose otherwise. Existing machine settings keep their
-current effective mode. The summary lists approvals, settings and undo commands.
-The Test build mark and summary show whether the test passed, was skipped, failed,
-or did not run. Skipping after a failed run keeps that outcome visible. Only a
-passed test labels the machine ready; otherwise it is set up.
-Uninstalling the server service is optional; Stim Host permissions stay in System
-Settings until you remove them.
+wizard changed it, and runs doctor to forget the pairing. A failed undo shows
+**Retry undo**; it does not repeat on its own, because each run asks doctor to
+forget the pairing. It shows revoke commands for grants created during this run,
+preserving pre-existing approvals. When the pre-state is unknown, only grants
+recorded in the setup journal appear.
+
+**Remove** in Remote Macs takes the Mac out of `remote.machines`. Its sheet
+shows the optional cleanup on that Mac: `stim-server devices revoke <id>` for
+this Mac's build and hosting requests, and `stim-server service uninstall`. It
+also says that an `ios.remote` or `android.remote` naming the Mac needs
+changing.
 
 Another Mac on the tailnet can build for this one once a person on it approves
 this Mac (see [Build access](../../packages/server/README.md#build-access)).

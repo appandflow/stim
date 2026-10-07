@@ -90,7 +90,6 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
 @Test func copyNamesPhonesOnlyWithThePhoneApp() {
   func offCopy() -> [String] {
     [
-      PhoneApp.Copy.addMachineDetail(phoneApp: false),
       PhoneApp.Copy.screenPermissionUse(phoneApp: false),
       PhoneApp.Copy.screenPermissionRequest(phoneApp: false),
       PhoneApp.Copy.viewerAppError(phoneApp: false),
@@ -108,6 +107,6 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
     ]
   }
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }
-  #expect(PhoneApp.Copy.addMachineDetail(phoneApp: true).contains("phone"))
+  #expect(PhoneApp.Copy.screenPermissionUse(phoneApp: true).contains("phone"))
   #expect(PhoneApp.Copy.serverPageName(phoneApp: true) == "Phones")
 }

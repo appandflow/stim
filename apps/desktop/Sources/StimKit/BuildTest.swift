@@ -207,13 +207,41 @@ public enum WizardMode: String, CaseIterable, Sendable {
     case .off: return "Never"
     }
   }
-  public static func defaultChoice(passed: Bool, changedMode: Bool, current: String?) -> Self {
-    changedMode ? (passed ? .auto : .off) : Self(rawValue: current ?? "auto") ?? .auto
+  /// Auto once the wizard sets up the first build machine; otherwise the mode this Mac already had.
+  public static func defaultChoice(changedMode: Bool, current: String?) -> Self {
+    changedMode ? .auto : Self(rawValue: current ?? "auto") ?? .auto
   }
 }
 
-public func summaryLines(addedEntries: [String: String], mode: WizardMode) -> [String] {
-  ["remote.machines"].compactMap { key in
-    addedEntries[key].map { "Added \($0) to \(key)" }
-  } + ["remote.buildMode = \(mode.rawValue)"]
+/// Where this Mac starts simulators and emulators once a remote Mac hosts them: `ios.remote` and `android.remote`.
+public enum SimulatorPlacement: String, CaseIterable, Sendable {
+  case thisMac, auto, always
+
+  public func title(machine: String) -> String {
+    switch self {
+    case .thisMac: return "This Mac"
+    case .auto: return "Auto"
+    case .always: return "Always on \(machine)"
+    }
+  }
+
+  /// The setting value for the `remote.machines` entry `machine`; nil unsets it so this Mac runs them. Always names
+  /// the entry itself, port included, because the CLI matches `remote.machines` entries exactly.
+  public func value(machine: String) -> String? {
+    switch self {
+    case .thisMac: return nil
+    case .auto: return "auto"
+    case .always: return machine
+    }
+  }
+
+  /// The choice that matches a current setting value; nil for a value the wizard does not offer, such as `eas`.
+  public init?(current: String?, machine: String) {
+    switch current {
+    case nil: self = .thisMac
+    case "auto": self = .auto
+    case machine: self = .always
+    default: return nil
+    }
+  }
 }

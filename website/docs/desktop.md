@@ -493,32 +493,34 @@ belonging to that path at once. Settings and other details are in the
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Remote Mac…**, which guides you through all six steps: pick a
-Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
-compare tools, test a sample build, and review settings and undo commands. Run
-the generated setup command in Terminal while signed in at the build Mac and
-answer each y/N approval there. Permission prompts appear on that Mac. There
-is no SSH option.
+offers **Add Remote Mac…**, which guides you through five steps:
 
-Tool fixes can be copied to run there. **Install This Mac's Build** handles a
-Stim build mismatch, and **Check Android** adds Java and Android SDK checks.
-Desktop prepares a pinned Expo blank SDK 58 sample in its own Application
-Support folder from step 2. It uses that checkout for setup requests if you have
-no listed workspace. The test verifies an offloaded build and launch, then
-forces a local build without the build cache to prove this Mac can still build.
-Live output, phase timings and a speed comparison show the results. The sample
-workspace stops when the test ends or the sheet closes. **Run again** reuses the
-folder; **Delete sample app** in Remote Macs stops it and removes its Stim workspace and sample folder after confirmation, and
-releases its owned simulator (parked for reuse within the parked-simulator limit,
-deleted otherwise). If cleanup fails,
-the folder stays for a retry and Desktop shows the failure.
+1. Check Tailscale and pick a Mac on your tailnet.
+2. Choose Builds and/or Hosted simulators.
+3. Run setup there.
+4. Compare tools.
+5. Choose when to offload.
 
-Done keeps the approved entries and selects Auto / Always / Never. When the
-wizard turned offloading off, a passed test defaults to Auto; a failed or skipped
-test keeps Never selected unless you choose otherwise. Existing machine settings
-keep their effective mode. Cancel removes only settings the wizard added and
-shows revoke commands for the build Mac. The summary explains how to undo setup;
-Stim Host permissions remain in System Settings until you remove them.
+Run the generated setup command in Terminal while signed in at the build Mac
+and answer each y/N approval there. Permission prompts appear on that Mac.
+There is no SSH option. The wizard refreshes by itself; there is no Check again
+button.
+
+Only a problem that stops the chosen capability blocks the Tools step. A Stim
+build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
+differences, such as a different global CocoaPods or missing Android tools, are
+warnings that say what they cost and offer copyable fixes.
+
+The last step offers a **Try it** agent prompt and `stim ios --remote-build
+<machine>`. It sets **Builds** (`remote.buildMode`, Auto by default for your
+first remote Mac). With Hosted simulators chosen, it also sets **Simulators**
+(`ios.remote` and `android.remote` for this Mac). **Run a
+test build with a sample app** runs the optional sample test in Desktop's own
+pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
+you have no listed workspace. **Delete sample app** in Remote Macs removes it.
+Cancel removes only settings the wizard added and shows revoke commands for the
+build Mac. **Remove** in Remote Macs shows the optional cleanup to run on that
+Mac.
 
 See [Remote Macs](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
 

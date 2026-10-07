@@ -54,6 +54,20 @@ public enum Tailnet {
     public var id: String { mac.id }
   }
 
+  /// How Tailscale is installed on this Mac: the Mac app (turned on from its menu bar item), only the CLI
+  /// (`tailscale up`), or not at all.
+  public enum Install: Equatable, Sendable {
+    case app, cli, none
+
+    public static func detect(
+      environment: [String: String], exists: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
+    ) -> Install {
+      if exists(appBinary) { return .app }
+      let path = (environment["PATH"] ?? "").split(separator: ":")
+      return path.contains { exists("\($0)/tailscale") } ? .cli : .none
+    }
+  }
+
   public enum Reachability: Equatable, Sendable {
     case tailscaleMissing, tailscaleStopped, peerOffline, ready
   }
@@ -80,8 +94,9 @@ public enum Tailnet {
     }.sorted { $0.mac.dnsName < $1.mac.dnsName }
   }
 
-  public static func reachability(statusJSON: Data?, peer: Peer?) -> Reachability {
-    guard let statusJSON else { return .tailscaleMissing }
+  /// `install` tells a quit Tailscale app, whose CLI answers nothing, from a missing Tailscale.
+  public static func reachability(statusJSON: Data?, peer: Peer?, install: Install = .none) -> Reachability {
+    guard let statusJSON else { return install == .none ? .tailscaleMissing : .tailscaleStopped }
     guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
       status["BackendState"] as? String == "Running"
     else { return .tailscaleStopped }
