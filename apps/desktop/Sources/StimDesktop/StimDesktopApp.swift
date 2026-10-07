@@ -7,6 +7,7 @@ import SwiftUI
 struct AddMachineRequest {
   var machineID: String?
   var hostedSimulators: Bool
+  var checkout: String? = nil
 }
 
 enum TutorialEntry { case resume, begin }

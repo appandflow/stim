@@ -70,6 +70,24 @@
       XCTAssertEqual(model.snapshot?.record.skipped, ["sidebar"])
     }
 
+    @MainActor func testMachineApprovalAdvancesAndSurvivesLocalRefresh() throws {
+      let defaults = isolatedDefaults()
+      TutorialRecordStore(defaults).record = TutorialRecord(
+        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "machine",
+        done: TutorialSteps.all.prefix { $0.id != "machine" }.map(\.id))
+      let model = TutorialModel(defaults: defaults)
+      let env = try workspace()
+      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .awaitingApproval)
+      XCTAssertEqual(model.snapshot?.currentStep, "machine")
+      XCTAssertFalse(model.machineState.showsPrompt)
+      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved)
+      XCTAssertEqual(model.snapshot?.currentStep, "finish")
+      XCTAssertTrue(model.machineState.showsPrompt)
+      model.setManual(true)
+      XCTAssertEqual(model.machineState, .approved)
+      XCTAssertEqual(model.snapshot?.steps.first { $0.id == "machine" }?.state, .done)
+    }
+
     @MainActor func testResumeArchivedTourShowsDone() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(

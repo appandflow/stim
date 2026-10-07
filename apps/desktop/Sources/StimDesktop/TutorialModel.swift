@@ -22,6 +22,8 @@ final class TutorialModel: ObservableObject {
   private var now = Date()
   private var viewerEvents: [TutorialViewerEvents.Entry] = []
   private var viewerEventSequence = 0
+  @Published private(set) var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
+  @Published private(set) var machineState = TutorialMachineState.none
   private var pairedPhoneCount: Int?
   private var removalRefused = false
   private var missingSince: Date?
@@ -82,11 +84,14 @@ final class TutorialModel: ObservableObject {
 
   func update(
     workspaces: [Workspace], archived: [ArchivedWorkspace], sheetOpen: Bool, now: Date = Date(),
-    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
+    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil,
+    machineState: TutorialMachineState = .none, removalRefused: Bool = false
   ) {
     self.now = now
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
+    phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
+    self.machineState = machineState
     self.removalRefused = removalRefused
     self.workspaces = workspaces
     self.archived = archived
@@ -136,7 +141,8 @@ final class TutorialModel: ObservableObject {
         environment: workspace.flatMap(TutorialEnvironment.init), archivedProjectRoots: archivedRoots,
         logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
         pairedPhoneCount: pairedPhoneCount,
-        replayOff: workspace?.replayOff ?? false, archiveEnabled: fallback ? false : archiveEnabled ?? true,
+        machineApproved: machineState == .approved, replayOff: workspace?.replayOff ?? false,
+        archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))
     if restarting, oldStart != snapshot?.record.startedAt {
       restarting = false
@@ -205,7 +211,7 @@ final class TutorialModel: ObservableObject {
     guard statusLoaded else { return }
     update(
       workspaces: workspaces, archived: archived, sheetOpen: false, now: now,
-      viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
+      viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, machineState: machineState, removalRefused: removalRefused)
   }
 
   private func syncFollowers() {
