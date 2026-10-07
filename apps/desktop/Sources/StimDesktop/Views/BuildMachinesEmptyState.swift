@@ -45,7 +45,7 @@ struct BuildMachinesEmptyState: View {
       Text("No build machines").font(.stim(.headline))
       Text(
         needsTailscale
-          ? "Build machines need Tailscale on both Macs. Install it on the other Mac and sign in to the same tailnet. It shows up here once both are connected."
+          ? "Build machines need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
           : "A build machine is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
       )
       .foregroundStyle(Palette.secondary)

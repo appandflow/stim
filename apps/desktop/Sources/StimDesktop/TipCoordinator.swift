@@ -113,7 +113,7 @@ final class TipCoordinator: ObservableObject {
       && Tips.gate(
         usage: persistence.usage, setupCompleted: discovery.setupCompleted,
         workspaces: inputs.workspaces, enabled: persistence.enabled)
-      && !suppressed && MainWindow.isOpen
+      && !suppressed && MainWindow.isShown
     var state = persistence.state
     var selected: TipTopic?
     var showsNext = false
