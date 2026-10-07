@@ -193,6 +193,33 @@ test('skips absent CLI and contains invalid inventory and unsuccessful close res
   expect(stderr).toHaveBeenCalledWith(expect.stringContaining('could not close agent-device session'));
 });
 
+test("reports agent-device's own refusal instead of the bare command line", () => {
+  const refusal = {
+    success: false,
+    error: {
+      code: 'COMMAND_FAILED',
+      message: 'Daemon registration ownership could not be verified.',
+      details: { reason: 'daemon_registration_unproven' },
+    },
+  };
+  setExecutor({
+    findExecutable: () => '/bin/agent-device',
+    runFile: () => {
+      throw Object.assign(new Error('Command failed: agent-device session list'), {
+        status: 1,
+        stdout: JSON.stringify(refusal),
+        stderr: '',
+      });
+    },
+  });
+  closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  expect(stderr).toHaveBeenCalledWith(
+    expect.stringContaining(
+      'could not list agent-device sessions for U1: agent-device refused: Daemon registration ownership could not be verified. (daemon_registration_unproven)',
+    ),
+  );
+});
+
 test('stops invoking agent-device once the per-device budget is exhausted', () => {
   let now = 1000;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
