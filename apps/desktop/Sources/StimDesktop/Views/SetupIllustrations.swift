@@ -12,24 +12,59 @@ struct NoDeviceArt: View {
     Color(light: 0xDDD3FFFF, dark: 0x210092FF, lightHighContrast: 0xDDD3FFFF, darkHighContrast: 0x210092FF)
   }
 
+  private static let kappa: CGFloat = 0.5523
+  private static let rimY: CGFloat = 46
+  private static let floorY: CGFloat = 170
+
+  private var jarBody: Path {
+    let left: CGFloat = 48
+    let right: CGFloat = 172
+    let radiusX: CGFloat = 62
+    let radiusY: CGFloat = 28
+    let k = Self.kappa
+    return Path {
+      $0.move(to: CGPoint(x: left, y: Self.rimY))
+      $0.addLine(to: CGPoint(x: left, y: Self.floorY))
+      $0.addCurve(
+        to: CGPoint(x: 110, y: Self.floorY + radiusY),
+        control1: CGPoint(x: left, y: Self.floorY + radiusY * k),
+        control2: CGPoint(x: 110 - radiusX * k, y: Self.floorY + radiusY))
+      $0.addCurve(
+        to: CGPoint(x: right, y: Self.floorY),
+        control1: CGPoint(x: 110 + radiusX * k, y: Self.floorY + radiusY),
+        control2: CGPoint(x: right, y: Self.floorY + radiusY * k))
+      $0.addLine(to: CGPoint(x: right, y: Self.rimY))
+      $0.closeSubpath()
+    }
+  }
+
+  private var lidSide: Path {
+    let radiusX: CGFloat = 67
+    let radiusY: CGFloat = 30
+    let k = Self.kappa
+    return Path {
+      $0.move(to: CGPoint(x: 110 - radiusX, y: 32))
+      $0.addLine(to: CGPoint(x: 110 - radiusX, y: Self.rimY))
+      $0.addCurve(
+        to: CGPoint(x: 110, y: Self.rimY + radiusY),
+        control1: CGPoint(x: 110 - radiusX, y: Self.rimY + radiusY * k),
+        control2: CGPoint(x: 110 - radiusX * k, y: Self.rimY + radiusY))
+      $0.addCurve(
+        to: CGPoint(x: 110 + radiusX, y: Self.rimY),
+        control1: CGPoint(x: 110 + radiusX * k, y: Self.rimY + radiusY),
+        control2: CGPoint(x: 110 + radiusX, y: Self.rimY + radiusY * k))
+      $0.addLine(to: CGPoint(x: 110 + radiusX, y: 32))
+      $0.closeSubpath()
+    }
+  }
+
   var body: some View {
     ZStack {
       Canvas { context, _ in
-        let base = Path {
-          $0.move(to: CGPoint(x: 30, y: 118))
-          $0.addLine(to: CGPoint(x: 30, y: 129))
-          $0.addCurve(to: CGPoint(x: 110, y: 165), control1: CGPoint(x: 30, y: 148.88), control2: CGPoint(x: 65.82, y: 165))
-          $0.addCurve(to: CGPoint(x: 190, y: 129), control1: CGPoint(x: 154.18, y: 165), control2: CGPoint(x: 190, y: 148.88))
-          $0.addLine(to: CGPoint(x: 190, y: 118))
-          $0.closeSubpath()
-        }
-        context.fill(base, with: .color(Palette.brand))
-        context.stroke(base, with: .color(outline), lineWidth: 1)
-        let top = Path(ellipseIn: CGRect(x: 30, y: 82, width: 160, height: 72))
-        context.fill(top, with: .color(lavender))
-        context.stroke(top, with: .color(outline), lineWidth: 1)
-        let slot = Path(ellipseIn: CGRect(x: 49, y: 91, width: 122, height: 54))
-        context.stroke(slot, with: .color(outline), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+        context.fill(jarBody, with: .color(lavender.opacity(0.45)))
+        let floor = Path(ellipseIn: CGRect(x: 48, y: Self.floorY - 28, width: 124, height: 56))
+        context.fill(floor, with: .color(lavender.opacity(0.7)))
+        context.stroke(floor, with: .color(outline), lineWidth: 1)
       }
       TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { timeline in
         Canvas { context, _ in
@@ -38,8 +73,26 @@ struct NoDeviceArt: View {
         }
       }
       .offset(y: floating ? -4 : 0)
+      Canvas { context, _ in
+        context.fill(jarBody, with: .color(lavender.opacity(0.2)))
+        context.stroke(jarBody, with: .color(outline), lineWidth: 1)
+        let glint = Path {
+          $0.move(to: CGPoint(x: 62, y: 100))
+          $0.addLine(to: CGPoint(x: 62, y: 154))
+        }
+        context.stroke(
+          glint, with: .color(.white.opacity(colorScheme == .dark ? 0.3 : 0.85)),
+          style: StrokeStyle(lineWidth: 3, lineCap: .round))
+        context.fill(lidSide, with: .color(Palette.brand))
+        context.stroke(lidSide, with: .color(outline), lineWidth: 1)
+        let top = Path(ellipseIn: CGRect(x: 43, y: 2, width: 134, height: 60))
+        context.fill(top, with: .color(Palette.brand))
+        context.stroke(top, with: .color(outline), lineWidth: 1)
+        let ring = Path(ellipseIn: CGRect(x: 55, y: 11, width: 110, height: 42))
+        context.stroke(ring, with: .color(Palette.onBrand.opacity(0.45)), lineWidth: 1)
+      }
     }
-    .frame(width: 220, height: 166)
+    .frame(width: 220, height: 202)
     .accessibilityHidden(true)
     .task(id: reduceMotion) {
       withAnimation(reduceMotion ? nil : .easeInOut(duration: 3).repeatForever(autoreverses: true)) {
@@ -56,7 +109,9 @@ struct NoDeviceArt: View {
       let turnedZ = z * cos(yaw) - x * sin(yaw)
       let depth = y * sin(pitch) + turnedZ * cos(pitch)
       let scale = 1 / (1 - depth / 320)
-      return (CGPoint(x: 110 + turnedX * scale, y: 58 + (y * cos(pitch) - turnedZ * sin(pitch)) * scale), depth)
+      return (
+        CGPoint(x: 110 + turnedX * scale * 0.85, y: 126 + (y * cos(pitch) - turnedZ * sin(pitch)) * scale * 0.85), depth
+      )
     }
     func rounded(_ rect: CGRect, radius: CGFloat, depth: CGFloat) -> [(point: CGPoint, depth: CGFloat)] {
       let corners: [(CGFloat, CGFloat, CGFloat)] = [
