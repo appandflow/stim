@@ -22,7 +22,8 @@ Branch on the code, never on the message.`,
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
-  on the host to enable iOS handoff and native logs (hello feature hosted-ios-data).
+  on the host to enable handoff and native logs (hello features hosted-ios-data
+  for iOS and hosted-android-data for Android).
   A name outside hosting.machines is STIM_BAD_ARG. Missing or pending hosting
   approval keeps the doctor --fix and stim-server devices grant remedies.`,
     },

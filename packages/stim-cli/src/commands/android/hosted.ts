@@ -79,6 +79,7 @@ export async function finishHostedAndroidRun({
       root,
       slot,
       bundle: artifact.apkPath,
+      handoff: artifact.handoff,
       bundleId: packageName,
       release,
       metroPort,

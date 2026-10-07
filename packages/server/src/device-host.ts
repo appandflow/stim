@@ -37,12 +37,12 @@ import {
   parseHostedNativeOffer,
   hostedAppAttempt,
   hostedMacosLogsDir,
-  hostedIosLogsDir,
+  hostedNativeLogsDir,
   parseHostedAppOffer,
   parseHostedLogsCursor,
   readHostedApp,
   readHostedAppMetadata,
-  readHostedIosLogsCheckpoint,
+  readHostedNativeLogsCheckpoint,
   readLogsSince,
   type HostedAppDelivery,
   type HostedAppLaunch,
@@ -101,7 +101,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted macOS and iOS apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the simulator or macOS bundle a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }
@@ -670,8 +670,6 @@ export class DeviceHost {
     try {
       const record = this.appSession(client, params);
       const attempt = (params as { attempt: string }).attempt;
-      if (record.platform !== 'macos' && record.platform !== 'ios')
-        throw new Error('Only hosted iOS and macOS sessions take a build from this Mac.');
       if (record.state !== 'ready' || this.closed || !this.owned.has(record.id) || record.appAttempt !== attempt)
         throw new Error(
           'Only the current app attempt of a ready session attached to this server receives an app. Explicit stop must reconcile a lost owner.',
@@ -682,10 +680,15 @@ export class DeviceHost {
       const app = readHostedApp(record.id, attempt);
       if (app.state !== 'receiving' || !app.files.length)
         throw new Error('Send the app manifest before handing over a build.');
+      if (
+        record.platform === 'android' &&
+        (app.files.length !== 1 || app.files[0]?.path !== 'App.apk' || app.files[0]?.kind !== 'file')
+      )
+        throw new Error('Hosted Android handoff requires a single file entry named App.apk.');
       const taken =
         this.options.builtBundle?.(client, build.handoff, build.sha256) ?? 'This server hands over no builds.';
       if (typeof taken === 'string') throw new Error(taken);
-      const transfer = handOverHostedApp(app, taken.bundle);
+      const transfer = handOverHostedApp(app, taken.bundle, record.platform);
       owned.data = transfer.then(
         () => undefined,
         () => undefined,
@@ -736,15 +739,13 @@ export class DeviceHost {
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record) return refused('unknown-session', 'This client has no such hosted session.');
-      if (record.platform !== 'macos' && record.platform !== 'ios')
-        throw new Error('Hosted logs support iOS and macOS sessions only.');
       const home = join(deviceHostArea(record.id), 'home');
-      const dir = record.platform === 'ios' ? hostedIosLogsDir(home) : hostedMacosLogsDir(home);
+      const dir = record.platform === 'macos' ? hostedMacosLogsDir(home) : hostedNativeLogsDir(home, record.platform);
       const saved = dir ? readLogsSince(dir, cursor) : { records: [], cursor, more: false };
       const owned = this.owned.get(record.id);
       const attempt = owned?.installedAttempt ?? record.appAttempt;
       if (
-        record.platform === 'ios' &&
+        record.platform !== 'macos' &&
         record.state === 'ready' &&
         attempt &&
         readHostedAppMetadata(record.id, attempt).state === 'installed' &&
@@ -766,7 +767,9 @@ export class DeviceHost {
           ...page,
           more:
             page.more || (record.state === 'ready' && !owned?.stopping && !owned?.installing && !!owned?.logs?.more),
-          ...(record.platform === 'ios' ? { checkpoint: readHostedIosLogsCheckpoint(home)?.until } : {}),
+          ...(record.platform !== 'macos'
+            ? { checkpoint: readHostedNativeLogsCheckpoint(home, record.platform)?.until }
+            : {}),
         },
       };
     } catch (error) {
@@ -791,7 +794,7 @@ export class DeviceHost {
   private collectLogs(record: HostedDeviceSession, owned: OwnedSession, final = false): Promise<void> {
     if (owned.logs?.pending) return owned.logs.pending;
     const attempt = owned.installedAttempt ?? record.appAttempt;
-    if (record.platform !== 'ios' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
+    if (record.platform === 'macos' || !attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
       return Promise.resolve();
     const claim = this.takeLogsClaim(owned.claim);
     const logs = (owned.logs = { started: Date.now(), more: false } as NonNullable<OwnedSession['logs']>);

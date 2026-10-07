@@ -1,13 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
-import {
-  isJsonObject,
-  parseHostedLogsCursor,
-  type HostedLogsCursor,
-  type HostedMacosPlacement,
-  type HostedIosPlacement,
-} from '@stim-cli/core/state';
+import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
@@ -16,16 +10,18 @@ import { call, type HostConnection } from './hosted-client.ts';
 
 const MAX_PAGES = 64;
 
-type LogTarget = { platform: 'ios' | 'macos'; slot: string };
+type LogTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
 const MACOS: LogTarget = { platform: 'macos', slot: 'default' };
 const logsStateDir = (root: string, target: LogTarget): string =>
-  target.platform === 'macos' ? macosDir(root) : join(workspaceDir(root), 'ios', validateDeviceSlot(target.slot));
+  target.platform === 'macos'
+    ? macosDir(root)
+    : join(workspaceDir(root), target.platform, validateDeviceSlot(target.slot));
 const cursorFile = (root: string, target: LogTarget): string =>
   join(logsStateDir(root, target), 'host-logs-cursor.json');
 const hostLogFile = (root: string, target: LogTarget): string =>
   join(
     workspaceLogsDir(root),
-    `${target.platform === 'macos' ? 'macos' : deviceSlotFileKey('ios', target.slot)}-host.ndjson`,
+    `${target.platform === 'macos' ? 'macos' : deviceSlotFileKey(target.platform, target.slot)}-host.ndjson`,
   );
 
 function readCursor(root: string, session: string, target: LogTarget): HostedLogsCursor | undefined {
@@ -60,8 +56,8 @@ function commitPage(
         try {
           for (const record of records)
             writer.write(
-              target.platform === 'ios'
-                ? { ...record, src: 'device', platform: 'ios', slot: target.slot, event: 'hosted_native_log' }
+              target.platform !== 'macos'
+                ? { ...record, src: 'device', platform: target.platform, slot: target.slot, event: 'hosted_native_log' }
                 : record,
             );
         } finally {
@@ -84,7 +80,7 @@ function commitPage(
 
 export async function pullHostedMacosLogs(
   root: string,
-  placement: HostedMacosPlacement | HostedIosPlacement,
+  placement: { session: string },
   host: HostConnection,
   target: LogTarget = MACOS,
   maxPages: number = MAX_PAGES,
@@ -126,7 +122,7 @@ export async function pullHostedMacosLogs(
     }
     checkpoint = nextCheckpoint;
   }
-  if (target.platform === 'ios')
+  if (target.platform !== 'macos')
     throw new Error(
       final
         ? 'Final native log copy reached its time or page bound; the host keeps collected logs after stop.'
@@ -134,14 +130,19 @@ export async function pullHostedMacosLogs(
     );
 }
 
-export async function pullHostedIosLogs(
+export async function pullHostedNativeLogs(
   root: string,
   slot: string,
-  placement: HostedIosPlacement,
+  placement: { session: string },
   host: HostConnection,
   final = false,
+  platform: 'ios' | 'android' = 'ios',
 ): Promise<void> {
-  if (!host.connection.supports('hosted-ios-data'))
-    throw new Error(`${host.machine} needs a newer stim-server to collect hosted iOS native logs.`);
-  await pullHostedMacosLogs(root, placement, host, { platform: 'ios', slot }, final ? 1024 : MAX_PAGES, final);
+  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
+    throw new Error(
+      `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
+    );
+  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final);
 }
+
+export { pullHostedNativeLogs as pullHostedIosLogs };

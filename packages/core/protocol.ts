@@ -42,6 +42,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `macos-window-select` is `input.window`, which pins the view to a macOS app window named by `macos-windows`,
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
+ * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -61,6 +62,7 @@ export const FEATURES = [
   'workspace-diff',
   'hosted-congestion',
   'hosted-ios-data',
+  'hosted-android-data',
   'server-update',
 ] as const;
 

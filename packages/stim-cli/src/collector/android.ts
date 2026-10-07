@@ -68,7 +68,10 @@ export function parseLogcatLine(
   { now = Date.now, clockOffsetMs = null }: { now?: () => number; clockOffsetMs?: number | null } = {},
 ): NdjsonRecord | null {
   if (typeof line !== 'string') return null;
-  const epoch = LOGCAT_EPOCH.exec(line.trimEnd());
+  const thread = /^\s*(\d+)\.(\d{3,6})\s+(\d+)\s+\d+\s+([A-Z])\s+(.*?):\s?(.*)$/.exec(line.trimEnd());
+  const epoch = thread
+    ? [thread[0], thread[1], thread[2], thread[4], thread[5], thread[3], thread[6]]
+    : LOGCAT_EPOCH.exec(line.trimEnd());
   if (epoch) {
     const [, seconds, fraction, letter, tag, pid, msg] = epoch;
     if (!letter || !tag || !msg?.trim()) return null;

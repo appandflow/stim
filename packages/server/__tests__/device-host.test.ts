@@ -99,11 +99,11 @@ if(input.mode === 'prepare') {
   }
 } else if(input.mode === 'logs') {
   writeFileSync(join(home,'logs-entered'),String(process.pid));
-  if(input.deviceType === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
+  if((input.deviceType ?? input.deviceProfile) === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
   else {
-    if(input.deviceType === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
-    const logs=join(home,'ios-logs');mkdirSync(logs,{recursive:true});
-    appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:'ios',level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
+    if((input.deviceType ?? input.deviceProfile) === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
+    const logs=join(home,input.platform+'-logs');mkdirSync(logs,{recursive:true});
+    appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:input.platform,level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
     out({more:input.deviceType === 'logs-backlog' && !input.final});
   }
 } else if(input.mode === 'reverse') {
@@ -2225,12 +2225,12 @@ test(
   },
 );
 
-test.each(['stop', 'close', 'revoke'])(
-  'the host collects a final native tail before %s teardown without a client drain',
-  async (ending) => {
-    const session = reserve();
+test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].map((ending) => [platform, ending])))(
+  'the host collects a final %s native tail before %s teardown without a client drain',
+  async (platform, ending) => {
+    const session = reserve({ platform });
     await state(session.id, 'ready');
-    const app = appOffer(session.id);
+    const app = appOffer(session.id, 'app-first', platform);
     host.appOffer('client', app.params);
     await uploadManifest(app);
     await host.appChunk('client', {
@@ -2249,18 +2249,21 @@ test.each(['stop', 'close', 'revoke'])(
     } else host.stop('client', { session: session.id });
     await state(session.id, 'stopped');
     const workerHome = join(deviceHostArea(session.id), 'home');
-    expect(readFileSync(join(workerHome, 'ios-logs', 'device.ndjson'), 'utf8')).toContain('final native tail');
+    expect(readFileSync(join(workerHome, `${platform}-logs`, 'device.ndjson'), 'utf8')).toContain('final native tail');
     expect(existsSync(join(workerHome, 'stopped'))).toBe(true);
   },
 );
 
-test.each(['stop', 'close', 'revoke'])(
-  'a bounded iOS log worker is cancelled and settled before %s deletes its device',
+test.each(['ios', 'android'].flatMap((platform) => ['stop', 'close', 'revoke'].map((ending) => [platform, ending])))(
+  'a bounded %s log worker is cancelled and settled before %s deletes its device',
   { skip: process.platform === 'win32' },
-  async (ending) => {
-    const session = reserve({ deviceType: 'logs-hang' });
+  async (platform, ending) => {
+    const session = reserve({
+      platform,
+      ...(platform === 'ios' ? { deviceType: 'logs-hang' } : { deviceProfile: 'logs-hang' }),
+    });
     await state(session.id, 'ready');
-    const app = appOffer(session.id);
+    const app = appOffer(session.id, 'app-first', platform);
     host.appOffer('client', app.params);
     await uploadManifest(app);
     await host.appChunk('client', {
@@ -2614,4 +2617,70 @@ test('a failed Android Metro restore is refused and leaves the session ready for
   expect(readHostedSessions().find((entry) => entry.id === first.id)?.state).toBe('ready');
   rmSync(join(workerHome, 'fail-reverse'));
   expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
+});
+test('Android native followers coalesce under a child-aware claim and retain collected logs after stop', async () => {
+  const session = reserve({ platform: 'android', deviceProfile: 'logs-delayed' });
+  await state(session.id, 'ready');
+  const app = appOffer(session.id, 'app', 'android');
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  expect(await host.logsQuery('other', { session: session.id })).toHaveProperty('error.code', 'unknown-session');
+  const first = host.logsQuery('client', { session: session.id });
+  const second = host.logsQuery('client', { session: session.id });
+  const claimRoot = join(deviceHostRoot(), `${session.id}.claims.logs`);
+  const workerHome = join(deviceHostArea(session.id), 'home');
+  await vi.waitFor(() => expect(existsSync(join(workerHome, 'logs-entered'))).toBe(true));
+  const claim = readClaimSet(claimRoot).live[0];
+  expect(claim?.child?.pid).toBe(Number(readFileSync(join(workerHome, 'logs-entered'), 'utf8')));
+  const result = await first;
+  expect(await second).toEqual(result);
+  expect(result).toHaveProperty('result.records', [
+    expect.objectContaining({ src: 'device', platform: 'android', level: 'error', msg: 'native failure' }),
+  ]);
+  expect(readClaimSet(claimRoot).live).toEqual([]);
+  host.stop('client', { session: session.id });
+  await state(session.id, 'stopped');
+  expect(await host.logsQuery('client', { session: session.id })).toHaveProperty(
+    'result.records',
+    expect.arrayContaining([expect.objectContaining({ platform: 'android', msg: 'final native tail' })]),
+  );
+});
+
+test('Android handoff refuses a mixed bundle manifest before spending a build token', async () => {
+  await host.close();
+  const builtBundle = vi.fn<() => string>(() => 'not available');
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: process.env,
+    agents: noAgents,
+    allowed: (client) => allowed.has(client),
+    builtBundle,
+  });
+  const session = reserve({ platform: 'android' });
+  await state(session.id, 'ready');
+  const app = appOffer(session.id, 'app', 'android');
+  const manifest = Buffer.from(
+    JSON.stringify([
+      { path: 'App.apk', kind: 'file', size: app.content.length, sha256: app.sha256 },
+      { path: 'Info.plist', kind: 'file', size: app.content.length, sha256: app.sha256 },
+    ]),
+  );
+  const params = {
+    ...app.params,
+    manifest: { size: manifest.length, sha256: createHash('sha256').update(manifest).digest('hex') },
+  };
+  host.appOffer('client', params);
+  await host.appChunk('client', {
+    ...params,
+    sha256: params.manifest.sha256,
+    offset: 0,
+    data: manifest.toString('base64'),
+  });
+  expect(
+    await host.appHandoff('client', { ...params, build: { handoff: 'a'.repeat(64), sha256: 'b'.repeat(64) } }),
+  ).toHaveProperty('error.message', expect.stringContaining('single file entry named App.apk'));
+  expect(builtBundle).not.toHaveBeenCalled();
 });

@@ -85,8 +85,27 @@ here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
 reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the
 host serial and AVD name private. Unreachable cleanup retains the placement;
-retry stop when the host answers. Host logs, view/control and agent driving
-are not available yet. Local Metro logs remain available for bundle errors.
+retry stop when the host answers. View/control and agent driving are not available yet.
+
+Reruns upload only missing manifest and APK content from a session-scoped store,
+verified by digest; each new attempt still installs the APK. If the build ran on
+this hosting Mac's pinned node, Stim hands over only the single `App.apk` matching
+the client's manifest. Both build and hosting approvals must name the same tailnet
+node. Any handoff failure falls back to upload.
+
+`stim logs --errors` and `stim logs --json` pull app-filtered native logcat records
+as `src: device`; JavaScript logs still arrive through local Metro. The host verifies
+the exact ledger-owned serial, resolves the app's PID on each query and drains its
+last observed PID after a crash or restart. A crash before any PID was observed,
+evicted logcat entries and entries persisted beyond the five-second overlap may
+be unavailable. Collection has a bounded output and time budget; an oversized
+query retries the recent tail and records any dropped interval. Stop copies logs
+before and after the host's final collection and retains them locally after
+emulator deletion. Older hosts without `hosted-android-data` get an update note,
+use uploads and show logs already copied here.
+
+Try this with your agent: "Run this app with `stim android --remote mini`, inspect
+`stim logs --errors`, fix any native or bundle error, then run `stim stop`."
 
 ## Requirements
 

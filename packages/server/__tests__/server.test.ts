@@ -251,8 +251,9 @@ if (process.argv[2] === 'offer') {
       writeFileSync(join(contents, 'data'), 'data bytes');
       symlinkSync('MacOS', join(contents, 'Current'));
     }
+    if (job.platform === 'android') writeFileSync(join(job.area, 'out', job.job, 'App.apk'), 'APK bytes');
     const sha256 = createHash('sha256').update(archive).digest('hex');
-    print({ type: 'result', ok: true, artifact: { name: 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
 }
 `;
@@ -878,6 +879,7 @@ describe('pairing', () => {
           'workspace-diff',
           'hosted-congestion',
           'hosted-ios-data',
+          'hosted-android-data',
           'server-update',
         ],
         actions: [],
@@ -1514,17 +1516,27 @@ describe('offloaded builds', () => {
     },
   );
 
-  async function macosBuild(port: number, peer: string) {
+  async function nativeBuild(port: number, peer: string, platform: 'android' | 'macos' = 'macos') {
     const { client, id } = await buildClient(port, peer);
     await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
     client.socket.send(blob('x'));
     const started = await client.request('build.start', {
       repo: 'app-1',
       project: '',
-      platform: 'macos',
+      platform,
       fingerprint: 'f00d',
       stimBuild: 'b1',
-      macos: { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' },
+      ...(platform === 'android'
+        ? {
+            android: {
+              variant: 'debug',
+              abi: 'arm64-v8a',
+              gradleBuildCache: true,
+              pch: 'auto',
+              compilerCache: 'ccache',
+            },
+          }
+        : { macos: { product: 'Sample', infoPlist: 'Support/Info.plist', bundleId: 'dev.sample.stim.test' } }),
     });
     const job = (started as { result: { job: string } }).result.job;
     await progress(client);
@@ -1549,9 +1561,9 @@ describe('offloaded builds', () => {
         process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
       `,
       );
-      const elsewhere = await macosBuild(port, '100.64.0.3');
-      const revoked = await macosBuild(port, '100.64.0.2');
-      const own = await macosBuild(port, '100.64.0.2');
+      const elsewhere = await nativeBuild(port, '100.64.0.3');
+      const revoked = await nativeBuild(port, '100.64.0.2');
+      const own = await nativeBuild(port, '100.64.0.2');
       expect(own.build.handoff).toMatch(/^[0-9a-f]{64}$/);
       expect(existsSync(join(own.out, 'app.tgz'))).toBe(false);
       expect(existsSync(join(own.out, 'App.app'))).toBe(true);
@@ -1639,9 +1651,87 @@ describe('offloaded builds', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)(
+    'Android handoff checks same-node approvals, archive digest and APK-only manifest before copying verified bytes',
+    async () => {
+      const port = await start();
+      writeFileSync(
+        join(root, 'device-host-worker.mjs'),
+        `
+      import {writeFileSync} from 'node:fs';import {join} from 'node:path';
+      const chunks=[];for await(const chunk of process.stdin)chunks.push(chunk);
+      const input=JSON.parse(Buffer.concat(chunks));
+      const device={avdName:'stim-hosted-'+input.session,serial:'emulator-'+input.consolePort,consolePort:input.consolePort,
+        systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
+      if(input.mode==='prepare') {
+        writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
+        writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[device.avdName],web:[]}));
+      }
+      if(input.mode==='stop')writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[],android:[],web:[]}));
+      process.stdout.write(JSON.stringify({state:input.mode==='prepare'?'ready':'stopped',device}));
+    `,
+      );
+      const elsewhere = await nativeBuild(port, '100.64.0.3', 'android');
+      const own = await nativeBuild(port, '100.64.0.2', 'android');
+      expect(existsSync(join(own.out, 'App.apk'))).toBe(true);
+      const pending = requestDeviceHostAccess('Android hosting client', {
+        kind: 'tailnet',
+        nodeId: 'nPhoneA',
+        nodeName: 'phone',
+        user: 'u',
+      });
+      if (!pending.ok) throw new Error(pending.reason);
+      grantDevice(pending.device.id, ['device-host']);
+      const hosting = await connect(port, '100.64.0.2');
+      await hosting.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: pending.deviceToken } });
+      const reserved = await hosting.request('device-host.reserve', {
+        workspace: '/client/app',
+        slot: 'default',
+        platform: 'android',
+        attempt: 'handoff',
+      });
+      const session = (reserved as { result: { id: string } }).result.id;
+      await vi.waitFor(async () =>
+        expect(await hosting.request('device-host.attach', { session })).toHaveProperty('result.state', 'ready'),
+      );
+      const offer = async (attempt: string, files: object[]) => {
+        const manifest = JSON.stringify(files);
+        const app = {
+          session,
+          attempt,
+          bundleId: 'dev.fixture',
+          mode: 'release',
+          manifest: { sha256: sha(manifest), size: manifest.length },
+        };
+        await hosting.request('device-host.app.offer', app);
+        await hosting.request('device-host.app.chunk', {
+          session,
+          attempt,
+          sha256: sha(manifest),
+          offset: 0,
+          data: Buffer.from(manifest).toString('base64'),
+        });
+        return app;
+      };
+      const handoff = (build: { handoff: string; sha256: string }) =>
+        hosting.request('device-host.app.handoff', { session, attempt: 'app', build });
+      const app = await offer('app', [{ ...file('App.apk', 'APK bytes'), kind: 'file' }]);
+      expect(await handoff(elsewhere.build)).toHaveProperty(
+        'error.message',
+        expect.stringContaining('same tailnet node'),
+      );
+      expect(await handoff({ ...own.build, sha256: 'c'.repeat(64) })).toHaveProperty('error.code', 'action-failed');
+      expect(await handoff(own.build)).toHaveProperty('result', { files: 1, bytes: 9 });
+      expect(await hosting.request('device-host.app.offer', app)).toHaveProperty('result.missing', []);
+      expect(readFileSync(join(deviceHostArea(session), 'blobs', sha('APK bytes')), 'utf8')).toBe('APK bytes');
+      expect(existsSync(own.out)).toBe(false);
+      expect(await handoff(own.build)).toHaveProperty('error.code', 'action-failed');
+    },
+  );
+
   test.skipIf(!fakeTailscale)('deletes a fetched macOS build nobody takes once its handoff lapses', async () => {
     const port = await start({ buildLimits: { handoffMs: 50 } });
-    const { out } = await macosBuild(port, '100.64.0.2');
+    const { out } = await nativeBuild(port, '100.64.0.2');
     await eventually(() => !existsSync(out));
   });
 

@@ -6964,6 +6964,73 @@ describe('strict build machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+
+  test('an offloaded hosted Android build carries its handoff through artifact caching into delivery', async () => {
+    configureMini();
+    const handoff = { nodeId: 'nMini', token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath: fakeApk(),
+      handoff,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    const device = {
+      avdName: 'stim-private',
+      serial: 'emulator-5554',
+      consolePort: 5554,
+      deviceProfile: 'pixel_6',
+      systemImage: 'system-images;android-30;google_apis;arm64-v8a',
+      architecture: 'arm64-v8a' as const,
+    };
+    const placement = {
+      machine: 'mini',
+      selected: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appAttempt: 'app',
+      device,
+      agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+    };
+    const deliveries: unknown[] = [];
+    const h = harness({
+      remoteDevice: 'mini',
+      buildMachine: 'mini',
+      json: true,
+      prepareHostedAndroid: async () => ({
+        host: { machine: 'mini', connection: { close: () => {} } },
+        choice: device,
+        session: null,
+      }),
+      storeCached: (_platform: string, _key: string, path: string) => path,
+      build: never('local build'),
+      placeHostedAndroid: async (
+        _target: unknown,
+        args: { handoff?: offloadClient.BuildHandoff | null; reserved: (value: typeof placement) => void },
+      ) => {
+        deliveries.push(args.handoff);
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(deliveries).toEqual([handoff]);
+    expect(h.calls.build).toEqual([]);
+  });
 });
 
 describe('named Android hosting placement', () => {
