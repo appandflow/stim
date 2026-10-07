@@ -72,6 +72,7 @@ struct SettingsView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .frame(maxWidth: .infinity)
         Text(ScopeSettingsView.caption(for: selected)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
       .padding(.horizontal, Space.xl)
