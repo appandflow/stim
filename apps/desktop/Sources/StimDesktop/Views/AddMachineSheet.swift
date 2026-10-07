@@ -1,4 +1,3 @@
-import AppKit
 import StimKit
 import SwiftUI
 
