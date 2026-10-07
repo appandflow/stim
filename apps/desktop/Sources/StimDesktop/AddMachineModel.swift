@@ -215,6 +215,14 @@ final class AddMachineModel {
     polling?.cancel()
     polling = nil
     Task { await sample?.end() }
+    if modeWritten, !finished {
+      modeWritten = false
+      Task { await restoreMode() }
+    }
+  }
+
+  private func restoreMode() async {
+    do { try await dependencies.writeSetting("remote.buildMode", nil) } catch { modeWritten = true }
   }
 
   func preselect(machineID: String?, hostedSimulators: Bool) {
@@ -495,6 +503,7 @@ final class AddMachineModel {
       if payload.entry("remote.buildMode")?.value.string != mode.rawValue {
         try await dependencies.writeSetting("remote.buildMode", mode.rawValue)
       }
+      modeWritten = false
       if choosesSimulators, let entry = machineEntry, let simulators {
         let value = simulators.value(machine: entry)
         for key in ["ios.remote", "android.remote"] where payload.entry(key)?.value.string != value {
