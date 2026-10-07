@@ -124,7 +124,15 @@ private struct NoticeCard: View {
 
   private var secondaries: [Notice.Action] { [notice.alternateAction, notice.secondaryAction].compactMap { $0 } }
 
-  private var actions: some View {
+  @ViewBuilder private var actions: some View {
+    if secondaries.isEmpty {
+      primary.padding(.top, Space.xxs)
+    } else {
+      rows
+    }
+  }
+
+  private var rows: some View {
     ViewThatFits(in: .horizontal) {
       HStack(spacing: Space.xs) {
         Spacer(minLength: 0)
