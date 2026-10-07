@@ -81,6 +81,8 @@ checkout. The second line is where it sits inside its checkout, such as
   Live also shows a workspace with a running build, and one that
   `stim worktree warm` is preparing ("Warming...", with an activity indicator)
   or has prepared before its first run ("Ready").
+- **Hidden**: off by default and not part of All. It shows the workspaces you hid
+  with **Hide** (see below), each marked with a small eye-slash.
 - **Projects**: which projects the sidebar lists.
 - **Group by**: Project (the tree) or None (one list, each row subtitled with
   its project too).
@@ -110,6 +112,20 @@ dot with the number of uncommitted files, arrows for commits ahead of and
 behind the upstream, and **merged** when `gc` would call the branch merged. A
 clean branch level with its upstream shows nothing. Hovering the row indicator
 spells it out.
+
+## Hiding a workspace
+
+**Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
+row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Live,
+Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
+a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
+this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
+archive). It is not shared with the phone app or another Mac, and Stim itself does not know about it.
+
+A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
+or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
+workspace in use cannot be hidden. Entries for a workspace that is no longer live, idle, not set up or
+archived are dropped.
 
 ## Archived workspaces
 

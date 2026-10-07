@@ -42,6 +42,12 @@ import Testing
     #expect(!items.contains(.lastOutput))
   }
 
+  @Test func workspaceAndWorktreeRowsOfferHideEvenWithoutAWorktreeToRemove() {
+    let source = workspaceMenuItems(for: .workspace(metroRunning: false, platforms: ["ios"], linkedWorktree: false))
+    #expect(source.contains(.toggleHidden))
+    #expect(workspaceMenuItems(for: .worktree).contains(.toggleHidden))
+  }
+
   @Test func projectRowOnlyOffersFileActionsAndStopAll() {
     let items = workspaceMenuItems(for: .project).compactMap { $0 }
     #expect(items == [.revealInFinder, .copyPath, .stopAllLiveWorkspaces])
