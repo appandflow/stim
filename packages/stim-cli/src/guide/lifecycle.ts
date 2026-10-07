@@ -414,7 +414,7 @@ If Stim is not installed globally, replace stim with npx stim.
   stim stop
 
 The same setup serves macos --remote. Approval is separate from build, read
-and phone control. Set ios.remote to the machine name for a workspace default;
+and phone control. Set ios.remote to the machine name for a default (machine scope for the whole Mac);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
 there is a free concurrency.maxDevices slot (0 means unlimited), no device

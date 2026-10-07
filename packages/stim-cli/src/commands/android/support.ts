@@ -85,7 +85,7 @@ export function remoteAvdFlagRefusal({
   return {
     code: 'STIM_BAD_ARG',
     message: `${given} ${given.includes(' and ') ? 'apply' : 'applies'} only to a local owned Android emulator; the ${remoteBackend} remote backend chooses its own device.`,
-    remedy: `Drop ${given} for a remote run. For a local owned emulator, drop --remote and unset android.remote with \`stim settings unset android.remote --scope <workspace|repo|committed>\`.`,
+    remedy: `Drop ${given} for a remote run. For a local owned emulator, drop --remote and unset android.remote with \`stim settings unset android.remote --scope <machine|workspace|repo|committed>\`.`,
   };
 }
 

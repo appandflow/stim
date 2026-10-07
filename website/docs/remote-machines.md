@@ -128,7 +128,7 @@ Use the same device-host approval and name from `remote.machines`:
 stim reload android
 stim stop`} />
 
-`android.remote` sets the workspace default. `--system-image` and
+`android.remote` sets the default (machine scope for the whole Mac; a workspace, repo or committed value overrides it). `--system-image` and
 `--device-profile` select choices installed on the host; the build targets
 its offered ABI. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
@@ -168,7 +168,8 @@ Read `android.host.agent` from `stim status --json`, open the installed package
 with its remote config, and verify the first screen with agent-device."
 
 Desktop uses placement set by config or agents, for example
-`stim settings set android.remote auto --scope workspace` (or `ios.remote`),
+`stim settings set android.remote auto --scope machine` (or `ios.remote`; a
+workspace, repo or committed value overrides the machine default),
 or per run `stim android --remote auto` / `stim android --remote <machine>`.
 New runs pass no `--remote` flag; recorded hosted sessions keep their machine
 until `stim stop`. When a device is not on this Mac, Desktop shows

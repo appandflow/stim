@@ -883,6 +883,15 @@ test('a machine android.deviceProfile and android.systemImage apply under every 
   });
 });
 
+test('a machine ios.remote and android.remote are the default under every project layer', () => {
+  saveConfig({ version: 2, projects: {}, repos: {}, ios: { remote: 'auto' }, android: { remote: 'mini' } });
+  expect(remoteIosSetting(resolveSettings({}))).toEqual({ kind: 'machine', machine: 'auto' });
+  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
+  const resolved = resolveSettings({ repoRoot: tmpHome });
+  expect(remoteIosSetting(resolved)).toEqual({ kind: 'backend', backend: 'eas' });
+  expect(remoteAndroidSetting(resolved)).toEqual({ kind: 'machine', machine: 'mini' });
+});
+
 test('machine-only settings never leak into resolveSettings or read as unknown', () => {
   saveConfig({
     version: 2,
