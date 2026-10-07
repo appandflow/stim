@@ -139,9 +139,8 @@ export function restoreHostedAndroidMetro(
   );
   if (reversed.failed) throw new Error(reversed.reason);
   assertHostedAndroidTarget(home, device);
-  const prefs = writeDebugHttpHost(
+  writeDebugHttpHost(
     { serial: device.serial, packageName: record.bundleId, metroPort: metro.devicePort, physical: true },
     { exec },
   );
-  if (!prefs.ok) throw new Error(prefs.reason);
 }

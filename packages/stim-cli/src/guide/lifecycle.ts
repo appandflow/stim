@@ -308,7 +308,7 @@ emulator, close the gateway and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A host restart stops
 sessions. Rerun the same machine to replace a stopped session. Host logcat,
-view/control and agent driving arrive in following PRs; use local Metro logs
+view/control and agent driving are not available yet; use local Metro logs
 for bundle errors.`,
     },
     'hosted-ios': {

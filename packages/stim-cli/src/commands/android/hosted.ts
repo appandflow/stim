@@ -141,7 +141,7 @@ export async function finishHostedAndroidRun({
       metroPort,
       logsDir,
       host,
-      serial: '',
+      serial: null,
       apkPath: artifact.apkPath,
       androidPackage: packageName,
       installSkipped: false,

@@ -463,7 +463,7 @@ export class DeviceHost {
               ? outcome.value.notice
               : 'Hosted Android Metro restore was not established.'),
         );
-        if (!owned.stopping) this.failed(record.id, error);
+        if (!outcome.settled && !owned.stopping) this.failed(record.id, error);
         throw error;
       }
     })();

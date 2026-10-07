@@ -54,7 +54,7 @@ import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
-import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, appendFileSync, mkdirSync, realpathSync, existsSync, rmSync } from 'node:fs';
 import { workspaceName } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/index.ts')).href)};
 import { captureProcessToken, processStartMicros } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, '../../core/process-identity.ts')).href)};
 import { join } from 'node:path';
@@ -109,6 +109,7 @@ if(input.mode === 'prepare') {
 } else if(input.mode === 'reverse') {
   appendFileSync(join(home,'reversed'),JSON.stringify({port:input.metroPort,clientPort:input.clientMetroPort,attempt:input.attempt})+'\\n');
   if(input.deviceProfile === 'delayed-reverse') await new Promise(resolve=>setTimeout(resolve,300));
+  if(input.deviceProfile === 'failing-reverse' && existsSync(join(home,'fail-reverse'))) { out({state:'unknown',device:null,notice:'adb is restarting'}); process.exit(0); }
   out({state:'ready',device:JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'))});
 } else if(input.mode === 'install') {
   appendFileSync(join(home,'installed'),input.attempt+'\\n');
@@ -2586,4 +2587,31 @@ test('Android Metro refuses missing or invalid ports, unapproved clients and non
   expect(validate({ id: 1, method: 'device-host.metro.open', params: { ...params, clientMetroPort: 65536 } })).toBe(
     false,
   );
+});
+
+test('a failed Android Metro restore is refused and leaves the session ready for a retry', async () => {
+  const first = reserve({ platform: 'android', attempt: 'android-restore-fail', deviceProfile: 'failing-reverse' });
+  await state(first.id, 'ready');
+  const params = { session: first.id, gatewayPort: 12345, secret: 'b'.repeat(64), clientMetroPort: 8082 };
+  const opened = await host.metroOpen('client', params, '127.0.0.1');
+  if ('error' in opened) throw new Error(opened.error.message);
+  const app = appOffer(first.id, 'android-dev', 'android');
+  app.params.mode = 'development';
+  host.appOffer('client', app.params);
+  await uploadManifest(app);
+  await host.appChunk('client', {
+    session: first.id,
+    attempt: app.params.attempt,
+    sha256: app.sha256,
+    offset: 0,
+    data: app.content.toString('base64'),
+  });
+  host.appLaunch('client', app.params);
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  const workerHome = join(deviceHostArea(first.id), 'home');
+  writeFileSync(join(workerHome, 'fail-reverse'), '1');
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('error.code', 'action-failed');
+  expect(readHostedSessions().find((entry) => entry.id === first.id)?.state).toBe('ready');
+  rmSync(join(workerHome, 'fail-reverse'));
+  expect(await host.metroOpen('client', params, '127.0.0.1')).toHaveProperty('result.port', opened.result.port);
 });

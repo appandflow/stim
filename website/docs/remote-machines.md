@@ -86,7 +86,7 @@ reverse, including after an adb server restart. Release variants skip Metro.
 Status reports `android.host` per slot with a profile and API name, keeping the
 host serial and AVD name private. Unreachable cleanup retains the placement;
 retry stop when the host answers. Host logs, view/control and agent driving
-come in following PRs. Local Metro logs remain available for bundle errors.
+are not available yet. Local Metro logs remain available for bundle errors.
 
 ## Requirements
 

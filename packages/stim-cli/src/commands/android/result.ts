@@ -224,7 +224,7 @@ export interface ReportAndroidResultArgs {
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string | null;
-  serial: string;
+  serial: string | null;
   apkPath: string | null;
   androidPackage: string;
   installSkipped: boolean;
