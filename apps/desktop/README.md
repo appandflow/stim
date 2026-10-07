@@ -988,7 +988,7 @@ ready or the 15-second startup deadline passes, then uses its regular poller.
 The server retries reading its Stim home every 30 seconds. Desktop applies the
 usual home checks to an external server whenever health reports its Stim home,
 including while it is not ready. Until health is ready, Desktop does not connect
-a session or offer pairing or route setup, and its poller does not list paired
+a session, issue pairing codes or run route setup, and its poller does not list paired
 devices, because that read of the Stim home can hang while it is degraded.
 Listing, approving and revoking paired devices work as before while the server is
 off, failed or running.
@@ -1001,12 +1001,22 @@ An iPhone that turns on notifications gets push notifications from the server
 while **Serve to phones** is on, even when the app on the phone is closed; see
 [Push notifications](../../packages/server/README.md#push-notifications).
 
-**Pair a Phone** runs `stim-server pair --json`, with `--control` while **Allow
-this phone to control devices** is checked (the default), and shows its
-single-use code as a QR code with the time left before it expires, plus the
-endpoint and token for manual entry. Changing the option generates a new code;
-the previous code stays valid until it expires.
-The sheet shows the phone once it pairs. The paired phones list comes from
+**Pair a Phone...** opens a five-step wizard: get the apps, connect Tailscale,
+turn on serving, scan a code, and see the paired phone. It is also available
+from the first-run guide's **Pair your phone** step. The wizard turns on serving
+and sets up a tailnet-only route through the authenticated loopback `route.setup`
+request; it never enables Funnel. Tailscale and server checks update automatically.
+Cancelling before pairing turns serving back off only if the wizard turned it on.
+
+Codes come from `stim-server pair --json`, with `--control` for **View and
+control** (the default). Each single-use code expires after five minutes; the
+wizard replaces expired codes automatically up to three times, then offers
+**Show a New Code**. Changing access generates a new code; the previous code
+stays valid until it expires. **Can't scan? Enter the endpoint and token** shows
+copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
+waits for the phone and shows its name and access on the success screen.
+
+The paired phones list comes from
 `stim-server devices --json`: each phone's name, a **Read-only** or **Can
 control** badge, its short id, the tailnet node it paired from, when it was last
 seen, an **Allow control** checkbox, which runs `stim-server devices grant <id>
@@ -1031,8 +1041,8 @@ or parks its device. Parked sessions remain listed without a Stop button. The
 list refreshes every five seconds and stays hidden when the local server does
 not support it.
 
-When Tailscale is not running, start it on this Mac. Pairing then works only on
-this Mac, such as in an iOS Simulator, until the private connection is ready.
+When Tailscale is not running, start it on this Mac. The wizard waits for
+Tailscale and a verified private route before showing a pairing code.
 
 While Tailscale runs, **Set up connection** in the Phones tab configures and
 verifies a dedicated tailnet-only HTTPS proxy to the server's loopback port.
@@ -1646,9 +1656,8 @@ The panel follows workspace creation, the first iOS build, a cached rebuild,
 live view and control, app logs, agent actions and replay, Fast Refresh, optional
 phone and remote Mac steps, then stop/removal and Archived. Both optional
 steps keep Skip available.
-Pair a phone opens Settings > Phones > Pair. When
-the server is off, Turn on Serve to phones opens the Phones tab, where you enable
-it yourself. A pairing that exists when the step starts shows Done already,
+Pair a phone opens the Pair a Phone wizard, which
+turns on serving itself when the server is off. A pairing that exists when the step starts shows Done already,
 followed by "Open Stim on your phone: the tour workspace is there".
 
 Add remote Mac opens the existing wizard using the tour workspace as its

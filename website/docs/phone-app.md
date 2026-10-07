@@ -18,8 +18,8 @@ a paired phone starts with it on. Turning the flag off does not stop a running
 :::
 
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
-workspaces, builds, devices and logs. Pairings are read-only by default;
-you can allow a phone to control devices and run Reload and Stop from the Mac.
+workspaces, builds, devices and logs. Choose view-only or view-and-control access
+when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
 It can keep connections to several paired Macs.
 
 ## Install
@@ -60,15 +60,20 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Serve to phones
 
-On the Mac, open **Stim > Settings > Phones** and turn on **Serve to phones**.
-Desktop runs the server while it is open, or uses one already running.
-Choose **Set up connection** when a private route is missing. If Tailscale
-asks to enable HTTPS, approve its browser setup and retry. Pairing remains
-unavailable until the route is verified.
+On the Mac, open **Stim > Settings > Phones > Pair a Phone...**, or choose
+**Pair a Phone...** in the first-run guide's **Pair your phone** step. The wizard
+walks through getting Stim Mobile and Tailscale on your phone, connecting both
+devices to the same tailnet, turning on serving, scanning a code, and confirming
+the paired phone. Checks update automatically.
 
-The route is private to the tailnet. Setup preserves existing routes and
-never enables Funnel. Do not put this server behind a Funneled port: that
-makes its handlers public, and pairing refuses.
+Desktop runs the server while it is open, or uses one already running. The
+wizard turns on serving and uses its authenticated loopback `route.setup`
+request to configure a private tailnet-only route. Setup preserves existing
+routes and never enables Funnel. If Tailscale asks to enable HTTPS, open
+**Open Tailscale setup**, approve it in your browser, then choose **Try Again**.
+The wizard waits until the route is verified. A route exposing the server
+through Funnel refuses setup and pairing: remove that Funnel handler before
+using a tailnet-only route.
 
 For a standalone server, use the
 [server's Tailscale instructions](https://github.com/appandflow/stim/blob/main/packages/server/README.md#tailscale)
@@ -77,17 +82,23 @@ viewing and server-delivered notifications.
 
 ## Pair your phone
 
-1. In Desktop's **Settings > Phones**, choose **Pair a Phone...**.
+1. Follow the Desktop wizard to **Scan with Stim Mobile**. Choose **View only**
+   or **View and control** for this phone.
 2. In the phone app, choose **Pair with your Mac** from the welcome screen,
    or **Pair a machine** from Machines. Allow the camera and scan the QR code.
-3. Name the machine and choose **Save** to open the workspace list.
+3. Name the machine and choose **Save** to open the workspace list. Desktop
+   waits for the phone, then shows its name and access on the success screen.
 
-The code pairs one phone and expires after five minutes. It is consumed once;
-a second phone needs a new code. If scanning fails or camera access is denied,
-choose **Enter the endpoint and token instead** and copy the **Endpoint** and **Token** from
-Desktop into the phone's fields. Manual entry uses the same single-use code.
-Choose **New Code** on the Mac when it expires, and **Retry** on the phone
-when a failed scan needs another attempt.
+The single-use code pairs one phone and expires after five minutes. A second
+phone needs a new code. Desktop replaces expired codes automatically up to
+three times, then offers **Show a New Code**. Changing access also generates a
+new code; the previous code stays valid until it expires.
+
+If scanning fails or camera access is denied, expand **Can't scan? Enter the
+endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
+button; the token is hidden until you choose the eye button. Choose **Enter the
+endpoint and token instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
+the phone when a failed scan needs another attempt.
 
 A standalone server can print the same pairing payload:
 
