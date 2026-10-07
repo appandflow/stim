@@ -460,6 +460,7 @@ export async function runReload({
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
+  let hostedReopened = false;
   const reverseChecked =
     target.platform === 'android'
       ? live.filter((c) => c.platform === 'android' && !c.record.release && c.record.metroPort === port)
@@ -468,7 +469,7 @@ export async function runReload({
     if (candidate.hostedAndroid) {
       try {
         await d.reopenHostedMetro(root, candidate.hostedAndroid, port);
-        reverseRestored.push(candidate.hostedAndroid.session);
+        hostedReopened = true;
       } catch (error) {
         return {
           ok: false,
@@ -498,7 +499,7 @@ export async function runReload({
 
   const request = { role: target.platform, appId: target.record.appId };
   const expectedPeers = reverseChecked.filter((c) => c.record.appId === target.record.appId).length;
-  for (let poll = 0; reverseRestored.length && poll < RECONNECT_POLLS; poll++) {
+  for (let poll = 0; (reverseRestored.length || hostedReopened) && poll < RECONNECT_POLLS; poll++) {
     const peers = await d.reloadMetro(port, { ...request, peersOnly: true });
     if (peers.broadcast) await d.sleep(RECONNECT_UNOBSERVED_MS);
     if (peers.unreachable || peers.broadcast || (peers.ok && peers.targets >= expectedPeers)) break;
