@@ -45,6 +45,7 @@ struct TipsTests {
     inputs.hosting = []
     inputs.macs = [mac]
     inputs.pairedPhones = 0
+    inputs.phoneApp = true
     inputs.rows = 11
     inputs.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":true}")]
     for topic in TipTopic.allCases {
@@ -52,7 +53,11 @@ struct TipsTests {
       var negative = inputs
       switch topic {
       case .buildMachine: negative.machines = ["mini"]
-      case .phone: negative.pairedPhones = 1
+      case .phone:
+        negative.pairedPhones = 1
+        var flagOff = inputs
+        flagOff.phoneApp = false
+        #expect(!Tips.applicable(.phone, inputs: flagOff))
       case .tutorial: negative.tutorialCompleted = true
       case .hideWorkspaces: negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
       case .statusFilter: negative.sidebar.statuses = [.live]
@@ -244,9 +249,21 @@ struct TipsTests {
     #expect(!Tips.suppressesDiscovery(.away, lastShown: [:]))
   }
 
+  @Test func withoutThePhoneAppNoPhoneTipIsSelected() {
+    var inputs = TipInputs()
+    inputs.pairedPhones = 0
+    var state = TipState()
+    for offset in 0..<TipTopic.allCases.count {
+      let day = now.addingTimeInterval(Double(offset) * 86400)
+      #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: day, calendar: calendar) != .phone)
+      #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: day, calendar: calendar) != .phone)
+    }
+  }
+
   @Test func nextTipDoesNotRetireTopicsThatShareStateWithDiscovery() {
     var inputs = TipInputs()
     inputs.pairedPhones = 0
+    inputs.phoneApp = true
     var state = TipState()
     #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .phone)
     #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
@@ -257,6 +274,7 @@ struct TipsTests {
   @Test func aDiscoveryTakenTopicIsSkippedAndAnyNoticeHidesTheCard() {
     var inputs = TipInputs()
     inputs.pairedPhones = 0
+    inputs.phoneApp = true
     var state = TipState()
     #expect(Tips.select(inputs: inputs, state: &state, discoveries: [.away: .shown], now: now, calendar: calendar) == .tutorial)
     #expect(Tips.visible(gate: true, noticeCount: 0, closedDay: nil, now: now, calendar: calendar))
