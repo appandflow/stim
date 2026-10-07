@@ -70,7 +70,7 @@ struct PairPhoneSheet: View {
 
   private var appContent: some View {
     Group {
-      GetAppsArt()
+      PhoneAppsArt()
       Text("Get the apps on your phone").font(.stim(.title))
       HStack(alignment: .top, spacing: Space.md) {
         appCard {
@@ -98,7 +98,7 @@ struct PairPhoneSheet: View {
 
   private var tailscaleContent: some View {
     Group {
-      TailnetArt()
+      PhoneTailnetArt()
       Text("Connect both to your tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
         Text("This Mac").font(.stim(.headline))
@@ -139,7 +139,7 @@ struct PairPhoneSheet: View {
 
   private var serveContent: some View {
     Group {
-      ServeArt()
+      PhoneServeArt()
       Text("Turning on serving").font(.stim(.title))
       checkRow(wizard.serverCheck) {
         switch wizard.server {
@@ -289,7 +289,7 @@ struct PairPhoneSheet: View {
 
   private var doneContent: some View {
     Group {
-      PairedArt()
+      PhonePairedArt()
       if let paired = wizard.paired {
         Text("\(paired.name) is paired").font(.stim(.title))
         Label("Sees workspaces, devices and logs", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)

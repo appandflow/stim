@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct GetAppsArt: View {
+struct PhoneAppsArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var floating = false
 
@@ -37,7 +37,7 @@ struct GetAppsArt: View {
   }
 }
 
-struct TailnetArt: View {
+struct PhoneTailnetArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -61,7 +61,7 @@ struct TailnetArt: View {
   }
 }
 
-struct ServeArt: View {
+struct PhoneServeArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -81,7 +81,7 @@ struct ServeArt: View {
   }
 }
 
-struct PairedArt: View {
+struct PhonePairedArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCheck = false
 
