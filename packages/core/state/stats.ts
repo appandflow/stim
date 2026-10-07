@@ -53,6 +53,7 @@ export interface StatsPlacement {
   machine?: string;
   buildMs?: number;
   slotWaitMs?: number;
+  deviceSlotWaitMs?: number;
   /** The project's last cold build here before this run. */
   localEstimateMs?: number;
   failed?: true;
@@ -69,7 +70,16 @@ export interface StatsCapacityRefusal {
   workspace: string;
 }
 
-export function trimCapacityRefusals(events: StatsCapacityRefusal[], now: number): StatsCapacityRefusal[] {
+export interface StatsCapacityWait {
+  at: string;
+  kind: 'device-wait';
+  platform: StatsPlatform;
+  ms: number;
+  max: number;
+  workspace: string;
+}
+
+export function trimCapacityRefusals<T extends { at: string }>(events: T[], now: number): T[] {
   return events
     .filter((event) => {
       const age = now - Date.parse(event.at);
@@ -78,6 +88,9 @@ export function trimCapacityRefusals(events: StatsCapacityRefusal[], now: number
     .toSorted((a, b) => Date.parse(a.at) - Date.parse(b.at))
     .slice(-CAPACITY_REFUSAL_LIMIT);
 }
+
+export const trimCapacityWaits: (events: StatsCapacityWait[], now: number) => StatsCapacityWait[] =
+  trimCapacityRefusals<StatsCapacityWait>;
 
 export interface BuildMachineTotals {
   offloaded: number;
@@ -96,6 +109,7 @@ export interface StatsRecord {
   history?: Record<string, RunHistory>;
   placements?: StatsPlacement[];
   capacityRefusals?: StatsCapacityRefusal[];
+  capacityWaits?: StatsCapacityWait[];
   buildMachines?: Record<string, BuildMachineTotals>;
 }
 
@@ -275,6 +289,7 @@ function normalize(record: StatsRecord): StatsRecord {
   const capacityRefusals = Array.isArray(record.capacityRefusals)
     ? record.capacityRefusals.flatMap(normalizeCapacityRefusal)
     : [];
+  const capacityWaits = Array.isArray(record.capacityWaits) ? record.capacityWaits.flatMap(normalizeCapacityWait) : [];
   const buildMachines: Record<string, BuildMachineTotals> = {};
   if (isObject(record.buildMachines)) {
     for (const [name, totals] of Object.entries(record.buildMachines)) {
@@ -288,6 +303,7 @@ function normalize(record: StatsRecord): StatsRecord {
     ...(Object.keys(history).length ? { history } : {}),
     ...(placements.length ? { placements } : {}),
     ...(capacityRefusals.length ? { capacityRefusals } : {}),
+    ...(capacityWaits.length ? { capacityWaits } : {}),
     ...(Object.keys(buildMachines).length ? { buildMachines } : {}),
   };
 }
@@ -300,6 +316,7 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
   if (typeof reason !== 'string' || typeof project !== 'string') return [];
   const buildMs = wholeMs(value.buildMs);
   const slotWaitMs = wholeMs(value.slotWaitMs);
+  const deviceSlotWaitMs = wholeMs(value.deviceSlotWaitMs);
   const localEstimateMs = wholeMs(value.localEstimateMs);
   return [
     {
@@ -311,6 +328,7 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
       ...(typeof machine === 'string' && machine !== '' ? { machine } : {}),
       ...(buildMs > 0 ? { buildMs } : {}),
       ...(slotWaitMs > 0 ? { slotWaitMs } : {}),
+      ...(deviceSlotWaitMs > 0 ? { deviceSlotWaitMs } : {}),
       ...(localEstimateMs > 0 ? { localEstimateMs } : {}),
       ...(value.failed === true ? { failed: true as const } : {}),
     },
@@ -325,6 +343,13 @@ function normalizeCapacityRefusal(value: unknown): StatsCapacityRefusal[] {
   if (typeof max !== 'number' || !Number.isInteger(max) || max <= 0) return [];
   if (typeof workspace !== 'string' || workspace === '') return [];
   return [{ at: new Date(at).toISOString(), kind, platform: platform as StatsPlatform, max, workspace }];
+}
+
+function normalizeCapacityWait(value: unknown): StatsCapacityWait[] {
+  if (!isObject(value) || value.kind !== 'device-wait') return [];
+  const refusal = normalizeCapacityRefusal({ ...value, kind: 'device' })[0];
+  if (!refusal || typeof value.ms !== 'number' || !Number.isFinite(value.ms) || value.ms < 0) return [];
+  return [{ ...refusal, kind: 'device-wait', ms: Math.round(value.ms) }];
 }
 
 function normalizeMachineTotals(totals: Record<string, unknown>): BuildMachineTotals {
@@ -458,6 +483,7 @@ export interface StatsReport {
   machine: { ios: StatsBucket | null; android: StatsBucket | null };
   offload: OffloadSummary;
   capacityRefusals?: StatsCapacityRefusal[];
+  capacityWaits?: StatsCapacityWait[];
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
 }
@@ -466,6 +492,7 @@ export function readStatsReport(key: string | null, now: number): { report: Stat
   const { record, note } = readStats();
   const project = key ? record?.projects[key] : null;
   const capacityRefusals = trimCapacityRefusals(record?.capacityRefusals ?? [], now).toReversed();
+  const capacityWaits = trimCapacityWaits(record?.capacityWaits ?? [], now).toReversed();
   return {
     report: {
       version: STATS_VERSION,
@@ -473,6 +500,7 @@ export function readStatsReport(key: string | null, now: number): { report: Stat
       machine: { ios: record?.machine.ios ?? null, android: record?.machine.android ?? null },
       offload: offloadSummary(record, now),
       ...(capacityRefusals.length ? { capacityRefusals } : {}),
+      ...(capacityWaits.length ? { capacityWaits } : {}),
       agentDevice: readAgentDeviceUsage(),
       swiftpmCache: readSwiftpmCacheUsage(),
     },

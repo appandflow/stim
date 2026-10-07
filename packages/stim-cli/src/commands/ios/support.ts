@@ -1,3 +1,5 @@
+import type { BuildProgress } from '../../engine/build-progress.ts';
+import type { RunRecorder } from '../../engine/stats.ts';
 import { parseDeviceWait } from '../../engine/device-lease-run.ts';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
@@ -7,7 +9,13 @@ import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailA
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import type { SettingsObject } from '../../workspace/settings.ts';
 import type { SettingScope } from '@stim-cli/core/state';
-import { layerNote, unknownIosDeviceTypeRefusal, unknownIosRuntimeRefusal } from '../../engine/device-capacity.ts';
+import {
+  DEFAULT_DEVICE_SLOT_WAIT_MS,
+  type DeviceSlotWaitPolicy,
+  layerNote,
+  unknownIosDeviceTypeRefusal,
+  unknownIosRuntimeRefusal,
+} from '../../engine/device-capacity.ts';
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
@@ -268,24 +276,14 @@ export function printDiagnostics(note: (line: string) => void, result: Extract<B
 export function resolveIosWait(
   opts: IosCommandOptions,
   physical: boolean,
-): { waitSeconds: number; noWait: boolean } | { failure: FailArgs } {
+): { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number; checkCapacity: boolean } | { failure: FailArgs } {
   const noWait = opts.wait === false;
-  const waitFlagged = opts.wait !== undefined;
   if (opts.waitConflict) {
     return {
       failure: {
         code: 'STIM_BAD_ARG',
         message: '--wait and --no-wait ask for opposite things.',
-        remedy: 'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
-      },
-    };
-  }
-  if (waitFlagged && !physical) {
-    return {
-      failure: {
-        code: 'STIM_BAD_ARG',
-        message: '--wait and --no-wait only apply to a `--device` run.',
-        remedy: 'This workspace owns its simulator, so nothing contends for it. Drop the flag, or pass `--device`.',
+        remedy: 'Pass only one of `--wait <seconds>` and `--no-wait`.',
       },
     };
   }
@@ -295,9 +293,56 @@ export function resolveIosWait(
       failure: {
         code: 'STIM_BAD_ARG',
         message: waitParsed.error,
-        remedy: 'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+        remedy:
+          'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a busy lease or device slot at once.',
       },
     };
   }
-  return { waitSeconds: waitParsed.seconds, noWait };
+  return {
+    waitSeconds: waitParsed.seconds,
+    noWait,
+    checkCapacity: !physical && (noWait || waitParsed.seconds === 0),
+    deviceSlotWaitMs: noWait
+      ? 0
+      : opts.wait === undefined && !physical
+        ? DEFAULT_DEVICE_SLOT_WAIT_MS
+        : waitParsed.seconds * 1000,
+  };
+}
+
+interface IosDeviceWaitRun {
+  policy: DeviceSlotWaitPolicy;
+  record: RunRecorder['record'];
+  booting(pending: { done: Promise<unknown> } | undefined): void;
+  finish(): Promise<void>;
+}
+
+export function createIosDeviceWaitRun(stats: RunRecorder, progress: BuildProgress): IosDeviceWaitRun {
+  const controller = new AbortController();
+  let waiting = false;
+  let boot: Promise<unknown> | undefined;
+  let outcome: Parameters<RunRecorder['record']>[0] | undefined;
+  return {
+    policy: {
+      signal: controller.signal,
+      waitingFor(info) {
+        waiting = info !== null;
+        progress.waitingFor(info, 'device-slot');
+      },
+      onWait: stats.addDeviceSlotWaitMs,
+    },
+    record(next) {
+      if (waiting) outcome = next;
+      else stats.record(next);
+    },
+    booting(pending) {
+      boot ??= pending?.done;
+    },
+    async finish() {
+      const queued = waiting;
+      controller.abort();
+      if (queued) await boot?.catch(() => {});
+      if (outcome) stats.record(outcome);
+    },
+  };
 }

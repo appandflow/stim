@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSlotsDir, tryAcquireBuildSlotClaim } from '@stim-cli/core/state';
+import type { BuildWaitingFor } from '@stim-cli/core/state';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
@@ -25,6 +26,7 @@ interface TryAcquireBuildSlotOptions {
 
 interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
   out?: (line: string) => void;
+  waitingFor?: (info: BuildWaitingFor | null) => void;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   intervalMs?: number;
@@ -113,6 +115,7 @@ export async function acquireBuildSlot({
   logFile = null,
   now = Date.now,
   out = () => {},
+  waitingFor = () => {},
   sleep = sleepAsync,
   intervalMs = SLOT_POLL_MS,
   progressMs = SLOT_PROGRESS_MS,
@@ -122,28 +125,33 @@ export async function acquireBuildSlot({
   const started = now();
   let lastProgress = started;
   let waited = false;
-  for (;;) {
-    const got = tryAcquireBuildSlot({ max, root, logFile });
-    if (got) return { ...got, slotWaitMs: waited ? Math.max(0, Math.round(now() - started)) : 0 };
+  try {
+    for (;;) {
+      const got = tryAcquireBuildSlot({ max, root, logFile });
+      if (got) return { ...got, slotWaitMs: waited ? Math.max(0, Math.round(now() - started)) : 0 };
 
-    waited = true;
-    const elapsed = now() - started;
-    if (elapsed >= ceilingMs) {
-      const err = new Error(
-        `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
-          'process that is still running, or by a holder Stim cannot identify. Slots live under ' +
-          buildSlotsDir() +
-          '; ' +
-          'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
-      ) as Error & { code?: string };
-      err.code = 'STIM_BUILD_SLOT_TIMEOUT';
-      throw err;
+      waited = true;
+      waitingFor({ kind: 'build-slot', inUse: max, max, since: new Date(started).toISOString() });
+      const elapsed = now() - started;
+      if (elapsed >= ceilingMs) {
+        const err = new Error(
+          `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
+            'process that is still running, or by a holder Stim cannot identify. Slots live under ' +
+            buildSlotsDir() +
+            '; ' +
+            'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
+        ) as Error & { code?: string };
+        err.code = 'STIM_BUILD_SLOT_TIMEOUT';
+        throw err;
+      }
+      if (now() - lastProgress >= progressMs) {
+        lastProgress = now();
+        out(slotWaitingLine({ max, elapsedMs: elapsed }));
+      }
+      await sleep(intervalMs);
     }
-    if (now() - lastProgress >= progressMs) {
-      lastProgress = now();
-      out(slotWaitingLine({ max, elapsedMs: elapsed }));
-    }
-    await sleep(intervalMs);
+  } finally {
+    waitingFor(null);
   }
 }
 

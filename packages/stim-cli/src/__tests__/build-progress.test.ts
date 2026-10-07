@@ -210,6 +210,40 @@ describe('active build record', () => {
     releaseClaim(claim);
   });
 
+  test('slot waits stay independent of phase and overlapping waits show the earliest until it ends', () => {
+    const claim = takeClaim();
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => T0 });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    const device = { kind: 'device-slot' as const, inUse: 2, max: 2, since: new Date(T0).toISOString() };
+    const build = { kind: 'build-slot' as const, inUse: 1, max: 1, since: new Date(T0 + 1000).toISOString() };
+    progress.waitingFor(device);
+    progress.step('compile');
+    progress.waitingFor(build);
+    expect(report()).toMatchObject({ phase: 'compile', waitingFor: device });
+    progress.waitingFor(null, 'device-slot');
+    expect(report()).toMatchObject({ phase: 'compile', waitingFor: build });
+    progress.waitingFor(null, 'build-slot');
+    expect(report().waitingFor).toBeUndefined();
+    progress.clear();
+    releaseClaim(claim);
+  });
+
+  test('malformed slot wait state is ignored without losing an older active build', () => {
+    const claim = takeClaim();
+    const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim });
+    const record = activeRecord()!;
+    for (const waitingFor of [
+      null,
+      {},
+      { kind: 'device-slot', inUse: -1, max: 2, since: 'bad' },
+      { kind: 'build-slot', inUse: 2, max: 2, since: 'bad' },
+    ]) {
+      expect(parseActiveBuild({ ...record, waitingFor })).toEqual(record);
+    }
+    progress.clear();
+    releaseClaim(claim);
+  });
+
   test('records phase transitions under the run claim, reports running, and clears on exit', () => {
     const claim = takeClaim();
     let now = T0;

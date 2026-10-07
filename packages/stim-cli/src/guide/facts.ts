@@ -1251,7 +1251,7 @@ RULES
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
             completedPhaseMs?, basis,
             plannedPhases, missReason?, missProvisional?, detail?, placement,
-            waitingOn? }
+            waitingOn?, waitingFor? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1337,6 +1337,9 @@ RULES
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
                    prebuild, pods or compile.
+  waitingFor       optional { kind: "build-slot" | "device-slot", inUse, max,
+                   since } for a slot wait, independently of phase. since is
+                   ISO. Overlapping waits show the first, then the remaining one.
   waitingOn        while phase is "wait" and the holder is known: { path },
                    the workspace whose build of the same artifact this run
                    waits for; absent otherwise. The lock is machine-wide, so
@@ -1637,6 +1640,7 @@ RULES
                                               "total": <totals> } },
                  "placements": [<placement>, ...] },
     "capacityRefusals": [<capacityRefusal>, ...],
+    "capacityWaits": [<capacityWait>, ...],
     "agentDevice": <AgentDeviceUsage|null>,
     "swiftpmCache": <SwiftpmCacheUsage|null> }
 
@@ -1659,6 +1663,12 @@ CAPACITY REFUSALS
   within 6 hours for its device-limit suggestion, including terminal runs.
   Recording is best effort and does not change the refusal. Plain stats
   output is unchanged.
+  capacityWaits?: [{ at, kind: "device-wait", platform: "ios" | "android",
+                    ms, max, workspace }]
+  Each owned-device slot wait records its whole elapsed milliseconds,
+  including waits that time out or fail. It has the same 50-event, 7-day
+  retention, newest-first order, workspace id and best-effort recording.
+  It is omitted when empty.
 
 AGENT-DEVICE DISK USAGE
   agentDevice: { version: 1, measuredAt, bytes, complete, stateDir,
@@ -1743,8 +1753,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 BUILD PLACEMENT (\`offload\`)
   Every run that compiles records where it built and why, in a placement: { at, project, platform,
-  decision, reason, machine?, buildMs?, slotWaitMs?, localEstimateMs?, failed? }.
-  slotWaitMs is whole milliseconds waiting for a build slot, present only when positive.
+  decision, reason, machine?, buildMs?, slotWaitMs?, deviceSlotWaitMs?, localEstimateMs?, failed? }.
+  slotWaitMs and deviceSlotWaitMs are whole milliseconds waiting for build
+  and owned-device slots respectively, present only when positive.
   decision is "here", "offloaded", or "fell-back" (it tried a build machine
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here

@@ -4004,6 +4004,7 @@ describe('concurrency limits', () => {
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
     const h = harness({
       json,
+      wait: false,
       recordCapacityRefusal,
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
       checkCapacity: (args: Record<string, unknown>) => {
@@ -4047,6 +4048,7 @@ describe('concurrency limits', () => {
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
     const h = harness({
       recordCapacityRefusal,
+      wait: false,
       checkCapacity: () => ({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown', remedy: 'inspect claim' }),
     });
     const result = await h.run();
@@ -5697,14 +5699,7 @@ describe('--device: the lease on the device', () => {
     expect(listLeaseFiles()).toEqual([]);
   });
 
-  test('--wait without --device, an unusable value, and both flags at once are all STIM_BAD_ARG', async () => {
-    const noDevice = await harness({ wait: '30' }).run();
-    expect(noDevice.error?.code).toBe('STIM_BAD_ARG');
-    expect(noDevice.error?.message).toMatch(/only apply to a `--device` run/);
-
-    const bypassNoDevice = await harness({ wait: false }).run();
-    expect(bypassNoDevice.error?.message).toMatch(/only apply to a `--device` run/);
-
+  test('an unusable wait value and both flags at once are STIM_BAD_ARG', async () => {
     const bad = await harness({
       device: true,
       wait: 'soon',

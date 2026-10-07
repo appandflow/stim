@@ -16,7 +16,7 @@ import {
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
@@ -246,11 +246,11 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Only with --device.',
+      'How long to wait for another workspace to release the device it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
     )
     .option(
       '--no-wait',
-      "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Only with --device.",
+      "Install on a device another workspace leases instead of waiting: this run takes no lease and, when both workspaces build the same app id, the install terminates the holder's running app. Without --device, refuse a full device cap or existing slot queue immediately.",
     )
     .action(async (opts: AndroidCommandOptions) => {
       if (opts.plan) return planAndroid(opts);
@@ -715,6 +715,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     emit,
   } = androidSlotOptions(options);
   const progress = options.progress ?? NO_BUILD_PROGRESS;
+
   const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
@@ -864,6 +865,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   );
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
+  const deviceSlotWait = {
+    waitMs: plan.deviceSlotWaitMs,
+    displayName: basename(root),
+    waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
+    onWait: (ms: number) => stats.addDeviceSlotWaitMs(ms),
+  };
   const { build: buildPlan, target, isExpo, cacheProviderConfig } = plan;
   const { variant, release, cache: cachePolicy } = buildPlan;
   record.configuration = variant ?? 'debug';
@@ -1066,11 +1073,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         );
       }
     }
-    const capacity = checkCapacity({
-      platform: PLATFORM,
-      project,
-      max: limits.maxDevices,
-    });
+    const capacity =
+      plan.deviceSlotWaitMs === 0
+        ? checkCapacity({
+            platform: PLATFORM,
+            project,
+            max: limits.maxDevices,
+          })
+        : null;
     if (capacity) {
       if (capacity.code === 'STIM_AT_CAPACITY') {
         recordRefusal({ platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) }, now());
@@ -1087,6 +1097,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         settingsRoot,
         settings,
         flags: {
+          deviceSlotWait,
           systemImage: target.systemImage,
           systemImageFlag: systemImageFlag?.trim() || null,
           deviceProfile: target.deviceProfile,
@@ -1110,7 +1121,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     const boot = (): Promise<AndroidBootLike> =>
       Promise.resolve(
-        ensureDeviceBooted({ platform: PLATFORM, device, projectPath: root, out, logFile: emuLog }),
+        ensureDeviceBooted({ platform: PLATFORM, device, projectPath: root, deviceSlotWait, out, logFile: emuLog }),
       ).catch((e) => ({
         failed: true as const,
         reason: String((e as Error)?.message || e),
@@ -1188,6 +1199,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           hit: progress.hit,
           place: progress.place,
           waitingOn: progress.waitingOn,
+          waitingFor: progress.waitingFor,
         },
       },
       {
@@ -1403,6 +1415,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               platform: PLATFORM,
               device: { ...device, serial: undefined },
               projectPath: root,
+              deviceSlotWait,
               out,
               logFile: emuLog,
             }),

@@ -36,7 +36,7 @@ import {
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
 import type { RunRecorder, RunEstimates } from '../../engine/stats.ts';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, type Optimizations } from '../../optimizations.ts';
@@ -111,12 +111,13 @@ interface IosArtifactRequest {
     note: (line: string) => void;
     logWriter: () => NdjsonWriter;
     estimates: () => RunEstimates;
-    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs' | 'setPlacement'>;
+    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPodsMs' | 'setPlacement' | 'deviceSlotWaitMs'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
     hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
     waitingOn: (root: string | null) => void;
+    waitingFor?: BuildProgress['waitingFor'];
   };
 }
 
@@ -215,7 +216,7 @@ export async function acquireIosArtifact(
   }: IosArtifactRequest,
   d: IosArtifactDeps,
 ): Promise<IosArtifactResult> {
-  const { phase, note, logWriter, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
+  const { phase, note, logWriter, estimates, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const physical = device !== null;
   const keyOptions = {
     scheme: buildScheme,
@@ -699,7 +700,13 @@ export async function acquireIosArtifact(
   async function takeBuildSlot(): Promise<void> {
     if (!maxBuilds) return;
     try {
-      buildSlot = await d.acquireBuildSlot({ max: maxBuilds, root, logFile, out: note });
+      buildSlot = await d.acquireBuildSlot({
+        max: maxBuilds,
+        root,
+        logFile,
+        out: note,
+        waitingFor: (info) => waitingFor?.(info, 'build-slot'),
+      });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (e) {
       const refusal = claimFailure(e, 'stim ios');
@@ -1018,11 +1025,17 @@ export async function acquireIosArtifact(
           stats.setPlacement({
             decision: 'fell-back',
             slotWaitMs,
+            deviceSlotWaitMs: stats.deviceSlotWaitMs(),
             reason: offloadFallback ?? 'offload failed',
             ...(fallbackMachine ? { machine: fallbackMachine } : {}),
           });
         } else {
-          stats.setPlacement({ decision: 'here', reason: hereReason, slotWaitMs });
+          stats.setPlacement({
+            decision: 'here',
+            reason: hereReason,
+            slotWaitMs,
+            deviceSlotWaitMs: stats.deviceSlotWaitMs(),
+          });
         }
         builtOn = 'here';
         buildFailure = { ...buildFailure, builtOn };

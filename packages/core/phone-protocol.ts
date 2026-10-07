@@ -45,6 +45,7 @@ export type PhoneBuildReport = Omit<
   | 'plannedPhases'
   | 'missReason'
   | 'detail'
+  | 'waitingFor'
 > & {
   outcomeKnown?: boolean;
   placement?: PhoneBuildPlacement;
@@ -57,6 +58,7 @@ export type PhoneBuildReport = Omit<
   plannedPhases?: { phase: PhoneBuildPhase; expectedMs: number }[] | null;
   missReason?: PhoneBuildMissReason;
   detail?: PhoneBuildDetail;
+  waitingFor?: Omit<State.BuildWaitingFor, 'kind'> & { kind: string };
 };
 export type PhoneBuildPlacement = string | Exclude<State.BuildPlacement, string>;
 export type PhoneBuildDetail = Omit<State.BuildDetail, 'step' | 'unit'> & { step: string | null; unit: string | null };

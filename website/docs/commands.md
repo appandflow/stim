@@ -299,10 +299,13 @@ build can compile on a paired build machine instead: see `offload.mode` in
   can lease. It cannot be combined with `--remote`. Stim never creates, boots,
   or deletes hardware.
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
-  `0` refuses immediately if busy). Only with `--device`.
+  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
+  owned-device slot wait across the Stim home (default 600 seconds). Remote
+  targets do not join this local slot queue.
 - `--no-wait` bypasses leasing, including when another workspace holds the
   device. Installing the same app terminates that workspace's running app.
-  Only with `--device`; cannot be combined with `--wait`.
+  Without `--device`, it refuses a full device cap or existing slot queue
+  immediately. It cannot be combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no local fallback.
   `auto` refuses until automatic placement ships. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both Macs,
@@ -433,10 +436,13 @@ on a paired build machine instead: see `offload.mode` in
   With no serial it selects a connected device this workspace can lease. It
   cannot be combined with `--remote`.
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
-  `0` refuses immediately if busy). Only with `--device`.
+  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
+  owned-device slot wait across the Stim home (default 600 seconds). Remote
+  targets do not join this local slot queue.
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
-  the same app terminates that workspace's running app. Only with `--device`;
-  cannot be combined with `--wait`.
+  the same app terminates that workspace's running app. Without `--device`, it
+  refuses a full device cap or existing slot queue immediately. It cannot be
+  combined with `--wait`.
 - `--remote <machine>` runs on a named approved Mac in `hosting.machines`, with no fallback. `--system-image` and `--device-profile` select the host's installed choices. See [remote machines](./remote-machines.md#run-android-on-a-hosting-mac).
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote emulator. It needs eas-cli 21.6.0 or later.
@@ -1269,7 +1275,19 @@ the last 100 from the last 7 days, newest first. `offload.machines` gives each
 build machine's offloaded builds, offloaded time, estimated time saved and
 fallbacks, for today (this Mac's calendar day) and in total. The plain output
 adds a `build placement` section with the same counts and the last 5
-placements. Placements include `slotWaitMs` as whole milliseconds waiting for a build slot only when positive. `stim guide facts stats` has every field.
+placements. Placements include `slotWaitMs` and `deviceSlotWaitMs` as whole milliseconds waiting for build and owned-device slots, omitted when zero. `stim guide facts stats` has every field.
+
+Owned-device waits print the count, holder workspace names and elapsed time
+at once and about every 10 seconds on stderr. Status JSON includes optional
+`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since }`
+without changing the build phase. Overlapping waits show the one that started
+first, then the remaining wait.
+
+The optional top-level JSON `capacityWaits` lists each owned-device slot wait:
+`{ at, kind: "device-wait", platform, ms, max, workspace }`. `ms` is whole
+elapsed milliseconds, including waits that time out or fail. The list keeps
+the last 50 events from 7 days, newest first, and is omitted when empty.
+Recording is best effort.
 
 The optional top-level JSON `capacityRefusals` lists the last 50 device
 refusals from the last 7 days, newest first, and is omitted when empty. Each

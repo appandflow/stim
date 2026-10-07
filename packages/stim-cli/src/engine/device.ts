@@ -8,6 +8,7 @@ import { configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
 import { reconcileSimSlim } from './simslim.ts';
+import type { DeviceSlotWaitPolicy } from './device-capacity.ts';
 import { ensureIosBooted, ensureOwnedIosDevice, type IosBoot } from './device-ios.ts';
 import { ANDROID_BOOT_TIMEOUT_MS, ensureAndroidBooted, ensureOwnedAndroidDevice } from './device-android.ts';
 
@@ -60,6 +61,7 @@ export interface DeviceSettings {
 }
 
 export interface DeviceFlags {
+  deviceSlotWait?: DeviceSlotWaitPolicy;
   simulatorApp?: IosSimulatorApp;
   deviceType?: string | null;
   runtime?: string | null;
@@ -174,11 +176,13 @@ export async function ensureBooted({
   alive = pidExists,
   projectPath,
   slot,
+  deviceSlotWait,
 }: Partial<
   {
     platform: string;
     device: OwnedDeviceRecord | null;
     simulatorApp: IosSimulatorApp;
+    deviceSlotWait: DeviceSlotWaitPolicy;
     timeoutMs: number;
     pollMs: number;
     out: Notify;
@@ -187,10 +191,19 @@ export async function ensureBooted({
   } & EmulatorLogging
 > = {}): Promise<BootResult> {
   if (platform === 'ios')
-    return ensureIosBooted({ device, simulatorApp, timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS, pollMs, out });
+    return ensureIosBooted({
+      device,
+      projectPath,
+      deviceSlotWait,
+      simulatorApp,
+      timeoutMs: timeoutMs ?? IOS_BOOT_TIMEOUT_MS,
+      pollMs,
+      out,
+    });
   if (platform === 'android')
     return ensureAndroidBooted({
       device,
+      deviceSlotWait,
       projectPath,
       slot,
       timeoutMs: timeoutMs ?? ANDROID_BOOT_TIMEOUT_MS,

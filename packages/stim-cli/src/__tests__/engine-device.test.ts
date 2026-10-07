@@ -569,6 +569,7 @@ describe('ensureBooted: android', () => {
       });
       const result = await ensureBooted({
         platform: 'android',
+        deviceSlotWait: { noWait: true },
         projectPath: tmpHome,
         device: { avdName: 'stim-app', consolePort: 5556, owned: true },
         timeoutMs: 5000,
@@ -2628,7 +2629,12 @@ describe('checkDeviceCapacity', () => {
       const sources = { sims, adb: makeAdbDevices(), config: makeConfig(), booting: [] };
       expect(checkDeviceCapacity({ platform: 'ios', project: { platforms: {} }, max: 4, ...sources })).toBe(null);
       await expect(
-        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 4, sources }),
+        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
+          root: tmpHome,
+          noWait: true,
+          max: 4,
+          sources,
+        }),
       ).rejects.toMatchObject({ code: 'STIM_NO_DEVICE' });
     },
   );
@@ -2647,7 +2653,12 @@ describe('checkDeviceCapacity', () => {
     };
     expect(checkDeviceCapacity({ platform: 'android', project: { platforms: {} }, max: 1, ...sources })).toBe(null);
     await expect(
-      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 1, sources }),
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 1,
+        sources,
+      }),
     ).resolves.toBe('booted');
   });
 
@@ -2664,7 +2675,12 @@ describe('checkDeviceCapacity', () => {
       booting: [],
     };
     await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 1, sources }),
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 1,
+        sources,
+      }),
     ).resolves.toBe('booted');
     const withEmulator = {
       ...sources,
@@ -2673,7 +2689,12 @@ describe('checkDeviceCapacity', () => {
       }),
     };
     await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 1, sources: withEmulator }),
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 1,
+        sources: withEmulator,
+      }),
     ).rejects.toMatchObject({ code: 'STIM_NO_DEVICE' });
   });
 
@@ -2690,7 +2711,12 @@ describe('checkDeviceCapacity', () => {
       booting: [],
     };
     await expect(
-      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 1, sources }),
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 1,
+        sources,
+      }),
     ).resolves.toBe('booted');
   });
 });
@@ -2745,7 +2771,12 @@ describe('withDeviceBootAdmission', () => {
 
     test('the boot is refused with the claim code and the command that removes it', async () => {
       await expect(
-        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 2, sources: listings }),
+        withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
+          root: tmpHome,
+          noWait: true,
+          max: 2,
+          sources: listings,
+        }),
       ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', removeCommand: expect.stringContaining('rm ') });
     });
   });
@@ -2761,19 +2792,29 @@ describe('withDeviceBootAdmission', () => {
           admitted();
           finishBoot = () => resolve('booted');
         }),
-      { max: 1, sources },
+      { root: tmpHome, noWait: true, max: 1, sources },
     );
     await inFlight;
-    const second = withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 1, sources });
+    const second = withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', {
+      root: tmpHome,
+      noWait: true,
+      max: 1,
+      sources,
+    });
     await expect(second).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
     const { record } = decodeStats(readFileSync(statsFile(), 'utf-8'));
     expect(record?.capacityRefusals).toEqual([
-      expect.objectContaining({ kind: 'device', platform: 'ios', max: 1, workspace: workspaceId(process.cwd()) }),
+      expect.objectContaining({ kind: 'device', platform: 'ios', max: 1, workspace: workspaceId(tmpHome) }),
     ]);
     finishBoot();
     await expect(first).resolves.toBe('booted');
     await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 1, sources }),
+      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 1,
+        sources,
+      }),
     ).resolves.toBe('booted');
   });
 
@@ -2795,7 +2836,12 @@ describe('withDeviceBootAdmission', () => {
       }),
     };
     await expect(
-      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', { max: 2, sources: full }),
+      withDeviceBootAdmission({ platform: 'android', key: 'stim-a' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 2,
+        sources: full,
+      }),
     ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   });
 
@@ -2809,10 +2855,20 @@ describe('withDeviceBootAdmission', () => {
       ],
     };
     await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', { max: 2, sources: full }),
+      withDeviceBootAdmission({ platform: 'ios', key: 'u1' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 2,
+        sources: full,
+      }),
     ).resolves.toBe('booted');
     await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', { max: 2, sources: full }),
+      withDeviceBootAdmission({ platform: 'ios', key: 'u2' }, async () => 'booted', {
+        root: tmpHome,
+        noWait: true,
+        max: 2,
+        sources: full,
+      }),
     ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   });
 });

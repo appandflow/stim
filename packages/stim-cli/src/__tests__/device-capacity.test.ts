@@ -1,0 +1,329 @@
+import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readStatsReport } from '@stim-cli/core/state';
+import { workspaceId } from '@stim-cli/core';
+import {
+  withDeviceBootAdmission,
+  deviceSlotWaitingLine,
+  type DeviceSlotWaitPolicy,
+} from '../engine/device-capacity.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
+import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
+
+let root: string;
+beforeEach(() => {
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-device-queue-')));
+  process.env.STIM_HOME = root;
+});
+afterEach(() => {
+  delete process.env.STIM_HOME;
+  rmSync(root, { recursive: true, force: true });
+});
+
+const empty = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
+const occupied = [makeIosSim({ udid: 'holder', name: 'stim-holder', state: 'Booted' })];
+const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+
+function takeTicket() {
+  const got = tryAcquireClaim({ root: join(root, 'device-waits'), mode: 'shared', label: 'device wait' });
+  if (!got.acquired) throw new Error('ticket not acquired');
+  return got.acquired;
+}
+
+test('three device waiters keep FIFO across platforms even when later tickets poll first', async () => {
+  let full = true;
+  const admitted: number[] = [];
+  const sleepers: (() => void)[][] = [[], [], []];
+  const boots = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const waiting = [deferred<void>(), deferred<void>(), deferred<void>()];
+  const runs: Promise<void>[] = [];
+  for (let i = 0; i < 3; i++) {
+    runs.push(
+      withDeviceBootAdmission(
+        { platform: i === 1 ? 'android' : 'ios', key: `device-${i}` },
+        async () => {
+          admitted.push(i);
+          await boots[i]!.promise;
+        },
+        {
+          root,
+          max: 1,
+          sources: { ...empty, sims: () => (full ? occupied : []) },
+          sleep: () =>
+            new Promise<void>((resolve) => {
+              sleepers[i]!.push(resolve);
+              waiting[i]!.resolve();
+            }),
+        },
+      ),
+    );
+    await waiting[i]!.promise;
+    await new Promise((resolve) => setTimeout(resolve, 3));
+  }
+  const poll = async (i: number) => {
+    sleepers[i]!.shift()!();
+    await tick();
+  };
+  expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(3);
+  full = false;
+  await poll(2);
+  await poll(1);
+  expect(admitted).toEqual([]);
+  await poll(0);
+  expect(admitted).toEqual([0]);
+  expect(readClaimSet(join(root, 'device-boots')).live).toHaveLength(1);
+  boots[0]!.resolve();
+  await runs[0];
+  await poll(2);
+  expect(admitted).toEqual([0]);
+  await poll(1);
+  expect(admitted).toEqual([0, 1]);
+  boots[1]!.resolve();
+  await runs[1];
+  await poll(2);
+  boots[2]!.resolve();
+  await Promise.all(runs);
+  expect(admitted).toEqual([0, 1, 2]);
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  expect(readStats().record?.capacityWaits).toHaveLength(3);
+});
+
+test('a dead waiter is reaped by process identity and cannot block an available slot', async () => {
+  const path = plantClaim(join(root, 'device-waits'), 'shared', goneClaimOwner(), {
+    startedAt: '2026-01-01T00:00:00.000Z',
+  });
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => 'booted', {
+      root,
+      max: 1,
+      sources: empty,
+      noWait: true,
+    }),
+  ).resolves.toBe('booted');
+  expect(existsSync(path)).toBe(false);
+});
+
+test.each([{ noWait: true }, { waitMs: 0 }])(
+  'an immediate run cannot jump a live ticket even with spare capacity: %j',
+  async (policy) => {
+    const ticket = takeTicket();
+    const boot = vi.fn<() => Promise<void>>(async () => {});
+    try {
+      await expect(
+        withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+          root,
+          max: 1,
+          sources: empty,
+          ...policy,
+        }),
+      ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(boot).not.toHaveBeenCalled();
+      expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
+    } finally {
+      releaseClaim(ticket);
+    }
+  },
+);
+
+test.each(['ios', 'android'])("the run's own booted or booting %s device bypasses a live queue", async (platform) => {
+  const ticket = takeTicket();
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform, key: 'own' }, async () => 'reused', {
+        root,
+        max: 1,
+        sources: { ...empty, sims: occupied, booting: [{ platform, key: 'own' }] },
+        sleep: async () => {
+          throw new Error('own device must not wait');
+        },
+      }),
+    ).resolves.toBe('reused');
+    expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
+  } finally {
+    releaseClaim(ticket);
+  }
+});
+
+test('an already booted owned simulator bypasses a live queue even above the cap', async () => {
+  const ticket = takeTicket();
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'own' }, async () => 'reused', {
+        root,
+        max: 1,
+        sources: { ...empty, sims: [...occupied, makeIosSim({ udid: 'own', name: 'stim-own', state: 'Booted' })] },
+        sleep: async () => {
+          throw new Error('own device must not wait');
+        },
+      }),
+    ).resolves.toBe('reused');
+  } finally {
+    releaseClaim(ticket);
+  }
+});
+
+test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
+  let now = Date.now();
+  const lines: string[] = [];
+  const state = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>();
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      waitMs: 12_000,
+      sources: { ...empty, sims: occupied },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+      waitingFor: state,
+    }),
+  ).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    message: expect.stringContaining('Waited 12s'),
+    remedy: expect.stringMatching(/stim stop.*--wait <seconds>.*concurrency.maxDevices/),
+  });
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain('1/1 in use: stim-holder');
+  expect(lines[1]).toContain('10s elapsed');
+  expect(state.mock.calls[0]?.[0]).toMatchObject({ kind: 'device-slot', inUse: 1, max: 1 });
+  expect(state).toHaveBeenLastCalledWith(null);
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  const report = readStatsReport(null, now).report;
+  expect(report.capacityRefusals).toEqual([expect.objectContaining({ workspace: workspaceId(root), max: 1 })]);
+  expect(report.capacityWaits).toEqual([expect.objectContaining({ kind: 'device-wait', ms: 12_000 })]);
+});
+
+test('admission records device slot duration in the compiling placement independently of placement timing', async () => {
+  let now = Date.now();
+  let full = true;
+  const stats = createRunRecorder({ platform: 'ios', write: recordRunStats, now: () => now, note: () => {} });
+  stats.setProject('fixture');
+  stats.setCacheKey('fixture-key');
+  await withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+    root,
+    max: 1,
+    sources: { ...empty, sims: () => (full ? occupied : []) },
+    now: () => now,
+    sleep: async (ms) => {
+      stats.setPlacement({ decision: 'here', reason: 'local compile' });
+      now += ms;
+      full = false;
+    },
+    onWait: stats.addDeviceSlotWaitMs,
+  });
+  stats.record({ failed: false, durationMs: 3000 });
+  expect(readStats().record?.placements?.[0]?.deviceSlotWaitMs).toBe(2000);
+  expect(readStats().record?.capacityWaits?.[0]?.ms).toBe(2000);
+});
+
+test('an error during a wait releases the ticket and clears visible waiting state', async () => {
+  const waitingFor = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>();
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      sources: { ...empty, sims: occupied },
+      waitingFor,
+      sleep: async () => {
+        throw new Error('interrupted');
+      },
+    }),
+  ).rejects.toThrow('interrupted');
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  expect(waitingFor).toHaveBeenLastCalledWith(null);
+  expect(readStats().record?.capacityWaits).toHaveLength(1);
+});
+
+test('an unresolved waiter refuses with its exact claim and removal command', async () => {
+  const shared = join(root, 'device-waits', 'shared');
+  mkdirSync(shared, { recursive: true });
+  writeFileSync(join(shared, 'stray'), 'unknown');
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      sources: empty,
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_CLAIM_REFUSED', removeCommand: expect.stringContaining(shared) });
+});
+
+test('waiting progress names workspaces for live devices and boot claims', async () => {
+  let now = Date.now();
+  const lines: string[] = [];
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 2,
+      waitMs: 1,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+      sources: {
+        ...empty,
+        sims: occupied,
+        config: makeConfig({
+          projects: {
+            '/work/holder-root': { label: 'tree-one', platforms: { ios: { deviceUdid: 'holder', owned: true } } },
+          },
+        }),
+        booting: [{ platform: 'android', key: 'stim-two', displayName: 'tree-two' }],
+      },
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  const expected =
+    'device      waiting for a device slot (2/2 in use: tree-one, tree-two), 0s elapsed -- stim guide lifecycle concurrency';
+  expect(lines[0]).toBe(expected);
+  expect(deviceSlotWaitingLine({ count: 2, max: 2, holders: ['tree-one', 'tree-two'], elapsedMs: 0 })).toBe(expected);
+});
+
+test('cancelling a queued run promptly releases its ticket without booting', async () => {
+  const controller = new AbortController();
+  const queued = deferred<void>();
+  const boot = vi.fn<() => Promise<void>>(async () => {});
+  const run = withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+    root,
+    max: 1,
+    signal: controller.signal,
+    sources: { ...empty, sims: occupied },
+    waitingFor: (info) => {
+      if (info) queued.resolve();
+    },
+  });
+  const result = run.catch((error) => error);
+  await queued.promise;
+  controller.abort();
+  expect(await result).toMatchObject({ name: 'AbortError' });
+  expect(boot).not.toHaveBeenCalled();
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+});
+
+test('an error reporting an admitted wait still releases the boot reservation', async () => {
+  let full = true;
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      sources: { ...empty, sims: () => (full ? occupied : []) },
+      sleep: async () => {
+        full = false;
+      },
+      onWait: () => {
+        throw new Error('report failed');
+      },
+    }),
+  ).rejects.toThrow('report failed');
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
   artifactCachePolicy,
@@ -105,6 +106,7 @@ export interface AndroidRunPlan {
     readonly targetAbiOnly: boolean;
   };
   readonly target: AndroidTargetPlan;
+  readonly deviceSlotWaitMs: number;
   readonly isExpo: boolean;
   readonly metroWarmup: boolean;
   readonly cacheProviderConfig: CacheProviderConfig | null;
@@ -275,19 +277,11 @@ export function resolveAndroidRunPlan(
     );
   }
   const noWait = waitFlag === false;
-  const waitFlagged = waitFlag !== undefined;
   if (waitConflict) {
     return fail(
       'STIM_BAD_ARG',
       '--wait and --no-wait ask for opposite things.',
-      'Pass `--wait <seconds>` to wait for the lease, or `--no-wait` to install without one.',
-    );
-  }
-  if (waitFlagged && !physical) {
-    return fail(
-      'STIM_BAD_ARG',
-      '--wait and --no-wait only apply to a `--device` run.',
-      'This workspace owns its emulator, so nothing contends for it. Drop the flag, or pass `--device`.',
+      'Pass only one of `--wait <seconds>` and `--no-wait`.',
     );
   }
   const waitParsed = parseDeviceWait(noWait ? undefined : waitFlag);
@@ -295,7 +289,7 @@ export function resolveAndroidRunPlan(
     return fail(
       'STIM_BAD_ARG',
       waitParsed.error,
-      'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a leased device at once.',
+      'Pass a whole number of seconds, e.g. --wait 90. `--wait 0` refuses a busy lease or device slot at once.',
     );
   }
   const waitSeconds = waitParsed.seconds;
@@ -387,6 +381,11 @@ export function resolveAndroidRunPlan(
         targetAbiOnly: optimizations.android.targetAbiOnly,
       },
       target,
+      deviceSlotWaitMs: noWait
+        ? 0
+        : waitFlag === undefined && !physical
+          ? DEFAULT_DEVICE_SLOT_WAIT_MS
+          : waitSeconds * 1000,
       isExpo,
       metroWarmup: optimizations.metroWarmup,
       cacheProviderConfig,

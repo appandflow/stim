@@ -56,7 +56,7 @@ import {
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
 import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
@@ -107,12 +107,13 @@ interface AndroidArtifactRequest {
     phase: (label: unknown, text: string) => void;
     out: (line: string) => void;
     estimates: () => RunEstimates;
-    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPlacement'>;
+    stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPlacement' | 'deviceSlotWaitMs'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
     hit: () => void;
     place: (remote: { host: string; phase: string } | null) => void;
     waitingOn: (root: string | null) => void;
+    waitingFor?: BuildProgress['waitingFor'];
   };
 }
 
@@ -225,7 +226,7 @@ export async function acquireAndroidArtifact(
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn } = progress;
+  const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   let fallbackMachine: string | null = null;
   let hereReason = 'no build machine is paired';
   let slotWaitMs: number | undefined;
@@ -589,7 +590,13 @@ export async function acquireAndroidArtifact(
   async function takeBuildSlot(): Promise<boolean> {
     if (!maxBuilds) return true;
     try {
-      buildSlot = await acquireSlot({ max: maxBuilds, root, logFile: buildLog, out });
+      buildSlot = await acquireSlot({
+        max: maxBuilds,
+        root,
+        logFile: buildLog,
+        out,
+        waitingFor: (info) => waitingFor?.(info, 'build-slot'),
+      });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (err) {
       const refusal = claimFailure(err, 'stim android');
@@ -851,11 +858,17 @@ export async function acquireAndroidArtifact(
             stats.setPlacement({
               decision: 'fell-back',
               slotWaitMs,
+              deviceSlotWaitMs: stats.deviceSlotWaitMs(),
               reason: record.offloadFallback ?? 'offload failed',
               ...(fallbackMachine ? { machine: fallbackMachine } : {}),
             });
           } else {
-            stats.setPlacement({ decision: 'here', reason: hereReason, slotWaitMs });
+            stats.setPlacement({
+              decision: 'here',
+              reason: hereReason,
+              slotWaitMs,
+              deviceSlotWaitMs: stats.deviceSlotWaitMs(),
+            });
           }
           record.builtOn = 'here';
           phase('build', `compiling ${variant || 'debug'} with Gradle`);
