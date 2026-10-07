@@ -967,10 +967,7 @@ function inspectDeviceCommand(
 ): Refusal | null {
   const refuse = (rule: Refusal['rule'], message: string): Refusal => ({ id, rule, message, details: {} });
   if (typeof params.command !== 'string' || !DEVICE_COMMANDS.includes(params.command))
-    return refuse(
-      'command',
-      'Refused command: this connection allows only hosted simulator inspection and interaction.',
-    );
+    return refuse('command', 'Refused command: this connection allows only hosted device inspection and interaction.');
   if (device.platform === 'android' && params.serial !== undefined && params.serial !== device.id)
     return refuse('device', 'Another emulator is refused; this connection targets one hosted emulator.');
   const screenshot = params.command === 'screenshot';
