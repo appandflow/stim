@@ -210,6 +210,50 @@ struct CommandText: View {
   }
 }
 
+struct CopyableCommand: View {
+  var command: String
+  @State private var copied = false
+  @State private var copyCount = 0
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+  var body: some View {
+    HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+      Text(verbatim: command)
+        .font(.stim(.caption, mono: true))
+        .foregroundStyle(Palette.secondary)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+      Button {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(command, forType: .string)
+        copyCount += 1
+        setCopied(true)
+        AccessibilityNotification.Announcement("Copied").post()
+      } label: {
+        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+          .iconFont(IconSize.small, weight: .medium)
+          .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+      }
+      .buttonStyle(.icon(tint: copied ? Palette.success : Palette.secondary))
+      .help("Copy the command")
+      .accessibilityLabel("Copy \(command)")
+      .task(id: copyCount) {
+        guard copied, (try? await Task.sleep(for: .seconds(2))) != nil else { return }
+        setCopied(false)
+      }
+    }
+    .padding(.leading, Space.md)
+    .padding(.trailing, Space.xxs)
+    .padding(.vertical, Space.xxs)
+    .background(RoundedRectangle(cornerRadius: Radius.chip).fill(Palette.background))
+    .overlay(RoundedRectangle(cornerRadius: Radius.chip).strokeBorder(Palette.border))
+  }
+
+  private func setCopied(_ value: Bool) {
+    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { copied = value }
+  }
+}
+
 struct Sparkline: View {
   var values: [Double]
   var color: Color = Palette.accent

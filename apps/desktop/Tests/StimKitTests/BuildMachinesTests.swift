@@ -134,6 +134,7 @@ import Testing
     let machines = try #require(report.buildMachines)
     #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown])
     #expect(machines[0].detail.contains("stim-server devices grant ab12 --build"))
+    #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil])
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
         .buildMachines == nil)

@@ -1062,10 +1062,11 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 On the Mac that wants to build elsewhere, **Stim > Settings > Build Machines**
 lists the entries of the `offload.machines` machine setting, each with its
 state from the `buildMachines` field of `stim doctor --json --platform ios`:
-**Approved**, **Waiting for approval** (with the request id), **Not asked**,
-**Revoked** (revoked, denied, or the request lapsed), **Different Mac** (the
-name now belongs to another tailnet node than the one this Mac asked, so Stim
-does not connect to it), **Not on the tailnet**, **Tailscale is off**,
+**Approved**, **Waiting for approval** (with the approval command to copy),
+**Not asked**, **Revoked** (revoked, denied, or the request lapsed),
+**Different Mac** (the name now belongs to another tailnet node than the one
+this Mac asked, so Stim does not connect to it), **Not on the tailnet**,
+**Tailscale is off**,
 **Unreachable** or **Not a tailnet name**. Doctor runs in the first workspace
 `stim status` lists, like the doctor checks that notify as **Needs you**; with no
 workspace listed, the tab says so. While a machine waits for approval the tab
