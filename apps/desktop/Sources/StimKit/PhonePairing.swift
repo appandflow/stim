@@ -1,20 +1,20 @@
 import Foundation
 
-/// Tailscale on this Mac, as the Pair a Phone wizard reads it from `tailscale status --json`. An installed app or
-/// CLI that does not answer reads as stopped, not missing.
+/// Tailscale on this Mac, as the Pair a Phone wizard reads it from `tailscale status --json` and `Tailnet.Install`. An
+/// installed app or CLI that does not answer reads as stopped, not missing.
 public enum MacTailscale: Equatable, Sendable {
   case checking
   case missing
   case stopped(hasApp: Bool)
   case running(dnsName: String?)
 
-  public init(statusJSON: Data?, hasApp: Bool, hasCLI: Bool) {
+  public init(statusJSON: Data?, install: Tailnet.Install) {
     guard let statusJSON, let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else {
-      self = hasApp || hasCLI ? .stopped(hasApp: hasApp) : .missing
+      self = install == .none ? .missing : .stopped(hasApp: install == .app)
       return
     }
     guard status["BackendState"] as? String == "Running" else {
-      self = .stopped(hasApp: hasApp)
+      self = .stopped(hasApp: install == .app)
       return
     }
     let dns = ((status["Self"] as? [String: Any])?["DNSName"] as? String)?

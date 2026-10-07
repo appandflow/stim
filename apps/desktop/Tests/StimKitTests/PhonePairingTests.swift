@@ -26,11 +26,11 @@ final class PhonePairingTests: XCTestCase {
 
   func testTailscaleReadsInstalledButQuitAsStoppedAndNotInstalledAsMissing() {
     let running = Data(#"{"BackendState":"Running","Self":{"DNSName":"Mac.Tail.Test."}}"#.utf8)
-    XCTAssertEqual(MacTailscale(statusJSON: running, hasApp: true, hasCLI: false), .running(dnsName: "mac.tail.test"))
+    XCTAssertEqual(MacTailscale(statusJSON: running, install: .app), .running(dnsName: "mac.tail.test"))
     let stopped = Data(#"{"BackendState":"Stopped"}"#.utf8)
-    XCTAssertEqual(MacTailscale(statusJSON: stopped, hasApp: false, hasCLI: true), .stopped(hasApp: false))
-    XCTAssertEqual(MacTailscale(statusJSON: nil, hasApp: true, hasCLI: false), .stopped(hasApp: true))
-    XCTAssertEqual(MacTailscale(statusJSON: nil, hasApp: false, hasCLI: false), .missing)
+    XCTAssertEqual(MacTailscale(statusJSON: stopped, install: .cli), .stopped(hasApp: false))
+    XCTAssertEqual(MacTailscale(statusJSON: nil, install: .app), .stopped(hasApp: true))
+    XCTAssertEqual(MacTailscale(statusJSON: nil, install: .none), .missing)
   }
 
   func testTailscaleOnThisMacBlocksTheTailscaleStep() {

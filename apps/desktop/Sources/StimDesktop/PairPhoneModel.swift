@@ -66,8 +66,7 @@ final class PairPhoneModel {
           return await Task.detached {
             MacTailscale(
               statusJSON: Tailnet.status(environment: environment),
-              hasApp: FileManager.default.isExecutableFile(atPath: Tailnet.appBinary),
-              hasCLI: SetupChecks.tool("tailscale", environment: environment) != nil)
+              install: Tailnet.Install.detect(environment: environment))
           }.value
         },
         snapshot: {

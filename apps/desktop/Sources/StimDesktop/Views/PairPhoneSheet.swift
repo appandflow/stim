@@ -98,7 +98,12 @@ struct PairPhoneSheet: View {
 
   private var tailscaleContent: some View {
     Group {
-      PhoneTailnetArt()
+      switch wizard.tailscale {
+      case .stopped(true): AddMachineIllustration(scene: .tailscaleSwitch)
+      case .stopped(false): AddMachineIllustration(scene: .tailscaleUp)
+      case .missing: AddMachineIllustration(scene: .tailnet(connected: false))
+      case .checking, .running: PhoneTailnetArt()
+      }
       Text("Connect both to your tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
         Text("This Mac").font(.stim(.headline))
@@ -112,23 +117,20 @@ struct PairPhoneSheet: View {
           Label("Tailscale is on", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
           if let dns { Text(dns).font(.stim(.caption)).foregroundStyle(Palette.secondary) }
         case .stopped(let hasApp):
-          Label(
-            hasApp ? "Tailscale is off. Turn it on from the Tailscale icon in the menu bar." : "Tailscale is off.",
-            systemImage: "xmark.circle.fill"
-          ).foregroundStyle(Palette.warning)
+          Label("Tailscale is off on this Mac", systemImage: "xmark.circle.fill").foregroundStyle(Palette.warning)
           if hasApp {
-            Button("Open Tailscale") {
-              let configuration = NSWorkspace.OpenConfiguration()
-              configuration.activates = false
-              NSWorkspace.shared.openApplication(
-                at: URL(fileURLWithPath: "/Applications/Tailscale.app"), configuration: configuration)
-            }.buttonStyle(.stim())
+            Text("Turn on Tailscale in its menu bar app. This step continues by itself once it is connected.")
+              .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
           } else {
+            Text("Start Tailscale in Terminal. This step continues by itself once it is up.").foregroundStyle(Palette.secondary)
             CopyableCommand(command: "tailscale up")
           }
         case .missing:
-          Label("Tailscale is not installed.", systemImage: "xmark.circle.fill").foregroundStyle(Palette.warning)
-          Link("Get Tailscale for Mac", destination: URL(string: "https://tailscale.com/download/mac")!)
+          Label("Tailscale is not installed on this Mac", systemImage: "xmark.circle.fill").foregroundStyle(Palette.warning)
+          Button("Download Tailscale", systemImage: "arrow.down.circle") {
+            NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+          }
+          .buttonStyle(.stim(.primary, .regular))
         }
         Divider()
         Text("Your phone").font(.stim(.headline))
