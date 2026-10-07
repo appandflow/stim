@@ -110,7 +110,7 @@ final class DiscoveryCoordinator: ObservableObject {
       macs = peers ?? []
       let report = try? await stats.machine()
       polling = false
-      placements = report?.offload?.placements
+      if let report { placements = report.offload?.placements }
       rememberCapacityRefusal(report?.capacityRefusals)
       if let peers {
         let result = Discovery.newMac(macs: peers, seen: persistence.seenPeers, machines: machines.entries ?? [], now: Date())

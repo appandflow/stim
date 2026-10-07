@@ -60,7 +60,7 @@ import {
 } from '../engine/ios-device.ts';
 import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
-import { createRunRecorder, tryRecordCapacityRefusal, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
+import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -640,10 +640,9 @@ async function runIos(
       });
       if (capacity) {
         if (capacity.code === 'STIM_AT_CAPACITY') {
-          tryRecordCapacityRefusal(
-            d.recordCapacityRefusal,
+          d.recordCapacityRefusal(
             { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
-            d.now,
+            d.now(),
           );
         }
         return fail(capacity);

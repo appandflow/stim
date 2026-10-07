@@ -233,16 +233,6 @@ export function recordCapacityRefusal(event: Omit<StatsCapacityRefusal, 'at' | '
   } catch {}
 }
 
-export function tryRecordCapacityRefusal(
-  write: typeof recordCapacityRefusal,
-  event: Parameters<typeof recordCapacityRefusal>[0],
-  now: () => number,
-): void {
-  try {
-    write(event, now());
-  } catch {}
-}
-
 export function createRunRecorder({
   platform,
   write,

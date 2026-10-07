@@ -3981,59 +3981,49 @@ describe('concurrency limits', () => {
     expect(slotAcquired).toBe(0);
   });
 
-  test.each([
-    [false, false],
-    [false, true],
-    [true, false],
-    [true, true],
-  ])(
-    'maxDevices at capacity preserves STIM_AT_CAPACITY with a recorder that throws=%s and json=%s',
-    async (throws, json) => {
-      const capacityCalls: Record<string, unknown>[] = [];
-      const recordCapacityRefusal = vi.fn<typeof recordRefusal>(() => {
-        if (throws) throw new Error('stats unavailable');
-      });
-      const h = harness({
-        json,
-        recordCapacityRefusal,
-        getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
-        checkCapacity: (args: Record<string, unknown>) => {
-          capacityCalls.push(args);
-          return {
-            code: 'STIM_AT_CAPACITY',
-            message: 'at capacity',
-            remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-          };
-        },
-      });
-      const result = await h.run();
-      expect(result.ok).toBe(false);
-      expect(h.stdout.map((line) => JSON.parse(line))).toEqual(
-        json
-          ? [
-              {
-                code: 'STIM_AT_CAPACITY',
-                message: 'at capacity',
-                remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-              },
-            ]
-          : [],
-      );
-      assert(result.error);
-      expect(result.error).toMatchObject({ code: 'STIM_AT_CAPACITY', message: 'at capacity' });
-      expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
-      expect(recordCapacityRefusal).toHaveBeenCalledWith(
-        { platform: 'android', max: 3, workspace: workspaceId(root) },
-        expect.any(Number),
-      );
-      expect(h.stderr.join('\n')).not.toContain('stats unavailable');
-      const capacityArgs = capacityCalls[0];
-      assert(capacityArgs);
-      expect(capacityArgs.max).toBe(3);
-      expect(h.calls.ensureDevice.length).toBe(0);
-      expect(h.stderr.join('\n')).toMatch(/stim stop/);
-    },
-  );
+  test.each([[false], [true]])('maxDevices at capacity preserves STIM_AT_CAPACITY with json=%s', async (json) => {
+    const capacityCalls: Record<string, unknown>[] = [];
+    const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
+    const h = harness({
+      json,
+      recordCapacityRefusal,
+      getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
+      checkCapacity: (args: Record<string, unknown>) => {
+        capacityCalls.push(args);
+        return {
+          code: 'STIM_AT_CAPACITY',
+          message: 'at capacity',
+          remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stdout.map((line) => JSON.parse(line))).toEqual(
+      json
+        ? [
+            {
+              code: 'STIM_AT_CAPACITY',
+              message: 'at capacity',
+              remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+            },
+          ]
+        : [],
+    );
+    assert(result.error);
+    expect(result.error).toMatchObject({ code: 'STIM_AT_CAPACITY', message: 'at capacity' });
+    expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
+    expect(recordCapacityRefusal).toHaveBeenCalledWith(
+      { platform: 'android', max: 3, workspace: workspaceId(root) },
+      expect.any(Number),
+    );
+    expect(h.stderr.join('\n')).not.toContain('stats unavailable');
+    const capacityArgs = capacityCalls[0];
+    assert(capacityArgs);
+    expect(capacityArgs.max).toBe(3);
+    expect(h.calls.ensureDevice.length).toBe(0);
+    expect(h.stderr.join('\n')).toMatch(/stim stop/);
+  });
 
   test('a non-capacity device refusal is not recorded', async () => {
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();

@@ -3250,60 +3250,50 @@ describe('concurrency limits', () => {
     expect(calls.order.includes('buildIos')).toBeTruthy();
   });
 
-  test.each([
-    [false, false],
-    [false, true],
-    [true, false],
-    [true, true],
-  ])(
-    'maxDevices at capacity preserves STIM_AT_CAPACITY with a recorder that throws=%s and json=%s',
-    async (throws, json) => {
-      reserve();
-      const capacity: { args?: CheckDeviceCapacityArgs } = {};
-      const recordCapacityRefusal = vi.fn<typeof recordRefusal>(() => {
-        if (throws) throw new Error('stats unavailable');
-      });
-      const { logs, errs, exitCode, calls } = await run(
-        { json },
-        {
-          recordCapacityRefusal,
-          getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
-          checkDeviceCapacity: (args) => {
-            capacity.args = args;
-            return {
+  test.each([[false], [true]])('maxDevices at capacity preserves STIM_AT_CAPACITY with json=%s', async (json) => {
+    reserve();
+    const capacity: { args?: CheckDeviceCapacityArgs } = {};
+    const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
+    const { logs, errs, exitCode, calls } = await run(
+      { json },
+      {
+        recordCapacityRefusal,
+        getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
+        checkDeviceCapacity: (args) => {
+          capacity.args = args;
+          return {
+            code: 'STIM_AT_CAPACITY',
+            message: 'at capacity',
+            remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+          };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(logs.map((line) => JSON.parse(line))).toEqual(
+      json
+        ? [
+            {
               code: 'STIM_AT_CAPACITY',
               message: 'at capacity',
               remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-            };
-          },
-        },
-      );
-      expect(exitCode).toBe(1);
-      expect(logs.map((line) => JSON.parse(line))).toEqual(
-        json
-          ? [
-              {
-                code: 'STIM_AT_CAPACITY',
-                message: 'at capacity',
-                remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
-              },
-            ]
-          : [],
-      );
-      assert(capacity.args);
-      expect(capacity.args.max).toBe(2);
-      expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
-      expect(recordCapacityRefusal).toHaveBeenCalledWith(
-        { platform: 'ios', max: 2, workspace: workspaceId(root) },
-        expect.any(Number),
-      );
-      expect(errs.join('\n')).toContain('at capacity');
-      expect(errs.join('\n')).toContain('STIM_AT_CAPACITY');
-      expect(errs.join('\n')).not.toContain('stats unavailable');
-      expect(errs.join('\n')).toMatch(/stim stop/);
-      expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
-    },
-  );
+            },
+          ]
+        : [],
+    );
+    assert(capacity.args);
+    expect(capacity.args.max).toBe(2);
+    expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
+    expect(recordCapacityRefusal).toHaveBeenCalledWith(
+      { platform: 'ios', max: 2, workspace: workspaceId(root) },
+      expect.any(Number),
+    );
+    expect(errs.join('\n')).toContain('at capacity');
+    expect(errs.join('\n')).toContain('STIM_AT_CAPACITY');
+    expect(errs.join('\n')).not.toContain('stats unavailable');
+    expect(errs.join('\n')).toMatch(/stim stop/);
+    expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
 
   test('a non-capacity device refusal is not recorded', async () => {
     reserve();

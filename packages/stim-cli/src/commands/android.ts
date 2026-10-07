@@ -61,7 +61,6 @@ import {
   readRunEstimates,
   recordRunStats,
   recordCapacityRefusal,
-  tryRecordCapacityRefusal,
   createRunRecorder,
   statsProjectKey,
   type RunEstimates,
@@ -1029,11 +1028,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     });
     if (capacity) {
       if (capacity.code === 'STIM_AT_CAPACITY') {
-        tryRecordCapacityRefusal(
-          recordRefusal,
-          { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
-          now,
-        );
+        recordRefusal({ platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) }, now());
       }
       return fail(capacity.code, capacity.message, capacity.remedy);
     }
