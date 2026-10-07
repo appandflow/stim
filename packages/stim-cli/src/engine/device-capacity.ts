@@ -328,11 +328,10 @@ function takeBootMarker(device: BootingDevice): ClaimHandle {
     details: { platform: device.platform, key: device.key },
   });
   if (attempt.acquired) return attempt.acquired;
-  throw new ClaimRefusedError({
-    claimPath: attempt.held?.path ?? attempt.waitingFor?.[0]?.path ?? bootingDevicesRoot(),
-    root: bootingDevicesRoot(),
-    reason: 'another process holds it exclusively, so this boot cannot be counted toward concurrency.maxDevices',
-    label: 'device boot',
+  throw new DeviceAdmissionRefusal({
+    code: 'STIM_NO_DEVICE',
+    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward concurrency.maxDevices.`,
+    remedy: 'Retry once that process finishes.',
   });
 }
 
@@ -375,7 +374,8 @@ async function admit(
 /**
  * Boots `device` only if one more owned device fits under `concurrency.maxDevices`. The count and the
  * marker that makes this boot visible to other runs are taken under one lock in `$STIM_HOME`, so concurrent
- * runs cannot all pass the cap; the marker is held until `boot` settles. Throws DeviceAdmissionRefusal.
+ * runs cannot all pass the cap; the marker is held until `boot` settles. Throws DeviceAdmissionRefusal, or
+ * ClaimRefusedError when a booting claim cannot be verified.
  */
 export async function withDeviceBootAdmission<T>(
   device: BootingDevice,
