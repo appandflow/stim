@@ -39,8 +39,8 @@ brew install --cask appandflow/tap/stim
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
-tiles with an **on &lt;machine&gt;** label. Turn on **Serve to phones** to view and
-control them through this Mac's stim-server relay. Touch and text reach the
+tiles with an **on &lt;machine&gt;** label. You view and control them through this
+Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
@@ -137,9 +137,17 @@ Stim Desktop hides everything about the phone app unless the **Phone app**
 feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
-a paired phone starts with it on. Turning the flag off does not stop a running
-`stim-server` or revoke pairings.
+a paired phone starts with it on. Turning the flag off revokes no pairings;
+Desktop's own `stim-server` then listens on loopback only.
 :::
+
+Desktop runs its own `stim-server` whenever it is open, on loopback only, with no
+switch. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
+a stim-server already serves the same Stim home, for example the `stim-server
+service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
+stops or reconfigures it. When the server cannot start, a warning icon in the
+sidebar footer says why; click it to retry. Serving phones over the tailnet stays
+opt-in (**Serve to phones**, with the Phone app flag on).
 
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
@@ -164,8 +172,7 @@ a paired phone starts with it on. Turning the flag off does not stop a running
   Legacy input stays usable during background retries. Cancelling a development
   request stops waiting while its lookup guard remains held until CoreSimulator returns.
 - **Replay.** Scrub back through a device's recent screen, with agent actions
-  and errors marked on the timeline. Needs **Serve to phones** in **Stim >
-  Settings > Phones**.
+  and errors marked on the timeline.
 - **Simulator options.** While **Control** is on for a running local iOS
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
@@ -223,7 +230,7 @@ a paired phone starts with it on. Turning the flag off does not stop a running
   cleanup previews or confirms the selection before deleting anything.
   Build-cache stats and placement totals use the
   existing local server connection when it allows reads for the same Stim home;
-  otherwise they use the CLI. This does not turn on **Serve to phones**. A
+  otherwise they use the CLI. A
   cancelled stats refresh stops waiting without disconnecting device viewing;
   its server read may continue until it finishes or reaches its existing limit
   (normally 60 seconds). The shared connection limits each complete response to
@@ -233,7 +240,7 @@ a paired phone starts with it on. Turning the flag off does not stop a running
   changes**, to browse staged, unstaged and new files. The built-in viewer loads
   each patch when you select its file, with a 200-file list and 256 KiB preview
   limit. It labels binary, oversized and unavailable previews, and needs the
-  local server (**Serve to phones** on) to be read-capable with workspace diff
+  local server to be read-capable with workspace diff
   support, for the same Stim home. In **Settings > Integrations > Review changes in**, choose
   **Built-in** or **Visual Studio Code**. VS Code opens the local repository for
   review in Source Control, rather than exporting a selected comparison. A

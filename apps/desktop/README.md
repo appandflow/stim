@@ -10,14 +10,13 @@ It reads Stim state only through `stim status --watch --json`, `stim status --js
 `stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
-the CLI; reading stats never starts the server or changes **Serve to phones**. An RPC failure is shown without
+the CLI; reading stats never starts the server. An RPC failure is shown without
 retrying through the CLI. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
 60 seconds), occupying a request slot until then. The shared connection accepts complete WebSocket messages
 up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
 
-Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server the
-Phones tab runs or found, over loopback; see [Replay](#replay) and [Physical devices](#physical-devices). Its
+Device replay and a leased physical device's screen, which only stim-server serves, come from the stim-server Desktop runs or found, over loopback (see [stim-server](#stim-server)); see [Replay](#replay) and [Physical devices](#physical-devices). Its
 actions run the `stim` executable with an argument list, never a shell string,
 in the workspace directory:
 
@@ -122,7 +121,7 @@ flag for one run.
 
 **Phone app** is off by default. Off, Desktop hides the Phones page (the page stays as **Server**, without **Serve to
 phones** and pairing), the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
-phones in copy. It never stops a running stim-server or revokes a pairing. A Mac that already serves phones or has a
+phones in copy. It never revokes a pairing. Desktop's own stim-server then listens on loopback only. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
 
@@ -214,10 +213,9 @@ title, checks and review, and **Open on GitHub**. **Review changes** opens a
 read-only diff sheet. **Changed** lists staged and unstaged files; **New** lists
 untracked files. Selecting a file requests only its patches. Lists stop at
 200 files and previews at 256 KiB; binary, oversized and unavailable previews
-are labeled. Built-in viewing needs the existing loopback server (turn on **Serve to
-phones** on the Phones page) to support workspace diffs and allow reads for the
+are labeled. Built-in viewing needs Desktop's loopback server to support workspace diffs and allow reads for the
 CLI's same Stim home. An older or
-unavailable server shows its reason without a CLI fallback or starting a server.
+unavailable server shows its reason without a CLI fallback.
 
 In **Settings > Integrations > Review changes in**, choose **Built-in** or
 **Visual Studio Code**. The latter opens this local repository in the installed
@@ -859,7 +857,7 @@ endpoint, such as Playwright MCP, shows as the driver.
 
 ## Replay
 
-While a stim-server runs on port 7787 (**Serve to phones**, see [Phones](#phones)),
+While Desktop's stim-server runs (see [stim-server](#stim-server)),
 each simulator, emulator and web page's device viewer offers a replay bar
 once the server has recorded it,
 like the phone app's device viewer. Stim Desktop connects to that server at
@@ -874,8 +872,7 @@ paired as "Stim Desktop"; Stim Dev does not reuse that pairing, which stays in
 `stim-server devices` until you revoke it. The server issued it to
 a loopback connection, so it refuses the token from any other node. When the
 server no longer knows the token, the app pairs once more, so revoking it with
-`stim-server devices revoke` lasts only until the next connection; turn off
-**Serve to phones** to stop it. A read-only pairing from an earlier version gets
+`stim-server devices revoke` lasts only until the next connection. A read-only pairing from an earlier version gets
 control through `stim-server devices grant <id> --control` once, then the app
 reconnects. The Phones list leaves both apps' devices out.
 
@@ -942,7 +939,7 @@ renews a lease itself.
 
 Instead of a screen, the tile says:
 
-- **Turn on Serve to phones** while no stim-server runs, or why the server is
+- **Connecting to stim-server** while it starts, or why the server is
   unreachable.
 - **Update stim-server** with the install command when the server's hello
   lacks `physical-ios` or `physical-android` for the device.
@@ -955,25 +952,38 @@ A delayed stream shows the server's reason, such as a locked iPhone. When the
 server ends control (no input for 5 minutes, the device gone, the lease
 ended), Control turns off and the tile says why.
 
-## Phones
+## stim-server
 
-**Stim > Settings > Phones** serves Stim to the phone app through
-`stim-server` from `@stim-cli/server`. With **Serve to phones** on, the app
-checks `http://127.0.0.1:7787/health` at launch. When a server answers, the app
-uses it if Desktop uses the default home or the server serves Desktop's resolved
+Desktop runs a local `stim-server` from `@stim-cli/server` while it is open; there
+is no switch. Replay, the diff viewer, archived logs, hosted app and simulator
+views and device recordings all read from it. At launch the app checks
+`http://127.0.0.1:7787/health`. When a server answers, the app uses it if
+Desktop uses the default home or the server serves Desktop's resolved
 home; otherwise it names both homes and asks you to stop that server or launch
-Desktop with `-stimServerPort <port>`. If no server answers, it runs `stim-server --port
-7787` and stops it with SIGTERM when the app quits, or when you turn the
-preference off, followed by SIGKILL if it has not exited after 3 seconds. A
+Desktop with `-stimServerPort <port>`. A server the app did not start, such as the
+`stim-server service` LaunchAgent on a Mac that hosts for others, is never stopped
+or reconfigured and keeps running after the app quits. If no server answers, the app runs
+`stim-server --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on
+a Tailscale address, and stops it with SIGTERM when the app quits, followed by SIGKILL
+if it has not exited after 3 seconds. A
 killed server leaves its `stim status --watch` child running until that child's
-next write fails. A server the app did not start keeps running after the app
-quits. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in the same tab. A test copy can move the port from 7787 with
+next write fails. A stim-server older than the `--loopback-only` flag exits at once,
+and the sidebar footer shows a warning icon that says to update it. A failure of any
+other kind, such as a port held by another program or a server for another Stim home,
+shows the same icon with the reason in its tooltip; click it to retry. No dialog
+interrupts. `--loopback-only` removes the server's own Tailscale listeners; a
+`tailscale serve` route that already forwards to the port keeps working, and Desktop
+never removes it. Turning the Phone app flag off, or **Serve to phones** off, restarts the
+server Desktop started in loopback-only mode, which disconnects paired phones until
+they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
+choose in **Settings > Phones** (**Server** with the Phone app off). A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
 seconds. When a server the app did not start misses two checks in a row, the app starts its
-own while **Serve to phones** is on. The pairing and device commands use the
+own. With the Phone app on and **Serve to phones** on, Desktop starts its server without
+`--loopback-only`, so it also listens on this Mac's Tailscale addresses, and restarts the
+server it started when the setting or the flag changes. The pairing and device commands use the
 `STIM_HOME` its health reports, so they act on that server's pairing state. When that `STIM_HOME` is
 not `~/.stim`, the tab names it and warns that phones paired now are stored
 there. This warning appears when Desktop uses the default home and
@@ -981,7 +991,7 @@ has adopted a server started with another home. Those phones stop working once S
 serves `~/.stim` again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in Phones and the sidebar tooltip. Desktop keeps
+**Degraded** with its reason in the Phones page and the sidebar tooltip. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
@@ -1550,8 +1560,7 @@ Sentry DSN or `stim-desktop` URL scheme. It has its own `UserDefaults`, login
 item, notification permission and notification history, and pairs with
 stim-server under its own name (see [Replay](#replay)). Both apps use port
 7787, so the one that starts second uses the other's server instead of starting
-one; when that app quits, the remaining one starts its own within two minutes while
-**Serve to phones** is on. Paired phones and the `tailscale serve` route keep working
+one; when that app quits, the remaining one starts its own within two minutes. Paired phones and the `tailscale serve` route keep working
 because they belong to the Stim home, not to either app. Both apps run their
 autopilot. `stim ios` and `stim android` open device links with `open -a Stim`,
 which reaches the release app, never Stim Dev.
