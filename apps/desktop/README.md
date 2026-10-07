@@ -723,7 +723,7 @@ text size, Larger accessibility sizes, Increase contrast, Reduce motion,
 Reduce transparency or Show button borders. Each change reads the device back;
 **Refresh** picks up changes made elsewhere. Unsupported fields read
 **Unavailable**. The panel is available only on a running local simulator while
-**Control** is on, outside replay; it closes when control is released. These are
+**Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
 location, VoiceOver, color filters and Liquid Glass controls are not included.

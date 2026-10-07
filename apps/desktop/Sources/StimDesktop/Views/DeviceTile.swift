@@ -352,7 +352,7 @@ struct DeviceTile: View {
     guard viewer, !replaying, device.isRunning else { return nil }
     switch device {
     case .ios(_, let sim) where !sim.physical && device.localSimulatorUDID != nil: break
-    case .android(_, let avd) where avd.owned && !avd.physical && avd.serial != nil: break
+    case .android(_, let avd) where avd.owned && !avd.physical && device.localEmulatorSerial != nil: break
     default: return nil
     }
     return DeviceFrameOption(

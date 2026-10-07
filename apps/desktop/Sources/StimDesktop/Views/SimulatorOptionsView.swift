@@ -1,7 +1,6 @@
 import SimulatorFrames
 import SwiftUI
 
-/// The viewer's "Show device frame" choice. `unavailableReason` is why no frame can be drawn, or nil when one can.
 struct DeviceFrameOption {
   let isOn: Binding<Bool>
   let unavailableReason: String?

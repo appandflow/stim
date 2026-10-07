@@ -289,11 +289,10 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   /// The simulator model without its runtime, such as "iPhone 18 Pro"; `model` for any other device.
   public var modelName: String { iosModel.name }
 
-  /// The device type a frame preference is kept for: the simulator model or the emulator's device profile.
   public var frameType: String {
     switch self {
     case .ios: return "ios.\(iosModel.name)"
-    case .android(_, let d): return "android.\(d.deviceProfile ?? "emulator")"
+    case .android(_, let d): return "android.\(d.deviceProfile ?? d.name)"
     case .web, .remote: return "other"
     }
   }

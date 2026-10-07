@@ -157,7 +157,7 @@ show refusals for removals started from its own workspace actions.
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; audio, location,
   VoiceOver, color filters and Liquid Glass options are not included.
-  Its **Development** section also offers **Slow animations** and **Shake**
+  Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
   where CoreSimulator supports them. Slow animations changes guest UIKit
   animation speed and reads the setting back; Shake sends a shake event to the
   foreground app. Android animation settings are unchanged.

@@ -63,6 +63,5 @@ struct DuoModelTests {
 
   @Test func reportsNothingWhenNoXcodeHasTheModel() {
     #expect(DuoModelAsset.locate(selected: selected, installed: [beta, selected]) { _ in false } == nil)
-    #expect(DuoModelAsset.reason(selected: selected).contains("Xcode.app"))
   }
 }

@@ -5,7 +5,6 @@ public enum DuoModelAsset {
   static let relativePath =
     "SharedFrameworks/DeviceKit.framework/Versions/A/PlugIns/CoreDevicePopDeviceKitExtension.devicekitplugin/Contents/Resources/V68.usdz"
 
-  /// The model in the selected Xcode, else in the first installed Xcode that has it.
   static func locate(selected: String, installed: [String], exists: (String) -> Bool) -> String? {
     for developerDir in [selected] + installed.filter({ $0 != selected }) {
       let path = URL(fileURLWithPath: developerDir).deletingLastPathComponent().appendingPathComponent(relativePath).path
@@ -29,7 +28,6 @@ public enum DuoModelAsset {
       .map { URL(fileURLWithPath: $0) }
   }
 
-  /// Why no Duo model can load, or nil when one can.
   public static var unavailableReason: String? {
     current == nil ? reason(selected: CoreSimulator.developerDir) : nil
   }
