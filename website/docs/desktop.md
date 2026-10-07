@@ -341,19 +341,21 @@ These gestures are not available for physical devices, remote previews or web pa
 
 With **Control** on an owned local simulator or emulator, the Mac and the device
 share their clipboard text automatically. Switching to the viewer window, or
-copying on the Mac while it is focused, sets the device clipboard; text copied on
+a new Mac clipboard item while the window is focused, sets the device clipboard; text copied on
 the device reaches the Mac within about two seconds while the window is focused,
-and once more as the window loses focus. Nothing syncs while the window is
-minimized, closed or covered. Concealed or transient Mac items (the marks password
-managers set), items carrying files or images, empty text and text over 256 KB are
-never copied. Opening a viewer never replaces the Mac clipboard with the device's.
+and once more as the window loses focus while it stays visible. Nothing syncs while
+the window is hidden, minimized or covered. Mac items marked concealed or transient
+(as password managers do), items carrying files or images, empty text and text over
+256 KB are never sent to the device; text read from the device cannot be classified,
+so it reaches the Mac marked transient, which clipboard-history apps skip. The
+device's apps, and agents driving it, can read text sent to it. Opening a viewer never replaces the Mac clipboard with the device's.
 Turn it off with **Sync clipboard** in the options popover (the sliders button),
 which also has **Paste Mac clipboard** and **Copy device clipboard** for one-off
 transfers. Syncing only sets the device clipboard; to insert text, paste in the
 guest. An iOS simulator shows its own "Allow Paste" prompt for text that came from
 another source; click **Allow Paste** in the viewer. Unicode and line breaks are
 preserved. Physical devices, hosted and remote sessions and replay never sync, so
-no clipboard text crosses the network.
+no clipboard text crosses the network or reaches another Mac.
 
 The All devices and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.

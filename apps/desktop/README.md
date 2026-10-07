@@ -285,14 +285,15 @@ Mac pasteboard changes while it is key, the Mac text is set on the device with
 `simctl pbcopy` or the emulator's `setClipboard`; it is not pasted. While the window is key
 the device is read every two seconds (`simctl pbpaste`, or `getClipboard`) and its
 text replaces the Mac's when it changed; one more read follows when the window stops
-being key. Nothing syncs while the window is hidden, minimized or covered. The first
-read of a session only records the device's text. Concealed and transient items
-(`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType`), items with
-files or images, empty text and text over 256 KB are skipped. The popover also has
+being key while it stays visible. Nothing syncs while the window is hidden, minimized or covered. The first
+read of a session only records the device's text. Mac items with concealed or transient
+marks (`org.nspasteboard.ConcealedType`, `org.nspasteboard.TransientType` and older password
+manager types), files or images, and empty or over-256 KB text are not sent to the device. Device text
+is written to the Mac marked transient, since its sensitivity is unknown. The popover also has
 **Paste Mac clipboard**, which presses Command-V on an iOS simulator (iOS asks
 "Allow Paste" for text from another source) and **Copy device clipboard**.
 Physical devices, hosted and remote sessions and replay never sync: clipboard text
-would otherwise cross the network to another Mac.
+would otherwise be sent to another Mac.
 
 On the right, 360 points wide, the **agent actions** list what agents did on
 the device (`stim logs --source agent`), oldest first, with filter chips (All,

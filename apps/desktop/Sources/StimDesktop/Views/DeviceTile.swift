@@ -160,6 +160,7 @@ struct DeviceTile: View {
       clipboardError = nil
       clipboardSync = ClipboardSync()
     }
+    .onChange(of: syncsClipboard) { _, _ in clipboardSync = ClipboardSync() }
     .background(WindowStateReader { windowState = $0 })
     .task(id: clipboardSyncID) {
       guard let id = clipboardSyncID else { return }
@@ -674,11 +675,18 @@ struct DeviceTile: View {
     }
   }
 
+  private var macChangedSinceLastLook: Bool {
+    clipboardSync.macChangeCount.map { $0 != NSPasteboard.general.changeCount } ?? false
+  }
+
   private func pullFromDevice(_ id: ClipboardSyncID) async {
     let text = await readDeviceClipboard()
-    guard !Task.isCancelled, id.target == clipboardTarget, let text = clipboardSync.textForMac(deviceText: text) else { return }
+    guard !Task.isCancelled, id.target == clipboardTarget, !macChangedSinceLastLook,
+      let text = clipboardSync.textForMac(deviceText: text)
+    else { return }
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(text, forType: .string)
+    NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType(ClipboardSync.transientType))
     clipboardSync.didCopyToMac(text, changeCount: NSPasteboard.general.changeCount)
   }
 
@@ -700,7 +708,7 @@ struct DeviceTile: View {
           changeCount: board.changeCount, types: types,
           text: types.contains(NSPasteboard.PasteboardType.string.rawValue) ? board.string(forType: .string) : nil)
         if let text = clipboardSync.textForDevice(snapshot, becameKey: becameKey) {
-          if await copyToDevice(text), !Task.isCancelled, id.target == clipboardTarget {
+          if await copyToDevice(text), id.target == clipboardTarget {
             clipboardSync.didCopyToDevice(text)
             pushed = true
           }

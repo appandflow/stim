@@ -502,8 +502,7 @@ public final class SimulatorDisplayNSView: NSView {
     environment["LC_ALL"] = "en_US.UTF-8"
     var request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbcopy", udid], environment: environment, timeout: 10)
     request.input = Data(text.utf8)
-    guard let result = try? await request.run(), result.succeeded, !Task.isCancelled, interactive, self.udid == udid
-    else { return false }
+    guard let result = try? await request.run(), result.succeeded, interactive, self.udid == udid else { return false }
     return true
   }
 
@@ -511,6 +510,7 @@ public final class SimulatorDisplayNSView: NSView {
     guard interactive, let udid, display != nil else { return nil }
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
+    environment["LC_ALL"] = "en_US.UTF-8"
     let request = ProcessRequest("/usr/bin/xcrun", ["simctl", "pbpaste", udid], environment: environment, timeout: 10)
     guard let result = try? await request.run(), result.succeeded, !Task.isCancelled,
       interactive, self.udid == udid

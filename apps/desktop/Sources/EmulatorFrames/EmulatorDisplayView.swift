@@ -413,8 +413,8 @@ public final class EmulatorDisplayNSView: NSView {
     guard interactive, let serial, let input = inputClient(), let endpoint else { return false }
     let clipboard = EmulatorInput(endpoint: endpoint)
     defer { clipboard.close() }
-    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, !Task.isCancelled,
-      interactive, self.serial == serial, self.input === input
+    guard await clipboard.call("setClipboard", InputMessages.clipboard(text), timeout: 5) != nil, interactive,
+      self.serial == serial, self.input === input
     else { return false }
     return true
   }
