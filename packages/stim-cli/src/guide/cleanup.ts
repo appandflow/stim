@@ -383,7 +383,8 @@ ON THE SOURCE CHECKOUT
   dirty-tree and unpushed guards do not apply on that path.
   Run from the checkout root it reclaims every registered project under the
   checkout. Run from a subfolder (for example apps/mobile) it reclaims only
-  the nearest registered project at or above that folder, leaves the other
+  the nearest registered project at or above that folder and the projects nested
+  under it, leaves the other
   projects' devices, ports and records alone, and refuses with exit 1 when no
   project is registered at or above it.
   It ends with:

@@ -479,11 +479,8 @@ export function reclaimKeys(rootPath: string): string[] {
   return [...keys].toSorted();
 }
 
-async function withReclaimLocks<T>(
-  rootPath: string,
-  fn: (lockedKeys: readonly string[]) => Promise<T>,
-  keys: readonly string[] = reclaimKeys(rootPath),
-): Promise<T> {
+async function withReclaimLocks<T>(rootPath: string, fn: (lockedKeys: readonly string[]) => Promise<T>): Promise<T> {
+  const keys = reclaimKeys(rootPath);
   const acquire = (index: number): Promise<T> =>
     index === keys.length ? fn(keys) : withManagedTunnelRemovalLock(keys[index]!, () => acquire(index + 1));
   return acquire(0);
@@ -495,8 +492,7 @@ async function reclaimAll(
   {
     preserveRootProject = false,
     removedBy,
-    scoped = false,
-  }: { preserveRootProject?: boolean; removedBy?: 'worktree-remove' | 'gc' | 'maintenance'; scoped?: boolean } = {},
+  }: { preserveRootProject?: boolean; removedBy?: 'worktree-remove' | 'gc' | 'maintenance' } = {},
 ): Promise<ReclaimAllResult> {
   const dereferenced: string[] = [];
   const killedPids: number[] = [];
@@ -562,7 +558,7 @@ async function reclaimAll(
       project: key,
     });
   }
-  for (const key of scoped ? [] : reclaimKeys(rootPath)) {
+  for (const key of reclaimKeys(rootPath)) {
     if (keys.includes(key) || keptEntries.includes(key)) continue;
     keptEntries.push(key);
     retainedResources.push({
@@ -638,51 +634,48 @@ function hasRegisteredProjectUnder(rootPath: string): boolean {
 function projectAtOrAbove(root: string, path: string): string | null {
   const here = nativeCanonicalPath(path);
   const keys = Object.keys(loadConfig()?.projects ?? {}).filter(
-    (key) => isPathPrefix(root, key) && isPathPrefix(nativeCanonicalPath(key), here),
+    (key) =>
+      isPathPrefix(nativeCanonicalPath(root), nativeCanonicalPath(key)) && isPathPrefix(nativeCanonicalPath(key), here),
   );
   return keys.toSorted((a, b) => b.length - a.length)[0] ?? null;
 }
 
-async function reclaimEnvironment(root: string, why: string, only?: string): Promise<void> {
+async function reclaimEnvironment(root: string, why: string): Promise<void> {
   await withManagedRemoteWorktreeRemovalLock(root, () =>
-    withReclaimLocks(
-      root,
-      async (lockedKeys) => {
-        const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove', scoped: only !== undefined });
-        for (const line of poolLines(result)) console.error(line);
-        for (const device of result.deletedDevices) {
-          console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
-        }
-        for (const session of result.stoppedSessions) {
-          console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
-        }
-        for (const tunnel of result.stoppedTunnels) {
-          console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
-        }
-        for (const lease of result.releasedLeases) {
-          console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
-        }
-        for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
-        for (const dir of result.removedWorkspaceDirs) {
-          console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
-        }
-        for (const dir of result.failedWorkspaceDirs) {
-          console.error(chalk.yellow(phaseLine('workspace', `could not remove ${dir}`)));
-        }
-        if (result.dereferenced.length) {
-          console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
-        }
-        if (result.keptEntries.length) {
-          reportRetainedResources(root, result);
-          return;
-        }
-        for (const s of result.skippedDevices) {
-          console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
-        }
-        console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
-      },
-      only === undefined ? undefined : [only],
-    ),
+    withReclaimLocks(root, async (lockedKeys) => {
+      const result = await reclaimAll(root, lockedKeys, { removedBy: 'worktree-remove' });
+      for (const line of poolLines(result)) console.error(line);
+      for (const device of result.deletedDevices) {
+        console.error(chalk.dim(phaseLine('device', `deleted ${device}`)));
+      }
+      for (const session of result.stoppedSessions) {
+        console.error(chalk.dim(phaseLine('device', `stopped remote session ${session}`)));
+      }
+      for (const tunnel of result.stoppedTunnels) {
+        console.error(chalk.dim(phaseLine('lan', `stopped the ${tunnel} tunnel`)));
+      }
+      for (const lease of result.releasedLeases) {
+        console.error(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
+      }
+      for (const pid of result.killedPids) console.error(chalk.dim(phaseLine('metro', `killed pid ${pid}`)));
+      for (const dir of result.removedWorkspaceDirs) {
+        console.error(chalk.dim(phaseLine('workspace', `removed ${dir}`)));
+      }
+      for (const dir of result.failedWorkspaceDirs) {
+        console.error(chalk.yellow(phaseLine('workspace', `could not remove ${dir}`)));
+      }
+      if (result.dereferenced.length) {
+        console.error(chalk.dim(phaseLine('workspace', `no longer referenced: ${result.dereferenced.join(', ')}`)));
+      }
+      if (result.keptEntries.length) {
+        reportRetainedResources(root, result);
+        return;
+      }
+      for (const s of result.skippedDevices) {
+        console.error(chalk.yellow(phaseLine('device', `kept ${describeKeptDevice(s)} (${s.reason})`)));
+      }
+      console.error(chalk.green(`Reclaimed the environment; the working tree stays (${why}).`));
+    }),
   );
 }
 
@@ -912,7 +905,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     return;
   }
   if (entry.path === source.path) {
-    if (entry.path !== path) {
+    if (nativeCanonicalPath(entry.path) !== nativeCanonicalPath(path)) {
       const project = projectAtOrAbove(entry.path, path);
       if (!project) {
         console.error(chalk.red(`Refusing to reclaim from ${path}: no Stim project is registered at or above it.`));
@@ -925,7 +918,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
       console.error(
         chalk.dim(`${path} is inside the source checkout ${entry.path}; reclaiming only the project ${project}.`),
       );
-      await reclaimEnvironment(entry.path, 'it is the source checkout', project);
+      await reclaimEnvironment(project, 'it is the source checkout');
       return;
     }
     await reclaimEnvironment(entry.path, 'it is the source checkout');
@@ -1079,7 +1072,7 @@ export function registerRemove(worktree: Command): void {
   worktree
     .command('remove [target]')
     .description(
-      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place; from a subfolder it reclaims only the project at or above that folder.',
+      'Remove a worktree, its unused Stim-created branch, build artifacts, owned devices, and Metro port. Defaults to the current workspace. On the source checkout it reclaims the environment only and leaves the tree in place; from a subfolder it reclaims only the project at or above that folder, with the projects nested under it.',
     )
     .option('--force', 'remove even when the worktree holds uncommitted or unpushed work or initialized submodules')
     .action(async (target: string | undefined, opts: { force?: boolean }) => {

@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   excludePodChurn,
   excludeWatchmanCookies,
@@ -572,6 +572,20 @@ describe('on the source checkout, from a subfolder', () => {
       expect(getProject(web)?.metroPort).toBe(8086);
     },
   );
+
+  test('reclaims projects nested under that project, and treats a root spelled differently as the root', async () => {
+    const { mobile, web } = sourceCheckout();
+    const example = join(mobile, 'example');
+    mkdirSync(example);
+    upsertProject(example, { metroPort: 8087 });
+    await captureAction(registerRemove)(mobile, {});
+    expect(getProject(example)).toBe(null);
+    expect(getProject(web)?.metroPort).toBe(8086);
+
+    await captureAction(registerRemove)(join(mainDir, '..', basename(mainDir)), {});
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(web)).toBe(null);
+  });
 
   test('from the checkout root still reclaims every project under it', async () => {
     const { mobile, web } = sourceCheckout();
@@ -1587,29 +1601,6 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
   } finally {
     console.error = originalError;
-    rmSync(base, { recursive: true, force: true });
-  }
-}, 30_000);
-
-test('against a real repo: from a subfolder of the source checkout, only the project at or above it is reclaimed', async () => {
-  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-subfolder-')));
-  try {
-    const { repo } = realRepoWithWorktree(base);
-    const mobile = join(repo, 'apps', 'mobile');
-    const web = join(repo, 'apps', 'web');
-    mkdirSync(mobile, { recursive: true });
-    mkdirSync(web, { recursive: true });
-    upsertProject(mobile, { metroPort: 8085 });
-    upsertProject(web, { metroPort: 8086 });
-    realGitFakeSimctl(simctlJson([]));
-
-    await captureAction(registerRemove)(mobile, {});
-
-    expect(process.exitCode).not.toBe(1);
-    expect(getProject(mobile)).toBe(null);
-    expect(getProject(web)?.metroPort).toBe(8086);
-    expect(existsSync(mobile)).toBe(true);
-  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);
