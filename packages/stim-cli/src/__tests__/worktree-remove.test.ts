@@ -548,6 +548,54 @@ test('action: source-checkout artifact deletion blocks a concurrent replacement 
   expect(existsSync(workspaceStateFile(mainDir))).toBe(false);
 });
 
+describe('on the source checkout, from a subfolder', () => {
+  const sourceCheckout = () => {
+    const mobile = join(mainDir, 'apps', 'mobile');
+    const web = join(mainDir, 'apps', 'web');
+    mkdirSync(join(mobile, 'src'), { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    setExecutor(makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) }));
+    return { mobile, web };
+  };
+
+  test.each(['project folder', 'folder below the project'])(
+    'reclaims only the project at or above the %s',
+    async (where) => {
+      const { mobile, web } = sourceCheckout();
+      const run = captureAction(registerRemove);
+      await run(where === 'project folder' ? mobile : join(mobile, 'src'), {});
+
+      expect(process.exitCode).not.toBe(1);
+      expect(getProject(mobile)).toBe(null);
+      expect(getProject(web)?.metroPort).toBe(8086);
+    },
+  );
+
+  test('from the checkout root still reclaims every project under it', async () => {
+    const { mobile, web } = sourceCheckout();
+    const run = captureAction(registerRemove);
+    await run(mainDir, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)).toBe(null);
+  });
+
+  test('refuses from a folder with no registered project at or above it, leaving every project', async () => {
+    const { mobile, web } = sourceCheckout();
+    const docs = join(mainDir, 'docs');
+    mkdirSync(docs);
+    const run = captureAction(registerRemove);
+    await run(docs, {});
+
+    expect(process.exitCode).toBe(1);
+    expect(getProject(mobile)?.metroPort).toBe(8085);
+    expect(getProject(web)?.metroPort).toBe(8086);
+  });
+});
+
 test('action: a registered project directory that is not a git repo gets the same environment reclaim', async () => {
   process.env.STIM_ARCHIVE_ENABLED = 'true';
   upsertProject(wtDir, {
@@ -1539,6 +1587,29 @@ test('against a real repo: a locked worktree is refused before its owned sim is 
     expect(errs.join('\n')).toContain(`git -C ${repo} worktree unlock ${wt}`);
   } finally {
     console.error = originalError;
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('against a real repo: from a subfolder of the source checkout, only the project at or above it is reclaimed', async () => {
+  const base = canon(mkdtempSync(join(tmpdir(), 'stim-test-remove-subfolder-')));
+  try {
+    const { repo } = realRepoWithWorktree(base);
+    const mobile = join(repo, 'apps', 'mobile');
+    const web = join(repo, 'apps', 'web');
+    mkdirSync(mobile, { recursive: true });
+    mkdirSync(web, { recursive: true });
+    upsertProject(mobile, { metroPort: 8085 });
+    upsertProject(web, { metroPort: 8086 });
+    realGitFakeSimctl(simctlJson([]));
+
+    await captureAction(registerRemove)(mobile, {});
+
+    expect(process.exitCode).not.toBe(1);
+    expect(getProject(mobile)).toBe(null);
+    expect(getProject(web)?.metroPort).toBe(8086);
+    expect(existsSync(mobile)).toBe(true);
+  } finally {
     rmSync(base, { recursive: true, force: true });
   }
 }, 30_000);

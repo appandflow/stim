@@ -1388,7 +1388,9 @@ Reclaims the target environment, build output, port, and owned device. It then
 removes any linked worktree when safe, warmed or not, without requiring a
 Stim registry entry. Git-created branches stay. An existing Stim ownership
 record permits deleting a branch only when it has no unique commits. On the
-source checkout it only reclaims the environment; a bare repository directory
+source checkout it only reclaims the environment: from the checkout root, every
+registered project under it; from a subfolder, only the project at or above that
+folder, and it refuses when none is registered there. A bare repository directory
 is refused because it is not a worktree. `--force` permits removal
 with uncommitted, untracked, or unpushed work or initialized submodules. A
 worktree locked with `git worktree lock` is refused until you unlock it.
