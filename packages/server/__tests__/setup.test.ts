@@ -48,6 +48,16 @@ function record(overrides: Partial<PairedDevice> = {}): PairedDevice {
   };
 }
 
+const health =
+  (host: { screenRecording: boolean; accessibility: boolean }): SetupDeps['health'] =>
+  async () => ({
+    version: '1.16.0',
+    stim: '1.16.0',
+    stimHome: home,
+    stimBuild: 'digest',
+    host: { name: 'Stim Host', ...host },
+  });
+
 function fixture(overrides: Partial<SetupDeps> = {}) {
   let time = now;
   let installClaim = false;
@@ -106,7 +116,13 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       }
     },
     installed: async () => installed,
-    health: async () => ({ version, stim: '1.16.0', stimHome: home, stimBuild: 'digest' }),
+    health: async () => ({
+      version,
+      stim: '1.16.0',
+      stimHome: home,
+      stimBuild: 'digest',
+      host: { name: 'Stim Host', screenRecording: true, accessibility: true },
+    }),
     build: () => ({ version, stimBuild: 'digest' }),
     install: async (_versions, source) => {
       expect(readSetupJournal(options.ticketHash)?.steps.find((s) => s.id === 'server')?.state).toBe('running');
@@ -155,7 +171,6 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
       return 'granted';
     },
     panes: async () => ({ screen: 'Screen & System Audio Recording', control: 'Device Control and Data Access' }),
-    permissions: async () => ({ screenRecording: true, accessibility: true }),
     requestPermissions: async () => {
       actions.push('permissions');
     },
@@ -362,7 +377,7 @@ test('no request before expiry finishes with 2 and never asks for permissions or
 });
 
 test('a timed-out permission opens its settings pane, reports the lost feature, and keeps a partial-success journal', async () => {
-  const f = fixture({ permissions: async () => ({ screenRecording: false, accessibility: true }) });
+  const f = fixture({ health: health({ screenRecording: false, accessibility: true }) });
   f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
   expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
   expect(f.actions.filter((a) => a === 'Privacy_ScreenCapture')).toHaveLength(1);
@@ -471,10 +486,22 @@ test('approval cannot outlive the ticket while a terminal question is open', asy
   expect(f.grants).toEqual([]);
 });
 
+test('grants the running service already holds are reported without a request or wait', async () => {
+  const f = fixture({ tty: true });
+  f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
+  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(0);
+  expect(f.actions).not.toContain('permissions');
+  const steps = readSetupJournal(options.ticketHash)?.steps ?? [];
+  expect(steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject({
+    state: 'ok',
+    detail: 'Already granted.',
+  });
+});
+
 test('terminal permission skip names the unavailable feature without changing TCC or failing the grant', async () => {
   const f = fixture({
     tty: true,
-    permissions: async () => ({ screenRecording: true, accessibility: false }),
+    health: health({ screenRecording: true, accessibility: false }),
     permissionWait: async () => true,
   });
   f.records.push(record({ id: 'host-id', requestedCapability: 'device-host' }));
