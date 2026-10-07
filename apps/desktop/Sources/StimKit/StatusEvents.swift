@@ -99,8 +99,17 @@ public enum StatusEvents {
   }
 }
 
+private enum TimestampFormatters {
+  // Foundation documents NSFormatter subclasses as safe to call from several threads once configured
+  // (Date Formatters, Thread Safety); these are configured here and never mutated again.
+  nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+  nonisolated(unsafe) static let plain = ISO8601DateFormatter()
+}
+
 func parseTimestamp(_ text: String) -> Date? {
-  let formatter = ISO8601DateFormatter()
-  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
 }
