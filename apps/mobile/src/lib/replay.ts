@@ -18,8 +18,8 @@ export type TimelinePiece =
 /**
  * The scrubber's track, one scale for every recorded span and unrecorded gap: a millisecond takes the same width
  * anywhere, except in a gap longer than `LONG_GAP_MS`, which takes `LONG_GAP_MS` and is `collapsed`. The track's
- * length is rounded up to a whole `WINDOW_STEP_MS`, with the spare room before the oldest footage, so its right edge
- * is the newest footage. `from` and `to` are a piece's place on the track, 0 to 1.
+ * length, while footage grows, is rounded up to a whole `WINDOW_STEP_MS`, with the spare room before the oldest
+ * footage, so its right edge is the newest footage; with `fit` it is exactly the footage. `from` and `to` are a piece's place on the track, 0 to 1.
  */
 export interface Timeline {
   start: number;
@@ -33,12 +33,14 @@ export interface Timeline {
 /**
  * Every time on the timeline is a Mac capture time; a device still recorded ends at its newest footage, or at
  * `liveEnd` when that is later, the Mac's estimated time now. `previousLength` is the length of the track shown
- * before, which the new one keeps unless footage grew past it or shrank by two steps.
+ * before, which the new one keeps unless footage grew past it or shrank by two steps. With `fit`, for footage that is
+ * not growing, the track is exactly as long as the footage and its gaps, so it fills the whole width.
  */
 export function buildTimeline(
   spans: readonly ReplaySpan[],
   liveEnd?: number,
   previousLength?: number,
+  fit = false,
 ): Timeline | null {
   if (!spans.length) return null;
   const last = spans.at(-1)!;
@@ -50,8 +52,9 @@ export function buildTimeline(
   });
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   const fitted = Math.max(1, Math.ceil(total / WINDOW_STEP_MS)) * WINDOW_STEP_MS;
-  const length =
-    previousLength !== undefined && fitted < previousLength && previousLength - fitted < 2 * WINDOW_STEP_MS
+  const length = fit
+    ? total
+    : previousLength !== undefined && fitted < previousLength && previousLength - fitted < 2 * WINDOW_STEP_MS
       ? previousLength
       : fitted;
   const pieces: TimelinePiece[] = [];

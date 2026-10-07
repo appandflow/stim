@@ -389,13 +389,14 @@ export interface BuildLine {
 }
 
 function fallbackText(machine: string, detail: string): string {
-  if (/^busy\b/.test(detail)) return t`${machine} busy`;
-  if (/^no less loaded\b/.test(detail)) return t`${machine} no less loaded`;
-  if (/^capacity unknown\b/.test(detail)) return t`${machine} too old`;
-  if (detail.startsWith('Stim build ')) return t`${machine} on another Stim build`;
-  if (/^(CPU|Xcode|simulator SDK|CocoaPods|JDK) /.test(detail)) return t`${machine} toolchain differs`;
-  if (/^no (iPhone simulator|Android SDK|NDK|build-tools|platform) /.test(detail)) return t`${machine} missing SDK`;
-  if (/ GB free, needs /.test(detail)) return t`${machine} low on disk`;
+  if (/^busy\b/.test(detail)) return t`${machine} was busy`;
+  if (/^no less loaded\b/.test(detail)) return t`${machine} was no less loaded`;
+  if (/^capacity unknown\b/.test(detail)) return t`${machine} runs an older stim-server`;
+  if (detail.startsWith('Stim build ')) return t`${machine} was on a different Stim build`;
+  if (/^(CPU|Xcode|simulator SDK|CocoaPods|JDK) /.test(detail)) return t`${machine} has a different toolchain`;
+  if (/^no (iPhone simulator|Android SDK|NDK|build-tools|platform) /.test(detail))
+    return t`${machine} is missing the SDK`;
+  if (/ GB free, needs /.test(detail)) return t`${machine} is low on disk`;
   return t`${machine} failed`;
 }
 
@@ -405,7 +406,7 @@ export interface FallbackLine {
 }
 
 /**
- * A short line for a run that considered offloading and built here, such as "janics-mac-mini busy -> built here",
+ * A plain line for a run that considered offloading and built here, such as "Built here: janics-mac-mini was busy",
  * from the first machine `offloadFallback` names; `reason` is the whole of it.
  */
 export function fallbackLine(build: Pick<LastBuild, 'offloadFallback'>): FallbackLine | null {
@@ -413,7 +414,7 @@ export function fallbackLine(build: Pick<LastBuild, 'offloadFallback'>): Fallbac
   if (!reason) return null;
   const match = /^([A-Za-z0-9][A-Za-z0-9.-]*(?::\d{1,5})?): (.+)$/.exec(reason);
   const what = match ? fallbackText(machineName(match[1]!), match[2]!) : t`offload skipped`;
-  return { text: t`${what} \u2192 built here`, reason };
+  return { text: t`Built here: ${what}`, reason };
 }
 
 export function buildLine(platform: Platform, last: LastBuild | undefined, plan: PlanState | undefined): BuildLine {

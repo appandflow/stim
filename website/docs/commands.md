@@ -1400,7 +1400,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons>] [--worktrees] [--idle <duration>] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories, clean linked
@@ -1771,8 +1771,9 @@ Archives are excluded from normal gc, `--cache all`, and unscoped `--older-than`
 `--delete` to remove them. `--cache archived:<id>` selects one archive; an
 unknown id refuses with `STIM_BAD_ARG` and lists known ids. `archived-logs`,
 `archived-recordings`, and `archived-agent` select only that kind and preserve
-the record. `--older-than` filters by removal age for whole and per-kind
-selection; an explicit id ignores it. Archive selection reports abandoned
+the record. Add `:<id>` (for example `archived-logs:<id>`) to clear one kind of
+one archive; an unknown id refuses the same way. `--older-than` filters by
+removal age for whole and per-kind selection; an explicit id ignores it. Archive selection reports abandoned
 staging and keeps live or unresolved claims, naming the claim removal command.
 
 <StimTabs code="stim gc --cache archived" />

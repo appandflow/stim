@@ -297,18 +297,18 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
       .lastBuilds?.ios)
     #expect(offloaded.summary == "Built on janics-mac-mini in 1m 11s")
     let cases: [(String, String)] = [
-      ("janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)", "janics-mac-mini busy \u{2192} built here"),
+      ("janics-mac-mini: busy (load at or above 2/core; load 8.2/core, 2 builds)", "Built here: janics-mac-mini was busy"),
       (
         "mini:7869: Stim build 6bbe there, e774 here; busy (already running 1 offloaded build(s), its limit)",
-        "mini on another Stim build \u{2192} built here"
+        "Built here: mini was on a different Stim build"
       ),
-      ("mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer", "mini no less loaded \u{2192} built here"),
-      ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "mini too old \u{2192} built here"),
-      ("mini: no iPhone simulator on 27.0 there", "mini missing SDK \u{2192} built here"),
-      ("mini: 4.1 GB free, needs 10.0 GB", "mini low on disk \u{2192} built here"),
-      ("mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB", "mini on another Stim build \u{2192} built here"),
-      ("mini: the connection closed (1006)", "mini failed \u{2192} built here"),
-      ("this app is not in a git checkout (fatal: not a git repository)", "offload skipped \u{2192} built here"),
+      ("mini: no less loaded (load 1.2/core there, 0.4/core here); box: no offer", "Built here: mini was no less loaded"),
+      ("mini: capacity unknown (older stim-server) while this Mac has a free slot", "Built here: mini runs an older stim-server"),
+      ("mini: no iPhone simulator on 27.0 there", "Built here: mini is missing the SDK"),
+      ("mini: 4.1 GB free, needs 10.0 GB", "Built here: mini is low on disk"),
+      ("mini: Stim build 6bbe there, e774 here; 4.1 GB free, needs 10.0 GB", "Built here: mini was on a different Stim build"),
+      ("mini: the connection closed (1006)", "Built here: mini failed"),
+      ("this app is not in a git checkout (fatal: not a git repository)", "Built here: offload skipped"),
     ]
     for (reason, text) in cases {
       var build = offloaded

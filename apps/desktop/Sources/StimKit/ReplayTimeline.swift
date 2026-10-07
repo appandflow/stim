@@ -2,8 +2,8 @@ import Foundation
 
 /// The scrubber's track, one scale for every recorded span and unrecorded gap, as the phone's `buildTimeline` lays it
 /// out: a millisecond takes the same width anywhere, except in a gap longer than `longGapMs`, which takes `longGapMs`
-/// and is `collapsed`. The track's `length` is rounded up to a whole `windowStepMs`, with the spare room before the
-/// oldest footage, so its right edge is the newest footage. `from` and `to` are a piece's place on the track, 0 to 1.
+/// and is `collapsed`. While footage grows, the track's `length` is rounded up to a whole `windowStepMs`, with the spare
+/// room before the oldest footage, so its right edge is the newest footage; with `fit` it is exactly the footage. `from` and `to` are a piece's place on the track, 0 to 1.
 /// Every time is a Mac capture time from `replay.range`.
 public struct ReplayTimeline: Equatable, Sendable {
   public struct Piece: Equatable, Sendable {
@@ -41,8 +41,9 @@ public struct ReplayTimeline: Equatable, Sendable {
 
   /// A device still recorded ends at its newest footage, or at `liveEnd` when that is later, the Mac's estimated time
   /// now. `previousLength` is the length of the track shown before, which the new one keeps unless footage grew past
-  /// it or shrank by two steps.
-  public init?(spans: [ReplaySpan], liveEnd: Double? = nil, previousLength: Double? = nil) {
+  /// it or shrank by two steps. With `fit`, for footage that is not growing, the track is exactly as long as the
+  /// footage and its gaps, so it fills the whole width with no spare room before the oldest footage.
+  public init?(spans: [ReplaySpan], liveEnd: Double? = nil, previousLength: Double? = nil, fit: Bool = false) {
     guard let last = spans.last else { return nil }
     var shown = spans
     if let liveEnd, liveEnd > last.end { shown[shown.count - 1] = ReplaySpan(start: last.start, end: liveEnd) }
@@ -55,7 +56,9 @@ public struct ReplayTimeline: Equatable, Sendable {
     let total = weights.reduce(0, +)
     let fitted = max(1, (total / Self.windowStepMs).rounded(.up)) * Self.windowStepMs
     let length =
-      if let previousLength, fitted < previousLength, previousLength - fitted < 2 * Self.windowStepMs {
+      if fit {
+        total
+      } else if let previousLength, fitted < previousLength, previousLength - fitted < 2 * Self.windowStepMs {
         previousLength
       } else {
         fitted

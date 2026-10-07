@@ -401,7 +401,8 @@ stderr and removal continues. Removal stdout stays empty.
 Normal gc, `--cache all` and unscoped `--older-than` leave archives alone.
 Explicit archive selection lists ids, kinds, bytes, and expiry. Add `--delete`
 to act. `archived:<id>` selects one archive; `archived-logs`,
-`archived-recordings`, and `archived-agent` delete that kind while keeping records.
+`archived-recordings`, and `archived-agent` delete that kind while keeping records;
+add `:<id>` (`archived-logs:<id>`) to clear that kind from one archive.
 `--older-than` filters by removal age except with an explicit id, where it is ignored.
 
 <StimTabs code="stim gc --cache archived" />
