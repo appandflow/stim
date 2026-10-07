@@ -89,7 +89,7 @@ final class TipCoordinator: ObservableObject {
     var inputs = TipInputs()
     if machines.settings.error == nil {
       inputs.machines = machines.entries
-      inputs.hosting = machines.settings.payload.map { $0.entry("hosting.machines")?.value.strings ?? [] }
+      inputs.hosting = machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
     }
     inputs.macs = machines.macs
     inputs.pairedPhones = ServerController.shared.pairedPhoneCount

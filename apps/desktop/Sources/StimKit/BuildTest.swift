@@ -213,7 +213,7 @@ public enum WizardMode: String, CaseIterable, Sendable {
 }
 
 public func summaryLines(addedEntries: [String: String], mode: WizardMode) -> [String] {
-  ["offload.machines", "hosting.machines"].compactMap { key in
+  ["remote.machines"].compactMap { key in
     addedEntries[key].map { "Added \($0) to \(key)" }
-  } + ["offload.mode = \(mode.rawValue)"]
+  } + ["remote.buildMode = \(mode.rawValue)"]
 }

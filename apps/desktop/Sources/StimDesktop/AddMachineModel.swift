@@ -235,7 +235,7 @@ final class AddMachineModel {
     if let checkout {
       do {
         let report = try await dependencies.doctor(checkout, false, [:])
-        await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
+        await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
       } catch { self.error = error.localizedDescription }
     } else {
       sample?.prepare()
@@ -258,14 +258,14 @@ final class AddMachineModel {
         await sample.waitForPreparation()
         guard sample.sampleReady else { return }
         let report = try await dependencies.doctor(sample.folder, false, [:])
-        await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
+        await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
         wizard.hasWorkspace = true
       }
       let payload = try await dependencies.readSettings()
       wizard.settings = SetupWizard.Settings(
-        builds: payload.entry("offload.machines")?.value.strings ?? [],
-        hosts: payload.entry("hosting.machines")?.value.strings ?? [],
-        mode: payload.entry("offload.mode")?.value.string, modeOrigin: payload.entry("offload.mode")?.origin)
+        builds: payload.entry("remote.machines")?.value.strings ?? [],
+        hosts: payload.entry("remote.machines")?.value.strings ?? [],
+        mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
       commandKnown = known
       let current = dependencies.now()
       if let draft = draftTicket, current < draft.expiresAt {
@@ -345,9 +345,9 @@ final class AddMachineModel {
         do {
           let payload = try await dependencies.readSettings()
           wizard.settings = SetupWizard.Settings(
-            builds: payload.entry("offload.machines")?.value.strings ?? [],
-            hosts: payload.entry("hosting.machines")?.value.strings ?? [],
-            mode: payload.entry("offload.mode")?.value.string, modeOrigin: payload.entry("offload.mode")?.origin)
+            builds: payload.entry("remote.machines")?.value.strings ?? [],
+            hosts: payload.entry("remote.machines")?.value.strings ?? [],
+            mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
         } catch {
           self.error = error.localizedDescription
           return
@@ -375,7 +375,7 @@ final class AddMachineModel {
   private func runDoctor(ask: Bool, ticket: String? = nil) async throws {
     guard !isFixture, let checkout = doctorPath else { return }
     let report = try await dependencies.doctor(checkout, ask, ticket.map { ["STIM_ACCESS_TICKET": $0] } ?? [:])
-    await send(.doctorReported(build: match(report.buildMachines), host: match(report.deviceHosts)))
+    await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
   }
 
   private func reportDoctor(ask: Bool) async {
@@ -441,11 +441,11 @@ final class AddMachineModel {
     }
     do {
       let report = try await doctor(cwd, "ios")
-      toolsStatus = match(report.buildMachines)
+      toolsStatus = match(report.remoteMachines)
       toolFindings = report.findings
       if checksAndroid {
         let report = try await doctor(cwd, "android")
-        androidStatus = match(report.buildMachines)
+        androidStatus = match(report.remoteMachines)
         androidFindings = report.findings
       }
       error = nil
@@ -467,7 +467,8 @@ final class AddMachineModel {
     do {
       let payload = try await dependencies.readSettings()
       mode = WizardMode.defaultChoice(
-        passed: sample?.test.passed == true, changedMode: wizard.modeChanged, current: payload.entry("offload.mode")?.value.string
+        passed: sample?.test.passed == true, changedMode: wizard.modeChanged,
+        current: payload.entry("remote.buildMode")?.value.string
       )
       updateSummary()
       page = .summary
@@ -482,8 +483,8 @@ final class AddMachineModel {
     defer { busy = false }
     do {
       let payload = try await dependencies.readSettings()
-      if payload.entry("offload.mode")?.value.string != mode.rawValue {
-        try await dependencies.writeSetting("offload.mode", mode.rawValue)
+      if payload.entry("remote.buildMode")?.value.string != mode.rawValue {
+        try await dependencies.writeSetting("remote.buildMode", mode.rawValue)
       }
       updateSummary()
       error = nil
@@ -503,16 +504,13 @@ final class AddMachineModel {
         let payload = try await dependencies.readSettings()
         let entry = SetupPortProbe.entry(machine: mac.machine, port: port)
         if wizard.modeChanged, !modeWritten {
-          try await dependencies.writeSetting("offload.mode", "off")
+          try await dependencies.writeSetting("remote.buildMode", "off")
           modeWritten = true
         }
-        for capability in SetupCapability.allCases where wizard.capabilities.contains(capability) {
-          let key = capability == .build ? "offload.machines" : "hosting.machines"
-          let entries = payload.entry(key)?.value.strings ?? []
-          if !entries.contains(entry) {
-            try await dependencies.writeSetting(key, OffloadMachines.adding(entry, to: entries))
-            addedEntries[key] = entry
-          }
+        let entries = payload.entry("remote.machines")?.value.strings ?? []
+        if !entries.contains(entry) {
+          try await dependencies.writeSetting("remote.machines", OffloadMachines.adding(entry, to: entries))
+          addedEntries["remote.machines"] = entry
         }
         error = nil
         let effects = wizard.apply(.entriesWritten, now: dependencies.now())
@@ -526,7 +524,7 @@ final class AddMachineModel {
         }
         addedEntries = [:]
         if modeWritten {
-          try await dependencies.writeSetting("offload.mode", nil)
+          try await dependencies.writeSetting("remote.buildMode", nil)
           modeWritten = false
         }
       case .forgetPairing: try await runDoctor(ask: true)
@@ -561,9 +559,9 @@ final class AddMachineModel {
           from: Data(
             """
             {"project":"/fixture","findings":[
-            {"code":"build-machine-xcode","level":"cost","title":"Build machine mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
-            {"code":"build-machine-bundler","level":"cost","title":"Build machine mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
-            {"code":"build-machine-stim-build","level":"cost","title":"Build machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this Mac."}]}
+            {"code":"build-machine-xcode","level":"cost","title":"Remote Mac mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
+            {"code":"build-machine-bundler","level":"cost","title":"Remote Mac mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
+            {"code":"build-machine-stim-build","level":"cost","title":"Remote Mac mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this Mac."}]}
             """.utf8)
         ).findings
       case .toolsBusy:
@@ -614,12 +612,12 @@ final class AddMachineModel {
           events,
           lines: fixture == .offloading || fixture == .localBuilding
             ? [
-              .init(text: "$ stim ios --build-machine mini --no-build-cache --json", kind: .command),
+              .init(text: "$ stim ios --remote-build mini --no-build-cache --json", kind: .command),
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
         mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
-        summary = summaryLines(addedEntries: ["offload.machines": "mini", "hosting.machines": "mini"], mode: mode)
+        summary = summaryLines(addedEntries: ["remote.machines": "mini"], mode: mode)
       }
     }
 

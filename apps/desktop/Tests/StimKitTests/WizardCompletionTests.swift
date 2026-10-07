@@ -97,9 +97,9 @@ final class WizardCompletionTests: XCTestCase {
       from: Data(
         """
         {"project":"/fixture","findings":[
-        {"code":"build-machine-jdk","level":"cost","title":"Build machine other JDK","detail":"mismatch","fix":"other fix"},
-        {"code":"build-machine-jdk","level":"cost","title":"Build machine mini JDK","detail":"mismatch","fix":"selected fix"},
-        {"code":"build-machine-checkout","level":"cost","title":"Build machine mini checkout","detail":"checkout","fix":"checkout fix"}]}
+        {"code":"build-machine-jdk","level":"cost","title":"Remote Mac other JDK","detail":"mismatch","fix":"other fix"},
+        {"code":"build-machine-jdk","level":"cost","title":"Remote Mac mini JDK","detail":"mismatch","fix":"selected fix"},
+        {"code":"build-machine-checkout","level":"cost","title":"Remote Mac mini checkout","detail":"checkout","fix":"checkout fix"}]}
         """.utf8))
     let status = try status([
       ["code": "jdk", "reason": "JDK 17 there, none here"],
@@ -120,7 +120,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(wizardFixIsCommand("xcodebuild -downloadPlatform iOS"))
     XCTAssertTrue(wizardFixIsCommand("gem install bundler"))
     XCTAssertFalse(wizardFixIsCommand("Install Bundler (`gem install bundler`) on mini."))
-    XCTAssertFalse(wizardFixIsCommand("Use a build machine with the same CPU architecture as this Mac."))
+    XCTAssertFalse(wizardFixIsCommand("Use a remote Mac with the same CPU architecture as this Mac."))
     XCTAssertFalse(wizardFixIsCommand("stim-server service update --release <version>"))
   }
 

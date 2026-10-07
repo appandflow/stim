@@ -293,7 +293,7 @@ struct TutorialPanel: View {
     case "phone":
       return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see this workspace. You can skip this step."
     case "machine":
-      return "Optional. An approved Mac can build the same app. Choose one in Settings > Build Machines, or skip this step."
+      return "Optional. An approved Mac can build the same app. Choose one in Settings > Remote Macs, or skip this step."
     case "finish":
       return
         "Your agent reverts the tutorial edit, stops the workspace and removes only its worktree. Open Archived to revisit its history."
@@ -313,7 +313,7 @@ struct TutorialPanel: View {
     case "screen-recording": return "Screen recording replay"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
-    case "approved": return "Build machine approved"
+    case "approved": return "Remote Mac approved"
     case "offloaded": return "Build ran on another Mac"
     default: return PhaseStep.name(id)
     }

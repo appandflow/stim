@@ -39,7 +39,7 @@
     },
     "plan": []
   },
-  "buildMachines": [
+  "remoteMachines": [
     {
       "machine": "janics-mac-mini:7869",
       "state": "approved",

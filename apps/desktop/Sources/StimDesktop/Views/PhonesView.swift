@@ -83,7 +83,7 @@ struct PhonesView: View {
         Text("Macs that build here")
       } footer: {
         Text(
-          "Another Mac asks from its Build machines tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
+          "Another Mac asks from its Remote Macs tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
         )
         .foregroundStyle(Palette.tertiary)
         .multilineTextAlignment(.leading)

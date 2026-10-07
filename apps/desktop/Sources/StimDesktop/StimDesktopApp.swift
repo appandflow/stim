@@ -247,7 +247,7 @@ struct StimDesktopApp: App {
     .commands {
       UpdateCommands()
       CommandGroup(replacing: .newItem) {
-        Button("Add Build Machine\u{2026}") {
+        Button("Add Remote Mac\u{2026}") {
           MainWindow.show()
           OpenRequests.shared.addMachine = AddMachineRequest(machineID: nil, hostedSimulators: false)
         }
