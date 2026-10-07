@@ -61,8 +61,7 @@ final class SampleBuildModel {
           return
         }
         if dependencies.exists(sample.folder) {
-          try await stopSample()
-          try dependencies.remove(sample.folder)
+          try await removeSample()
         }
         try dependencies.create(sample.onboarding)
         let generated = sample.onboarding.appendingPathComponent("sample")
@@ -163,6 +162,25 @@ final class SampleBuildModel {
     cleanup = task
     await task.value
     cleanup = nil
+  }
+
+  func removeSample() async throws {
+    let sample = dependencies.sample
+    guard sample.permitsRemoval(sample.folder) else { throw CocoaError(.fileWriteNoPermission) }
+    var teardown = [StimCommand(["stop"], cwd: folder)]
+    if dependencies.exists(sample.folder.appendingPathComponent(".git")) {
+      teardown.append(StimCommand(["worktree", "remove", folder], cwd: sample.onboarding.path))
+    }
+    for command in teardown {
+      let output = try await dependencies.run(command, { _ in })
+      guard output.exit == 0 else {
+        let stderr = output.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        throw StimCLI.Failure.exited(
+          output.exit, stderr: "\(command.program) \(command.arguments.joined(separator: " ")) failed: \(stderr)")
+      }
+    }
+    guard sample.permitsRemoval(sample.folder) else { throw CocoaError(.fileWriteNoPermission) }
+    try dependencies.remove(sample.folder)
   }
 
   private func stopSample() async throws {

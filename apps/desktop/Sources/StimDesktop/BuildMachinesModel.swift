@@ -137,10 +137,7 @@ final class BuildMachinesModel {
       return
     }
     do {
-      let output = try await sample.dependencies.run(StimCommand(["stop"], cwd: location.folder.path), { _ in })
-      guard output.exit == 0 else { throw StimCLI.Failure.exited(output.exit, stderr: output.stderr) }
-      guard location.permitsRemoval(location.folder) else { throw CocoaError(.fileWriteNoPermission) }
-      try FileManager.default.removeItem(at: location.folder)
+      try await sample.removeSample()
       sampleExists = false
       writeFailure = nil
     } catch { writeFailure = error.localizedDescription }
