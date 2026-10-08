@@ -467,7 +467,8 @@ debug.logs STIM_DEBUG  default false. STIM_DEBUG=1 (or 0) overrides the setting
 for one command. While on, the CLI writes debug records to
 STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
 duration and exit status but never arguments, remote_connect and
-remote_request with durations and codes). The file rotates at about 8 MiB and keeps one previous
+remote_request with durations and codes); stim-server writes server.ndjson there
+and logs every request with its timings to its service log. The file rotates at about 8 MiB and keeps one previous
 generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.

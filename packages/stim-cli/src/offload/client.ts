@@ -27,6 +27,7 @@ import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-f
 import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { debugLog } from '../debug-log.ts';
+import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -328,13 +329,23 @@ export class BuildConnection {
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     const started = performance.now();
     const result = await BuildConnection.connect(target, token, timeoutMs, capability);
+    const ms = Math.round(performance.now() - started);
     debugLog.log('remote_connect', {
       host: target.host,
       capability,
-      ms: Math.round(performance.now() - started),
+      ms,
       timeoutMs,
       ...(result instanceof BuildConnection ? { ok: true } : { ok: false, failure: result.failure, code: result.code }),
     });
+    if (!(result instanceof BuildConnection))
+      reportRemoteFailure('remote_connect_failed', {
+        host: target.host,
+        capability,
+        ms,
+        timeoutMs,
+        msg: result.failure,
+        code: result.code,
+      });
     return result;
   }
 
@@ -420,11 +431,14 @@ export class BuildConnection {
     const id = this.nextId++;
     const started = performance.now();
     const done = (reply: Reply): Reply => {
+      const ms = Math.round(performance.now() - started);
       debugLog.log('remote_request', {
         method,
-        ms: Math.round(performance.now() - started),
+        ms,
         ...('error' in reply ? { ok: false, code: reply.error.code } : { ok: true }),
       });
+      if ('error' in reply)
+        reportRemoteFailure('remote_request_failed', { method, ms, code: reply.error.code, msg: reply.error.message });
       return reply;
     };
     return new Promise((resolve) => {

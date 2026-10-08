@@ -24,6 +24,9 @@ Branch on the code, never on the message.`,
   an unavailable choice. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
+  To see why a host was slow or refused: stim logs --source placement (hosts checked and
+  reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
+  and the host's stim-server service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
   on the host to enable handoff and native logs (hello features hosted-ios-data

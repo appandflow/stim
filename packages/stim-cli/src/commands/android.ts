@@ -56,6 +56,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild }
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { setRemoteLogSink } from '../remote-log.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
@@ -754,6 +755,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     createWriter(buildLog, { truncate: true, fields: { platform: PLATFORM, slot } }),
     progress,
   );
+
+  setRemoteLogSink((entry) => writer.write(entry));
 
   const record: AndroidRecord = {
     fingerprint: null,

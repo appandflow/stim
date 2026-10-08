@@ -514,6 +514,19 @@ a process already running as the worker user can forge that header.
   reused server older than 1.16.0, generate a new command after expiry, and
   check Tailscale and the private route when the live mirror cannot connect.
 
+### Find out why a remote Mac was slow or refused
+
+Every placement decision is a record: `stim logs --source placement` lists the
+Macs checked with a reason code each, and a failed request to a Mac (for
+example one that did not answer hello in time) is a `remote_connect_failed` or
+`remote_request_failed` record in `stim logs --source build`. On the Mac that
+serves the request, stim-server writes request errors to its service log
+(`~/Library/Logs/Stim/<label>.log`) with the client's device id and the run id
+of the `stim` command that sent it. To see every request with its duration and
+slow steps, run `stim settings set debug.logs true --scope machine` on that Mac,
+or set `STIM_DEBUG=1` for its stim-server. Nothing is sent anywhere, and no
+token or ticket is logged.
+
 ## Ask your agent
 
 These responses are illustrative. Placement comes from `stim status --json`

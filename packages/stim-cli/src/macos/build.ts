@@ -1,3 +1,4 @@
+import { setRemoteLogSink } from '../remote-log.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../placement-log.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
@@ -92,6 +93,7 @@ export async function buildMacosBundle({
   handoff: BuildHandoff | null;
 }> {
   if (record) record.buildMachine = buildMachine;
+  setRemoteLogSink((entry) => writer.write({ ...entry, platform: 'macos' }));
   validateInfoPlist(root, product, infoPlist);
   const repository = realpathSync(repoRoot(root) ?? root);
   const extras = resolveBundleExtras(root, repository, resources, assetCatalog);

@@ -210,7 +210,7 @@ THE RECORD
              else generated per run. Processes a command starts, such as the
              Metro supervisor and the collectors, keep the id of the command
              that started them. Debug records and the hello to stim-server
-             carry it too.
+             carry it too, and stim-server puts it on its log lines.
     deviceTs Android logcat's original epoch milliseconds; ts is aligned to
              host time using a bounded clock query at each collector attachment
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
@@ -227,6 +227,26 @@ Maintenance records use src: maintenance and appear in the plain timeline.
 Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
+
+REMOTE REQUEST RECORDS
+A request to another Mac that fails is a warn record with src: build in the
+run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
+code } (could not connect or say hello, e.g. "no reply in time" when the Mac
+did not answer hello) and remote_request_failed { method, ms, code, msg }.
+Timings of requests that succeed are debug records (below).
+stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
+no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
+ms=<n> error=<code>" for an error reply (once a minute per client, method and
+code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
+Mac fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
+slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
+whois and probe are the hello's Tailscale identity lookup and its wait for
+the host permission probe; a method name that is not a plain dotted lowercase
+name is logged as unknown)
+and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
+timings when an open connection was shared), also as
+records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
 
 DEBUG LOGS
 With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
