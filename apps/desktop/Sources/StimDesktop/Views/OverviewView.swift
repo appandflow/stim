@@ -295,7 +295,7 @@ struct OverviewView: View {
             Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
             Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            IconButton(systemImage: "xmark", help: "Dismiss this tip") {
+            IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
               TryThisStore(defaults: .standard).dismiss(tip)
               dismissedTips.insert(tip)
             }

@@ -115,7 +115,8 @@ import Testing
     #expect(summary.status.kind == .driven)
     #expect(summary.status.tone == .brand)
     #expect(summary.active)
-    #expect(summary.apps.map(\.label) == ["iOS \u{00B7} a", "iOS \u{00B7} b"])
+    #expect(summary.apps.map(\.name) == ["a", "b"])
+    #expect(summary.apps.map { $0.platforms.map(\.kind) } == [[.running], [.building]])
     #expect(summary.apps.map(\.status.kind) == [.driven, .building])
     #expect(summary.apps.map(\.active) == [true, true])
     #expect(summary.drivers == "agent-device")
@@ -123,7 +124,7 @@ import Testing
     #expect(summary.problems == ["4 errors", "CI failing"])
     #expect(summary.agents.map(\.id) == ["codex:shared", "claude-code:other"])
     let spoken =
-      "topic, Driven by an agent for 5 minutes, iOS \u{00B7} a: Driven by an agent for 5 minutes, iOS \u{00B7} b: Building iOS, Codex \u{00B7} Fix +1, 4 errors, CI failing, driven by agent-device, 3 EAS sessions"
+      "topic, Driven by an agent for 5 minutes, a: iOS running, b: iOS building, Codex \u{00B7} Fix +1, 4 errors, CI failing, driven by agent-device, 3 EAS sessions"
     #expect(summary.label == spoken + ", Pull request 7, open, checks failing, Repo")
     #expect(page.rowSummary(now: Self.now, subtitle: nil, showsGit: false).label == spoken)
 
@@ -170,5 +171,65 @@ import Testing
     #expect(
       env.rowLabel(now: Self.now, folder: "apps/mobile", showsGit: false)
         == "w, iOS, driven by agent-device for 5 minutes, iOS slot ipad running, apps/mobile")
+  }
+}
+
+@Suite struct PlatformStateTests {
+  static let now = parseTimestamp("2026-09-30T12:00:00.000Z")!
+  static let iosUp = #""ios":{"name":"stim-w (iPhone 18 27.0)","udid":"S","owned":true,"state":"Booted"}"#
+  static let androidDown = #""android":{"name":"stim-w","owned":true,"physical":false,"state":"shutdown"}"#
+  static let macosApp =
+    #"{"launchId":"m","product":"App","bundle":"/App.app","bundleId":"dev.app","executable":"/App.app/App","state":"running","build":{"state":"\#("ok")","startedAt":"2026-09-30T11:00:00.000Z"}}"#
+  static func failedBuild(_ platform: String) -> String {
+    #""lastBuilds":{"\#(platform)":{"platform":"\#(platform)","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":1,"fingerprint":null,"startedAt":"2026-09-30T11:00:00.000Z","finishedAt":null}}"#
+  }
+
+  static func states(live: Bool = true, _ fields: String = "") throws -> [String] {
+    let json = #"{"path":"/w","live":\#(live),"memoryMb":0,"warnings":[]\#(fields.isEmpty ? "" : "," + fields)}"#
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    return env.platformStates(now: now).map { "\($0.platform):\($0.kind.rawValue)" }
+  }
+
+  @Test func showsNothingForAWorktreeThatRanNothing() throws {
+    #expect(try Self.states(live: false, #""platforms":["ios","android","macos","web"]"#) == [])
+  }
+
+  @Test func showsOnlyIosWhenOnlyIosRan() throws {
+    #expect(try Self.states(Self.iosUp) == ["ios:running"])
+  }
+
+  @Test func givesEachPlatformItsOwnState() throws {
+    #expect(try Self.states(Self.iosUp + "," + Self.androidDown) == ["ios:running", "android:idle"])
+  }
+
+  @Test func showsAMacosBuild() throws {
+    let building = #""macos":\#(Self.macosApp.replacingOccurrences(of: "\"ok\"", with: "\"running\""))"#
+    #expect(try Self.states(building) == ["macos:building"])
+    #expect(try Self.states(#""macos":\#(Self.macosApp)"#) == ["macos:running"])
+  }
+
+  @Test func showsAFailedAndroidBuildWhileIosRuns() throws {
+    #expect(try Self.states(Self.iosUp + "," + Self.failedBuild("android")) == ["ios:running", "android:failed"])
+  }
+
+  @Test func dropsAStaleFailureOfAStoppedWorkspace() throws {
+    let old = Self.failedBuild("android").replacingOccurrences(of: "2026-09-30T11", with: "2026-09-01T11")
+    #expect(try Self.states(live: false, old) == ["android:idle"])
+  }
+
+  @Test func namesTheAppsOfAMultiAppWorktreeOnlyWhereThePlatformsDoNotTellThemApart() throws {
+    let worktree = #""worktree":{"path":"/w"}"#
+    func app(_ path: String, _ fields: String) -> String {
+      #"{"path":"\#(path)","live":true,"warnings":[],\#(worktree),\#(fields)}"#
+    }
+    let envs = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        "[\(app("/w/mac", #""macos":\#(Self.macosApp)"#)),\(app("/w/mobile", Self.iosUp)),\(app("/w/other", Self.iosUp)),\(app("/w/none", #""memoryMb":0"#))]"
+          .utf8))
+    let page = try #require(WorktreePage(path: "/w/mac", environments: envs))
+    let summary = page.rowSummary(now: Self.now, subtitle: nil, showsGit: false)
+    #expect(summary.apps.map(\.name) == [nil, "mobile", "none", "other"])
+    #expect(summary.apps.map { $0.platforms.map(\.platform) } == [["macos"], ["ios"], [], ["ios"]])
   }
 }
