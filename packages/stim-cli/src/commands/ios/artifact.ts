@@ -25,6 +25,7 @@ import {
 import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-lock.ts';
+import { runArtifactLifecycle, type ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { BuildSlotHandle } from '../../engine/build-slots.ts';
 import { easDeviceBuildRemedy, type EasBuildResult } from '../../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../../engine/ios-lan.ts';
@@ -583,15 +584,13 @@ export async function acquireIosArtifact(
     return null;
   };
 
-  async function prepareCachedArtifact(): Promise<void> {
-    if (appPath && cacheHit) {
-      const prepared = await installableCachedApp(appPath);
-      appPath = prepared;
-      if (!prepared) {
-        cacheHit = false;
-        waitedForBuild = null;
-      }
+  async function prepareCachedArtifact(cachedPath: string): Promise<string | null> {
+    const prepared = await installableCachedApp(cachedPath);
+    if (!prepared) {
+      cacheHit = false;
+      waitedForBuild = null;
     }
+    return prepared;
   }
 
   function reasonForMiss(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null } {
@@ -878,255 +877,309 @@ export async function acquireIosArtifact(
     return true;
   }
 
-  async function buildArtifact(): Promise<void> {
-    buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache, buildMachine };
-    if (!appPath) {
-      const offload = placeBuild();
-      if (!offload) await takeBuildSlot();
+  interface SourcePreparation {
+    mutatingSteps: string[];
+    rekeyedBy: string[];
+  }
 
-      const mutatingSteps: string[] = [];
-      const rekeyedBy: string[] = [];
+  async function prepareSource(): Promise<SourcePreparation> {
+    const mutatingSteps: string[] = [];
+    const rekeyedBy: string[] = [];
 
-      const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
-      if (prebuild === 'refuse') {
-        fail({ ...staleNativeDirRefusal(PLATFORM), build: buildFailure });
-      }
-      reportPendingRecheck(prebuild);
-      if (prebuild === 'generate' || prebuild === 'regenerate') {
-        step('prebuild');
-        recordPrebuild(root, PLATFORM, null);
-        const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
-        if (result?.failed) {
-          phase('prebuild', 'FAILED');
-          fail({
-            code: result.code || 'STIM_PREBUILD_FAILED',
-            message: result.reason || 'expo prebuild failed.',
-            remedy: result.remedy || `See ${logFile} for the transcript.`,
-            lines: (result.lastLines || []).slice(-5),
-            build: buildFailure,
-          });
-        }
-        const outcome =
-          prebuild === 'generate'
-            ? 'ios/ absent -> generated'
-            : 'ios/ not generated from this fingerprint -> regenerated with --clean';
-        phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
-        mutatingSteps.push('prebuild');
-      }
-
-      // A bare (non-Expo) project's ios/ never regenerates; ios.ts already validated --scheme against it.
-      if (isExpo && buildScheme !== undefined) {
-        const project = d.discoverXcodeProject(root);
-        if (project.error) fail({ ...project.error, build: buildFailure });
-        const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
-        if (schemeError) fail({ ...schemeError, build: buildFailure });
-      }
-
-      const podState = d.readPodState(root);
-      const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
-      const action = podAction(podState, verdict);
-      if (action.install) {
-        step('pods');
-        const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
-        const podCommand = result?.command || 'pod install';
-        for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
-        if (result?.failed) {
-          phase('pods', 'FAILED');
-          fail({
-            code: result.code || 'STIM_DEPS_FAILED',
-            message: result.reason || '`pod install` failed.',
-            remedy: result.remedy || `See ${logFile} for the transcript.`,
-            lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
-            build: buildFailure,
-          });
-        }
-        stats.setPodsMs(result?.durationMs ?? 0);
-        phase(
-          'pods',
-          `${action.reason} -> installed with \`${podCommand}\` (${formatDuration(result?.durationMs ?? 0)})`,
-        );
-        mutatingSteps.push(podCommand);
-      }
-
-      if (mutatingSteps.length) {
-        const after = await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: PLATFORM,
-          previousHash: fingerprint,
-          fingerprint: d.fingerprintProject,
+    const prebuild = d.planPrebuild(root, PLATFORM, { isExpo, fingerprint, sources: fingerprintSources });
+    if (prebuild === 'refuse') {
+      fail({ ...staleNativeDirRefusal(PLATFORM), build: buildFailure });
+    }
+    reportPendingRecheck(prebuild);
+    if (prebuild === 'generate' || prebuild === 'regenerate') {
+      step('prebuild');
+      recordPrebuild(root, PLATFORM, null);
+      const result = await d.runPrebuild(root, PLATFORM, logWriter(), { clean: prebuild === 'regenerate' });
+      if (result?.failed) {
+        phase('prebuild', 'FAILED');
+        fail({
+          code: result.code || 'STIM_PREBUILD_FAILED',
+          message: result.reason || 'expo prebuild failed.',
+          remedy: result.remedy || `See ${logFile} for the transcript.`,
+          lines: (result.lastLines || []).slice(-5),
+          build: buildFailure,
         });
-        const prebuildRan = mutatingSteps.includes('prebuild');
-        const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
-        if (after && !editedConfig.length && prebuildRan) {
-          recordPrebuild(root, PLATFORM, after.hash);
-        }
-        if (!after || editedConfig.length) {
-          storeHash = null;
-          storeKey = null;
-          buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
-          note(
-            chalk.yellow(
-              phaseLine(
-                'fingerprint',
-                after
-                  ? changedDuringBuildLine(editedConfig)
-                  : `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
-              ),
-            ),
-          );
-        } else if (after.moved) {
-          rekeyedBy.push(...mutatingSteps.map((mutation) => (mutation === 'prebuild' ? mutation : 'pod install')));
-          storeHash = after.hash;
-          storeSources = after.sources;
-          storeKey = buildCacheKey(PLATFORM, after.hash, keyOptions);
-          buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
-          note(
-            chalk.dim(
-              phaseLine(
-                'fingerprint',
-                `${shortHash(fingerprint)} -> ${shortHash(storeHash)} (after ${mutatingSteps.join(', ')})`,
-              ),
-            ),
-          );
+      }
+      const outcome =
+        prebuild === 'generate'
+          ? 'ios/ absent -> generated'
+          : 'ios/ not generated from this fingerprint -> regenerated with --clean';
+      phase('prebuild', `${outcome} (${formatDuration(result?.durationMs ?? 0)})`);
+      mutatingSteps.push('prebuild');
+    }
 
-          const late = useBuildCache ? d.resolveBuild(PLATFORM, storeKey) : null;
-          if (late) {
-            const prepared = await installableCachedApp(late);
-            if (prepared) {
-              appPath = prepared;
-              cacheHit = 'local';
-              lateHit();
-              phase('cache', `hit ${shortHash(storeHash)} (post-${mutatingSteps.join('/')} key)`);
-              if (releasedWait) {
-                waitedForBuild = releasedWait.facts;
-                phase(
-                  'build',
-                  `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
-                );
-              }
+    if (isExpo && buildScheme !== undefined) {
+      const project = d.discoverXcodeProject(root);
+      if (project.error) fail({ ...project.error, build: buildFailure });
+      const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
+      if (schemeError) fail({ ...schemeError, build: buildFailure });
+    }
+
+    const podState = d.readPodState(root);
+    const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
+    const action = podAction(podState, verdict);
+    if (action.install) {
+      step('pods');
+      const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
+      const podCommand = result?.command || 'pod install';
+      for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
+      if (result?.failed) {
+        phase('pods', 'FAILED');
+        fail({
+          code: result.code || 'STIM_DEPS_FAILED',
+          message: result.reason || '`pod install` failed.',
+          remedy: result.remedy || `See ${logFile} for the transcript.`,
+          lines: result.diagnosticLines?.length ? result.diagnosticLines : (result.lastLines || []).slice(-5),
+          build: buildFailure,
+        });
+      }
+      stats.setPodsMs(result?.durationMs ?? 0);
+      phase(
+        'pods',
+        `${action.reason} -> installed with \`${podCommand}\` (${formatDuration(result?.durationMs ?? 0)})`,
+      );
+      mutatingSteps.push(podCommand);
+    }
+
+    return { mutatingSteps, rekeyedBy };
+  }
+
+  async function revalidateSource({
+    mutatingSteps,
+    rekeyedBy,
+  }: SourcePreparation): Promise<ReadyArtifact<string> | null> {
+    if (mutatingSteps.length) {
+      const after = await refingerprintAfterMutation({
+        projectRoot: root,
+        platform: PLATFORM,
+        previousHash: fingerprint,
+        fingerprint: d.fingerprintProject,
+      });
+      const prebuildRan = mutatingSteps.includes('prebuild');
+      const editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
+      if (after && !editedConfig.length && prebuildRan) {
+        recordPrebuild(root, PLATFORM, after.hash);
+      }
+      if (!after || editedConfig.length) {
+        storeHash = null;
+        storeKey = null;
+        buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };
+        note(
+          chalk.yellow(
+            phaseLine(
+              'fingerprint',
+              after
+                ? changedDuringBuildLine(editedConfig)
+                : `unavailable after ${mutatingSteps.join(', ')}; the build will be installed but not cached`,
+            ),
+          ),
+        );
+      } else if (after.moved) {
+        rekeyedBy.push(...mutatingSteps.map((mutation) => (mutation === 'prebuild' ? mutation : 'pod install')));
+        storeHash = after.hash;
+        storeSources = after.sources;
+        storeKey = buildCacheKey(PLATFORM, after.hash, keyOptions);
+        buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
+        note(
+          chalk.dim(
+            phaseLine(
+              'fingerprint',
+              `${shortHash(fingerprint)} -> ${shortHash(storeHash)} (after ${mutatingSteps.join(', ')})`,
+            ),
+          ),
+        );
+
+        const late = useBuildCache ? d.resolveBuild(PLATFORM, storeKey) : null;
+        if (late) {
+          const prepared = await installableCachedApp(late);
+          if (prepared) {
+            appPath = prepared;
+            cacheHit = 'local';
+            lateHit();
+            phase('cache', `hit ${shortHash(storeHash)} (post-${mutatingSteps.join('/')} key)`);
+            if (releasedWait) {
+              waitedForBuild = releasedWait.facts;
+              phase(
+                'build',
+                `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
+              );
             }
           }
         }
       }
+    }
 
-      if (offload && !appPath) {
-        explainMiss(rekeyedBy);
-        step('compile');
-        if (!storeKey)
-          fallBack('no cache key to store the app under', 'offload failed: no cache key to store the app under');
-        const choice = storeKey ? await chooseMachine(offload) : null;
-        if (!choice || !(await compileElsewhere({ choice, candidate: offload }))) await takeBuildSlot();
-      }
+    return appPath ? { ready: appPath } : null;
+  }
 
-      if (!appPath) {
-        if (!offload) explainMiss(rekeyedBy);
-        step('compile');
-        if (offload) {
-          stats.setPlacement({
-            decision: 'fell-back',
-            slotWaitMs,
-            deviceSlotWaitMs: stats.deviceSlotWaitMs(),
-            reason: offloadFallback ?? 'offload failed',
-            ...(fallbackMachine ? { machine: fallbackMachine } : {}),
-          });
-        } else {
-          stats.setPlacement({
-            decision: 'here',
-            reason: hereReason,
-            slotWaitMs,
-            deviceSlotWaitMs: stats.deviceSlotWaitMs(),
-          });
-        }
-        builtOn = 'here';
-        buildFailure = { ...buildFailure, builtOn };
-        phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
-        const result = await d.buildIos({
-          root,
-          scheme: buildScheme,
-          udid,
-          destination: remoteDestination ? GENERIC_SIM_DESTINATION : null,
-          arch: remoteDestination ? simulatorArch : null,
-          ...(physical ? { sdk: IPHONEOS_SDK } : {}),
-          logWriter: logWriter(),
-          ...(configuration ? { configuration } : {}),
-          estimateMs: estimates().coldBuildMs,
-          optimizations: optimizations,
+  async function acquireRemoteArtifact(
+    offload: Candidate,
+    { rekeyedBy }: SourcePreparation,
+  ): Promise<ReadyArtifact<string> | null> {
+    explainMiss(rekeyedBy);
+    step('compile');
+    if (!storeKey)
+      fallBack('no cache key to store the app under', 'offload failed: no cache key to store the app under');
+    const choice = storeKey ? await chooseMachine(offload) : null;
+    if (choice) await compileElsewhere({ choice, candidate: offload });
+    return appPath ? { ready: appPath } : null;
+  }
+
+  async function compileHere(offload: Candidate | null, { rekeyedBy }: SourcePreparation): Promise<string> {
+    if (!offload) explainMiss(rekeyedBy);
+    step('compile');
+    if (offload) {
+      stats.setPlacement({
+        decision: 'fell-back',
+        slotWaitMs,
+        deviceSlotWaitMs: stats.deviceSlotWaitMs(),
+        reason: offloadFallback ?? 'offload failed',
+        ...(fallbackMachine ? { machine: fallbackMachine } : {}),
+      });
+    } else {
+      stats.setPlacement({
+        decision: 'here',
+        reason: hereReason,
+        slotWaitMs,
+        deviceSlotWaitMs: stats.deviceSlotWaitMs(),
+      });
+    }
+    builtOn = 'here';
+    buildFailure = { ...buildFailure, builtOn };
+    phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);
+    const result = await d.buildIos({
+      root,
+      scheme: buildScheme,
+      udid,
+      destination: remoteDestination ? GENERIC_SIM_DESTINATION : null,
+      arch: remoteDestination ? simulatorArch : null,
+      ...(physical ? { sdk: IPHONEOS_SDK } : {}),
+      logWriter: logWriter(),
+      ...(configuration ? { configuration } : {}),
+      estimateMs: estimates().coldBuildMs,
+      optimizations: optimizations,
+    });
+    compilationCache = result.compilationCache;
+    phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
+    if (!result.ok) {
+      phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
+      printDiagnostics(note, result);
+      const report = xcodeFailureReport(result, logFile);
+      fail({
+        code: result.code,
+        message: report.message,
+        remedy: report.remedy,
+        logPath: logFile,
+        build: { ...buildFailure, diagnostics: result.diagnostics },
+      });
+    }
+    stats.setBuildMs(result.durationMs);
+    phase('build', `ok (${formatDuration(result.durationMs)})`);
+    appPath = result.appPath;
+    bundleId = result.bundleId;
+
+    return appPath;
+  }
+
+  async function storeArtifact(artifactPath: string): Promise<void> {
+    if (storeKey && cachePolicy.write) {
+      try {
+        const stored = await storeTieredBuild({
+          local: filesystemBuildCapability({
+            resolve: d.resolveBuild,
+            store: d.storeBuild,
+            sources: storeSources,
+          }),
+          loadProvider,
+          target: { projectRoot: root, platform: PLATFORM, key: storeKey },
+          sourcePath: artifactPath,
+          overwrite: !useBuildCache || swapFellBack,
+          warn: cacheWarn,
         });
-        compilationCache = result.compilationCache;
-        phase('cache', `compilation cache ${compilationCacheActivityLine(compilationCache)}`);
-        if (!result.ok) {
-          phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
-          printDiagnostics(note, result);
-          const report = xcodeFailureReport(result, logFile);
-          fail({
-            code: result.code,
-            message: report.message,
-            remedy: report.remedy,
-            logPath: logFile,
-            build: { ...buildFailure, diagnostics: result.diagnostics },
-          });
-        }
-        stats.setBuildMs(result.durationMs);
-        phase('build', `ok (${formatDuration(result.durationMs)})`);
-        appPath = result.appPath;
-        bundleId = result.bundleId;
-
-        await settleStoreKeyAfterCompile(mutatingSteps.includes('prebuild'));
-
-        if (storeKey && cachePolicy.write) {
-          try {
-            const stored = await storeTieredBuild({
-              local: filesystemBuildCapability({
-                resolve: d.resolveBuild,
-                store: d.storeBuild,
-                sources: storeSources,
-              }),
-              loadProvider,
-              target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-              sourcePath: appPath!,
-              overwrite: !useBuildCache || swapFellBack,
-              warn: cacheWarn,
-            });
-            providerUpload = stored.providerUpload;
-            providerName = stored.providerName ?? providerName;
-          } catch (e) {
-            note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
-          }
-        }
-
-        if (physical) {
-          const prepared = await prepareDeviceApp(appPath!, { fresh: true });
-          if (!prepared) return;
-          appPath = prepared;
-        }
-
-        if (remote && !physical && storeHash) {
-          uploadPending = d.uploadRemote({
-            logWriter: logWriter(),
-            provider: remote.provider,
-            platform: PLATFORM,
-            projectRoot: root,
-            fingerprintHash: storeHash,
-            buildPath: appPath!,
-            runOptions: providerRunOptions,
-          });
-        }
+        providerUpload = stored.providerUpload;
+        providerName = stored.providerName ?? providerName;
+      } catch (e) {
+        note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
       }
     }
   }
 
+  async function finishArtifact(artifactPath: string): Promise<string> {
+    let installPath = artifactPath;
+    if (physical) {
+      const prepared = await prepareDeviceApp(installPath, { fresh: true });
+      if (!prepared) return installPath;
+      installPath = prepared;
+    }
+
+    if (remote && !physical && storeHash) {
+      uploadPending = d.uploadRemote({
+        logWriter: logWriter(),
+        provider: remote.provider,
+        platform: PLATFORM,
+        projectRoot: root,
+        fingerprintHash: storeHash,
+        buildPath: installPath,
+        runOptions: providerRunOptions,
+      });
+    }
+
+    return installPath;
+  }
+
   let transferred = false;
   try {
-    await resolveInitialFingerprint();
-    if (!easBuild) {
-      remote = await resolveRemoteArtifact();
-      if (!appPath) miss(reasonForMiss([]).reason);
-      await awaitSharedBuild();
-      await prepareCachedArtifact();
-      if (appPath) lateHit();
-      else if (swapFellBack) miss(reasonForMiss([]).reason);
-      await buildArtifact();
-    }
+    appPath = await runArtifactLifecycle<string, SourcePreparation, Candidate>({
+      resolve: async () => {
+        await resolveInitialFingerprint();
+        if (easBuild) return { kind: 'ready', artifact: appPath! };
+        remote = await resolveRemoteArtifact();
+        if (appPath) return { kind: 'cached', artifact: appPath };
+        miss(reasonForMiss([]).reason);
+        return { kind: 'miss' };
+      },
+      claim: useBuildCache
+        ? async () => {
+            await awaitSharedBuild();
+            return appPath;
+          }
+        : undefined,
+      reuse: async (cached) => {
+        appPath = await prepareCachedArtifact(cached);
+        if (appPath) lateHit();
+        else if (swapFellBack) miss(reasonForMiss([]).reason);
+        return appPath;
+      },
+      build: {
+        placement: {
+          select: () => {
+            buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache, buildMachine };
+            return placeBuild();
+          },
+          acquire: acquireRemoteArtifact,
+        },
+        admit: takeBuildSlot,
+        prepare: prepareSource,
+        revalidate: revalidateSource,
+        compile: compileHere,
+        validate: async ({ mutatingSteps }) => {
+          await settleStoreKeyAfterCompile(mutatingSteps.includes('prebuild'));
+          return storeKey ? 'cacheable' : 'uncacheable';
+        },
+        store: storeArtifact,
+        finish: finishArtifact,
+      },
+      release: () => {
+        if (openOffload.choice) closeOffload(openOffload.choice);
+        releaseLock();
+        releaseSlot();
+      },
+    });
     const artifact: PreparedIosArtifact = {
       handoff,
       path: appPath!,
@@ -1134,7 +1187,7 @@ export async function acquireIosArtifact(
       cache: {
         identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
         hit: cacheHit,
-        providerName: remote?.name ?? providerName,
+        providerName: (remote as LoadProjectProviderResult | null)?.name ?? providerName,
         buildMachine,
         ...(builtOn ? { builtOn } : {}),
         offloadedTo,
@@ -1183,9 +1236,6 @@ export async function acquireIosArtifact(
     if (error instanceof ArtifactRefusal) return { ok: false, failure: error.failure, compilationCache };
     throw error;
   } finally {
-    if (openOffload.choice) closeOffload(openOffload.choice);
-    releaseLock();
-    releaseSlot();
     if (!transferred) releaseArtifact();
   }
 }
