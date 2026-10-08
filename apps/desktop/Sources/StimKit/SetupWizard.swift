@@ -404,7 +404,7 @@ public struct SetupWizard: Sendable {
     journal?.done == false
       && capabilities.contains { capability in
         let state = status(for: capability)?.state
-        return state == .notAsked || state == .revoked
+        return state == .notAsked || state == .revoked || state == .lapsed
       }
   }
 

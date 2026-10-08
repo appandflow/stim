@@ -18,6 +18,11 @@ import { readAccessTicket, readHostPermissions } from '../offload/access-ticket.
 import {
   endpoint,
   findPeer,
+  markApproved,
+  isLapsed,
+  lapsedLine,
+  pendingReport,
+  requestedLine,
   parseMachine,
   realIo,
   type TailnetMachineIo,
@@ -36,12 +41,14 @@ interface MachineReport {
     | 'pending'
     | 'approved'
     | 'revoked'
+    | 'lapsed'
     | 'unreachable'
     | 'credentials-unavailable'
     | 'busy';
   dnsName?: string;
   deviceId?: string;
   requestedAt?: string;
+  expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
 }
 
@@ -130,6 +137,7 @@ async function request(
     deviceToken: reply.result.deviceToken,
     state: 'pending',
     requestedAt: new Date().toISOString(),
+    expiresAt: reply.result.approval.expiresAt,
     ...(ticket ? { ticketHash: ticket.ticketHash } : {}),
   };
   return {
@@ -139,6 +147,7 @@ async function request(
       state: 'pending',
       deviceId: credential.deviceId,
       requestedAt: credential.requestedAt,
+      expiresAt: credential.expiresAt,
     },
     finding: note(
       `Asked ${machine} for hosting access`,
@@ -299,7 +308,7 @@ export async function inspectDeviceHostMachines(
           reply.result.capabilities.includes('device-host')
         ) {
           if (credential.state !== 'approved') {
-            credentials = credentials.map((each) => (each.machine === machine ? { ...each, state: 'approved' } : each));
+            credentials = credentials.map((each) => (each.machine === machine ? markApproved(each) : each));
             store(credentials);
           }
           const host = readHostPermissions(reply.result.host);
@@ -332,22 +341,27 @@ export async function inspectDeviceHostMachines(
         const ticket = fix && pending && credential.state !== 'approved' ? readAccessTicket() : undefined;
         ask = fix && (revoked || (!!ticket && credential.ticketHash !== ticket.ticketHash));
         if (pending && !ask) {
-          inspected.machines.push({ ...known, state: 'pending' });
+          inspected.machines.push({ ...known, ...pendingReport(credential) });
           inspected.findings.push(
             note(
               `Remote Mac ${machine} has not approved this Mac for device hosting yet`,
-              `Requested at ${credential.requestedAt}.`,
+              requestedLine(credential),
               approval(machine, credential.deviceId),
             ),
           );
           continue;
         }
         if (!ask) {
-          inspected.machines.push({ ...known, state: revoked ? 'revoked' : 'unreachable' });
+          const lapsed = revoked && isLapsed(credential);
+          inspected.machines.push({ ...known, state: lapsed ? 'lapsed' : revoked ? 'revoked' : 'unreachable' });
           inspected.findings.push(
             note(
-              `Remote Mac ${machine} ${revoked ? 'no longer accepts this Mac for device hosting' : 'did not confirm hosting access'}`,
-              'The saved token and pinned node are preserved.',
+              lapsed
+                ? `Hosting request to ${machine} lapsed`
+                : `Remote Mac ${machine} ${revoked ? 'no longer accepts this Mac for device hosting' : 'did not confirm hosting access'}`,
+              lapsed
+                ? `${lapsedLine(machine, credential)} The saved token and pinned node are preserved.`
+                : 'The saved token and pinned node are preserved.',
               revoked
                 ? 'Run `stim doctor --fix` to ask again.'
                 : `Check stim-server and its tailnet serve route on ${machine}, then run doctor again.`,

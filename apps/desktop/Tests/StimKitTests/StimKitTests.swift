@@ -591,7 +591,7 @@ import Testing
     #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
     #expect(StatusFilter.summary([]) == "None")
     #expect(StatusFilter.summary([.notSetUp]) == "Not set up")
-    #expect(StatusFilter.summary([.idle, .live]) == "Live, Idle")
+    #expect(StatusFilter.summary([.idle, .live]) == "Active, Idle")
     #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
   }
 

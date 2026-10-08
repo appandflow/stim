@@ -180,7 +180,10 @@ struct StageLine: View {
     HStack(spacing: Space.md) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Color(stage.tone))
-        Text(stage.label.rawValue).font(.stim(.callout, weight: .semibold)).fixedSize()
+        Text(stage.label.rawValue)
+          .font(.stim(.body, weight: .semibold))
+          .foregroundStyle(Color(stage.tone))
+          .fixedSize()
         if let subtitle = stage.subtitle {
           Text(subtitle).font(.stim(.callout)).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
         }
@@ -342,7 +345,7 @@ struct UsageFigures: View {
   var usage: WorkspaceUsage
 
   var body: some View {
-    if let cpu = usage.cpuPercent { figure("cpu", formatPercent(cpu), help: "CPU, where 100% is one core") }
+    if let cpu = usage.cpuPercent { figure("speedometer", formatPercent(cpu), help: "CPU, where 100% is one core") }
     if let memory = usage.memoryMb {
       figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
     }
