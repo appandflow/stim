@@ -189,6 +189,7 @@ struct DeviceViewer: View {
           replay: replay, replaying: replaying,
           presence: env.appPresence(device),
           showsCovers: true,
+          status: DeviceTileStatus(device: device, canControl: interactive, building: env.runningBuild(for: device) != nil),
           viewer: true,
           maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2),
           pixelScale: devicePixelScale(

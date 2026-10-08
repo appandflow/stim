@@ -292,7 +292,7 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
-        if let action = status?.headerAction {
+        if !viewer, let action = status?.headerAction {
           Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
@@ -469,7 +469,9 @@ struct DeviceTile: View {
     if !showsCovers || interactive {
       EmptyView()
     } else if let build {
-      BuildCover(build: build, opaque: !device.isRunning, heading: status?.phase == .hostedStarting ? status?.message : nil)
+      BuildCover(
+        build: build, opaque: !device.isRunning,
+        heading: status?.phase == .hostedStarting && build.phase != "wait" ? status?.message : nil)
     } else if let status, status.phase != .shutDown, let message = status.message {
       statusCover(message, progress: status.showsProgress)
     } else if presence == AppPresence.none {

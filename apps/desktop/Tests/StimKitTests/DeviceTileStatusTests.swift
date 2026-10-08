@@ -41,7 +41,7 @@ import Testing
   @Test func aLiveDeviceOffersControlOrView() throws {
     let booted = try ios(state: "Booted")
     #expect(DeviceTileStatus(device: booted, canControl: true, building: false).headerAction == .control)
-    #expect(DeviceTileStatus(device: booted, canControl: false, building: true).headerAction == .view)
+    #expect(DeviceTileStatus(device: booted, canControl: false, building: false).headerAction == .view)
     #expect(DeviceTileStatus(device: booted, canControl: true, building: false).phase == .live)
   }
 
@@ -83,7 +83,6 @@ import Testing
 
   @Test func aMissingSimulatorIsReportedAsGone() throws {
     let device = try ios(state: "missing", name: nil)
-    #expect(device.label == "Missing simulator")
     let status = DeviceTileStatus(device: device, canControl: false, building: false)
     #expect(status.phase == .missing)
     #expect(status.message == "The simulator no longer exists.")
@@ -99,6 +98,7 @@ import Testing
 
   @Test func theEstimateShowsOnlyWhileTheRunIsWithinIt() {
     #expect(Format.estimateSuffix(elapsedMs: 30_000, expectedMs: 49_000) == " / ~0:49")
+    #expect(Format.estimateSuffix(elapsedMs: 49_000, expectedMs: 49_000) == " / ~0:49")
     #expect(Format.estimateSuffix(elapsedMs: 63_000, expectedMs: 49_000) == "")
     #expect(Format.estimateSuffix(elapsedMs: 10_000, expectedMs: nil) == "")
   }

@@ -559,6 +559,7 @@ struct WorkspaceDetail: View {
           Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(status.headerAction == nil)
         .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
         .accessibilityLabel("\(status.headerAction?.rawValue ?? "View") \(device.label)")
       }
