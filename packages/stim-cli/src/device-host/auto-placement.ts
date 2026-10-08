@@ -83,13 +83,18 @@ export async function probeHost(
   }
 }
 
-function hosted(target: HostedNativeTarget, reason: string, skipped: PlacementSkip[] = []) {
+function hosted(target: HostedNativeTarget, code: string, reason: string, skipped: PlacementSkip[] = []) {
   target.selection = { selected: 'auto', reason };
-  return { target, placement: { decision: 'hosted' as const, machine: target.host.machine, reason }, skipped };
+  return {
+    target,
+    placement: { decision: 'hosted' as const, machine: target.host.machine, reason },
+    code,
+    skipped,
+  };
 }
 
-function local(reason: string, skipped: PlacementSkip[] = []) {
-  return { target: null, placement: { decision: 'local' as const, reason }, skipped };
+function local(code: string, reason: string, skipped: PlacementSkip[] = []) {
+  return { target: null, placement: { decision: 'local' as const, reason }, code, skipped };
 }
 
 export async function automaticDevicePlacement(
@@ -129,7 +134,13 @@ export async function automaticDevicePlacement(
     probe?: typeof probeHost;
     budget?: typeof peekBudget;
   } = {},
-): Promise<{ target: HostedNativeTarget | null; placement: DevicePlacement; skipped: PlacementSkip[]; sticky?: true }> {
+): Promise<{
+  target: HostedNativeTarget | null;
+  placement: DevicePlacement;
+  code: string;
+  skipped: PlacementSkip[];
+  sticky?: true;
+}> {
   const recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined = read(root, platform, slot)[
     slot
   ];
@@ -143,13 +154,15 @@ export async function automaticDevicePlacement(
           machine: recorded.machine,
           reason: recorded.reason ?? decideDevicePlacement({ sticky: { machine: recorded.machine } }).reason,
         },
+        code: 'sticky',
         skipped: [],
         sticky: true,
       };
     write(root, slot, null, platform);
   }
   const devices = peek();
-  if (devices.localLive) return { ...local(decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
+  if (devices.localLive)
+    return { ...local('sticky', decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
   const entries = machines();
   if (entries === null)
     throw Object.assign(new Error('remote.machines is invalid. Run stim guide settings and correct it.'), {
@@ -172,7 +185,7 @@ export async function automaticDevicePlacement(
     buildMachine,
     noWait,
   });
-  if (early.kind === 'local' && early.skipped.length === 0) return local(early.reason);
+  if (early.kind === 'local' && early.skipped.length === 0) return local(early.code, early.reason);
   const probes = await Promise.all(entries.map((machine) => probe(machine, platform, selectors)));
   const decision = decideDevicePlacement({
     platform,
@@ -181,9 +194,9 @@ export async function automaticDevicePlacement(
     buildMachine,
     noWait,
   });
-  if (decision.kind === 'local') return local(decision.reason, decision.skipped);
+  if (decision.kind === 'local') return local(decision.code, decision.reason, decision.skipped);
   const target = probes.find((each) => each.probe.machine === decision.machines[0]!.machine)!.target!;
-  return hosted(target, decision.reason, decision.skipped);
+  return hosted(target, decision.code, decision.reason, decision.skipped);
 }
 
 export function devicePlacementLine(placement: DevicePlacement, skipped: PlacementSkip[]): string {

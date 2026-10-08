@@ -34,7 +34,12 @@ const decide = (local = here, offers: PlacementProbe[] = [offered('mini')], extr
   decideDevicePlacement({ platform: 'ios', here: local, offers, noWait: false, ...extra });
 
 test('a free local slot on a healthy Mac stays local instead of consuming a host', () => {
-  expect(decide()).toEqual({ kind: 'local', reason: 'load 1.2/core here, 1 of 3 devices in use', skipped: [] });
+  expect(decide()).toEqual({
+    kind: 'local',
+    code: 'this-mac-free',
+    reason: 'load 1.2/core here, 1 of 3 devices in use',
+    skipped: [],
+  });
   expect(decide({ ...here, devices: { count: 10, max: 0, queued: 0 } }).kind).toBe('local');
 });
 
@@ -125,6 +130,23 @@ test('fallback includes every declined, incompatible, full, pressured and unreac
     skipped: offers.map((each) => ({ machine: each.machine, reason: expect.any(String) })),
   });
   expect(result.skipped[0]?.reason).toBe('declined: All configured hosted device reservations are occupied');
+  expect(result.skipped.map((each) => each.code)).toEqual([
+    'declined',
+    'no-matching-device',
+    'no-capacity',
+    'memory',
+    'no-matching-device',
+    'unreachable',
+  ]);
+  expect(result.code).toBe('no-host-admits');
+});
+
+test('a placed host and the reasons this Mac stays local carry stable codes', () => {
+  expect(decide(full).code).toBe('placed');
+  expect(decide(full, []).code).toBe('no-remote-mac');
+  expect(decide({ ...full, devices: { ...full.devices, count: null } }).code).toBe('device-count-unknown');
+  expect(decide({ ...here, loadPerCore: 3 }, [offered('unknown', null)]).skipped[0]?.code).toBe('load');
+  expect(decideDevicePlacement({ sticky: { machine: 'mini' } }).code).toBe('sticky');
 });
 
 test('no-wait does not reject an admitted host or bypass local admission when none admits', () => {

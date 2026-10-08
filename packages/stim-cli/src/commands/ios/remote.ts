@@ -1,5 +1,6 @@
 import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
+import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
@@ -121,6 +122,7 @@ export async function selectIosPlacement(
     noWait: boolean;
     note: (line: string) => void;
     phase: (label: string, line: string) => void;
+    log?: (record: PlacementRecord) => void;
   },
 ): Promise<
   | (ReturnType<typeof resolveIosRemote> & {
@@ -133,7 +135,7 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, phase, release, metroCheck } = args;
+  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, metroCheck } = args;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = args.validateSelectors();
@@ -148,6 +150,7 @@ export async function selectIosPlacement(
       noWait,
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
+    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, placed }));
     if (placed.target && !release && !metroCheck)
       return {
         failure: {

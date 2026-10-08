@@ -585,6 +585,7 @@ async function runIos(
     noWait: deviceSlotWaitMs === 0,
     note,
     phase,
+    log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   devicePlacement = remoteSelection.devicePlacement;

@@ -919,6 +919,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     checkBudget: options.checkBudget,
     note: out,
     phase,
+    log: (entry) => writer.write(entry),
+    fromFlag: commandRemoteBackend !== null,
   });
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;

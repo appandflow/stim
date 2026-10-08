@@ -435,6 +435,8 @@ offload resolves later, after the device architecture is known.
 When no host admits, auto runs here and may wait in the existing FIFO device
 slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
 line explains the decision and the skipped hosts. JSON progress goes to stderr.
+The same decision, with a reason code per host, is a src: placement record in
+stim logs (stim guide logs).
 A recorded hosted session wins over load; a live local owned slot stays here.
 A stopped recorded session places again; unreachable or unknown sessions refuse.
 
