@@ -323,7 +323,7 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
   if (!stream.isTTY) return;
   stream.on('data', discardInput);
   stream.resume();
-  await sleep(50);
+  await sleep(300);
   stream.off('data', discardInput);
   stream.pause();
 }

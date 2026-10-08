@@ -269,8 +269,8 @@ so there is no Check again button:
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
    signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
-   for each new capability grant there; Yes is the default, so Enter approves
-   running that Mac's project code on this one. Desktop mirrors
+   for each new capability grant there; Yes is the default, so Enter lets the
+   client Mac build here, or run its app code in hosted simulators here. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
    shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
