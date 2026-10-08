@@ -63,15 +63,15 @@ msgstr ": {summary}"
 msgid "{0, plural, one {# action} other {# actions}}"
 msgstr "{0, plural, one {# action} other {# actions}}"
 
+#. placeholder {0}: capacity.liveCount
+#: src/screens/mac-status.tsx
+msgid "{0, plural, one {# active workspace} other {# active workspaces}}"
+msgstr "{0, plural, one {# active workspace} other {# active workspaces}}"
+
 #. placeholder {0}: total.fallbacks
 #: src/screens/mac-status.tsx
 msgid "{0, plural, one {# fallback} other {# fallbacks}}"
 msgstr "{0, plural, one {# fallback} other {# fallbacks}}"
-
-#. placeholder {0}: capacity.liveCount
-#: src/screens/mac-status.tsx
-msgid "{0, plural, one {# live workspace} other {# live workspaces}}"
-msgstr "{0, plural, one {# live workspace} other {# live workspaces}}"
 
 #. placeholder {0}: owner.processes
 #: src/screens/mac-status.tsx
@@ -283,8 +283,8 @@ msgstr "{live} · Stim holds {held} of {total} GB{over}"
 
 #: src/screens/home.tsx
 #: src/screens/home.tsx
-msgid "{live} live"
-msgstr "{live} live"
+msgid "{live} active"
+msgstr "{live} active"
 
 #: src/lib/workspace-view.ts
 msgid "{machine} failed"
@@ -603,8 +603,8 @@ msgid "{title}, {phaseText}, {timing}"
 msgstr "{title}, {phaseText}, {timing}"
 
 #: src/screens/menu.tsx
-msgid "{title}, live"
-msgstr "{title}, live"
+msgid "{title}, active"
+msgstr "{title}, active"
 
 #: src/components/replay-bar.tsx
 msgid "{title}: {label}"
@@ -747,8 +747,17 @@ msgid "About Stim"
 msgstr "About Stim"
 
 #: src/screens/agent-actions.tsx
+#: src/screens/mac-status.tsx
 msgid "active"
 msgstr "active"
+
+#: src/screens/filters.tsx
+msgid "Active"
+msgstr "Active"
+
+#: src/lib/home.ts
+msgid "Active workspaces"
+msgstr "Active workspaces"
 
 #: src/screens/workspace-resources.tsx
 msgid "Activity totals"
@@ -821,8 +830,8 @@ msgid "All machines"
 msgstr "All machines"
 
 #: src/screens/filters.tsx
-msgid "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
-msgstr "All shows live, idle and archived workspaces. Archived shows only removed worktrees."
+msgid "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
+msgstr "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
 
 #: src/screens/logs.tsx
 msgid "All slots"
@@ -2232,14 +2241,9 @@ msgstr "Likely cold"
 msgid "Linking"
 msgstr "Linking"
 
-#: src/screens/mac-status.tsx
-msgid "live"
-msgstr "live"
-
 #: src/components/replay-bar.tsx
 #: src/components/replay-bar.tsx
 #: src/components/replay-bar.tsx
-#: src/screens/filters.tsx
 msgid "Live"
 msgstr "Live"
 
@@ -2250,10 +2254,6 @@ msgstr "Live output"
 #: src/components/device-screen.tsx
 msgid "Live screen of {label}"
 msgstr "Live screen of {label}"
-
-#: src/lib/home.ts
-msgid "Live workspaces"
-msgstr "Live workspaces"
 
 #: src/components/replay-bar.tsx
 msgid "Live, device stopped"
@@ -2534,6 +2534,10 @@ msgstr "No {outcome} run of this project recorded yet"
 msgid "no action yet"
 msgstr "no action yet"
 
+#: src/screens/home.tsx
+msgid "No active workspaces"
+msgstr "No active workspaces"
+
 #: src/components/device-tile.tsx
 #: src/screens/agent-actions.tsx
 msgid "No agent"
@@ -2631,10 +2635,6 @@ msgstr "no limit"
 #: src/components/device-tile.tsx
 msgid "No live screen"
 msgstr "No live screen"
-
-#: src/screens/home.tsx
-msgid "No live workspaces"
-msgstr "No live workspaces"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx

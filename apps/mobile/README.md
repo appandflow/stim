@@ -27,28 +27,28 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 
 - **Home**: one screen for every paired machine; the app keeps a connection
   to each. The **Machines** row has a chip per machine with its connection dot and basic
-  usage: live workspaces, the machine's memory used of total (as Activity
+  usage: active workspaces, the machine's memory used of total (as Activity
   Monitor's "Memory Used" counts it, colored by memory pressure), and the lowest
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
   grouped by repo. Each repo is a heading with how many of its workspaces are
-  live and idle; repos with a live workspace come first, then by name. In a
-  repo, live workspaces come before idle ones, each by name and machine, so a
-  workspace moves only when it turns live or idle, not while builds run and
+  active and idle; repos with an active workspace come first, then by name. In a
+  repo, active workspaces come before idle ones, each by name and machine, so a
+  workspace moves only when it turns active or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as live. When status identifies a linked Git checkout, its app projects
+  counts as active. When status identifies a linked Git checkout, its app projects
   share one workspace heading, with the branch and git state shown once. App
   children show paths such as `apps/mobile` and `apps/desktop`, each with its own
   status. The checkout heading opens the unified workspace page at the first app;
   child rows open the same page scrolled to that app's first device. Children stay visible without
-  an extra expansion step; filters still apply per app. Repo live/idle counts count
+  an extra expansion step; filters still apply per app. Repo active/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
   [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
   Source-only worktrees share their repo's section and count as idle. **Idle**, **All**
-  and **Show all** reveal them; the default **Live** filter hides them. Their rows
+  and **Show all** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
   than one is paired. They have no app activity or controls and do not open a
   workspace page. Machine and project filters apply; errors and remote-session
@@ -62,7 +62,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   this order and only when there is something to show: the workspace's agent
   session (the same one the Work card shows, running or ended) with how many
   others it has; what is wrong (error count, which opens the logs, a failed
-  build while the workspace is live or for a day after, a closed app, **CI
+  build while the workspace is active or for a day after, a closed app, **CI
   failing**, and warning or issue counts); while building, the build step with
   its counts, the cache outcome and the elapsed time against the estimate over
   a bar of the planned phases; while warming, the step with an activity
@@ -90,7 +90,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   or refuses the connection, free disk below 5 GB (the default of Stim's
   refuse floor), a failed last build, errors in the logs since the marker,
   status issues, a running build at more than twice its median, and a live
-  simulator or emulator whose app is not running. A workspace that is not live,
+  simulator or emulator whose app is not running. A workspace that is not active,
   building or holding a remote session, warming and ready ones included, adds only its error issues and a build
   that failed in the last day; the machine status sheet lists every issue. A
   disconnected machine shows only its offline item, because its status is
@@ -131,11 +131,11 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   destinations is open is saved on the phone and is what home shows next
   launch.
 - **Archived workspaces**: choose **Archived** in Filters to see removed
-  workspaces, grouped by repository and worktree like the live list. Apps in one
+  workspaces, grouped by repository and worktree like the active list. Apps in one
   worktree share a heading and keep their app labels. Rows show removal time,
   size, the PR number (or Merged), and an indicator for expired content or
   content expiring within 24 hours. Missing branch or repository facts fall back
-  to the worktree folder. Live and Idle show only current workspaces; All
+  to the worktree folder. Active and Idle show only current workspaces; All
   shows them followed by the archived ones.
   An archive opens the same workspace page as a read-only variant: Status shows
   removal, last activity, retention dates, size by content and activity totals;
@@ -146,17 +146,17 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   the number and title. Recordings replace live device tiles and open replay for
   each retained slot. Expired logs and recordings are marked. A replacement
   link opens the newer workspace when available. Archives have no workspace
-  controls and never add to live counts or Needs attention. An older server
+  controls and never add to active counts or Needs attention. An older server
   without archive status shows an empty list; one that refuses `archive.detail`
   keeps the last-build summary and build count and shows an update hint for full
   history and recording discovery. Archive log or replay refusals show an update hint.
-- **Filters**: the filter button filters the list by machine, by project, by live
+- **Filters**: the filter button filters the list by machine, by project, by active
   or idle, and to workspaces with errors or with remote sessions. The filters
-  are saved on the phone; a dot on the button shows that some are on. Live only
+  are saved on the phone; a dot on the button shows that some are on. Active only
   is the default.
 - **Machine status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
-  startup-volume free space charts over the last hour, the live workspaces and
+  startup-volume free space charts over the last hour, the active workspaces and
   Stim's share of memory, then **CPU and memory**, the status `machine` owners
   by memory. **Disk** shows the lowest free space against Stim's disk budget
   and a bar of what uses it: Stim devices, Stim caches and outputs,
@@ -181,7 +181,7 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   first 10 rows with **Show all N**, and the phone remembers both per section.
   The title shows the pairing's scope; a read-only pairing also says what it
   cannot do, with **Allow control**.
-  Needs attention groups status issues by workspace, live workspaces first,
+  Needs attention groups status issues by workspace, active workspaces first,
   then those with an error, and shows each issue's remedy with **Copy**, which
   copies it as `cd '<workspace>' && <remedy>`. No remedy maps to Reload or
   Stop, so none offers an action button.
@@ -189,7 +189,7 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   home right and shows the menu behind it: **Workspaces**, **Devices** and
   **Machines** (the same switch as home's toggle), **Notifications** (see
   [Inbox](#inbox)) with its unread count, **Pair a machine**, and
-  **Recent workspaces**, the workspaces most recently live or opened on this
+  **Recent workspaces**, the workspaces most recently active or opened on this
   phone. The button at the bottom shows the number of
   paired machines and opens **About**, with the app version and build, the
   runtime, channel, update and protocol, each paired machine's stim and server
@@ -587,7 +587,7 @@ own tile, from the environment's `physicalDevices` in `stim status`, next to
 any simulator or emulator in the same slot. The tile names the device and its
 model, carries a **Physical** pill and the time left on the lease, and counts
 as running while the Mac reaches the device. A lease alone puts the workspace
-under Live.
+under Active.
 
 A connected physical iPhone or iPad streams its screen, view only: the tile
 and the viewer show it like a simulator's, the viewer has no Control, and the
