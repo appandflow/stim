@@ -1164,7 +1164,7 @@ request lapses, such as "Waiting for approval until 21:05", in local time),
 **Not offloading** (doctor reports the approved machine as not offloadable, for
 any reason but load or an unanswered server), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
-denied), **Request lapsed** (nobody on the build machine approved it in time;
+denied), **Request lapsed** (nobody on the remote Mac approved it in time;
 **Ask Again** is available), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
@@ -1199,9 +1199,8 @@ set remote.machines <list> --scope machine` after a confirmation, unsetting it
 when the list is empty; removing a **Different Mac** also runs `--fix`, which
 forgets the old node so the Mac can be asked again.
 While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
-<machine>…" beside the spinner. The run stops after 2 minutes, and the tab
-shows an error naming the command that timed out; the periodic checks without
-`--fix` have no limit.
+<machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
+plain check after 30 seconds, and the tab shows that stim did not answer.
 
 A remote Mac that runs another Stim build than this Mac (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
