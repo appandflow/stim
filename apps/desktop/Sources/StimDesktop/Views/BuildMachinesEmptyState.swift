@@ -48,7 +48,7 @@ struct BuildMachinesEmptyState: View {
         Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
       } else {
         if tailscaleOff {
-          AddMachineIllustration(scene: .tailscaleSwitch)
+          AddMachineIllustration(scene: .tailscaleOff)
         } else {
           BuildMachineArt()
         }

@@ -170,7 +170,6 @@ private struct PollKey: Hashable {
 }
 
 /// The Remote Macs tab for the state it is given: a progress view, the empty state, or the list.
-/// `tailscaleRunning` is nil until the first Tailscale read; an empty list shows a checking state until then.
 struct BuildMachinesContent<ThisMac: View>: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?
