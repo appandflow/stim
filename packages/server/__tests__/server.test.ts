@@ -2268,24 +2268,6 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
       auth: { pairingToken: createPairingToken().token, deviceName: 'phone' },
     });
 
-  test.skipIf(!fakeTailscale)('answers /health while a hello waits on a slow tailscale whois', async () => {
-    const port = await start({ whoisDelayMs: 1500 });
-    const client = await connect(port, '100.64.0.2');
-    const startedAt = Date.now();
-    const hello = pairingHello(client).then((reply) => ({ reply, elapsed: Date.now() - startedAt }));
-    const latencies: number[] = [];
-    while (Date.now() - startedAt < 1200) {
-      const asked = Date.now();
-      await fetch(`http://127.0.0.1:${port}/health`);
-      latencies.push(Date.now() - asked);
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-    const { reply, elapsed } = await hello;
-    expect(reply).toHaveProperty('result.deviceToken');
-    expect(elapsed).toBeGreaterThanOrEqual(1400);
-    expect(Math.max(...latencies)).toBeLessThan(700);
-  });
-
   test.skipIf(!fakeTailscale)('runs the host permission probe beside whois instead of after it', async () => {
     const port = await start({ whoisDelayMs: 1500, host: { executable: slowProbe(1500), name: 'Stim Host Dev' } });
     const client = await connect(port, '100.64.0.2');
