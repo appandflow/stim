@@ -1652,6 +1652,9 @@ RULES
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
                 baseline. rekeyedBy is empty.
+  placement     with ios.remote or android.remote set to auto or a Mac,
+                where the plan assumes the device runs: "on <machine>" or
+                "this Mac; auto may use <machines>"; absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss

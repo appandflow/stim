@@ -506,6 +506,11 @@ struct NextBuildView: View {
           .fixedSize(horizontal: false, vertical: true)
           .foregroundStyle(plan.refusal != nil || plan.cacheHit == .none ? Palette.warning : Palette.success)
           .help(plan.detail ?? "")
+        if let placement = plan.placement {
+          Text(placement.prefix(1).uppercased() + placement.dropFirst())
+            .foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
         if inlineDetails, let detail = plan.detail {
           Text(detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
