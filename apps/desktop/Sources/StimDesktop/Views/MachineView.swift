@@ -77,7 +77,8 @@ struct MachineView: View {
           NowBand(status: status, metrics: metrics, gc: gc)
           if let plan = autopilot.pressure { pressureBanner(plan) }
           ThisMacPlacements(model: buildMachines)
-          MachineHeading(icon: "internaldrive", title: "Disk on this Mac", subtitle: nil) { EmptyView() }
+          MachineHeading(icon: "internaldrive", title: "Disk usage", subtitle: "Workspace, device and tool storage on this Mac.")
+          { EmptyView() }
           headline(report)
           if let usage = status.payload?.archivedUsage { ArchivedStorageSection(usage: usage) }
           safeToFree(report)
@@ -109,7 +110,7 @@ struct MachineView: View {
       "Free this space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { commands in
-      Button(commands.count == 1 ? "Run the command" : "Run \(commands.count) commands", role: .destructive) {
+      Button("Free disk space", role: .destructive) {
         actions.run("Free disk space", steps: commands, key: ActionCenter.machineKey)
       }
     } message: { commands in
@@ -173,7 +174,7 @@ struct MachineView: View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("Choose a machine to see its resources and build activity.")
+        Text("View resource usage and disk space on this Mac, or build activity on a linked Mac.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
@@ -203,7 +204,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Do it") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free disk space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }
@@ -305,7 +306,11 @@ struct MachineView: View {
     let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
-    return CollapsibleSection("machine.free", title: "Safe to free now", items: report.free, capped: false) {
+    return CollapsibleSection("machine.free", title: "Free disk space", items: report.free, capped: false) {
+      Image(systemName: "trash")
+        .iconFont(IconSize.small)
+        .foregroundStyle(Palette.tertiary)
+        .accessibilityHidden(true)
       Spacer()
       if let active = actions.active(for: ActionCenter.machineKey) {
         Button {
@@ -362,7 +367,7 @@ struct MachineView: View {
         }
         Spacer()
         let command = StimCommand(["gc", "--json"], cwd: NSHomeDirectory())
-        Button("Preview cleanup") { actions.run("Preview cleanup", command, key: ActionCenter.machineKey) }
+        Button("Preview disk cleanup") { actions.run("Preview disk cleanup", command, key: ActionCenter.machineKey) }
           .buttonStyle(.stim())
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
           .help(command.displayLine())
@@ -421,7 +426,7 @@ struct MachineView: View {
 
   private func free(_ commands: [StimCommand]) {
     if let preview = FreePlan.preview(commands) {
-      actions.run("Preview cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
+      actions.run("Preview disk cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
     } else {
       confirming = commands
     }
@@ -430,13 +435,17 @@ struct MachineView: View {
   // MARK: Projects
 
   private func projects(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.projects", title: "Projects", items: report.repositories) {
+    CollapsibleSection("machine.projects", title: "Repositories and worktrees", items: report.repositories) {
+      Image(systemName: "folder")
+        .iconFont(IconSize.small)
+        .foregroundStyle(Palette.tertiary)
+        .accessibilityHidden(true)
       Spacer()
+    } content: { shown in
       if storage.hasGitHubCLI == false {
         Text("Install the GitHub CLI (gh) to show open pull requests.").font(.stim(.footnote))
           .foregroundStyle(Palette.tertiary)
       }
-    } content: { shown in
       if report.repositories.isEmpty {
         Text("stim status reports no workspaces.").foregroundStyle(Palette.tertiary)
       } else {
@@ -618,7 +627,12 @@ struct MachineView: View {
   // MARK: Devices
 
   private func devices(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.devices", title: "Simulators and emulators", items: report.devices) { shown in
+    CollapsibleSection("machine.devices", title: "Simulators and emulators", items: report.devices) {
+      Image(systemName: "iphone")
+        .iconFont(IconSize.small)
+        .foregroundStyle(Palette.tertiary)
+        .accessibilityHidden(true)
+    } content: { shown in
       Text(
         "Stim acts only on devices this Stim home created. The others are listed so you can see their size; manage them in Xcode or Android Studio."
       )
@@ -724,6 +738,10 @@ struct MachineView: View {
   private func runtimes(_ report: StorageReport) -> some View {
     let unused = report.runtimes.filter(\.unused)
     return CollapsibleSection("machine.runtimes", title: "Runtimes and system images", items: report.runtimes) {
+      Image(systemName: "square.stack.3d.up")
+        .iconFont(IconSize.small)
+        .foregroundStyle(Palette.tertiary)
+        .accessibilityHidden(true)
       if !unused.isEmpty {
         Pill(tone: .warning) {
           Text("\(unused.count) unused \u{00B7} \(Format.fileSize(unused.compactMap(\.size.bytes).reduce(0, +)))")
@@ -783,7 +801,11 @@ struct MachineView: View {
   // MARK: Other tools
 
   private func otherTools(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.otherTools", title: "Other tools", items: report.unmanaged, capped: false) {
+    CollapsibleSection("machine.otherTools", title: "Other tool storage", items: report.unmanaged, capped: false) {
+      Image(systemName: "wrench.and.screwdriver")
+        .iconFont(IconSize.small)
+        .foregroundStyle(Palette.tertiary)
+        .accessibilityHidden(true)
     } content: { _ in
       Text("Space Xcode, Gradle and other apps use. Stim never deletes these; clear them from the tool that owns them.")
         .font(.stim(.footnote))
