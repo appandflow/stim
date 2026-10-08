@@ -515,8 +515,10 @@ struct DeviceTile: View {
         viewer
           ? (device.platform == "web"
             ? "Closed. Run stim web to open the page again."
-            : run.map { _ in "Not running. Run to boot the device and install the app." }
-              ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
+            : status?.phase == .missing
+              ? (status?.message ?? "")
+              : run.map { _ in "Not running. Run to boot the device and install the app." }
+                ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
           : (device.platform == "web"
             ? "Closed."
             : status?.phase == .missing

@@ -560,8 +560,11 @@ struct WorkspaceDetail: View {
         }
         .buttonStyle(.plain)
         .disabled(status.headerAction == nil)
-        .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
-        .accessibilityLabel("\(status.headerAction?.rawValue ?? "View") \(device.label)")
+        .help(
+          status.headerAction == nil
+            ? "" : canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)"
+        )
+        .accessibilityLabel(status.headerAction.map { "\($0.rawValue) \(device.label)" } ?? device.label)
       }
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
