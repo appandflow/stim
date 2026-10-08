@@ -66,9 +66,8 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
-    run({ signal, ...request }) {
-      return invoke(context, { operation: 'run', options: request }, signal) as ReturnType<StimClient['run']>;
-    },
+    run: (({ signal, ...request }) =>
+      invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
     stop({ signal, ...request } = {}) {
       return invoke(context, { operation: 'stop', options: request }, signal) as ReturnType<StimClient['stop']>;
     },
