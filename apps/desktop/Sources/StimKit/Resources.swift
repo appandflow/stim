@@ -61,6 +61,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
   var roots = Set<Int>()
   if env.live, let pid = env.supervisor?.pid { roots.insert(pid) }
   if let metro = env.metro, metro.running, let pid = metro.pid { roots.insert(pid) }
+  if env.live, let app = env.macos?.app { roots.insert(Int(app.pid)) }
   for device in env.devices {
     switch device {
     case .ios where device.localSimulatorUDID != nil:
