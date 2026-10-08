@@ -35,7 +35,6 @@ public struct PlatformState: Equatable, Sendable {
     }
   }
 
-  /// Idle is the hollow dot.
   public var filled: Bool { kind != .idle }
 }
 
@@ -132,7 +131,7 @@ extension Workspace {
   }
 
   /// The platforms this workspace has run, in iOS, Android, macOS, Web order: a device, a build in the history or
-  /// last builds, a running build or a macOS run. A failed build shows under the same rule as `rowProblems`.
+  /// last builds, a running build or a macOS run. A failed iOS, Android or macOS build shows while the workspace is live or for a day after it failed, like `rowProblems`; a failed web page shows while it is loaded.
   public func platformStates(now: Date) -> [PlatformState] {
     ["ios", "android", "macos", "web"].compactMap { platform in
       let history = platform == "web" ? [] : (builds?.builds(for: platform) ?? [])
