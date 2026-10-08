@@ -10,7 +10,6 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
 import { androidHome } from '../devices/android.ts';
-import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from './android-path-limit.ts';
 import { capDiagnostics, type Diagnostic, extractGradleDiagnostics } from './errors-gradle.ts';
 import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccache.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
@@ -21,9 +20,21 @@ export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-type AndroidProjectResult =
-  | { failed?: never; androidDir: string; gradlew: string }
-  | { failed: true; code: string; reason: string; remedy: string };
+export interface ApkLayout {
+  directory: string;
+  outputsDir: string;
+}
+
+export interface GradleProject extends ApkLayout {
+  gradlew: string;
+  module: string;
+}
+
+export interface GradlePreflightFailure {
+  code: string;
+  reason: string;
+  remedy: string;
+}
 
 export const ASSEMBLE_TASK = 'assembleDebug';
 
@@ -37,61 +48,22 @@ const LAST_LINES = 20;
 
 const TRANSCRIPT_LINES = 2000;
 
-function androidDir(root: string) {
-  return join(root, 'android');
-}
-
-export function gradlewPath(root: string): string {
-  return join(androidDir(root), process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
-}
-
-export function apkOutputsDir(root: string): string {
-  return join(androidDir(root), 'app', 'build', 'outputs', 'apk');
-}
-
-export function debugApkDir(root: string): string {
-  return join(apkOutputsDir(root), 'debug');
-}
-
-export function discoverAndroidProject(root: string): AndroidProjectResult {
-  const dir = androidDir(root);
-  if (!existsSync(dir)) {
-    return {
-      failed: true,
-      code: BUILD_ERROR,
-      reason: `No android/ directory in ${root}.`,
-      remedy:
-        'Generate it (`npx expo prebuild -p android`, which `stim android` runs itself on an Expo project) or check out the native sources.',
-    };
-  }
-  const gradlew = gradlewPath(root);
-  if (!existsSync(gradlew)) {
-    return {
-      failed: true,
-      code: BUILD_ERROR,
-      reason: `${gradlew} does not exist, so there is no gradle wrapper to build with.`,
-      remedy:
-        'Restore the wrapper (`gradle wrapper` in android/, or regenerate the project with `npx expo prebuild -p android --clean`).',
-    };
-  }
-  return { androidDir: dir, gradlew };
-}
-
 export function androidSdkRefusal({
   sdkPath,
   sdkExists,
   hasLocalProperties,
+  localPropertiesPath,
 }: {
   sdkPath: string;
   sdkExists: boolean;
   hasLocalProperties: boolean;
+  localPropertiesPath: string;
 }): { code: string; reason: string; remedy: string } | null {
   if (sdkExists || hasLocalProperties) return null;
   return {
     code: BUILD_ERROR,
     reason: `No Android SDK at ${sdkPath}.`,
-    remedy:
-      'Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into android/local.properties. JAVA_HOME must point at a JDK 17 install as well.',
+    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
   };
 }
 
@@ -177,8 +149,7 @@ function listApkSubdirs(base: string, prefix: string[] = [], depth = 0): string[
   return dirs;
 }
 
-function findVariantApkDir(root: string, variant: string): string | null {
-  const base = apkOutputsDir(root);
+function findVariantApkDir(base: string, variant: string): string | null {
   const wanted = variant.trim().toLowerCase();
   for (const segments of listApkSubdirs(base)) {
     if (variantNameOf(segments).toLowerCase() === wanted) return join(base, ...segments);
@@ -205,31 +176,31 @@ export interface LocateApkResult {
   candidates?: string[];
 }
 
-export function locateApk(root: string, transcript = '', variant: string | null = null): LocateApkResult {
+export function locateApk(project: ApkLayout, transcript = '', variant: string | null = null): LocateApkResult {
   const fromTranscript = parseApkFromTranscript(transcript);
   if (fromTranscript) {
-    const abs = isAbsolute(fromTranscript) ? fromTranscript : join(androidDir(root), fromTranscript);
+    const abs = isAbsolute(fromTranscript) ? fromTranscript : join(project.directory, fromTranscript);
     if (existsSync(abs)) return { apkPath: abs };
   }
 
   if (variant) {
-    const dir = findVariantApkDir(root, variant);
+    const dir = findVariantApkDir(project.outputsDir, variant);
     const apk = dir ? apkInDir(dir) : null;
     return { apkPath: apk };
   }
 
-  const direct = apkInDir(debugApkDir(root));
+  const direct = apkInDir(join(project.outputsDir, 'debug'));
   if (direct) return { apkPath: direct };
 
-  const found = findDebugApksUnder(apkOutputsDir(root));
+  const found = findDebugApksUnder(project.outputsDir);
   if (found.length === 1) {
     const apk = found[0]!;
-    const rel = relative(apkOutputsDir(root), apk).split(sep).slice(0, -1);
+    const rel = relative(project.outputsDir, apk).split(sep).slice(0, -1);
     const suggested = variantNameOf(rel);
     return {
       apkPath: apk,
       note:
-        `no APK in ${relative(androidDir(root), debugApkDir(root))}; using ${relative(androidDir(root), apk)}` +
+        `no APK in ${relative(project.directory, join(project.outputsDir, 'debug'))}; using ${relative(project.directory, apk)}` +
         `${suggested ? ` -- set the android.variant setting to "${suggested}" to build this variant explicitly` : ''}`,
     };
   }
@@ -382,33 +353,6 @@ export function parseProductFlavors(source: unknown): ProductFlavors {
   return { known: true, dimensions };
 }
 
-export function readProductFlavors(root: string): ProductFlavors {
-  return parseProductFlavors(readOrNull(join(androidDir(root), 'app', 'build.gradle')));
-}
-
-export function productFlavorRefusal({
-  flavors,
-  variant,
-}: {
-  flavors: ProductFlavors;
-  variant?: string | null;
-}): { code: string; reason: string; remedy: string } | null {
-  if (variant) return null;
-  if (!flavors.known || flavors.dimensions.length === 0) return null;
-  let combinations: string[][] = [[]];
-  for (const group of flavors.dimensions) {
-    combinations = combinations.flatMap((combination) => group.map((flavor) => combination.concat(flavor)));
-  }
-  if (combinations.length < 2) return null;
-  const count = flavors.dimensions.reduce((total, group) => total + group.length, 0);
-  const variants = combinations.map((combination) => variantNameOf(combination.concat('debug')));
-  return {
-    code: 'STIM_BAD_ARG',
-    reason: `android/app/build.gradle declares ${count} product flavors, so \`./gradlew ${ASSEMBLE_TASK}\` builds an APK for each of them and nothing says which flavor to install.`,
-    remedy: `Pass \`--variant ${variants[0]}\` or set the android.variant setting -- e.g. {"android": {"variant": "${variants[0]}"}} in .stim.json. The debug variants are: ${variants.join(', ')}.`,
-  };
-}
-
 export type BuildAndroidResult = {
   lastLines: string[];
   durationMs: number;
@@ -427,22 +371,29 @@ export type BuildAndroidResult = {
 
 export function gradleArgs(
   task: string,
-  { buildCache = true, abi = null }: { buildCache?: boolean; abi?: string | null } = {},
+  { buildCache = true, projectArgs = [] }: { buildCache?: boolean; projectArgs?: string[] } = {},
 ): string[] {
-  return [
-    task,
-    ...(buildCache ? ['--build-cache'] : ['--no-build-cache']),
-    ...(abi ? [`-PreactNativeArchitectures=${abi}`] : []),
-  ];
+  return [task, ...(buildCache ? ['--build-cache'] : ['--no-build-cache']), ...projectArgs];
 }
 
-export async function buildAndroid(
+export async function buildGradle(
   {
     root,
     logWriter,
     variant = null,
-    abi = null,
-  }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null; abi?: string | null },
+    project,
+    task,
+    projectArgs = [],
+    preflightFailure = null,
+  }: {
+    root: string;
+    logWriter?: NdjsonWriter | null;
+    variant?: string | null;
+    project: GradleProject;
+    task: string;
+    projectArgs?: string[];
+    preflightFailure?: GradlePreflightFailure | null;
+  },
   {
     spawnFn = null,
     now = Date.now,
@@ -456,7 +407,6 @@ export async function buildAndroid(
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
     onNote = (line: string) => console.error(line),
-    platform = process.platform,
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
@@ -470,50 +420,26 @@ export async function buildAndroid(
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
     onNote?: (line: string) => void;
-    platform?: NodeJS.Platform;
   } = {},
 ): Promise<BuildAndroidResult> {
-  const project = discoverAndroidProject(root);
-  if (project.failed) {
-    return {
-      ok: false,
-      code: project.code,
-      reason: project.reason,
-      remedy: project.remedy,
-      diagnostics: [],
-      truncated: 0,
-      lastLines: [],
-      durationMs: 0,
-    };
-  }
-
   const sdk = androidHome(env);
   const sdkExists = existsSync(sdk);
   const refusal = androidSdkRefusal({
     sdkPath: sdk,
     sdkExists,
-    hasLocalProperties: existsSync(join(project.androidDir, 'local.properties')),
+    hasLocalProperties: existsSync(join(project.directory, 'local.properties')),
+    localPropertiesPath: relative(root, join(project.directory, 'local.properties')).split(sep).join('/'),
   });
   if (refusal) return { ok: false, ...refusal, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
 
-  // https://github.com/appandflow/stim/issues/893: Gradle has not configured a custom
-  // buildStagingDirectory yet, so this default-layout check may refuse a shorter custom path.
-  const room = androidPathRoom(root, { abi, variant, platform });
-  if (room)
-    return {
-      ok: false,
-      code: 'STIM_PATH_TOO_LONG',
-      reason: androidPathRoomMessage(room),
-      remedy: androidPathRoomRemedy(room),
-      diagnostics: [],
-      truncated: 0,
-      lastLines: [],
-      durationMs: 0,
-    };
+  if (preflightFailure)
+    return { ok: false, ...preflightFailure, diagnostics: [], truncated: 0, lastLines: [], durationMs: 0 };
 
+  const wrapper = `./${relative(project.directory, project.gradlew).split(sep).join('/')}`;
+  const moduleTask = task.includes(':') ? task : `${project.module === ':' ? '' : project.module}:${task}`;
+  const tasksTask = `${project.module === ':' ? '' : project.module}:tasks`;
   const spawn: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
-  const task = assembleTaskFor(variant);
-  const args = gradleArgs(task, { buildCache, abi });
+  const args = gradleArgs(task, { buildCache, projectArgs });
   if (cas) {
     args.push('--init-script', cas.initScript);
     onNote(chalk.dim(phaseLine('cache', `Apple Clang CAS on (${cas.dir})`)));
@@ -580,7 +506,7 @@ export async function buildAndroid(
   try {
     child = spawnDeclared(() =>
       spawn(project.gradlew, args, {
-        cwd: project.androidDir,
+        cwd: project.directory,
         stdio: ['ignore', 'pipe', 'pipe'],
         env: {
           ...env,
@@ -594,7 +520,7 @@ export async function buildAndroid(
       }),
     );
   } catch (err) {
-    return spawnFailure(err, project, now() - startedAt);
+    return spawnFailure(err, root, project, now() - startedAt);
   }
 
   const outReader = createLineReader(push);
@@ -620,7 +546,11 @@ export async function buildAndroid(
   const ccacheActivity = ccache ? readCcacheActivity(ccache.statsLog) : CCACHE_UNAVAILABLE;
 
   if (result.error)
-    return { ...spawnFailure(result.error, project, durationMs), lastLines: tail.slice(), ccache: ccacheActivity };
+    return {
+      ...spawnFailure(result.error, root, project, durationMs),
+      lastLines: tail.slice(),
+      ccache: ccacheActivity,
+    };
 
   if (result.code !== 0) {
     const how = result.signal ? `signal ${result.signal}` : `exit code ${result.code}`;
@@ -628,7 +558,7 @@ export async function buildAndroid(
     return {
       ok: false,
       code: BUILD_ERROR,
-      reason: `\`./gradlew ${task}\` failed (${how}).`,
+      reason: `\`${wrapper} ${task}\` failed (${how}).`,
       diagnostics: shown,
       truncated,
       lastLines: tail.slice(),
@@ -637,16 +567,16 @@ export async function buildAndroid(
     };
   }
 
-  const located = locateApk(root, transcript, variant);
+  const located = locateApk(project, transcript, variant);
   if (!located.apkPath && located.candidates?.length) {
     return {
       ok: false,
       code: BUILD_ERROR,
-      reason: `\`./gradlew ${task}\` left ${located.candidates.length} debug APKs under ${apkOutputsDir(root)}, and nothing says which flavor to install.`,
-      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(apkOutputsDir(root), located.candidates[0]!).split(sep).slice(0, -1))}"}} in .stim.json.`,
+      reason: `\`${wrapper} ${task}\` left ${located.candidates.length} debug APKs under ${project.outputsDir}, and nothing says which flavor to install.`,
+      remedy: `Set the android.variant setting to the variant to install -- e.g. {"android": {"variant": "${variantNameOf(relative(project.outputsDir, located.candidates[0]!).split(sep).slice(0, -1))}"}} in .stim.json.`,
       diagnostics: [],
       truncated: 0,
-      lastLines: located.candidates.map((c) => relative(androidDir(root), c)),
+      lastLines: located.candidates.map((c) => relative(project.directory, c)),
       durationMs,
       ccache: ccacheActivity,
     };
@@ -656,11 +586,11 @@ export async function buildAndroid(
       ok: false,
       code: BUILD_ERROR,
       reason: variant
-        ? `\`./gradlew ${task}\` succeeded but produced no APK under ${apkOutputsDir(root)} for variant "${variant}".`
-        : `\`./gradlew ${task}\` succeeded but produced no APK in ${debugApkDir(root)}.`,
+        ? `\`${wrapper} ${task}\` succeeded but produced no APK under ${project.outputsDir} for variant "${variant}".`
+        : `\`${wrapper} ${task}\` succeeded but produced no APK in ${join(project.outputsDir, 'debug')}.`,
       remedy: variant
-        ? `Check that the android.variant setting ("${variant}") names a real variant (\`./gradlew :app:tasks\` lists the assemble tasks).`
-        : `Check that ${task} builds the app module (\`./gradlew :app:${task}\` in android/) and that no flavour redirects the output.`,
+        ? `Check that the android.variant setting ("${variant}") names a real variant (\`${wrapper} ${tasksTask}\` lists the assemble tasks).`
+        : `Check that ${task} builds the ${project.module.replace(/^:/, '') || 'root'} module (\`${wrapper} ${moduleTask}\` in ${relative(root, project.directory).split(sep).join('/') || '.'}/) and that no flavour redirects the output.`,
       diagnostics: [],
       truncated: 0,
       lastLines: tail.slice(),
@@ -689,7 +619,8 @@ function resetStatsLog(statsLog: string): void {
 
 function spawnFailure(
   err: unknown,
-  project: Extract<AndroidProjectResult, { gradlew: string }>,
+  root: string,
+  project: GradleProject,
   durationMs: number,
 ): Extract<BuildAndroidResult, { ok: false }> {
   const nodeErr = err as NodeJS.ErrnoException;
@@ -701,7 +632,7 @@ function spawnFailure(
     reason: `Could not run ${project.gradlew}: ${message}`,
     remedy: permissionDenied
       ? `Make the wrapper executable: \`chmod +x ${project.gradlew}\`.`
-      : 'Check that the gradle wrapper is intact (android/gradlew and android/gradle/wrapper/) and that JAVA_HOME points at a JDK 17 install.',
+      : `Check that the gradle wrapper is intact (${relative(root, project.gradlew)} and ${relative(root, join(project.directory, 'gradle', 'wrapper'))}/) and that JAVA_HOME points at a JDK 17 install.`,
     diagnostics: [],
     truncated: 0,
     lastLines: [],

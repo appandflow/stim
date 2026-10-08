@@ -29,6 +29,7 @@ import {
 } from '../../cache/build-cache.ts';
 import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
+import { type buildAndroid } from '../../integrations/react-native-build.ts';
 import {
   waitForSharedBuild,
   type acquireBuildLock,
@@ -44,7 +45,7 @@ import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine, type resolveCca
 import type { OwnedDeviceRecord } from '../../engine/device.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import { formatDiagnostic } from '../../engine/errors-gradle.ts';
-import type { buildAndroid } from '../../engine/gradle.ts';
+
 import { recordPrebuild, staleNativeDirRefusal, type planPrebuild, type runPrebuild } from '../../engine/prebuild.ts';
 import {
   easAuthNote,
