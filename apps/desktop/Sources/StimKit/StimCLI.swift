@@ -81,6 +81,15 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
+  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
+  public func doctorJSONText(cwd: String) async -> String {
+    do {
+      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
+    } catch {
+      return "stim doctor failed: \(error.localizedDescription)"
+    }
+  }
+
   public func status() async throws -> StatusPayload {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }
@@ -193,11 +202,22 @@ public struct StimCLI: Sendable {
     diagnostics.tag("last_cli_command", name)
     diagnostics.breadcrumb("cli", "start \(name)")
     let startedAt = Date()
+    let log = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
+    var environment = environment.merging(extraEnvironment) { _, extra in extra }
+    environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(
-      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra },
-      timeout: timeout)
+      command.program, command.arguments, cwd: cwd, environment: environment, timeout: timeout)
     request.captureStderr = true
-    let result = try await request.run()
+    let result: ProcessResult
+    do {
+      result = try await request.run()
+    } catch {
+      log.fail(error)
+      throw error
+    }
+    log.finish(
+      status: result.status, timedOut: result.timedOut, stderr: stderrTail(result.stderrText),
+      stdout: result.status == 0 ? "" : result.stdoutText)
     diagnostics.breadcrumb(
       "cli", "finish \(name)",
       data: [
@@ -243,6 +263,17 @@ public struct StimCLI: Sendable {
         throw Failure.toolNotFound(command.program)
       }
       launch = (tool, command.arguments)
+    }
+    let log = DebugLog.CLIRun(tool: command.program, arguments: command.arguments, cwd: command.cwd)
+    environment["STIM_RUN_ID"] = log.runID
+    let tail = LockedValue([String]())
+    let onLine: @Sendable (OutputLine) -> Void = { line in
+      if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
+      onLine(line)
+    }
+    let onExit: @Sendable (Int32) -> Void = { status in
+      log.finish(status: status, stderr: tail.withLock { $0.joined(separator: "\n") })
+      onExit(status)
     }
     guard command.program == "stim" else {
       return try ProcessStream.start(

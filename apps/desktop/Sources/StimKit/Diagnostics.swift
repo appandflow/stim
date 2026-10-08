@@ -214,6 +214,7 @@ public func decodeReporting<T: Decodable>(
   do {
     return try decoder.decode(type, from: data)
   } catch {
+    DebugLog.decodeFailed(type, source: source.rawValue, error: error, bytes: data.count)
     let (reason, path) = Diagnostics.describe(error)
     diagnostics.report(.decode(source: source, type: String(String(describing: type).prefix(80)), path: path, reason: reason))
     throw error

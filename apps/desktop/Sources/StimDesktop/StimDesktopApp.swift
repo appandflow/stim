@@ -161,6 +161,11 @@ struct StimDesktopApp: App {
 
   init() {
     CrashReporter.start()
+    DebugLog.info(
+      .app,
+      "launch version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") pid=\(ProcessInfo.processInfo.processIdentifier) verbose=\(DebugLog.isVerbose)"
+    )
+    MainThreadWatchdog.shared.start()
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     AppPreferences.migrate(.standard)
@@ -259,6 +264,9 @@ struct StimDesktopApp: App {
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
+        Divider()
+        Button("Reveal Debug Log") { DebugLogActions.reveal() }
+        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(cli: cli) }
         #if DEBUG
           Button("Replay Notification Animation") {
             NotificationInbox.shared.arrivals.send(nil)

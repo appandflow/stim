@@ -49,6 +49,8 @@ public enum AppPreferences {
     public static let viewerShowsActions = "viewer.showsActions"
     public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
+    /// Turns on the verbose Desktop debug log. Set only with `defaults write dev.stim.desktop debugLogging -bool YES`.
+    public static let debugLogging = "debugLogging"
 
     public static let tipsEnabled = "tips.enabled"
     public static let usageRecord = "tips.usageRecord"

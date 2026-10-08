@@ -11,6 +11,24 @@ final class ServerController: ObservableObject {
     case notReady(ServerStartup, owned: Bool)
     case failed(String)
 
+    var logName: String {
+      switch self {
+      case .off: "off"
+      case .starting: "starting"
+      case .running(_, let owned): "running(\(owned ? "started by Desktop" : "adopted"))"
+      case .notReady(let startup, let owned): "notReady(\(startup), \(owned ? "started by Desktop" : "adopted"))"
+      case .failed(let message): "failed(\(message))"
+      }
+    }
+
+    var logLevel: DebugLog.Level {
+      switch self {
+      case .failed: .error
+      case .notReady(.degraded, _): .warning
+      default: .info
+      }
+    }
+
     var kind: String {
       switch self {
       case .off: "off"
@@ -62,6 +80,7 @@ final class ServerController: ObservableObject {
 
   @Published private(set) var state = State.off {
     didSet {
+      if state != oldValue { DebugLog.log(state.logLevel, .server, "state \(oldValue.logName) -> \(state.logName)") }
       if case .failed = state { if case .failed = oldValue {} else { failedAt = Date() } } else { failedAt = nil }
       let failure = failureKind
       failureKind = nil
@@ -251,6 +270,7 @@ final class ServerController: ObservableObject {
   }
 
   func stop() {
+    DebugLog.info(.server, "stop requested")
     generation += 1
     terminate()
     state = .off
