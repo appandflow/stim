@@ -28,7 +28,13 @@ matching the selected product. Use development metadata without shared URL
 schemes or an update feed. Optional `macos.arguments` is a string array passed
 directly to the executable. Stim copies the Debug executable, built frameworks
 and SwiftPM resource bundles into its runtime area, derives a unique bundle ID
-from the workspace and signs that copy ad hoc. No signing account or
+from the workspace and signs that copy ad hoc. It also names the copy
+`<product> · <label>` in `CFBundleDisplayName` and `CFBundleName`, where the label
+is the workspace's worktree and app directory names (letters, digits, `.`, `_`
+and `-`, at most 24 characters), so several runs of one product show different
+names in the Dock and Cmd-Tab. Your plist and the app's own window titles stay
+as they are. `stim macos --json` and `stim status --json` report it as
+`displayName`. Hosted runs (`--remote`) get the same name. No signing account or
 provisioning settings change.
 
 Use `macos.resources` to copy files or directories into `Contents/Resources`.

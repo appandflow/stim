@@ -224,15 +224,14 @@ public struct StimServerCLI: Sendable {
   }
 
   public func pair(port: Int = defaultPort, control: Bool) async throws -> PairingCode {
-    try DebugLog.decode(
+    try decodeReporting(
       PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])),
-      source: "stim-server pair", decoder: Self.decoder)
+      source: .cli, decoder: Self.decoder)
   }
 
   public func devices() async throws -> [PairedDevice] {
-    try DebugLog.decode(
-      PairedDeviceList.self, from: await run(["devices", "--json"]), source: "stim-server devices", decoder: Self.decoder
-    ).devices
+    try decodeReporting(PairedDeviceList.self, from: await run(["devices", "--json"]), source: .cli, decoder: Self.decoder)
+      .devices
   }
 
   public func grant(_ id: String, control: Bool) async throws {
@@ -321,19 +320,19 @@ public struct StimServerCLI: Sendable {
 
   private func run(_ args: [String]) async throws -> Data {
     let command = try command(args)
-    let run = DebugLog.CLIRun(tool: "stim-server", arguments: args, cwd: nil)
+    let log = DebugLog.CLIRun(tool: "stim-server", arguments: args, cwd: nil)
     var environment = environment
-    environment["STIM_RUN_ID"] = run.runID
+    environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(command.program, command.arguments, environment: environment)
     request.captureStderr = true
     let result: ProcessResult
     do {
       result = try await request.run()
     } catch {
-      run.fail(error)
+      log.fail(error)
       throw error
     }
-    run.finish(status: result.status, timedOut: result.timedOut, stderr: stderrTail(result.stderrText))
+    log.finish(status: result.status, timedOut: result.timedOut, stderr: stderrTail(result.stderrText))
     guard result.status == 0 else {
       throw Failure.exited(result.status, result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
     }

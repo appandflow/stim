@@ -29,6 +29,8 @@ export interface MacosAppRecord {
   launchId: string;
   arguments: string[];
   product: string;
+  /** The app's visible name: the product and the workspace label. Absent in older records. */
+  displayName?: string;
   bundle: string;
   bundleId: string;
   executable: string;
@@ -59,6 +61,7 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     launchId,
     arguments: args,
     product,
+    displayName,
     bundle,
     bundleId,
     executable,
@@ -85,6 +88,7 @@ export function parseMacosRecord(value: unknown): MacosAppRecord | null {
     launchId,
     arguments: args as string[],
     product: product as string,
+    ...(typeof displayName === 'string' ? { displayName } : {}),
     bundle: bundle as string,
     bundleId: bundleId as string,
     executable: executable as string,

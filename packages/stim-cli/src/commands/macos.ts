@@ -20,6 +20,7 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
+import { workspaceAppName } from '../macos/app-name.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
@@ -192,12 +193,14 @@ async function buildBundle(
   try {
     const { bundleId: base } = validateInfoPlist(root, record.product, infoPlist);
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
+    const displayName = workspaceAppName(root, record.product);
     const built = await buildMacosBundle({
       root,
       product: record.product,
       infoPlist,
       bundle: record.bundle,
       bundleId,
+      displayName,
       scratch,
       writer,
       note,
@@ -208,6 +211,7 @@ async function buildBundle(
       assetCatalog: extras.assetCatalog,
     });
     record.bundleId = built.bundleId;
+    record.displayName = displayName;
     record.bundle = realpathSync(record.bundle);
     record.executable = realpathSync(join(record.bundle, 'Contents', 'MacOS', record.product));
     record.build = {
@@ -296,8 +300,8 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
 function launchPayload(root: string, record: MacosAppRecord): Record<string, unknown> {
   const agentDevice = { stateDir: workspaceAgentDeviceDir(root) };
   if (!record.host) return { agentDevice, platform: 'macos', ...record };
-  const { product, launchId, build, host } = record;
-  return { agentDevice, platform: 'macos', product, launchId, build, host };
+  const { product, displayName, launchId, build, host } = record;
+  return { agentDevice, platform: 'macos', product, displayName, launchId, build, host };
 }
 
 export default function macosCommand(program: Command): void {

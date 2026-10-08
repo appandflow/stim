@@ -175,6 +175,7 @@ struct ScopeSettingsView: View {
           }
           unknown
         }
+        .finiteAccessibilityFrame()
         .padding(.horizontal, Space.xl)
       }
     }

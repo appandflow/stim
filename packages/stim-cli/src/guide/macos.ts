@@ -19,7 +19,14 @@ macos.arguments is an array of arguments passed directly to the executable:
 
 The plist must contain CFBundleIdentifier and CFBundleExecutable matching the
 product. Use a development plist without shared URL schemes or an update feed.
-Stim gives the copied bundle a workspace-specific identifier. SwiftPM resource
+Stim gives the copied bundle a workspace-specific identifier and name: it sets
+CFBundleDisplayName and CFBundleName on the copy to "<product> \u00b7 <label>",
+where label is the owned-device label (worktree and app directory names, cleaned
+to letters, digits, . _ -; at most 24 characters, cut with an ellipsis). The Dock,
+Cmd-Tab and lsappinfo show it, so several runs tell apart; the process name in
+System Events stays the executable. The project plist and the app's window titles
+are untouched. The name is displayName in the launch payload and status. Hosted
+(--remote) and offloaded builds get the same name. SwiftPM resource
 bundles and frameworks in the reported build directory are copied into it;
 macos.resources maps destinations under Contents/Resources to file or directory
 sources relative to the Swift Package directory, for example:

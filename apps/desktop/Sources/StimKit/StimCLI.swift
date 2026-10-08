@@ -33,9 +33,14 @@ public struct StimCLI: Sendable {
   public let environment: [String: String]
   /// Runs `executable`'s script under the home directory's Node; nil runs `executable` through its own shebang.
   public let launcher: NodeLauncher?
+  let diagnostics: Diagnostics
 
-  public init(environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil) {
+  public init(
+    environment: [String: String], override: String? = nil, launcher: NodeLauncher? = nil,
+    diagnostics: Diagnostics = .shared
+  ) {
     var environment = environment
+    self.diagnostics = diagnostics
     self.executable = resolveExecutable(
       "stim", override: override.flatMap { $0.isEmpty ? nil : $0 } ?? environment["STIM_BIN"],
       environment: &environment)
@@ -86,36 +91,40 @@ public struct StimCLI: Sendable {
   }
 
   public func status() async throws -> StatusPayload {
-    try DebugLog.decode(StatusPayload.self, from: await run(["status", "--json"]), source: "stim status")
+    try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }
 
   public func stats(workspace: String) async throws -> ProjectStats {
-    try DebugLog.decode(ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace), source: "stim stats")
+    try decodeReporting(
+      ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim stats --json` in the home directory, where it reports this Mac's machine-wide part only.
   public func machineStats() async throws -> MachineStats {
-    try DebugLog.decode(MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()), source: "stim stats")
+    try decodeReporting(
+      MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
   public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
-    let (status, data, stderr) = try await execute([platform, "--plan", "--json"], cwd: workspace)
-    if status == 0 { return .plan(try DebugLog.decode(BuildPlan.self, from: data, source: "stim plan")) }
+    let args = [platform, "--plan", "--json"]
+    let (status, data, stderr) = try await execute(args, cwd: workspace)
+    if status == 0 { return .plan(try decodeReporting(BuildPlan.self, from: data, source: .cli, diagnostics: diagnostics)) }
     guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
-      throw Failure.exited(status, stderr: stderr)
+      throw exitFailure(args, status: status, stdout: data, stderr: stderr)
     }
     return .refused(refusal)
   }
 
   /// `stim gc --json` without `--delete` only reports.
   public func gcReport() async throws -> GcReport {
-    try DebugLog.decode(GcReport.self, from: await run(["gc", "--json"]), source: "stim gc")
+    try decodeReporting(GcReport.self, from: await run(["gc", "--json"]), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
-    try DebugLog.decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: "stim doctor")
+    try decodeReporting(
+      DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
   /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
@@ -130,15 +139,17 @@ public struct StimCLI: Sendable {
     cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
   ) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
-    return try DebugLog.decode(
+    return try decodeReporting(
       DoctorReport.self,
       from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
-      source: "stim doctor")
+      source: .cli, diagnostics: diagnostics
+    )
   }
 
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
   public func settings(cwd: String) async throws -> SettingsPayload {
-    try DebugLog.decode(SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: "stim settings")
+    try decodeReporting(
+      SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
   /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
@@ -148,12 +159,14 @@ public struct StimCLI: Sendable {
   {
     let args =
       value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
-    let (status, data, stderr) = try await execute(args + ["--scope", scope.rawValue, "--json"], cwd: cwd)
+    let fullArgs = args + ["--scope", scope.rawValue, "--json"]
+    let (status, data, stderr) = try await execute(fullArgs, cwd: cwd)
     if status == 0 {
-      return .written(try DebugLog.decode(SettingsWritePayload.self, from: data, source: "stim settings set").setting)
+      return .written(
+        try decodeReporting(SettingsWritePayload.self, from: data, source: .cli, diagnostics: diagnostics).setting)
     }
     guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
-      throw Failure.exited(status, stderr: stderr)
+      throw exitFailure(fullArgs, status: status, stdout: data, stderr: stderr)
     }
     return .refused(refusal)
   }
@@ -163,8 +176,14 @@ public struct StimCLI: Sendable {
   ) async throws -> Data {
     let (status, data, stderr) = try await execute(
       args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
-    guard status == 0 else { throw Failure.exited(status, stderr: stderr) }
+    guard status == 0 else { throw exitFailure(args, status: status, stdout: data, stderr: stderr) }
     return data
+  }
+
+  private func exitFailure(_ args: [String], status: Int32, stdout: Data, stderr: String) -> Failure {
+    let code = Diagnostics.stimCode(in: [stderr, String(decoding: stdout.prefix(8192), as: UTF8.self)])
+    diagnostics.report(.cli(command: Diagnostics.commandName(args), outcome: .exited(status), stimCode: code))
+    return .exited(status, stderr: stderr)
   }
 
   private func execute(
@@ -172,10 +191,20 @@ public struct StimCLI: Sendable {
   ) async throws -> (
     Int32, Data, String
   ) {
-    let command = try command(args)
-    let run = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
+    let name = Diagnostics.commandName(args)
+    let command: (program: String, arguments: [String])
+    do {
+      command = try self.command(args)
+    } catch Failure.notFound {
+      diagnostics.report(.cli(command: name, outcome: .notFound, stimCode: nil))
+      throw Failure.notFound
+    }
+    diagnostics.tag("last_cli_command", name)
+    diagnostics.breadcrumb("cli", "start \(name)")
+    let startedAt = Date()
+    let log = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
     var environment = environment.merging(extraEnvironment) { _, extra in extra }
-    environment["STIM_RUN_ID"] = run.runID
+    environment["STIM_RUN_ID"] = log.runID
     var request = ProcessRequest(
       command.program, command.arguments, cwd: cwd, environment: environment, timeout: timeout)
     request.captureStderr = true
@@ -183,15 +212,23 @@ public struct StimCLI: Sendable {
     do {
       result = try await request.run()
     } catch {
-      run.fail(error)
+      log.fail(error)
       throw error
     }
-    let stderr = stderrTail(result.stderrText)
-    run.finish(
-      status: result.status, timedOut: result.timedOut, stderr: stderr,
+    log.finish(
+      status: result.status, timedOut: result.timedOut, stderr: stderrTail(result.stderrText),
       stdout: result.status == 0 ? "" : result.stdoutText)
-    if result.timedOut, let timeout { throw Failure.timedOut(seconds: Int(timeout)) }
-    return (result.status, result.stdout, stderr)
+    diagnostics.breadcrumb(
+      "cli", "finish \(name)",
+      data: [
+        "duration_ms": String(Int(Date().timeIntervalSince(startedAt) * 1000)),
+        "exit_code": result.timedOut ? "timed-out" : String(result.status),
+      ])
+    if result.timedOut, let timeout {
+      diagnostics.report(.cli(command: name, outcome: .timedOut, stimCode: nil))
+      throw Failure.timedOut(seconds: Int(timeout))
+    }
+    return (result.status, result.stdout, stderrTail(result.stderrText))
   }
 
   /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
@@ -227,17 +264,34 @@ public struct StimCLI: Sendable {
       }
       launch = (tool, command.arguments)
     }
-    let run = DebugLog.CLIRun(tool: command.program, arguments: command.arguments, cwd: command.cwd)
-    environment["STIM_RUN_ID"] = run.runID
+    let log = DebugLog.CLIRun(tool: command.program, arguments: command.arguments, cwd: command.cwd)
+    environment["STIM_RUN_ID"] = log.runID
     let tail = LockedValue([String]())
+    let onLine: @Sendable (OutputLine) -> Void = { line in
+      if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
+      onLine(line)
+    }
+    let onExit: @Sendable (Int32) -> Void = { status in
+      log.finish(status: status, stderr: tail.withLock { $0.joined(separator: "\n") })
+      onExit(status)
+    }
+    guard command.program == "stim" else {
+      return try ProcessStream.start(
+        executable: launch.program, arguments: launch.arguments, cwd: command.cwd, environment: environment,
+        onLine: onLine, onExit: onExit)
+    }
+    let name = Diagnostics.commandName(command.arguments)
+    let diagnostics = diagnostics
+    let startedAt = Date()
+    diagnostics.tag("last_cli_command", name)
+    diagnostics.breadcrumb("cli", "start \(name)")
     return try ProcessStream.start(
       executable: launch.program, arguments: launch.arguments, cwd: command.cwd, environment: environment,
-      onLine: { line in
-        if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
-        onLine(line)
-      },
+      onLine: onLine,
       onExit: { status in
-        run.finish(status: status, stderr: tail.withLock { $0.joined(separator: "\n") })
+        diagnostics.breadcrumb(
+          "cli", "finish \(name)",
+          data: ["duration_ms": String(Int(Date().timeIntervalSince(startedAt) * 1000)), "exit_code": String(status)])
         onExit(status)
       })
   }

@@ -88,7 +88,7 @@ final class BuildMachinesModel {
       var unreachable: String?
       do {
         let result = try await request("machines.update.status", ["machine": .string(entry)])
-        let status = try JSONDecoder().decode(MachineUpdateStatus.self, from: JSONEncoder().encode(result))
+        let status = try decodeReporting(MachineUpdateStatus.self, from: result, source: .server)
         phase = MachineUpdatePhase.from(status, startedAt: startedAt)
         unreachable = status.remote == nil ? status.unreachable : nil
         if status.remote != nil, phase == .restarting {

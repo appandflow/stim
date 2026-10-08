@@ -174,18 +174,12 @@ public enum DebugLog {
     }
   }
 
-  /// `decoder.decode` that logs the type and coding path of a failure before rethrowing it.
-  public static func decode<T: Decodable>(
-    _ type: T.Type, from data: Data, source: String, decoder: JSONDecoder = JSONDecoder()
-  ) throws -> T {
-    do {
-      return try decoder.decode(type, from: data)
-    } catch let error as DecodingError {
-      let message = "\(type) from \(source): \(describe(error))"
-      if decodeFailures.withLock({ failures in failures.updateValue(message, forKey: source) != message }) {
-        DebugLog.error(.decode, "\(message) (\(data.count) bytes)")
-      }
-      throw error
+  /// Logs the type and coding path of a decode failure, once per repeated failure of one source.
+  public static func decodeFailed<T>(_ type: T.Type, source: String, error: Error, bytes: Int) {
+    guard let error = error as? DecodingError else { return }
+    let message = "\(type) from \(source): \(describe(error))"
+    if decodeFailures.withLock({ failures in failures.updateValue(message, forKey: source) != message }) {
+      DebugLog.error(.decode, "\(message) (\(bytes) bytes)")
     }
   }
 

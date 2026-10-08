@@ -249,7 +249,9 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = (extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown } = {}) =>
+  const build = (
+    extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown; displayName?: string } = {},
+  ) =>
     buildMacosBundle({
       root,
       product: 'Sample',
@@ -291,6 +293,30 @@ describe('macOS build placement and promotion', () => {
     expect(readFileSync(join(bundle, 'Contents', 'MacOS', 'Sample'), 'utf8')).toBe('remote');
     writeWorkspaceState(root, { macos: record({ build: { ...buildRecord, state: 'ok' } }) });
     expect(readMacosRecord(root)?.build.offloadedTo).toBe('mini');
+  });
+
+  it('names an offloaded bundle and re-signs it before verifying', async () => {
+    const calls: Array<[string, string[]]> = [];
+    const base = getExecutor();
+    setExecutor({
+      ...base,
+      runFile: (file: string, args: string[]) => {
+        calls.push([file, args]);
+        return base.runFile(file, args);
+      },
+    });
+    const fetched = remoteBundle();
+    succeeds(fetched);
+    await build({ displayName: 'Sample \u00b7 wt' });
+    const infoPlist = join(fetched, 'Contents', 'Info.plist');
+    const order = calls.map(([file, args]) => `${file} ${args[0]}`);
+    expect(calls).toContainEqual([
+      'plutil',
+      ['-replace', 'CFBundleDisplayName', '-string', 'Sample \u00b7 wt', infoPlist],
+    ]);
+    expect(calls).toContainEqual(['plutil', ['-replace', 'CFBundleName', '-string', 'Sample \u00b7 wt', infoPlist]]);
+    expect(order.indexOf('codesign --force')).toBeGreaterThan(order.lastIndexOf('plutil -replace'));
+    expect(order.indexOf('codesign --verify')).toBeGreaterThan(order.indexOf('codesign --force'));
   });
 
   it.each(['no-machine', 'worker-failed', 'bad-bundle', 'verification-failed'])(
@@ -626,6 +652,27 @@ describe('macOS resource staging', () => {
     ]);
     expect(calls.at(-1)).toEqual(['codesign', ['--force', '--sign', '-', bundle]]);
     expect(sealed).toEqual(['AppIcon.icns', 'nested/branding/wordmark.svg', 'Assets.car']);
+  });
+
+  it('names the copy before the final signature and leaves the source plist alone', () => {
+    stageBundle(
+      root,
+      'Sample',
+      'Info.plist',
+      bin,
+      bundle,
+      'dev.sample.stim.test',
+      { resources: {} },
+      'Sample \u00b7 wt',
+    );
+    const plist = join(bundle, 'Contents', 'Info.plist');
+    const names = calls.filter(([file, args]) => file === 'plutil' && args[0] === '-replace').map(([, args]) => args);
+    expect(names).toEqual([
+      ['-replace', 'CFBundleDisplayName', '-string', 'Sample \u00b7 wt', plist],
+      ['-replace', 'CFBundleName', '-string', 'Sample \u00b7 wt', plist],
+    ]);
+    expect(calls.at(-1)).toEqual(['codesign', ['--force', '--sign', '-', bundle]]);
+    expect(readFileSync(join(root, 'Info.plist'), 'utf8')).toBe('{}');
   });
 
   it('compiles assets when the development plist does not declare a minimum OS', () => {

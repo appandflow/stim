@@ -144,13 +144,14 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
       || physicalDevices?.isEmpty == false
   }
 
-  /// The workspace's default devices, its Stim-owned Chrome, each named slot's devices, then its leased physical
-  /// devices.
+  /// The workspace's default devices, its Stim-owned Chrome, its `stim macos` app, each named slot's devices, then its
+  /// leased physical devices.
   public var devices: [DeviceRef] {
     var out: [DeviceRef] = []
     if let ios { out.append(.ios(slot: DeviceRef.defaultSlot, ios)) }
     if let android { out.append(.android(slot: DeviceRef.defaultSlot, android)) }
     if let web { out.append(.web(web)) }
+    if let macos { out.append(.macos(macos)) }
     for slot in slots ?? [] {
       if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
       if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
@@ -160,7 +161,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     return out
   }
 
-  /// `devices` running first, then iOS, Android, Web, physical and remote devices, then by slot. The order never
+  /// `devices` running first, then iOS, Android, macOS, Web, physical and remote devices, then by slot. The order never
   /// depends on activity or drivers, so a device keeps its place while tools attach and detach.
   public var orderedDevices: [DeviceRef] {
     return devices.enumerated().sorted { a, b in
@@ -567,7 +568,7 @@ extension DeviceRef {
     func rank(_ device: DeviceRef) -> Int {
       if case .remote = device { return 4 }
       if device.isPhysical { return 3 }
-      return ["ios": 0, "android": 1, "web": 2][device.platform] ?? 4
+      return ["ios": 0, "android": 1, "macos": 2, "web": 3][device.platform] ?? 4
     }
     if a.isRunning != b.isRunning { return a.isRunning }
     let (ra, rb) = (rank(a), rank(b))

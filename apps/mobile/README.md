@@ -1239,7 +1239,8 @@ rendering straight to its native exception handler rather than through
 `ErrorBoundary` in `src/app/_layout.tsx` is wrapped with
 `Sentry.wrapExpoRouterErrorBoundary`.
 
-Reports carry no personal data: `sendDefaultPii` is off, there are no
+Besides crashes and uncaught JS errors, the app sends handled failures and
+route breadcrumbs, listed under "What is sent" below. Reports carry no personal data: `sendDefaultPii` is off, there are no
 screenshots, view hierarchy, session replay or performance tracing, and the
 native SDKs record no network breadcrumbs. Before an event or breadcrumb
 leaves the phone, `src/lib/sentry-scrub.ts` replaces URLs (the paired Mac's
@@ -1251,6 +1252,22 @@ scrubbed. Each report names the release
 (`com.appandflow.stim@<version>+<build>`), the build number as `dist`, and the
 running update in the tags `expo.updates.update_id`, `expo.updates.channel`
 and `expo.updates.runtime_version`.
+
+### What is sent
+
+Besides crashes and uncaught JS errors, the app sends these warning events and
+nothing else. Each distinct event is sent once per launch, at most 20 per
+launch, and none carries a payload value, endpoint, name, token or path:
+
+| Event (message)         | When                                                                                                                             | Tags                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rpc-validation-failed` | A message from a Mac fails the shared RPC validators ("The Mac sent an invalid RPC message"), during a session or while pairing. | `stage` (`parse`, `envelope`, `result`, `event` or `error`), `name` (the RPC method or event name), and for a schema violation `keyword`, `schema_path` (a location in the JSON Schema, such as `#/properties/sessions/items/required`), `missing_property` and `expected_type` when the schema names them. |
+| `pairing-failed`        | Pairing ends in an error.                                                                                                        | `error_class`: `timeout`, `closed`, `invalid-response`, `no-device-token` or `request-error:<code>`.                                                                                                                                                                                                        |
+| `connection-failed`     | A Mac answers `hello` with an error.                                                                                             | `error_class`: `refused:<code>` or `request-error:<code>`.                                                                                                                                                                                                                                                  |
+
+`<code>` is the Mac's error code and is sent only when it is one of the protocol's `ERROR_CODES`; otherwise `other`. The schema location comes from the validator, never from the message, so it holds no key or value the Mac sent. Once a session is established, a dropped connection, a sleeping Mac and a retry send nothing.
+
+Breadcrumbs added by the app are `navigation` entries holding the route pattern (such as `mac/[id]/workspace`), never the values of its parameters. Sentry's console breadcrumbs, scrubbed as above, remain. Tag values also pass through `src/lib/sentry-scrub.ts`. `src/lib/sentry.test.ts` checks that Sentry starts only with a DSN.
 
 With `SENTRY_AUTH_TOKEN` set, a Release build uploads its JS source maps and,
 on iOS, its dSYMs; without it, the build prints
