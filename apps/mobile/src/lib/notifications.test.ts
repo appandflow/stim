@@ -26,7 +26,8 @@ const OPEN: ConnectionState = {
   deviceId: null,
 };
 const payload = fixture.payload as StatusPayload;
-const ON: NotificationPrefs = { ...DEFAULT_PREFS, enabled: true };
+const DEFAULTS: NotificationPrefs = { ...DEFAULT_PREFS, enabled: true };
+const ON: NotificationPrefs = { ...DEFAULTS, levels: { ...DEFAULT_LEVELS, started: 'silent' } };
 
 const env = (extra: Partial<EnvironmentState> = {}): EnvironmentState => ({
   path: '/u/app/.worktrees/login',
@@ -176,6 +177,15 @@ describe('localNotifications', () => {
         ]),
       ),
     ).toEqual([[], []]);
+  });
+
+  it('does not notify work started unless the user turned it on', () => {
+    const steps = [
+      { at: 0, machines: [mac([env({ ios: sim('running') })])] },
+      { at: 60_000, machines: [mac([env({ ios: sim('running', 'driven') })])] },
+    ];
+    expect(texts(run(steps.map((step) => ({ ...step, prefs: DEFAULTS }))))).toEqual([[], []]);
+    expect(texts(run(steps))[1]).toHaveLength(1);
   });
 
   it('notifies work started quietly, grouped per machine, and opens the device viewer', () => {
@@ -346,7 +356,7 @@ describe('parsePrefs', () => {
   it('moves on/off categories to levels: on takes the default level, off stays off', () => {
     const migrated = parsePrefs(JSON.stringify({ enabled: true, categories: ['started', 'machine', 'control'] }));
     expect(migrated.levels).toEqual({
-      started: 'silent',
+      started: 'off',
       stuck: 'off',
       looping: 'off',
       finished: 'off',

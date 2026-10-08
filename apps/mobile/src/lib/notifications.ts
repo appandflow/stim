@@ -26,7 +26,7 @@ export type NotifyLevel = 'alert' | 'silent' | 'off';
 const NOTIFY_LEVELS: readonly NotifyLevel[] = ['alert', 'silent', 'off'];
 
 export const DEFAULT_LEVELS: Record<OversightCategory, NotifyLevel> = {
-  started: 'silent',
+  started: 'off',
   stuck: 'silent',
   looping: 'silent',
   finished: 'silent',

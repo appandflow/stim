@@ -509,6 +509,27 @@ describe('oversee', () => {
       expect(red.texts).toHaveLength(1);
     });
 
+    it('notifies the agent stop once per run, and again after the workspace went idle', () => {
+      const released = sim({ state: 'active', lastAt: T0 + 2 * MIN });
+      const idle = { live: false, phase: 'idle', ios: sim(null, 'Shutdown') };
+      const stop = (at: number, build: number) => [
+        {
+          at: at + MIN,
+          input: input([env({ ios: driven(at + MIN, at + MIN), ...builds({ status: 'ok', at: build }) })]),
+        },
+        { at: at + 2 * MIN, input: input([env({ ios: released, ...builds({ status: 'ok', at: at + 2 * MIN }) })]) },
+        { at: at + 8 * MIN, input: input([env({ ios: released, ...builds({ status: 'ok', at: at + 2 * MIN }) })]) },
+      ];
+      const { texts } = run([
+        drove[0]!,
+        ...stop(T0, T0),
+        ...stop(T0 + 10 * MIN, T0 + 10 * MIN),
+        { at: T0 + 30 * MIN, input: input([env({ ...idle, ...builds({ status: 'ok', at: T0 + 12 * MIN }) })]) },
+        ...stop(T0 + 40 * MIN, T0 + 40 * MIN),
+      ]);
+      expect(texts.filter((text) => text.includes('Agent stopped'))).toHaveLength(2);
+    });
+
     it('notifies a pull request once it is ready for review and once it merged, after a quiet first lookup', () => {
       const pr = (state: 'open' | 'merged', draft: boolean) => ({
         [PATH]: { number: 42, state, draft, url: 'https://github.com/o/r/pull/42' },
@@ -708,6 +729,24 @@ describe('oversee, what needs a person', () => {
     expect(watch(T0 + 3 * MIN, [expired])).toEqual([]);
     expect(watch(T0 + 4 * MIN, [env()])).toEqual([]);
     expect(watch(T0 + 5 * MIN, [expired])).toHaveLength(1);
+  });
+
+  it('notifies one item per workspace per run, and another once the workspace went live again', () => {
+    const expired = (...ids: ('ios' | 'android')[]) =>
+      env({
+        physicalDevices: ids.map((platform) => Object.assign(lease(T0), { platform, id: platform, name: platform })),
+      });
+    watch(T0, [env()]);
+    expect(watch(T0 + MIN, [expired('ios', 'android')])).toEqual([
+      `attention lease-ios-default:${PATH}: Lease on ios expired`,
+    ]);
+    expect(watch(T0 + 2 * MIN, [expired('ios', 'android')])).toEqual([]);
+    expect(watch(T0 + 3 * MIN, [{ ...expired('ios'), live: false, phase: 'idle' }])).toEqual([]);
+    expect(watch(T0 + 4 * MIN, [expired('ios', 'android')])).toEqual([
+      `attention lease-android-default:${PATH}: Lease on android expired`,
+    ]);
+    expect(watch(T0 + 5 * MIN, [env()])).toEqual([]);
+    expect(watch(T0 + 6 * MIN, [expired('ios')])).toHaveLength(1);
   });
 
   it('records what is already true at the first look without notifying', () => {
