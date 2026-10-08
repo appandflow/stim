@@ -6,8 +6,6 @@ enum JarColors {
   static func outline(_ scheme: ColorScheme) -> Color { scheme == .dark ? Palette.accent : Palette.brand }
 }
 
-/// The Stim jar from the branding board: a glass body drawn with thin outline strokes over a visible floor, under a
-/// solid purple lid with two rim bands. `content` stands inside the glass, sized `StimJar.contentSize`.
 struct StimJar<Content: View>: View {
   @ViewBuilder var content: Content
   @Environment(\.colorScheme) private var colorScheme
@@ -30,7 +28,6 @@ struct StimJar<Content: View>: View {
 private struct JarDrawing {
   var scheme: ColorScheme
   private var outline: Color { JarColors.outline(scheme) }
-  private var colorScheme: ColorScheme { scheme }
 
   private static let kappa: CGFloat = 0.5523
   private static let centerX: CGFloat = 80
@@ -96,7 +93,7 @@ private struct JarDrawing {
     glint.move(to: CGPoint(x: 38, y: 98))
     glint.addLine(to: CGPoint(x: 38, y: 150))
     context.stroke(
-      glint, with: .color(.white.opacity(colorScheme == .dark ? 0.3 : 0.9)),
+      glint, with: .color(.white.opacity(scheme == .dark ? 0.3 : 0.9)),
       style: StrokeStyle(lineWidth: 3, lineCap: .round))
 
     let lower = band(from: 8, to: 16)
