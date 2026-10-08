@@ -38,20 +38,33 @@ struct BuildMachinesEmptyState: View {
   var add: () -> Void
   var addDisabled = false
   var needsTailscale = false
+  var tailscaleOff = false
+  var checking = false
 
   var body: some View {
     VStack(spacing: Space.lg) {
-      BuildMachineArt()
-      Text("No remote Macs").font(.stim(.headline))
-      Text(
-        needsTailscale
-          ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
-          : "A remote Mac is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
-      )
-      .foregroundStyle(Palette.secondary)
-      .multilineTextAlignment(.center)
-      .frame(maxWidth: 380)
-      if !needsTailscale {
+      if checking {
+        ProgressView().controlSize(.regular).frame(height: 150)
+        Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
+      } else {
+        if tailscaleOff {
+          AddMachineIllustration(scene: .tailscaleOff)
+        } else {
+          BuildMachineArt()
+        }
+        Text(tailscaleOff ? "Tailscale is off" : "No remote Macs").font(.stim(.headline))
+        Text(
+          tailscaleOff
+            ? "Turn on Tailscale on this Mac. Remote Macs reach it over your tailnet, and they show up here once it is connected."
+            : needsTailscale
+              ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
+              : "A remote Mac is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
+        )
+        .foregroundStyle(Palette.secondary)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: 380)
+      }
+      if checking || !needsTailscale || tailscaleOff {
         Button("Add Remote Mac\u{2026}", action: add)
           .buttonStyle(.stim(.primary, .regular))
           .disabled(addDisabled)

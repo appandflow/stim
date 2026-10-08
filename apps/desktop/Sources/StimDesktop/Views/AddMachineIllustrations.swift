@@ -8,6 +8,7 @@ struct AddMachineIllustration: View {
     case tailnet(connected: Bool)
     case noMac
     case tailscaleSwitch
+    case tailscaleOff
     case tailscaleUp
     case capabilities(Set<SetupCapability>)
     case command
@@ -24,6 +25,7 @@ struct AddMachineIllustration: View {
       case .tailnet(let connected): TailnetArt(connected: connected)
       case .noMac: TailnetArt(connected: false, badge: "questionmark.circle.fill")
       case .tailscaleSwitch: TailscaleSwitchArt()
+      case .tailscaleOff: TailscaleSwitchArt(staysOff: true)
       case .tailscaleUp:
         ZStack {
           BrandHalo(size: 130)
@@ -106,6 +108,7 @@ private struct TailnetArt: View {
 
 /// The Tailscale menu bar item's menu, with its switch turning on.
 private struct TailscaleSwitchArt: View {
+  var staysOff = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var on = false
 
@@ -129,7 +132,7 @@ private struct TailscaleSwitchArt: View {
         HStack(spacing: Space.md) {
           VStack(alignment: .leading, spacing: 0) {
             Text("Tailscale").font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text)
-            Text(on ? "Connected" : "Disconnected").font(.stim(.caption)).foregroundStyle(
+            Text(on ? "Connected" : "Not Connected").font(.stim(.caption)).foregroundStyle(
               on ? Palette.success : Palette.secondary
             )
             .contentTransition(.opacity)
@@ -151,6 +154,7 @@ private struct TailscaleSwitchArt: View {
       .shadow(color: Palette.shadow.opacity(0.12), radius: 8, y: 4)
     }
     .task {
+      guard !staysOff else { return }
       guard !reduceMotion else {
         on = true
         return

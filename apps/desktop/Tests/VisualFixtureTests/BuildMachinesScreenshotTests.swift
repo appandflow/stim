@@ -21,7 +21,7 @@
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool, updates: [String: MachineUpdatePhase] = [:]
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:]
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
@@ -88,6 +88,7 @@
         ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
+        ("empty-checking", AnyView(content(entries: [], statuses: [], tailscale: nil))),
       ]
       for (name, view) in fixtures {
         for dark in [false, true] {
