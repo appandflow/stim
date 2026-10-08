@@ -106,7 +106,7 @@ final class ServerController: ObservableObject {
     return false
   }
 
-  var isResponding: Bool {
+  private var isResponding: Bool {
     switch state {
     case .running, .notReady: return true
     case .off, .starting, .failed: return false
