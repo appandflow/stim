@@ -4,6 +4,7 @@ export * from './swiftpm-cache-usage.ts';
 export * from './build-capacity.ts';
 export * from './build-machines.ts';
 export * from './config.ts';
+export * from './debug-log.ts';
 export * from './config-types.ts';
 export * from './json-file.ts';
 export * from './ledgers.ts';

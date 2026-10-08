@@ -462,6 +462,17 @@ overrides the file:
 budget is off. A value of the wrong shape refuses start, ios and android with
 STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
 
+DEBUG LOGS ARE MACHINE-LEVEL AND OFF BY DEFAULT
+debug.logs STIM_DEBUG  default false. STIM_DEBUG=1 (or 0) overrides the setting
+for one command. While on, the CLI writes debug records to
+STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
+duration and exit status but never arguments, remote_connect and
+remote_request with durations and codes) and stim-server writes
+server.ndjson there. Each file rotates at about 8 MiB and keeps one previous
+generation, and nothing is sent anywhere. Keys named like a secret are redacted.
+  stim settings set debug.logs true --scope machine
+See \`guide logs\` for reading the files.
+
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 maintenance.mode on (the default) removes what gc would under the caps and
 floors below; report measures and plans and deletes nothing; off disables it.

@@ -222,6 +222,15 @@ Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
+DEBUG LOGS
+With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
+debug records to STIM_HOME/logs/debug/cli.ndjson, outside any workspace, so
+stim logs does not show them. Read them with jq:
+  jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
+Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
+remote_connect and remote_request { ms, ok, code? } for requests to another
+Mac. They carry no arguments, tokens or tickets.
+
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
   metro.ndjson         the bundler, in both supervisor modes

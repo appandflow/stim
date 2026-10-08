@@ -25,6 +25,7 @@ import {
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import { debugLog } from '../debug-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -294,11 +295,29 @@ export class BuildConnection {
   }
 
   /** Resolves why it could not connect; `refused` when the machine answered and turned this Mac away. */
-  static open(
+  static async open(
     target: Endpoint,
     token: string,
     timeoutMs: number,
     capability: 'build' | 'device-host' = 'build',
+  ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
+    const started = performance.now();
+    const result = await BuildConnection.connect(target, token, timeoutMs, capability);
+    debugLog.log('remote_connect', {
+      host: target.host,
+      capability,
+      ms: Math.round(performance.now() - started),
+      timeoutMs,
+      ...(result instanceof BuildConnection ? { ok: true } : { ok: false, failure: result.failure, code: result.code }),
+    });
+    return result;
+  }
+
+  private static connect(
+    target: Endpoint,
+    token: string,
+    timeoutMs: number,
+    capability: 'build' | 'device-host',
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
@@ -370,14 +389,23 @@ export class BuildConnection {
   request(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Reply> {
     if (this.closed) return Promise.resolve({ error: { code: 'closed', message: this.closed } });
     const id = this.nextId++;
+    const started = performance.now();
+    const done = (reply: Reply): Reply => {
+      debugLog.log('remote_request', {
+        method,
+        ms: Math.round(performance.now() - started),
+        ...('error' in reply ? { ok: false, code: reply.error.code } : { ok: true }),
+      });
+      return reply;
+    };
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        resolve({ error: { code: 'timeout', message: `${method} got no reply in ${timeoutMs / 1000} s` } });
+        resolve(done({ error: { code: 'timeout', message: `${method} got no reply in ${timeoutMs / 1000} s` } }));
       }, timeoutMs);
       this.pending.set(id, (reply) => {
         clearTimeout(timer);
-        resolve(reply);
+        resolve(done(reply));
       });
       this.socket.send(JSON.stringify({ id, method, params }));
     });

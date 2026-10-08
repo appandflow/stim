@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
+import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 type CommandModule = { default: (program: Command, version: string) => void };
@@ -29,6 +30,17 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 
 const program = new Command();
 program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
+
+if (debugLog.enabled()) {
+  const argv = process.argv.slice(2);
+  const started = Date.now();
+  debugLog.log('run_start', {
+    version: pkg.version,
+    command: argv.filter((each) => !each.startsWith('-')).slice(0, 2),
+    flags: argv.filter((each) => each.startsWith('-')).map((each) => each.split('=')[0]),
+  });
+  process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
+}
 
 try {
   refuseRelativeStimPaths();
