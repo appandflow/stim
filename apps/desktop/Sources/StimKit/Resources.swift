@@ -74,7 +74,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
       for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
         roots.insert(p.pid)
       }
-    case .ios, .android, .remote, .web:
+    case .ios, .android, .remote, .web, .macos:
       break
     }
   }

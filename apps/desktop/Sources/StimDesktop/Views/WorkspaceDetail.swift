@@ -418,16 +418,9 @@ struct WorkspaceDetail: View {
   private func canvas(devices: [DeviceRef], focused: DeviceRef?) -> some View {
     GeometryReader { geo in
       ScrollView {
-        if let macos = workspace.macos {
-          VStack(spacing: Space.lg) {
-            MacosAppCard(app: macos, workspace: workspace.path)
-              .environment(\.macosViewportHeight, geo.size.height - Space.xxl * 2)
-            nativeActions(macos, workspace: workspace.path)
-          }.padding(Space.xxl)
-        }
-        if devices.isEmpty && workspace.macos == nil {
+        if devices.isEmpty {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
-        } else if !devices.isEmpty {
+        } else {
           let availableWidth = max(0, geo.size.width - Space.xxl * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
           let cardHeight = max(0, geo.size.height - Space.xxl * 2)
@@ -446,24 +439,11 @@ struct WorkspaceDetail: View {
     let devices = page.orderedDevices
     let entries = page.canvasEntries
     let target = page.canvasScrollTarget(selectedPath: selectedPath, focusedID: focusedID, devices: devices).map {
-      !page.apps.contains { $0.macos != nil } && $0 == devices.first?.id ? "devices" : $0
+      $0 == devices.first?.id ? "devices" : $0
     }
     return GeometryReader { geo in
       ScrollViewReader { reader in
         ScrollView {
-          ForEach(page.apps.filter { $0.macos != nil }) { app in
-            let hasSubtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) != nil
-            VStack(alignment: .leading, spacing: Space.sm) {
-              if let subtitle = page.subtitle(for: .init(path: app.path, platform: "macos"), among: entries) {
-                Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-              }
-              MacosAppCard(app: app.macos!, workspace: app.path)
-                .environment(\.macosViewportHeight, geo.size.height - Space.xxl * 2 - (hasSubtitle ? 24 : 0))
-              nativeActions(app.macos!, workspace: app.path)
-            }
-            .padding(Space.xxl)
-            .id("macos|\(app.path)")
-          }
           if entries.isEmpty {
             TimelineView(.periodic(from: .now, by: 30)) { context in
               emptyCanvas(stage: page.lead(now: context.date).stage(now: context.date))
@@ -545,12 +525,12 @@ struct WorkspaceDetail: View {
       focused: focused,
       status: status,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
-      showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path
+      showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path,
+      onBuildLogs: macosBuildLogs(device, workspace: workspace.path), clickThrough: true
     )
     return
       tile
       .tutorialAnchor(.deviceTile, workspace: workspace.path)
-      .allowsHitTesting(tile.showsStoppedBar)
       .background {
         Button {
           focusedID = device.id
@@ -569,12 +549,14 @@ struct WorkspaceDetail: View {
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
 
-  private func nativeActions(_ macos: MacosApp, workspace path: String) -> some View {
-    AgentFeed(cli: cli, workspace: path, slot: "default", deviceID: macos.launchId) { agentActions in
-      NativeAgentActions(actions: agentActions) { at in
-        logWorkspacePath = path
-        revealAgentActions(slot: "default", at: at)
-      }
+  private func macosBuildLogs(_ device: DeviceRef, workspace path: String) -> (() -> Void)? {
+    guard case .macos(let app) = device,
+      let query = LogQuery.build(
+        platform: "macos", slot: "default", startedAt: app.build.startedAt, finishedAt: app.build.finishedAt)
+    else { return nil }
+    return {
+      logWorkspacePath = path
+      openBuildLogs(query)
     }
   }
 
@@ -588,21 +570,6 @@ struct WorkspaceDetail: View {
     logQuery.search = ""
     showsLogs = true
     logMoment = at.map { LogMoment(at: $0) }
-  }
-}
-
-private struct NativeAgentActions: View {
-  var actions: [AgentAction]
-  var openLogs: (Double?) -> Void
-  @FocusState private var focused: Bool
-
-  var body: some View {
-    AgentActionsPanel(
-      actions: actions, replay: nil, canReplay: false, focused: $focused,
-      seek: { _ in }, openLogs: { openLogs($0?.record.ts) }
-    )
-    .frame(height: 280)
-    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
   }
 }
 

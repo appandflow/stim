@@ -19,11 +19,10 @@ public struct WallCard: Identifiable, Sendable {
     width < 700 ? 1 : width < 1500 ? 2 : 3
   }
 
-  /// One thing a card can stream: a device of one of the worktree's apps, or an app's Mac development app.
+  /// One thing a card can stream: a device of one of the worktree's apps, a macOS app included.
   public struct Option: Identifiable, Sendable {
     public enum Kind: Sendable {
       case device(DeviceRef)
-      case macos(MacosApp)
     }
 
     public var app: App
@@ -33,7 +32,6 @@ public struct WallCard: Identifiable, Sendable {
     public var id: String {
       switch kind {
       case .device(let device): "\(app.workspace.path)|\(device.id)"
-      case .macos: "\(app.workspace.path)|macos"
       }
     }
 
@@ -41,23 +39,17 @@ public struct WallCard: Identifiable, Sendable {
     public var isStreamable: Bool {
       switch kind {
       case .device(let device): device.isRunning
-      case .macos(let macos): macos.host != nil || macos.state == "running" || macos.state == "orphaned"
       }
     }
   }
 
-  /// The card's devices, then its Mac apps. Devices come app by app in `orderedDevices` order (iOS before Android, then
-  /// by slot). A card with several apps prefixes each label with its app.
+  /// The card's devices, app by app in `orderedDevices` order (iOS before Android, then macOS, then by slot). A card with several apps prefixes each label with its app.
   public var options: [Option] {
     let all = apps.flatMap(\.devices)
     func prefix(_ app: App) -> String { isMultiApp ? app.label + " \u{00B7} " : "" }
-    let devices = apps.flatMap { app in
+    return apps.flatMap { app in
       app.devices.map { Option(app: app, kind: .device($0), label: prefix(app) + $0.label(among: all)) }
     }
-    let macApps = apps.compactMap { app in
-      app.workspace.macos.map { Option(app: app, kind: .macos($0), label: prefix(app) + "Mac app") }
-    }
-    return devices + macApps
   }
 
   /// The option to stream: the remembered `choice` while it is still offered, otherwise the first streamable option,

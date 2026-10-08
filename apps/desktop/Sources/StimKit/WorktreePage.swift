@@ -143,14 +143,13 @@ public struct WorktreePage: Hashable, Sendable {
   }
 
   public var canvasEntries: [Entry] {
-    orderedDevices.map(\.entry) + apps.filter { $0.macos != nil }.map { Entry(path: $0.path, platform: "macos") }
+    orderedDevices.map(\.entry)
   }
 
   public func canvasScrollTarget(selectedPath: String, focusedID: String?, devices: [Device]) -> String? {
     let selectedDevices = devices.filter { $0.workspace.path == selectedPath }
     let device = selectedDevices.first { $0.device.id == focusedID } ?? selectedDevices.first
-    let card = apps.first { $0.path == selectedPath && $0.macos != nil }.map { "macos|\($0.path)" }
-    return device?.id ?? card
+    return device?.id
   }
 
   public var soleErrorApp: Workspace? {
