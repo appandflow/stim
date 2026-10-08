@@ -251,7 +251,11 @@ so there is no Check again button:
 1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac. If
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
-   download. Then select an online macOS peer from your tailnet.
+   download. Then select an online macOS peer from your tailnet. When no other
+   Mac is on the tailnet (or every peer is not a Mac), the step says so and
+   links to the Tailscale download for the Mac you want to use; the list
+   appears by itself when that Mac joins. When every listed Mac is offline, a
+   line under the list tells you to turn on Tailscale on that Mac.
 2. **What it does.** Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.

@@ -21,6 +21,7 @@ final class AddMachineModelTests: XCTestCase {
     var grantReady = false
     var journalNode = "nSelf"
     var peerId = "nMini"
+    var peers: String?
     var shouldFailHostWrite = false
     var shouldFailDoctor = false
     var toolProblems: [String: [[String: String]]] = [:]
@@ -31,7 +32,7 @@ final class AddMachineModelTests: XCTestCase {
       Data(
         """
         {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"laptop.tail.test."},
-         "Peer":{"one":{"ID":"\(peerId)","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}}}
+         "Peer":{\(peers ?? #""one":{"ID":"\#(peerId)","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#)}}
         """.utf8)
     }
     func payload() throws -> SettingsPayload {
@@ -99,6 +100,23 @@ final class AddMachineModelTests: XCTestCase {
           ticket: { SetupTicket.generate(now: $0) }), sample: sample)
     }
     private enum Failure: Error { case refused }
+  }
+
+  @MainActor func testMacListSeparatesNoMacOfflineOnlyAndAvailable() async {
+    let harness = Harness()
+    let model = harness.make()
+    let phone = #""p":{"ID":"nPhone","HostName":"iPhone","DNSName":"iphone.tail.test.","OS":"iOS","Online":true}"#
+    let off = #""o":{"ID":"nOld","HostName":"Old","DNSName":"old.tail.test.","OS":"macOS","Online":false}"#
+    let on = #""m":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+    for (peers, expected) in [
+      ("", AddMachineModel.MacList.empty), (phone, .empty), (off, .offlineOnly), ("\(off),\(phone)", .offlineOnly),
+      ("\(off),\(on)", .available),
+    ] {
+      harness.peers = peers
+      await model.refreshPeers()
+      XCTAssertEqual(model.macList, expected, peers)
+      XCTAssertTrue(model.tailscaleRunning)
+    }
   }
 
   @MainActor func testDiscoveryPreselectionWaitsForPeersAndRequiresTheUserToPick() async {

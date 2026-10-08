@@ -105,7 +105,7 @@ struct AddMachineSheet: View {
       switch model.reachability {
       case .tailscaleMissing: return .tailnet(connected: false)
       case .tailscaleStopped: return model.tailscaleInstall == .cli ? .tailscaleUp : .tailscaleSwitch
-      case .peerOffline, .ready: return .tailnet(connected: true)
+      case .peerOffline, .ready: return model.macList == .empty ? .noMac : .tailnet(connected: true)
       }
     case .choose: return .capabilities(wizard.capabilities)
     default: return setupComplete ? .ready : .command
@@ -137,7 +137,11 @@ struct AddMachineSheet: View {
       case .peerOffline, .ready:
         checkLine("Tailscale runs on this Mac", ready: true)
         machineList
-        if model.reachability == .peerOffline, let peer = model.selected {
+        if model.macList == .offlineOnly {
+          Text("Turn on Tailscale on that Mac to continue.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        if model.reachability == .peerOffline, model.macList == .available, let peer = model.selected {
           Text("Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
@@ -147,8 +151,13 @@ struct AddMachineSheet: View {
 
   @ViewBuilder private var machineList: some View {
     if model.peers.isEmpty {
-      Text("No other Macs on your tailnet yet. Install Tailscale on the build Mac and sign in with the same account.")
+      Text("No other Mac on your tailnet yet").font(.stim(.headline))
+      Text("Install Tailscale on the Mac you want to use and sign in with the same account.")
         .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      Button("Download Tailscale", systemImage: "arrow.down.circle") {
+        NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
+      }
+      .buttonStyle(.stim(.primary, .regular))
     } else {
       VStack(spacing: Space.xs) {
         ForEach(model.peers) { peer in

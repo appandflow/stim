@@ -4,7 +4,7 @@
   import SwiftUI
 
   enum AddMachineFixture: String, CaseIterable, Identifiable {
-    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, peerOffline, ready
+    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, noMac, peerOffline, ready
     case chooseBoth, chooseBuilds, chooseHosted, chooseNone, alreadyApproved
     case command, expired, starting, awaitingApproval, awaitingPermission, approved
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
@@ -34,10 +34,13 @@
          "Peer":{"one":{"ID":"nMini","HostName":"janics-mac-mini","DNSName":"mini.tail.test.","OS":"macOS","Online":\(self != .peerOffline)},
          "two":{"ID":"nAir","HostName":"old-air","DNSName":"old-air.tail.test.","OS":"macOS","Online":false}}}
         """.utf8)
+      let noMacStatus = Data(
+        #"{"BackendState":"Running","Self":{"ID":"nSelf","HostName":"MacBook-Pro","DNSName":"macbook.tail.test."},"Peer":{}}"#
+          .utf8)
       let client = Tailnet.selfNode(statusJSON: status)!
       let mac = Tailnet.peers(statusJSON: status).first!.mac
       var wizard = SetupWizard(hasWorkspace: self != .noWorkspace)
-      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .peerOffline, .ready].contains(self) {
+      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .peerOffline, .ready].contains(self) {
         _ = wizard.apply(.macChosen(mac), now: now)
         if self == .chooseBuilds { _ = wizard.apply(.capabilitiesChanged([.build]), now: now) }
         if self == .chooseHosted { _ = wizard.apply(.capabilitiesChanged([.deviceHost]), now: now) }
@@ -135,7 +138,8 @@
       let health = try! JSONDecoder().decode(
         Tailnet.Health.self, from: Data("{\"server\":\"stim-server\",\"version\":\"1.16.0\",\"protocol\":1}".utf8))
       model.configureFixture(
-        status: self == .tailscaleMissing || self == .tailscaleStoppedApp ? nil : status, health: [mac.id: health],
+        status: self == .tailscaleMissing || self == .tailscaleStoppedApp ? nil : self == .noMac ? noMacStatus : status,
+        health: [mac.id: health],
         selfNode: client, ticket: ticket,
         install: self == .tailscaleMissing ? .none : self == .tailscaleStoppedCLI ? .cli : .app)
       return model

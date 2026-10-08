@@ -134,6 +134,10 @@ final class AddMachineModel {
   var reachability: Tailnet.Reachability {
     Tailnet.reachability(statusJSON: statusJSON, peer: selected, install: tailscaleInstall)
   }
+  enum MacList: Equatable { case empty, offlineOnly, available }
+  var macList: MacList {
+    peers.isEmpty ? .empty : peers.contains(where: \.online) ? .available : .offlineOnly
+  }
   var tailscaleRunning: Bool { reachability != .tailscaleMissing && reachability != .tailscaleStopped }
   var known: SetupKnown {
     var known = wizard.known
