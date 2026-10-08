@@ -341,6 +341,7 @@ export const pathRules = [
   { path: '.oxlintrc.json', exempt: 'repository tooling, not published behavior' },
   { path: 'AGENTS.md', exempt: 'documentation' },
   { path: 'CLAUDE.md', exempt: 'documentation' },
+  { path: 'GLOSSARY.md', exempt: 'documentation' },
   { path: 'README.md', exempt: 'documentation' },
   { path: 'RELEASE.md', exempt: 'documentation' },
   { path: 'LICENSE', exempt: 'license' },
