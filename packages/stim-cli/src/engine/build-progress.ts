@@ -95,6 +95,8 @@ export interface BuildProgress {
   /** Reads one record the run writes to its build log, for the native tool's progress. */
   output(record: unknown): void;
   durations(): Record<string, number>;
+  /** The SwiftPM step total the build reported, or null when it reported none. */
+  steps(): number | null;
   clear(): void;
 }
 
@@ -110,6 +112,7 @@ export const NO_BUILD_PROGRESS: BuildProgress = {
   waitingFor: () => {},
   output: () => {},
   durations: () => ({}),
+  steps: () => null,
   clear: () => {},
 };
 
@@ -318,6 +321,10 @@ export function startBuildProgress({
     durations() {
       return phaseDurations(record.phases, now());
     },
+    steps() {
+      const detail = parser.detail('');
+      return detail?.unit === 'steps' ? detail.total : null;
+    },
     clear() {
       if (detailTimer) clearTimeout(detailTimer);
       detailTimer = null;
@@ -369,6 +376,7 @@ const HISTORY_FIELDS = [
   'offloadedTo',
   'offloadFallback',
   'diagnostics',
+  'compileSteps',
 ] as const;
 
 function withHistoryEntry(
@@ -420,6 +428,27 @@ export function recordFinishedBuild(
     }
     if (platform === 'macos') return withHistoryEntry(state, platform, entry);
     return withHistoryEntry({ ...state, lastBuild: record, [LAST_BUILD_KEYS[platform]]: record }, platform, entry);
+  });
+}
+
+/** Adds one phase's duration to the recorded run of `platform` that started at `startedAt`. */
+export function recordBuildPhase(
+  root: string,
+  platform: BuildPlatform,
+  startedAt: string,
+  phase: BuildPhase,
+  ms: number,
+): void {
+  updateWorkspaceState(root, (state) => {
+    const saved = state[BUILD_HISTORY_KEY];
+    const list = isJsonObject(saved) && Array.isArray(saved[platform]) ? (saved[platform] as unknown[]) : [];
+    const index = list.findIndex((entry) => isJsonObject(entry) && entry.startedAt === startedAt);
+    const entry = list[index];
+    if (!isJsonObject(entry)) return state;
+    const phases = isJsonObject(entry.phases) ? entry.phases : {};
+    const next = [...list];
+    next[index] = { ...entry, phases: { ...phases, [phase]: Math.round(ms) } };
+    return { ...state, [BUILD_HISTORY_KEY]: { ...(saved as Record<string, unknown>), [platform]: next } };
   });
 }
 

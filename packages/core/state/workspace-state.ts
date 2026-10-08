@@ -354,6 +354,9 @@ function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntr
     configuration: typeof record.configuration === 'string' ? record.configuration : null,
     cacheKey: typeof record.cacheKey === 'string' ? record.cacheKey : null,
     phases: historyPhases(record.phases),
+    ...(typeof record.compileSteps === 'number' && Number.isInteger(record.compileSteps) && record.compileSteps >= 0
+      ? { compileSteps: record.compileSteps }
+      : {}),
   };
 }
 

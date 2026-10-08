@@ -132,7 +132,7 @@ While a macOS build runs, `stim status --json` reports it as `environments[].bui
 `compile`, `install` and `launch`. During `compile`, `detail` carries SwiftPM's
 `[done / total]` counts with `unit: "steps"`, and fetching and planning packages show as the
 `configure` step. A macOS build has no cache lookup, so `outcome` and `plannedPhases` are `null`;
-finished runs and the time each phase took are in `environments[].builds.macos`. Stim Desktop shows them in the
+finished runs and the time each phase took, including `launch`, are in `environments[].builds.macos`, with SwiftPM's step total as `compileSteps`. Stim Desktop shows them in the
 workspace's build card.
 
 Stim Desktop offers **Build and Run**, **Open app** (for an app on this Mac) and **Stop** on the

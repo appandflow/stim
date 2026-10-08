@@ -8,6 +8,7 @@ import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type Mac
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
   NO_BUILD_PROGRESS,
+  recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
   tapBuildLog,
@@ -121,7 +122,18 @@ export async function runMacos(
             progress,
           );
           progress.step('launch');
-          if (!remote) return launchHere(root, record);
+          const launched = (): void => {
+            try {
+              recordBuildPhase(root, 'macos', record.build.startedAt, 'launch', progress.durations().launch ?? 0);
+            } catch (error) {
+              note(`The launch time could not be recorded in the build history: ${(error as Error)?.message || error}`);
+            }
+          };
+          if (!remote) {
+            const here = await launchHere(root, record);
+            launched();
+            return here;
+          }
           const connection = await connectHost(remote);
           const write = (patch: Partial<MacosAppRecord>) =>
             writeWorkspaceState(root, { macos: { ...record, ...patch } });
@@ -148,6 +160,7 @@ export async function runMacos(
               hostLaunched: run.launched,
             };
             writeWorkspaceState(root, { macos: placed });
+            launched();
             return placed;
           } catch (error) {
             write({ supervisor: undefined, ...(placement ? { host: placement, hostLaunched: false } : {}) });
@@ -204,7 +217,7 @@ async function buildBundle(
       durationMs: Date.now() - started,
     };
     writeWorkspaceState(root, { macos: record });
-    recordMacosBuild(root, record.build);
+    recordMacosBuild(root, record.build, progress.steps());
     return built.handoff;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -220,14 +233,14 @@ async function buildBundle(
         : {}),
     };
     writeWorkspaceState(root, { macos: { ...record, supervisor: undefined, build } });
-    recordMacosBuild(root, build);
+    recordMacosBuild(root, build, progress.steps());
     throw error;
   } finally {
     writer.close();
   }
 }
 
-function recordMacosBuild(root: string, build: MacosBuild): void {
+function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number | null): void {
   recordFinishedBuild(root, {
     platform: 'macos',
     status: build.state === 'ok' ? 'ok' : 'failed',
@@ -243,6 +256,7 @@ function recordMacosBuild(root: string, build: MacosBuild): void {
     builtOn: build.builtOn,
     offloadedTo: build.offloadedTo,
     offloadFallback: build.offloadFallback,
+    ...(compileSteps === null ? {} : { compileSteps }),
   });
 }
 
