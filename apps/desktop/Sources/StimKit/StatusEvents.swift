@@ -99,8 +99,17 @@ public enum StatusEvents {
   }
 }
 
+private enum TimestampFormatters {
+  // Foundation (Date Formatters, Thread Safety) documents date formatting as thread-safe; ISO8601DateFormatter is
+  // not marked Sendable, and these are configured once and never mutated again.
+  nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+  }()
+  nonisolated(unsafe) static let plain = ISO8601DateFormatter()
+}
+
 func parseTimestamp(_ text: String) -> Date? {
-  let formatter = ISO8601DateFormatter()
-  formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-  return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
 }

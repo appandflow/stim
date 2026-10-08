@@ -243,15 +243,23 @@ private func visibleEntries(
 ) -> [SidebarEntry] {
   let archives = ArchivedWorkspace.newestFirst(archived)
     .filter { !options.hiddenProjects.contains($0.sidebarProject.root) }
+  struct GroupKey: Hashable {
+    var project: Project
+    var worktreeRoot: String
+    var hidden: Bool
+  }
   var groups: [[ArchivedWorkspace]] = []
+  var groupIndexes: [GroupKey: [Int]] = [:]
   for archive in archives {
-    if let index = groups.firstIndex(where: {
-      $0[0].sidebarProject == archive.sidebarProject && $0[0].worktreeRoot == archive.worktreeRoot
-        && options.hiddenWorkspaces.archives.contains($0[0].id) == options.hiddenWorkspaces.archives.contains(archive.id)
-        && !$0.contains(where: { $0.projectRoot == archive.projectRoot })
+    let key = GroupKey(
+      project: archive.sidebarProject, worktreeRoot: archive.worktreeRoot,
+      hidden: options.hiddenWorkspaces.archives.contains(archive.id))
+    if let index = groupIndexes[key, default: []].first(where: {
+      !groups[$0].contains(where: { $0.projectRoot == archive.projectRoot })
     }) {
       groups[index].append(archive)
     } else {
+      groupIndexes[key, default: []].append(groups.count)
       groups.append([archive])
     }
   }
@@ -288,17 +296,28 @@ private func orderedEntries(
 private func sorted(
   _ entries: [SidebarEntry], by sort: SidebarSort, project: (String) -> Project
 ) -> [SidebarEntry] {
-  return entries.sorted { a, b in
-    if sort == .name {
-      let (x, y) = (project(a.path).name.lowercased(), project(b.path).name.lowercased())
-      if x != y { return x < y }
-    }
-    switch sort {
-    case .lastActivity where a.lastActivityAt != b.lastActivityAt: return newer(a.lastActivityAt, b.lastActivityAt)
-    case .memory where a.memoryMb != b.memoryMb: return a.memoryMb > b.memoryMb
-    default: return (a.sortName, a.path) < (b.sortName, b.path)
-    }
+  struct Keyed {
+    var entry: SidebarEntry
+    var project: String
+    var activity: Date?
+    var memory: Int
+    var name: String
+    var path: String
   }
+  let keyed = entries.map { entry in
+    Keyed(
+      entry: entry, project: sort == .name ? project(entry.path).name.lowercased() : "",
+      activity: sort == .lastActivity ? entry.lastActivityAt : nil, memory: sort == .memory ? entry.memoryMb : 0,
+      name: entry.sortName, path: entry.path)
+  }
+  return keyed.sorted { a, b in
+    if sort == .name, a.project != b.project { return a.project < b.project }
+    switch sort {
+    case .lastActivity where a.activity != b.activity: return newer(a.activity, b.activity)
+    case .memory where a.memory != b.memory: return a.memory > b.memory
+    default: return (a.name, a.path) < (b.name, b.path)
+    }
+  }.map(\.entry)
 }
 
 private func newer(_ a: Date?, _ b: Date?) -> Bool {

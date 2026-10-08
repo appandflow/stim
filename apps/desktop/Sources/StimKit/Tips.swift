@@ -91,6 +91,8 @@ public struct TipInputs {
   public var hosting: [String]?
   public var macs: [TailnetMac]?
   public var pairedPhones: Int?
+  /// The Phone app feature flag; without it no phone tip applies.
+  public var phoneApp = false
   public var tutorialCompleted = false
   public var sidebar = SidebarOptions()
   public var rows = 0
@@ -151,7 +153,7 @@ public enum Tips {
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
     switch topic {
     case .buildMachine: inputs.machines?.isEmpty == true && inputs.macs?.isEmpty == false
-    case .phone: inputs.pairedPhones == 0
+    case .phone: inputs.phoneApp && inputs.pairedPhones == 0
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection

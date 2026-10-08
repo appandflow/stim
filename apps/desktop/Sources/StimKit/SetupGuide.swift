@@ -212,16 +212,25 @@ public struct SetupGuideProgress {
   public static let completedKey = "setupGuide.completed"
   public static let resumeKey = "setupGuide.resumeStep"
 
+  public static let skipEnvironmentKey = "STIM_DESKTOP_SKIP_ONBOARDING"
+  public static let skipDefaultsKey = "skipOnboarding"
+
   private let defaults: UserDefaults
 
-  public init(_ defaults: UserDefaults = .standard) {
+  /// Whether first-run prompts are skipped for this run only: `STIM_DESKTOP_SKIP_ONBOARDING=1` in the environment or
+  /// the launch argument `-skipOnboarding YES`. Nothing is written, so a run without it shows them again.
+  public let skipsOnboarding: Bool
+
+  public init(_ defaults: UserDefaults = .standard, environment: [String: String] = ProcessInfo.processInfo.environment) {
     self.defaults = defaults
+    skipsOnboarding = environment[Self.skipEnvironmentKey] == "1" || defaults.bool(forKey: Self.skipDefaultsKey)
   }
 
   /// The screen the guide opens on by itself at launch, or nil. A saved step reopens after a restart. Until the guide
   /// is finished or closed once, a launch opens it on the welcome, unless `checks` find everything already set up:
   /// then it counts as finished without showing.
   public func stepAtLaunch(_ checks: SetupChecks) -> SetupStep? {
+    if skipsOnboarding { return nil }
     if let saved = resumeStep { return saved }
     guard !defaults.bool(forKey: Self.completedKey) else { return nil }
     guard !checks.isComplete else {

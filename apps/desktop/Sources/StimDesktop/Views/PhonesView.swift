@@ -1,6 +1,4 @@
 import AppKit
-import CoreImage
-import CoreImage.CIFilterBuiltins
 import StimKit
 import SwiftUI
 
@@ -12,128 +10,40 @@ struct PhonesView: View {
   @ObservedObject private var flags = FeatureFlagStore.shared
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
   @State private var pairing = false
+  @State private var pairingModel: PairPhoneModel?
   @State private var revoking: PairedDevice?
-  @State private var hosted = HostedSessionsModel()
-  @State private var stoppingSession: HostedSession?
 
   var body: some View {
     Form {
-      Section {
-        Toggle(page.serveToggleTitle, isOn: $servesPhones)
+      if flags.phoneApp {
+        if let problem {
+          Section { problemRow(problem) }
+        }
+        phones
+      } else {
+        if !serverErrors.isEmpty {
+          Section { ForEach(serverErrors, id: \.self) { Text(abbreviatingHome($0)).foregroundStyle(Palette.error) } }
+        }
+        if case .running(let health, _) = server.state, !health.tailscale.isRunning {
+          TailscaleSetup(tailscale: health.tailscale, port: server.port, canRestart: server.canRestart) {
+            server.restart()
+          }
+        }
+        if case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName {
+          RouteSection(server: server, route: route, dnsName: dnsName)
+        }
+      }
+      Section("Server") {
+        Toggle(PhoneApp.serverPage(phoneApp: flags.phoneApp).serveToggleTitle, isOn: $servesPhones)
           .onChange(of: servesPhones) { _, on in on ? server.start() : server.stop() }
         serverState
-      } footer: {
-        Text(PhoneApp.Copy.serveFooter(port: server.port, phoneApp: flags.phoneApp))
-          .foregroundStyle(Palette.tertiary)
-          .multilineTextAlignment(.leading)
-          .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      RecordingSection(settings: settings)
-
-      if case .running(let health, _) = server.state, !health.tailscale.isRunning {
-        TailscaleSetup(tailscale: health.tailscale, port: server.port, canRestart: server.canRestart) {
-          server.restart()
-        }
-      }
-
-      if case .running(let health, _) = server.state, let route = health.route, let dnsName = health.tailscale.dnsName {
-        RouteSection(server: server, route: route, dnsName: dnsName)
-      }
-
-      if page.showsPairedPhones {
-        Section {
-          ForEach(serverErrors, id: \.self) { error in
-            Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
-          }
-          if server.phones.isEmpty {
-            InlineEmpty("No paired phones.")
-          }
-          if let reason = pairingUnavailable {
-            Text(reason).foregroundStyle(Palette.tertiary)
-          }
-          PairedPhonesRows(
-            devices: server.phones, changing: { server.pendingGrants[$0.id] != nil },
-            allowControl: { server.grant($0, control: $1) }, revoke: { revoking = $0 })
-        } header: {
-          HStack {
-            Text("Paired phones")
-            Spacer()
-            Button("Pair a Phone\u{2026}") { pairing = true }
-              .disabled(pairingUnavailable != nil)
-              .help(pairingUnavailable ?? "Show a code to pair a phone")
-          }
-        }
-      } else if !serverErrors.isEmpty {
-        Section {
-          ForEach(serverErrors, id: \.self) { error in
-            Text(abbreviatingHome(error)).foregroundStyle(Palette.error)
-          }
-        }
-      }
-
-      Section {
-        if server.buildClients.isEmpty {
-          InlineEmpty("No Mac builds here.")
-        }
-        ForEach(server.buildClients) { device in
-          BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
-        }
-      } header: {
-        Text("Macs that build here")
-      } footer: {
-        Text(
-          "Another Mac asks from its Remote Macs tab. Stim Desktop notifies you, and only Allow lets it run its project's code here to build, as your user. A build client never reads workspaces or controls devices. Requests lapse after 15 minutes."
-        )
-        .foregroundStyle(Palette.tertiary)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      Section {
-        if server.deviceHostClients.isEmpty {
-          InlineEmpty("No device hosting approvals.")
-        }
-        ForEach(server.deviceHostClients) { device in
-          BuildClientRow(device: device, review: { BuildRequestPrompt.present(id: device.id) }) { revoking = device }
-        }
-      } header: {
-        Text("Device hosting approvals")
-      } footer: {
-        Text(
-          "Allow approves another Mac for hosted simulator and emulator sessions. Hosted iOS simulators and Android emulators run on an approved Mac via stim ios|android --remote <machine>. Use stim ios|android --remote auto to run here while this Mac has room, otherwise on an approved hosting Mac. Approval does not grant build access or read/control access to unrelated workspaces or devices. Requests lapse after 15 minutes."
-        )
-        .foregroundStyle(Palette.tertiary)
-        .multilineTextAlignment(.leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      }
-
-      if let sessions = hosted.sessions {
-        Section {
-          if sessions.isEmpty { InlineEmpty("No hosted sessions.") }
-          ForEach(sessions) { session in
-            HostedSessionRow(session: session, stopping: hosted.stopping.contains(session.id)) {
-              stoppingSession = session
-            }
-          }
-        } header: {
-          Text("Hosted here")
-        } footer: {
-          Text("A session is a simulator, emulator or app another Mac runs here; Stop ends it and deletes or parks its device.")
-            .foregroundStyle(Palette.tertiary)
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-      }
-
-      Section("stim-server executable") {
         HStack {
-          TextField("stim-server on the login shell's PATH", text: $executable)
+          TextField("stim-server executable", text: $executable, prompt: Text("stim-server on the login shell's PATH"))
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
-        Text("Overrides PATH the next time the server starts.")
-          .foregroundStyle(Palette.tertiary)
+        .help("Overrides PATH the next time the server starts.")
       }
+      RecordingSection(settings: settings)
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -141,108 +51,140 @@ struct PhonesView: View {
     .task {
       while !Task.isCancelled {
         server.refresh()
-        await hosted.refresh()
         try? await Task.sleep(for: .seconds(5))
       }
     }
     .sheet(isPresented: $pairing, onDismiss: server.reloadDevices) {
-      PairSheet(server: server)
+      if let pairingModel { PairPhoneSheet(model: pairingModel) }
     }
     .onQuitRequested { pairing = false }
     .onReceive(OpenRequests.shared.$pairsPhone) { pairs in
       guard pairs else { return }
       OpenRequests.shared.pairsPhone = false
-      pairing = flags.phoneApp && server.isRunning
+      guard flags.phoneApp else { return }
+      pair()
     }
     .confirmationDialog(
-      revokeTitle, isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
+      revoking.map { "Revoke \($0.name)?" } ?? "",
+      isPresented: .init(get: { revoking != nil }, set: { if !$0 { revoking = nil } }),
       presenting: revoking
     ) { device in
-      Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
-    } message: { device in
-      Text(
-        device.isDeviceHostClient
-          ? "That Mac's device hosting approval is removed. It must ask again."
-          : device.pendingUntil != nil
-            ? "That Mac cannot build here unless it asks again."
-            : device.isBuildClient
-              ? "That Mac can no longer build here and must ask again."
-              : "The phone disconnects and must pair again to reconnect.")
-    }
-    .confirmationDialog(
-      stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
-      isPresented: .init(get: { stoppingSession != nil }, set: { if !$0 { stoppingSession = nil } }),
-      presenting: stoppingSession
-    ) { session in
-      Button("Stop", role: .destructive) { Task { await hosted.stop(session) } }
+      Button("Revoke", role: .destructive) { server.revoke(device) }
     } message: { _ in
-      Text("This ends the session and deletes or parks its device on this Mac.")
+      Text("The phone disconnects and must pair again to reconnect.")
+    }
+  }
+
+  @ViewBuilder private var phones: some View {
+    let errors = serverErrors
+    if server.phones.isEmpty {
+      Section {
+        ForEach(errors, id: \.self) { Text(abbreviatingHome($0)).foregroundStyle(Palette.error) }
+        VStack(spacing: Space.lg) {
+          ZStack {
+            BrandHalo(size: 130)
+            BrandBadge(systemImage: "iphone", size: 64)
+          }
+          .accessibilityHidden(true)
+          Text("No paired phones").font(.stim(.headline))
+          Text("See this Mac's workspaces, devices and logs on your phone.")
+            .foregroundStyle(Palette.secondary)
+            .multilineTextAlignment(.center)
+          Button("Pair a Phone\u{2026}", action: pair).buttonStyle(.stim(.primary, .regular))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Space.xl)
+      }
+    } else {
+      Section {
+        ForEach(errors, id: \.self) { Text(abbreviatingHome($0)).foregroundStyle(Palette.error) }
+        ForEach(server.phones) { device in
+          PhoneRow(
+            device: device, changing: server.pendingGrants[device.id] != nil,
+            allowControl: { server.grant(device, control: $0) }, revoke: { revoking = device })
+        }
+      } header: {
+        HStack {
+          Text("Paired phones")
+          Spacer()
+          Button("Pair a Phone\u{2026}", action: pair).buttonStyle(.stim(.primary))
+        }
+      }
     }
   }
 
   private var serverErrors: [String] { [server.devicesError, server.changeError].compactMap { $0 } }
 
-  private var page: PhoneApp.ServerPage { PhoneApp.serverPage(phoneApp: flags.phoneApp) }
+  private func pair(fixing: Bool) {
+    pairingModel = PairPhoneModel(stimHome: stimHome, fixing: fixing)
+    pairing = true
+  }
 
-  private var pairingUnavailable: String? {
-    switch server.state {
-    case .running(let health, _):
-      if health.tailscale.isRunning && health.route?.state != "routed" {
-        return "Pairing needs a verified tailnet-only connection. Set it up in the Tailscale route section."
+  private func pair() { pair(fixing: false) }
+
+  private enum Problem {
+    case servingOff, tailscaleOff, funneled, noRoute
+
+    var text: String {
+      switch self {
+      case .servingOff: return "Serving is off, so paired phones can't connect."
+      case .tailscaleOff: return "Tailscale is off on this Mac, so phones can't connect."
+      case .funneled: return "Tailscale Funnel makes the Stim server public, so phones are refused."
+      case .noRoute: return "Phones can't reach this Mac yet: its private tailnet route is not set up."
       }
-      return nil
-    case .off: return "Pairing needs stim-server. Turn on Serve to phones to pair a phone."
-    case .starting, .notReady(.pending, _): return "Pairing is available once stim-server has started."
-    case .notReady(.degraded, _): return "Pairing is unavailable until stim-server can read its Stim home."
-    case .failed: return "Pairing is unavailable because stim-server failed to start."
     }
   }
 
-  private var revokeTitle: String {
-    guard let revoking else { return "" }
-    return revoking.pendingUntil == nil ? "Revoke \(revoking.name)?" : "Deny \(revoking.name)?"
+  private var problem: Problem? {
+    guard servesPhones else { return server.phones.isEmpty ? nil : .servingOff }
+    guard case .running(let health, _) = server.state else { return nil }
+    if !health.tailscale.isRunning { return .tailscaleOff }
+    switch health.route?.state {
+    case "funneled": return .funneled
+    case "missing", "unknown": return .noRoute
+    default: return nil
+    }
+  }
+
+  private func problemRow(_ problem: Problem) -> some View {
+    HStack(spacing: Space.md) {
+      Label(problem.text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+      Spacer()
+      if problem == .servingOff {
+        Button("Turn On") { servesPhones = true }.buttonStyle(.stim())
+      } else {
+        Button("Fix\u{2026}") { pair(fixing: true) }.buttonStyle(.stim())
+      }
+    }
   }
 
   @ViewBuilder private var serverState: some View {
     switch server.state {
     case .off:
-      Label("Not serving", systemImage: "circle").foregroundStyle(Palette.secondary)
+      EmptyView()
     case .starting, .notReady(.pending, _):
       HStack(spacing: Space.md) {
         ProgressView().controlSize(.small)
         Text("Starting").foregroundStyle(Palette.secondary)
       }
     case .notReady(.degraded(let reason), _):
-      VStack(alignment: .leading, spacing: Space.md) {
-        Text("Degraded: \(abbreviatingHome(reason))").foregroundStyle(Palette.warning).textSelection(.enabled)
-        Text("The server retries every 30 seconds.").foregroundStyle(Palette.tertiary)
-      }
+      Text("Degraded: \(abbreviatingHome(reason)). It retries every 30 seconds.")
+        .foregroundStyle(Palette.warning).textSelection(.enabled)
     case .running(let health, let owned):
-      VStack(alignment: .leading, spacing: Space.md) {
-        HStack(spacing: Space.md) {
-          StatusDot(
-            color: health.tailscale.isRunning ? Palette.success : Palette.warning,
-            label: health.tailscale.isRunning ? "Tailscale running" : "Tailscale not running")
-          Text(
-            "stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")"
-          )
-          Spacer()
-          Text(health.tailscale.isRunning ? "Tailscale" : "This Mac only")
-            .font(.stim(.caption, mono: true))
-            .foregroundStyle(Palette.tertiary)
-        }
-        if StimHome.isDefault(stimHome), !health.servesDefaultHome() {
-          Text(
-            "This server keeps pairings in \(abbreviatingHome(health.stimHome)), not ~/.stim. Phones paired now stop working when Stim Desktop serves ~/.stim again."
-          )
-          .foregroundStyle(Palette.warning)
-          .textSelection(.enabled)
-        }
+      Text("stim-server \(health.version) on port \(String(server.port))\(owned ? "" : ", started outside Stim Desktop")")
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      if StimHome.isDefault(stimHome), !health.servesDefaultHome() {
+        Text(
+          "This server keeps pairings in \(abbreviatingHome(health.stimHome)), not ~/.stim. Phones paired now stop working when Stim Desktop serves ~/.stim again."
+        )
+        .foregroundStyle(Palette.warning)
+        .textSelection(.enabled)
       }
     case .failed(let message):
-      VStack(alignment: .leading, spacing: Space.md) {
+      HStack {
         Text(abbreviatingHome(message)).foregroundStyle(Palette.error).textSelection(.enabled)
-        Button("Try Again") { server.start() }
+        Spacer()
+        Button("Try Again") { server.start() }.buttonStyle(.stim())
       }
     }
   }
@@ -372,53 +314,33 @@ struct RouteSection: View {
   }
 }
 
-private struct PairedPhonesRows: View {
-  var devices: [PairedDevice]
-  var changing: (PairedDevice) -> Bool
-  var allowControl: (PairedDevice, Bool) -> Void
-  var revoke: (PairedDevice) -> Void
-
-  var body: some View {
-    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: Space.lg, verticalSpacing: Space.md) {
-      ForEach(devices) { device in
-        if device.id != devices.first?.id {
-          Divider().gridCellUnsizedAxes(.horizontal)
-        }
-        DeviceRow(
-          device: device, changing: changing(device), allowControl: { allowControl(device, $0) },
-          revoke: { revoke(device) })
-      }
-    }
-  }
-}
-
-private struct DeviceRow: View {
+private struct PhoneRow: View {
   var device: PairedDevice
   var changing: Bool
   var allowControl: (Bool) -> Void
   var revoke: () -> Void
 
   var body: some View {
-    GridRow {
+    HStack(spacing: Space.lg) {
       Image(systemName: "iphone").iconFont(IconSize.large).foregroundStyle(Palette.accent)
       VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(device.name).font(.stim(.body, weight: .semibold))
-        Text("\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
+        Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
+        Text(lastSeen).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .fixedSize(horizontal: false, vertical: true)
-      ScopeBadge(canControl: device.canControl)
-      VStack(alignment: .trailing, spacing: Space.xxs) {
-        Text(lastSeen).foregroundStyle(Palette.secondary)
-        Text("Paired \(device.pairedAt.formatted(date: .abbreviated, time: .shortened))")
-          .foregroundStyle(Palette.tertiary)
+      Spacer()
+      Pill(device.canControl ? "Can control" : "View only", tone: device.canControl ? .success : .neutral, size: .small)
+      Menu {
+        Button(device.canControl ? "View Only" : "Allow Control") { allowControl(!device.canControl) }
+          .disabled(changing)
+        Divider()
+        Button("Revoke\u{2026}", role: .destructive, action: revoke)
+      } label: {
+        Image(systemName: "ellipsis.circle")
       }
-      .font(.stim(.footnote))
-      Toggle("Allow control", isOn: .init(get: { device.canControl }, set: allowControl))
-        .toggleStyle(.checkbox)
-        .disabled(changing)
-        .help("Let this phone drive simulators and emulators and run reload and stop.")
-      Button("Revoke", role: .destructive, action: revoke)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .fixedSize()
+      .accessibilityLabel("More actions for \(device.name)")
     }
     .padding(.vertical, Space.xxs)
   }
@@ -426,269 +348,6 @@ private struct DeviceRow: View {
   private var lastSeen: String {
     guard let at = device.lastSeenAt else { return "Never seen" }
     return "Seen \(at.formatted(.relative(presentation: .named)))"
-  }
-}
-
-private struct BuildClientRow: View {
-  var device: PairedDevice
-  var review: () -> Void
-  var revoke: () -> Void
-
-  var body: some View {
-    HStack(spacing: Space.lg) {
-      Image(systemName: "desktopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack(spacing: Space.sm) {
-          Text(verbatim: device.name).font(.stim(.body, weight: .semibold)).lineLimit(1)
-          if device.pendingUntil != nil {
-            Pill("Waiting for you", tone: .warning, size: .small)
-          } else {
-            Pill(device.isDeviceHostClient ? "Approved for devices" : "Can build", tone: .success, size: .small)
-          }
-        }
-        Text(verbatim: "\(device.id) \u{00B7} \(device.node)").font(.stim(.caption, mono: true))
-          .foregroundStyle(Palette.secondary)
-          .lineLimit(1)
-          .truncationMode(.middle)
-      }
-      Spacer()
-      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      if device.pendingUntil != nil {
-        Button("Review\u{2026}", action: review)
-        Button("Deny", role: .destructive, action: revoke)
-      } else {
-        Button("Revoke", role: .destructive, action: revoke)
-      }
-    }
-    .padding(.vertical, Space.xxs)
-  }
-
-  private var detail: String {
-    if let until = device.pendingUntil { return "Lapses \(until.formatted(.relative(presentation: .named)))" }
-    guard let at = device.lastSeenAt else { return device.isDeviceHostClient ? "Never connected" : "Never built" }
-    return "Seen \(at.formatted(.relative(presentation: .named)))"
-  }
-}
-
-private struct HostedSessionRow: View {
-  var session: HostedSession
-  var stopping: Bool
-  var stop: () -> Void
-
-  var body: some View {
-    HStack(spacing: Space.lg) {
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        HStack(spacing: Space.sm) {
-          Text(verbatim: session.client.name).font(.stim(.body, weight: .semibold))
-          Pill(stopping ? "Stopping" : session.stateLabel, tone: tone, size: .small)
-        }
-        Text(verbatim: [session.device, session.app].compactMap { $0 }.joined(separator: " \u{00B7} "))
-          .font(.stim(.caption))
-          .foregroundStyle(Palette.secondary)
-        Text(session.sinceText()).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
-      }
-      Spacer()
-      if !session.parked, session.state != .stopped {
-        Button("Stop", role: .destructive, action: stop)
-          .disabled(stopping || session.state == .stopping)
-      }
-    }
-    .padding(.vertical, Space.xxs)
-  }
-
-  private var tone: Tone {
-    if stopping || session.parked { return .neutral }
-    switch session.state {
-    case .ready: return .success
-    case .unknown: return .warning
-    default: return .neutral
-    }
-  }
-}
-
-private struct ScopeBadge: View {
-  var canControl: Bool
-
-  var body: some View {
-    Pill(canControl ? "Can control" : "Read-only", tone: canControl ? .success : .neutral, size: .small)
-  }
-}
-
-struct PairSheet: View {
-  @ObservedObject var server: ServerController
-  @Environment(\.dismiss) private var dismiss
-  @State private var code: PairingCode?
-  @State private var error: String?
-  @State private var paired: PairedDevice?
-  @State private var openedAt = Date()
-  @State private var showsToken = false
-  @State private var allowsControl = true
-
-  var body: some View {
-    VStack(spacing: Space.xl) {
-      Text("Pair a Phone").font(.stim(.title))
-      if let paired {
-        Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(Palette.success)
-        HStack(spacing: Space.sm) {
-          Text("Paired \(paired.name)").font(.stim(.headline))
-          ScopeBadge(canControl: paired.canControl)
-        }
-        Text("\(paired.id) \u{00B7} \(paired.node)").font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-      } else {
-        VStack(alignment: .leading, spacing: Space.xs) {
-          Toggle("Allow this phone to control devices", isOn: $allowsControl)
-            .toggleStyle(.checkbox)
-            .onChange(of: allowsControl) { load() }
-          Text(
-            allowsControl
-              ? "It can drive simulators and emulators and run reload and stop."
-              : "It can only see workspaces, devices and logs. You can allow control later in the Phones tab."
-          )
-          .font(.stim(.footnote))
-          .foregroundStyle(Palette.tertiary)
-          .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        if let error {
-          Text(abbreviatingHome(error)).foregroundStyle(Palette.error).textSelection(.enabled)
-          Button("Try Again", action: load)
-        } else if let code {
-          codeView(code)
-        } else {
-          ProgressView().frame(width: 260, height: 260)
-        }
-      }
-      HStack {
-        Spacer()
-        Button(paired == nil ? "Cancel" : "Done") { dismiss() }.keyboardShortcut(paired == nil ? .cancelAction : .defaultAction)
-      }
-    }
-    .padding(Space.xxxl)
-    .frame(width: 420)
-    .background(Palette.background)
-    .font(.stim(.body))
-    .foregroundStyle(Palette.text)
-    .onAppear(perform: load)
-    .task {
-      while !Task.isCancelled, paired == nil {
-        try? await Task.sleep(for: .seconds(2))
-        server.reloadDevices()
-        paired = server.devices.first { $0.isPhone && $0.pairedAt >= openedAt }
-      }
-    }
-  }
-
-  private func codeView(_ code: PairingCode) -> some View {
-    TimelineView(.periodic(from: .now, by: 1)) { context in
-      let remaining = Int(code.expiresAt.timeIntervalSince(context.date).rounded(.up))
-      VStack(spacing: Space.lg) {
-        Text("Scan this code with the Stim app on your phone. It pairs one phone.")
-          .foregroundStyle(Palette.secondary)
-          .multilineTextAlignment(.center)
-          .fixedSize(horizontal: false, vertical: true)
-        ZStack {
-          QRCodeImage(text: code.qrText)
-            .frame(width: 260, height: 260)
-            .blur(radius: remaining > 0 ? 0 : 8)
-          if remaining <= 0 {
-            Button("New Code", action: load).controlSize(.large)
-          }
-        }
-        Text(remaining > 0 ? "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60))" : "This code expired.")
-          .font(.stim(.callout, mono: true))
-          .foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
-        VStack(alignment: .leading, spacing: Space.sm) {
-          detail("Endpoint", code.qr.endpoint)
-          detail("Token", code.qr.pairingToken, secret: true)
-        }
-        if case .running(let health, _) = server.state, let route = health.route, route.state != "routed" {
-          Label(
-            route.state == "missing"
-              ? "No tailscale serve route to stim-server was found, so a phone cannot reach this endpoint yet. See the Phones tab."
-              : route.state == "funneled"
-                ? "Tailscale Funnel now exposes stim-server publicly. Do not use this code; see the Phones tab."
-                : "Could not read tailscale serve status, so this endpoint is assumed. See the Phones tab.",
-            systemImage: "exclamationmark.triangle.fill"
-          )
-          .foregroundStyle(Palette.warning)
-          .font(.stim(.callout))
-          .fixedSize(horizontal: false, vertical: true)
-        }
-        if code.isLocalOnly {
-          Label(
-            "Tailscale is not running, so this endpoint works only on this Mac, for example in an iOS Simulator.",
-            systemImage: "exclamationmark.triangle.fill"
-          )
-          .foregroundStyle(Palette.warning)
-          .font(.stim(.callout))
-          .fixedSize(horizontal: false, vertical: true)
-        }
-      }
-    }
-  }
-
-  private func detail(_ title: String, _ value: String, secret: Bool = false) -> some View {
-    HStack {
-      Text(title).foregroundStyle(Palette.tertiary).frame(width: 64, alignment: .leading)
-      if secret && !showsToken {
-        Text(String(repeating: "\u{2022}", count: 16)).font(.stim(.caption, mono: true)).lineLimit(1)
-      } else {
-        Text(value).font(.stim(.caption, mono: true)).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-      }
-      Spacer()
-      if secret {
-        Button {
-          showsToken.toggle()
-        } label: {
-          Image(systemName: showsToken ? "eye.slash" : "eye")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel(showsToken ? "Hide token" : "Show token")
-        .help(showsToken ? "Hide token" : "Show token")
-      }
-      CopyButton(value)
-    }
-    .font(.stim(.callout))
-  }
-
-  private func load() {
-    error = nil
-    code = nil
-    showsToken = false
-    let control = allowsControl
-    Task {
-      let result = await Result.awaiting { try await server.pairPhone(control: control) }
-      guard control == allowsControl else { return }
-      switch result {
-      case .success(let value): code = value
-      case .failure(let failure): error = failure.localizedDescription
-      }
-    }
-  }
-}
-
-struct QRCodeImage: View {
-  var text: String
-
-  var body: some View {
-    if let image = Self.render(text) {
-      Image(nsImage: image)
-        .interpolation(.none)
-        .resizable()
-        .scaledToFit()
-        .padding(Space.lg)
-        .background(RoundedRectangle(cornerRadius: Radius.card).fill(.white))
-    }
-  }
-
-  static func render(_ text: String) -> NSImage? {
-    let filter = CIFilter.qrCodeGenerator()
-    filter.message = Data(text.utf8)
-    filter.correctionLevel = "M"
-    guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
-      let cgImage = CIContext().createCGImage(output, from: output.extent)
-    else { return nil }
-    return NSImage(cgImage: cgImage, size: output.extent.size)
   }
 }
 

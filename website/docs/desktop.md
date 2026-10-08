@@ -85,7 +85,7 @@ The panel follows a small iOS app in its own worktree. It shows:
 - **App logs:** find the tagged error; **Crash me** and **Slow request** are optional checks.
 - **Agent actions and replay:** watch the agent drive the simulator and inspect its recording. If recording is off, the panel points to Settings.
 - **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
-- **Watch on your phone:** **Pair a phone** opens Settings > Phones > Pair. If the server is off, **Turn on Serve to phones** opens Phones so you can enable it. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
+- **Watch on your phone:** **Pair a phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
 - **Build on another Mac:** **Add remote Mac** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels. The page also shows removal and last activity, retention dates and sizes, build totals, final branch head, PR number and title (only Merged is treated as a final state), and ended agent sessions.
 
@@ -460,11 +460,12 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
-   phones**, choose **Set up connection** if needed, then **Pair a Phone…**.
-   Setup keeps existing Tailscale routes and never enables Funnel. If Tailscale
-   asks to enable HTTPS, approve its browser setup and retry. Pairing waits for a
-   verified private route; a timeout changes nothing.
+3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+   Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+   tailnet route, shows a code and waits for the phone. Setup keeps existing
+   Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
+   approve its browser setup and retry. Pairing waits for a verified private
+   route; a timeout changes nothing.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing
@@ -473,8 +474,8 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
-On the hosting Mac, **Stim > Settings > Phones > Hosted here**, below **Device
-hosting approvals**, lists the simulators, emulators and apps approved Macs run
+On the hosting Mac, **Stim > Settings > Remote Macs > Running here**, below
+**Macs using this Mac**, lists the simulators, emulators and apps approved Macs run
 here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every
@@ -501,32 +502,34 @@ belonging to that path at once. Settings and other details are in the
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Remote Mac…**, which guides you through all six steps: pick a
-Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
-compare tools, test a sample build, and review settings and undo commands. Run
-the generated setup command in Terminal while signed in at the build Mac and
-answer each y/N approval there. Permission prompts appear on that Mac. There
-is no SSH option.
+offers **Add Remote Mac…**, which guides you through five steps:
 
-Tool fixes can be copied to run there. **Install This Mac's Build** handles a
-Stim build mismatch, and **Check Android** adds Java and Android SDK checks.
-Desktop prepares a pinned Expo blank SDK 58 sample in its own Application
-Support folder from step 2. It uses that checkout for setup requests if you have
-no listed workspace. The test verifies an offloaded build and launch, then
-forces a local build without the build cache to prove this Mac can still build.
-Live output, phase timings and a speed comparison show the results. The sample
-workspace stops when the test ends or the sheet closes. **Run again** reuses the
-folder; **Delete sample app** in Remote Macs stops it and removes its Stim workspace and sample folder after confirmation, and
-releases its owned simulator (parked for reuse within the parked-simulator limit,
-deleted otherwise). If cleanup fails,
-the folder stays for a retry and Desktop shows the failure.
+1. Check Tailscale and pick a Mac on your tailnet.
+2. Choose Builds and/or Hosted simulators.
+3. Run setup there.
+4. Compare tools.
+5. Choose when to offload.
 
-Done keeps the approved entries and selects Auto / Always / Never. When the
-wizard turned offloading off, a passed test defaults to Auto; a failed or skipped
-test keeps Never selected unless you choose otherwise. Existing machine settings
-keep their effective mode. Cancel removes only settings the wizard added and
-shows revoke commands for the build Mac. The summary explains how to undo setup;
-Stim Host permissions remain in System Settings until you remove them.
+Run the generated setup command in Terminal while signed in at the build Mac
+and answer each y/N approval there. Permission prompts appear on that Mac.
+There is no SSH option. The wizard refreshes by itself; there is no Check again
+button.
+
+Only a problem that stops the chosen capability blocks the Tools step. A Stim
+build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
+differences, such as a different global CocoaPods or missing Android tools, are
+warnings that say what they cost and offer copyable fixes.
+
+The last step offers a **Try it** agent prompt and `stim ios --remote-build
+<machine>`. It sets **Builds** (`remote.buildMode`, Auto by default for your
+first remote Mac). With Hosted simulators chosen, it also sets **Simulators**
+(`ios.remote` and `android.remote` for this Mac). **Run a
+test build with a sample app** runs the optional sample test in Desktop's own
+pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
+you have no listed workspace. **Delete sample app** in Remote Macs removes it.
+Cancel removes only settings the wizard added and shows revoke commands for the
+build Mac. **Remove** in Remote Macs shows the optional cleanup to run on that
+Mac.
 
 See [Remote Macs](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
 
