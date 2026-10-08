@@ -18,19 +18,44 @@ $STIM_HOME/archive by default. See stim guide cleanup archive.
 
 MAINTENANCE
 
-Automatic maintenance is report-only in this release: it measures, plans and
-logs, and never stops or deletes resources. The default mode is report; it is
-off in CI and scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit.
-Commands trigger a detached pass when disk and memory checks (every minute)
-or directory sizes (hourly) are due. guide, settings and help do not trigger
+Automatic maintenance has three modes. report (the default) measures, plans
+and logs, and never deletes anything. on also runs the disk actions below
+through gc's own removal code. off disables it. It is off in CI and scoped
+STIM_HOME homes unless STIM_MAINTENANCE is explicit.
+Commands trigger a detached pass when a check is due: disk and memory pressure
+(every minute), directory sizes (hourly), finished worktrees (every 15
+minutes) and the age sweep (daily). guide, settings and help do not trigger
 it; gc --delete also skips the hook. status --watch also triggers checks.
-Size checks defer under high load. Attempts back off for at least one minute.
-Measured directories are workspace build outputs and Stim's shared native,
-Metro, ccache, Swift compilation and registered caches. Pressure checks read
-free disk on the Stim home, projects and worker root volumes. On macOS the
-memory signal is the sysctl pressure level, with no signal if sysctl fails.
-Other platforms use os.freemem(); macOS never falls back to it.
-Memory pressure is recorded only; memory stops are deferred to a later phase.
+Size, worktree and sweep checks defer under high load. Attempts back off for at
+least one minute. Measured directories are workspace build outputs and Stim's
+shared native, Metro, ccache, Swift compilation and registered caches.
+Pressure checks read free disk on the Stim home, projects and worker root
+volumes. On macOS the memory signal is the sysctl pressure level, with no
+signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
+back to it. Memory pressure is recorded only; stopping devices, dev servers
+and helpers is not automatic.
+
+In on mode a pass runs, cheapest to rebuild first:
+  1. orphaned workspace directories whose project is gone, and registered
+     caches whose directory no longer exists
+  2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
+     below the free-disk floor, or unused for maintenance.olderThanDays
+  3. build-cache and Metro entries, least recently used first, down to
+     maintenance.capTargetPercent of caches.buildCacheMaxGb or
+     caches.metroCacheMaxGb, and entries unused for olderThanDays
+  4. the Swift compilation cache, emptied whole, only below
+     budget.hardFloorDiskGb and with no build lock or slot held
+  5. linked worktrees whose branch or pull request finished (gc's finished
+     worktree rules and gc.worktreeGraceMinutes; maintenance.removeFinishedWorktrees)
+Disk-driven steps stop once free space is back above the floor. Kept for
+every pass: a workspace that is in use, holds a lock, was used within
+maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
+workspace of the command that started the pass; cache entries used within
+protectRecentHours, named by a project's last builds, a parked device or a
+live build lock, or in a Metro store with a running or unverifiable dev
+server. Anything the pass cannot verify is kept. Idle devices, dev servers and
+watchman are never touched by a pass. ccache evicts by itself under
+caches.ccacheMaxGb.
 
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records
@@ -41,12 +66,15 @@ Memory pressure is recorded only; memory stops are deferred to a later phase.
 The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
 maintenance.logMaxMb with the old generation retained for
 maintenance.logRetentionDays. Child crashes use maintenance/child.log.
-Actions and explaining skips are logged only when newly planned. A pass is
-logged after a size check or a change to actions, skips or blocked reasons.
+In report mode actions and explaining skips are logged only when newly
+planned; in on mode every action taken, failure and explaining skip is logged
+with its bytes, and a pass record carries the bytes freed. Removal of a
+worktree or orphaned directory is logged to the machine log only.
 maintenance.logChecks enables debug observations; default false.
 status and doctor report invalid settings and unresolved claims with a removal
 command to run only after confirming the holder is gone. Invalid cache caps
 fall back to their own defaults; invalid maintenance settings disable passes.
+Pin a workspace with \`stim settings set maintenance.keep true\` in its project.
 The run claim serializes passes with gc --delete; gc refuses a held claim
 with the holder and recovery guidance instead of waiting.
 

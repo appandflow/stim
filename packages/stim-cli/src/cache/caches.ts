@@ -235,8 +235,18 @@ export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
 
 export function pruneCache(
   cache: CacheDescriptor,
-  { olderThanDays, now = Date.now() }: { olderThanDays?: number; now?: number } = {},
-): { removed: number; bytes: number; skipped: string | null; failed?: number } {
+  {
+    olderThanDays,
+    now = Date.now(),
+    protect,
+    evictBytes,
+  }: {
+    olderThanDays?: number;
+    now?: number;
+    protect?: (entry: string) => string | null;
+    evictBytes?: number;
+  } = {},
+): { removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number } {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
 
   if (cache.prune === 'report-only') {
@@ -248,29 +258,36 @@ export function pruneCache(
   }
 
   const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);
+  const candidates: { entry: string; used: number; isDirectory: boolean; size: number }[] = [];
+  let protectedEntries = 0;
+  for (const entry of entries) {
+    try {
+      const st = statSync(entry);
+      const used = Math.max(st.atimeMs, st.mtimeMs);
+      if (used >= cutoff) continue;
+      if (protect?.(entry)) {
+        protectedEntries++;
+        continue;
+      }
+      candidates.push({ entry, used, isDirectory: st.isDirectory(), size: st.size });
+    } catch {}
+  }
+  if (evictBytes !== undefined) candidates.sort((a, b) => a.used - b.used);
   let removed = 0;
   let bytes = 0;
   let failed = 0;
-  for (const entry of entries) {
-    let used;
-    let size;
-    try {
-      const st = statSync(entry);
-      used = Math.max(st.atimeMs, st.mtimeMs);
-      size = st.isDirectory() ? directorySize(entry) : st.size;
-    } catch {
-      continue;
-    }
-    if (used >= cutoff) continue;
+  for (const { entry, isDirectory, size } of candidates) {
+    if (evictBytes !== undefined && bytes >= evictBytes) break;
+    const entryBytes = isDirectory ? directorySize(entry) : size;
     try {
       rmSync(entry, { recursive: true, force: true });
       removed++;
-      bytes += size;
+      bytes += entryBytes;
     } catch {
       failed++;
     }
   }
-  return { removed, bytes, failed, skipped: null };
+  return { removed, bytes, failed, skipped: null, protectedEntries };
 }
 
 function entriesAtDepth(dir: string, depth: number): string[] {

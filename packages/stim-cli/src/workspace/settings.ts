@@ -676,6 +676,15 @@ export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): numbe
   return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
 }
 
+export function projectMaintenancePinned(root: string): boolean {
+  try {
+    const value = settingValueAt(settingsForProject(root), 'maintenance.keep');
+    return value !== undefined && value !== false;
+  } catch {
+    return true;
+  }
+}
+
 export function projectDeviceReclaimIdleMinutes(root: string): number {
   return deviceReclaimIdleMinutesSetting(settingsForProject(root));
 }

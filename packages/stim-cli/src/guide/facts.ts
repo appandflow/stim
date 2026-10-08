@@ -808,7 +808,7 @@ RULES
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
   maintenance     top-level { mode, pressure, actions, blocked,
-                  skips, note, invalid? }, the next report-only maintenance plan
+                  skips, note, invalid? }, the next maintenance plan
                   from live pressure and cached sizes. note says when no
                   pass has run yet. No du runs for this preview.
   sections        one array per report section, in the text order. Every key
@@ -1563,13 +1563,15 @@ RULES
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
-  maintenance { mode, lastChecks: { pressure, size }, pressure, sizes,
+  maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
-    Report-only observations; every plan action's kind starts with would-.
+    mode is off, report or on. Plan actions start with would-; the records
+    of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
+    remove-worktree, remove-orphan, unregister-cache).
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
-    lastPass carries startedAt, durationMs, trigger, mode, freedBytes (0),
-    actions, stopped (0), blocked. recent holds the last 20 action, failure
+    lastPass carries startedAt, durationMs, trigger, mode, freedBytes
+    (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
     invalid names invalid settings; invalid cache caps use their defaults,
     while invalid maintenance settings disable passes. claim contains an

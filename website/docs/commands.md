@@ -689,8 +689,8 @@ result.
   `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
-- `--source maintenance` shows report-only maintenance actions and failures
-  for this workspace. Add `--errors` to show only maintenance failures from it;
+- `--source maintenance` shows maintenance actions, planned (report mode) or taken (on mode),
+  and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed

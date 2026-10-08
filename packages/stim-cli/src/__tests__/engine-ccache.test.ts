@@ -8,6 +8,7 @@ import {
   CCACHE_UNAVAILABLE,
   ccacheActivityLine,
   ccacheEnvironment,
+  ccacheMaxSize,
   ccacheStatsLog,
   parseCcacheBinary,
   parseCcacheStatsLog,
@@ -62,6 +63,19 @@ describe('ccacheEnvironment', () => {
     expect(String(env.CMAKE_CXX_COMPILER_LAUNCHER).startsWith('/')).toBe(true);
     expect(CCACHE_SLOPPINESS.split(',')).toEqual(['pch_defines', 'time_macros']);
     expect(CCACHE_MAX_SIZE).toBe('5G');
+  });
+});
+
+describe('ccacheMaxSize', () => {
+  test('passes caches.ccacheMaxGb to ccache as CCACHE_MAXSIZE and falls back to 5G on a bad value', () => {
+    expect(ccacheMaxSize(null, {})).toBe('5G');
+    expect(ccacheMaxSize(null, { STIM_CACHES_CCACHE_MAX_GB: '2.5' })).toBe('2.5G');
+    expect(ccacheMaxSize({ version: 2, projects: {}, repos: {}, caches: { ccacheMaxGb: 8 } } as never, {})).toBe('8G');
+    expect(ccacheMaxSize(null, { STIM_CACHES_CCACHE_MAX_GB: '0' })).toBe('5G');
+    expect(
+      ccacheEnvironment({ binary: '/b', dir: '/c', workspaceRoot: '/w', statsLog: '/l', maxSize: '2.5G' })
+        .CCACHE_MAXSIZE,
+    ).toBe('2.5G');
   });
 });
 
