@@ -78,8 +78,8 @@ prompt each (see below). A single running project gets one centered card.
 **Active worktrees** shows every worktree with something running, building or
 warming, grouped by worktree with a compact header: its name and project, the
 Metro port, who drives its devices, its memory and its errors. The device tiles
-sit under each header in a wrapping grid, so several worktrees fit on one
-screen. Clicking a header opens the project (on a project page it opens the
+sit under each header, so several worktrees fit on one screen: worktrees wrap
+across the page, and the tiles of a worktree scroll sideways when they do not fit. Clicking a header opens the project (on a project page it opens the
 workspace); clicking a tile opens its workspace with that device focused. A
 worktree with no running device shows a **No running devices** line instead.
 
@@ -379,10 +379,9 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". Tiles on the Active worktrees
-wall are previews too; clicking one opens its workspace with that device focused. The wall creates workspace
-rows and device tiles as you scroll, and pauses previews after they leave the
+wall are previews too; clicking one opens its workspace with that device focused. The wall pauses previews after they leave the
 scrolling area. Returning to a tile reconnects its preview. Active workspaces without
-running or building devices use compact cards with Metro status, warnings and
+running or building devices show a No running devices line under their header, with Metro status, warnings and
 positive-error log links; CPU and RAM stay on the workspace page.
 
 On macOS 26 and later, sidebar controls and device viewer buttons use native
@@ -1364,7 +1363,7 @@ The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
 config: appearance (Auto, Light, Dark), the sidebar's Status option, opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
-inspector opens, notifications, a menu bar extra with the live workspace count
+inspector opens, notifications, a menu bar extra with the active workspace count
 and quick open, launch at login, the autopilot (see Autopilot), and a `stim` executable override that applies
 at the next launch. Notifications and launch at login need the bundled app.
 

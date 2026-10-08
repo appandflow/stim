@@ -393,11 +393,10 @@ with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's t
 
 **Active worktrees** groups every worktree with something running, building or warming,
 each with a compact header (name, project, Metro port, who drives it, memory, errors)
-above a wrapping grid of device tiles, so several worktrees fit on one screen. Click a
+above its device tiles, so several worktrees fit on one screen; worktrees wrap across the page and a worktree's tiles scroll sideways when they do not fit. Click a
 header to open the project, or a tile to open its workspace with that device focused.
 
-The Active worktrees and project wall creates rows and device tiles as you scroll.
-Offscreen previews pause and reconnect when you return to them.
+On the Active worktrees and project wall, offscreen previews pause and reconnect when you return to them.
 
 On the Active worktrees and project wall, active workspaces without running or building
 devices show a **No running devices** line under their header, with Metro status
