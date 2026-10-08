@@ -4,7 +4,7 @@ import { phaseLine } from '../../command-output.ts';
 import { planEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { statsProjectKey } from '../../engine/stats.ts';
 import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../../optimizations.ts';
-import { appProjectProblem, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
+import { projectProblem, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {
   cacheProviderSettingError,
   remoteIosSetting,
@@ -55,8 +55,8 @@ export async function planIos(
   if (flag) return refuse(planFlagRefusal(flag));
   const root = d.findProjectRoot(process.cwd());
   if (!root) return refuse(NO_PROJECT_REFUSAL);
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) return refuse({ code: 'STIM_NO_PROJECT', ...projectProblem });
+  const problem = projectProblem(root, 'ios');
+  if (problem) return refuse({ code: 'STIM_NO_PROJECT', ...problem });
 
   const settingsContext = { projectPath: root, gitCommonDir: d.gitCommonDir(root), repoRoot: d.repoRoot(root) };
   const settings = d.resolveSettings(settingsContext);
