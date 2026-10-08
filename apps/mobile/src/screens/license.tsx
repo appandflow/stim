@@ -19,7 +19,7 @@ export function License({ index }: { index: number }) {
       <Text variant="footnote" tone="secondary">
         {`${entry.version} - ${entry.license}`}
       </Text>
-      {url ? <Button title={t`Open repository`} variant="secondary" onPress={() => void Linking.openURL(url)} /> : null}
+      {url ? <Button title={t`Open Repository`} variant="secondary" onPress={() => void Linking.openURL(url)} /> : null}
       <Text variant="footnote" mono selectable>
         {entry.text ?? t`This package does not include a license file.`}
       </Text>

@@ -93,7 +93,7 @@ export function Settings() {
           </Toggle>
         </Section>
         <NotificationsSection colors={colors} value={notifications} modifiers={rowModifiers} />
-        <Section title={t`Device view`} footer={<Text>{videoQualityFooter()}</Text>}>
+        <Section title={t`Device View`} footer={<Text>{videoQualityFooter()}</Text>}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -158,7 +158,7 @@ export function Settings() {
           />
           <LinkRow
             colors={colors}
-            title={t`Open source licenses`}
+            title={t`Open Source Licenses`}
             symbol="doc.text"
             onPress={() => router.push('/licenses')}
             modifiers={rowModifiers}

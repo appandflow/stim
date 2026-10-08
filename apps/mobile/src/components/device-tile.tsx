@@ -147,11 +147,11 @@ export function DeviceTile({
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   const buildName = build ? platformName(build.platform) : '';
   const placeholder = build ? (
-    <Placeholder title={t`Waiting for the ${buildName} build`} />
+    <Placeholder title={t`Waiting for the ${buildName} Build`} />
   ) : noApp ? (
-    <Placeholder title={t`No app installed`} subtitle={t`Fix the build and run it again`} />
+    <Placeholder title={t`No App Installed`} subtitle={t`Fix the build and run it again`} />
   ) : !streams ? (
-    <Placeholder title={t`No live screen`} subtitle={unservedReason(device)} />
+    <Placeholder title={t`No Live Screen`} subtitle={unservedReason(device)} />
   ) : null;
   return (
     <Card>
@@ -237,7 +237,7 @@ export function WarmingPlaceholder({ subtitle }: { subtitle: string | null }) {
   return (
     <Card>
       <View style={styles.warming}>
-        <Placeholder title={t`Warming the workspace`} subtitle={subtitle ?? undefined} />
+        <Placeholder title={t`Warming the Workspace`} subtitle={subtitle ?? undefined} />
       </View>
     </Card>
   );
