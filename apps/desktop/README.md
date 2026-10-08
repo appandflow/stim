@@ -64,10 +64,26 @@ CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
 **Overview**, **Active worktrees** and **Machines** stay pinned at the top of
-the sidebar; only the list below them scrolls. Overview is the default launch page. It groups active worktrees into rounded project cards,
-with up to three cards per row and one device preview per card. The project title, metrics and
-small previews are centered. Click anywhere on a project card to open its full project page. Show more (N) counts additional running devices and active worktrees without a running device. Active worktrees shows only running workspaces in a vertical list
-with bordered cards and full-size previews. Click a card's header or empty area to open its project; click a device to open its workspace's running view focused on that device. The sidebar lists projects as a
+the sidebar; only the list below them scrolls.
+
+**Overview** is the default launch page. Running projects come first, as cards
+with a live preview of one device each; **Show more (N)** counts the other
+running devices and worktrees, and clicking a card opens the project. Idle
+projects follow in a compact list, newest activity first, with the pull request
+that is open, a failed last build and the errors since the last marker; clicking
+a row opens the project. A **Recently archived** row lists the last five
+archives, and **Try this** suggests up to three features with a copyable agent
+prompt each (see below). A single running project gets one centered card.
+
+**Active worktrees** shows every worktree with something running, building or
+warming, grouped by worktree with a compact header: its name and project, the
+Metro port, who drives its devices, its memory and its errors. The device tiles
+sit under each header in a wrapping grid, so several worktrees fit on one
+screen. Clicking a header opens the project (on a project page it opens the
+workspace); clicking a tile opens its workspace with that device focused. A
+worktree with no running device shows a **No running devices** line instead.
+
+The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with an active, warming or ready workspace start expanded, and the app remembers each project you
