@@ -105,4 +105,20 @@ struct WallCardTests {
     #expect(cards[0].options.map(\.label) == ["apps/desktop \u{00B7} Mac app"])
     #expect(cards[0].selected(choice: nil)?.isStreamable == true)
   }
+
+  @Test func streamsARunningDeviceBeforeOneABuildIsBringingUp() throws {
+    let build = """
+      "build":{"platform":"ios","slot":"default","state":"running","phase":"compile",
+        "startedAt":"2026-10-05T09:00:00.000Z","phaseStartedAt":"2026-10-05T09:00:10.000Z","outcome":"cold",
+        "expectedMs":160000,"expectedPhaseMs":94000,"basis":3}
+      """
+    let stopped = #""ios":{"udid":"i","name":"iPhone 17","owned":true,"state":"Shutdown"}"#
+    let both = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(stopped),\(android),\(build)")])[0]
+    #expect(both.options.map(\.label) == ["Pixel 9", "iPhone 17"])
+    #expect(both.selected(choice: nil)?.label == "Pixel 9")
+
+    let building = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(stopped),\(build)")])[0]
+    #expect(building.selected(choice: nil)?.label == "iPhone 17")
+    #expect(building.selected(choice: nil)?.isStreamable == false)
+  }
 }

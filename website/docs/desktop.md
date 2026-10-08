@@ -400,7 +400,7 @@ preserved. Physical devices, hosted and remote sessions and replay never sync, s
 no clipboard text crosses the network or reaches another Mac.
 
 Overview opens first. The **Active** section comes first, with the same grid of live workspace
-cards as the Active worktrees page (see below). With nothing running, it says where active projects will appear. **Idle projects** follow as compact
+cards as the Active workspaces page (see below). With nothing running, it says where active projects will appear. **Idle projects** follow as compact
 cards in an adaptive grid, with their last activity, an open pull request, a failed last
 build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
 place. Click a card to open the project with all of its worktrees listed, under a

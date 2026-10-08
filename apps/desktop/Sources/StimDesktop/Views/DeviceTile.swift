@@ -32,7 +32,6 @@ struct DeviceTile: View {
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
   var pausesWhenOffscreen = false
-  /// Only the media area of the preview card, for a card that supplies its own header and width.
   var embedded = false
   var highlightsHeaderOnHover = false
   var pixelScale: CGFloat? = nil

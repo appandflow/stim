@@ -2,7 +2,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// The device each workspace card streams when the user picked one, for the life of the app.
 @MainActor
 final class WorkspaceCardChoices: ObservableObject {
   static let shared = WorkspaceCardChoices()
@@ -12,10 +11,12 @@ final class WorkspaceCardChoices: ObservableObject {
   func choose(_ optionID: String, for card: String) {
     choices[card] = optionID
   }
+
+  func adopt(_ optionID: String, for card: String) {
+    if choices[card] == nil { choices[card] = optionID }
+  }
 }
 
-/// The grid of live workspace cards that the Overview and the Active workspaces page share: two columns at typical
-/// widths, one when narrow, three when very wide.
 struct WorkspaceCardGrid: View {
   var cards: [WallCard]
   @ObservedObject var store: StatusStore
@@ -57,6 +58,13 @@ struct WorkspaceCardView: View {
     let options = card.options
     let selected = card.selected(choice: choices.choices[choiceKey])
     let env = selected?.app.workspace ?? card.apps[0].workspace
+    let tileShowsBuild =
+      selected.map { option in
+        if case .device(let device) = option.kind { return option.app.workspace.runningBuild(for: device) != nil }
+        return false
+      } ?? false
+    let otherBuilds =
+      selected == nil ? [] : card.apps.map(\.workspace).filter { $0.path != env.path && $0.build?.isRunning == true }
     Card(border: Palette.border) {
       VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -65,14 +73,19 @@ struct WorkspaceCardView: View {
             open()
           } label: {
             WorkspaceHeader(
-              env: env, project: store.project(of: env), usage: usage[env.path], showsProgress: false,
+              env: env, project: store.project(of: env), usage: usage[env.path],
+              showsProgress: selected != nil && !tileShowsBuild,
               openLogs: { openLogs(env.path) })
           }
           .buttonStyle(CardPressStyle())
           .accessibilityLabel(env.names.title)
+          ForEach(otherBuilds, id: \.path) { other in
+            if let build = other.build { BuildProgressBar(build: build).frame(maxWidth: 520) }
+          }
           if options.count > 1 { switcher(options, selected: selected) }
         }
         .padding(Space.xl)
+        Spacer(minLength: 0)
         media(selected)
           .frame(maxWidth: .infinity)
           .frame(height: CGFloat(tileSize.screenHeight))
@@ -80,12 +93,17 @@ struct WorkspaceCardView: View {
           .clipped()
           .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { mediaWidth = $0 })
       }
+      .frame(maxHeight: .infinity, alignment: .top)
     }
+    .frame(maxHeight: .infinity, alignment: .top)
     .contentShape(Rectangle())
     .onTapGesture(perform: open)
     .hoverHighlight(radius: Radius.card)
     .modifier(CardPressAppearance(pressed: pressed))
     .onPreferenceChange(CardPressedKey.self) { pressed = $0 }
+    .task(id: selected?.isStreamable == true ? selected?.id : nil) {
+      if let id = selected?.id, selected?.isStreamable == true { choices.adopt(id, for: choiceKey) }
+    }
   }
 
   private func switcher(_ options: [WallCard.Option], selected: WallCard.Option?) -> some View {

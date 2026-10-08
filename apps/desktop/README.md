@@ -66,7 +66,7 @@ The bell at the top right opens **Notifications** and shows the unread count.
 the sidebar; only the list below them scrolls.
 
 **Overview** is the default launch page. The **Active** section comes first, as
-the same grid of workspace cards the Active worktrees page uses (see below). With nothing
+the same grid of workspace cards the Active workspaces page uses (see below). With nothing
 running it says where active projects will appear. **Idle projects** follow as
 compact cards in an adaptive grid, newest activity first, with the pull request
 that is open, a failed last build and the errors since the last marker. The grid

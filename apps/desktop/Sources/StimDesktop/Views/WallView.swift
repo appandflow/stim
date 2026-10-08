@@ -162,12 +162,12 @@ struct WorkspaceHeader: View {
   var body: some View {
     VStack(alignment: stacked ? .center : .leading, spacing: Space.md) {
       row
-      if !showsProgress {
-        EmptyView()
-      } else if let build = env.build, build.isRunning {
-        BuildProgressBar(build: build).frame(maxWidth: 520)
-      } else if !env.live, env.isSettingUp {
-        SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+      if showsProgress {
+        if let build = env.build, build.isRunning {
+          BuildProgressBar(build: build).frame(maxWidth: 520)
+        } else if !env.live, env.isSettingUp {
+          SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+        }
       }
     }
     .contentShape(Rectangle())
