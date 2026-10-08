@@ -251,7 +251,7 @@ struct ActivitySheet: View {
         Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
           .disabled(!report.actionable)
           .confirmationDialog(
-            "Delete what stim gc reported?", isPresented: $confirmingDelete, titleVisibility: .visible
+            "Delete What stim gc Reported?", isPresented: $confirmingDelete, titleVisibility: .visible
           ) {
             Button("Run stim \(deleteArguments.filter { $0 != "--json" }.joined(separator: " "))", role: .destructive) {
               actions.run("Clean up", StimCommand(deleteArguments, cwd: run.command.cwd), key: ActionCenter.machineKey)
@@ -279,7 +279,7 @@ struct ActivitySheet: View {
     .fixedSize()
     .help("stim gc --idle <duration> shuts down owned devices with no driver or activity for that long. It never deletes them.")
     .confirmationDialog(
-      "Shut down devices idle \(idleDuration ?? "") or more?",
+      "Shut Down Devices Idle \(idleDuration ?? "") or More?",
       isPresented: Binding(get: { idleDuration != nil }, set: { if !$0 { idleDuration = nil } }),
       titleVisibility: .visible
     ) {

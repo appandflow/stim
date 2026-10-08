@@ -107,7 +107,7 @@ struct MachineView: View {
       if gc.report == nil { gc.refresh() }
     }
     .confirmationDialog(
-      "Free this space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+      "Free This Space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { commands in
       Button("Free Disk Space", role: .destructive) {
@@ -120,7 +120,7 @@ struct MachineView: View {
       )
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
       titleVisibility: .visible, presenting: removing
     ) { workspace in

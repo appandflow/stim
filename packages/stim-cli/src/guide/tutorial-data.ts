@@ -172,7 +172,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'build',
-    title: 'First iOS build',
+    title: 'First iOS Build',
     who: 'you',
     optional: false,
     prompt: null,

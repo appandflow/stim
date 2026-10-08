@@ -157,7 +157,7 @@ Remove the target-v1 evidence and dismiss-overlay lines before replay: replaying
 them can fail with REPLAY_DIVERGENCE on the recorded button identity.
 The scripts and screenshot stay in the tour worktree and are git-ignored.
 
-PAUSE: end the turn. Point at Agent actions, or the agent log records just
+PAUSE: end the turn. Point at Agent Actions, or the agent log records just
 printed. Expect another error-button line after replay. When screen recording
 is enabled, the user can scrub Replay in Desktop. Give the next prompt:
 "${TUTORIAL_PROMPTS.refresh}".`,
@@ -254,7 +254,7 @@ first failure. Read stderr and do not continue to later commands. Follow stim gu
 safety. Reuse only this version's tutorial app, never overwrite another folder.
 The creation block skips writes on reuse and checks the repository root.
 
-Replace {base} and {tour} with absolute paths; {base} must end in stim-tutorial. For Agent actions, replace
+Replace {base} and {tour} with absolute paths; {base} must end in stim-tutorial. For Agent Actions, replace
 {stateDir} with agentDevice.stateDir from stim ios or stim status --json;
 when read -r iosUdid waits, type this workspace's ios.udid from that status.
 For the optional machine step,
@@ -263,7 +263,7 @@ replace {machine} with a machine you have already approved, or skip it.
 Look at the sidebar during warm and Build during the first build (about four
 minutes on a cold cache). Compare cacheHit and missReason on rebuild. At Live
 view and control, open the device viewer and tap Log an error; without Desktop
-use the simulator. At App logs, try Crash me or Slow request if wanted. A JS
+use the simulator. At App Logs, try Crash me or Slow request if wanted. A JS
 crash shows a red box; the slow request is a local timer, not network capture.
 At Watch on Your Phone, optionally open an already paired Stim phone to see
 the tour workspace; phone setup and machine approval stay with you.

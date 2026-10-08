@@ -112,7 +112,7 @@ private struct TutorialHighlights: ViewModifier {
               )
               .allowsHitTesting(false)
           } else if showFallback, hint.path != nil, hint.path != hint.selectedPath {
-            Button("Show me", action: hint.showMe)
+            Button("Show Me", action: hint.showMe)
               .buttonStyle(.stim(.secondary))
               .accessibilityLabel("Show the tutorial workspace")
               .padding(Space.md)

@@ -147,7 +147,7 @@ public enum TutorialSteps {
 
       ]),
     TutorialStep(
-      id: "build", title: "First iOS build", who: "you", optional: false,
+      id: "build", title: "First iOS Build", who: "you", optional: false,
       prompt: nil, section: nil,
       manual: [
         "cd \"{base}\"",

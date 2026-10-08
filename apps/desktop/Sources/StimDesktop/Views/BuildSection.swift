@@ -397,7 +397,7 @@ struct BuildDiagnosticsView: View {
           .textSelection(.enabled)
       }
       if diagnostics.count > 1 {
-        Button(expanded ? "Show fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
+        Button(expanded ? "Show Fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
           expanded.toggle()
         }
         .buttonStyle(.link)

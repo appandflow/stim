@@ -156,7 +156,7 @@ struct LogsView: View {
         label: "Level",
         selection: $query.minimumLevel,
         options: LogLevel.allCases.map {
-          MenuPillOption(value: $0, title: $0 == .debug ? "All levels" : "\($0.rawValue.capitalized)+")
+          MenuPillOption(value: $0, title: $0 == .debug ? "All Levels" : "\($0.rawValue.capitalized)+")
         },
         isActive: query.minimumLevel != .debug
       )
@@ -184,7 +184,7 @@ struct LogsView: View {
 
   @ViewBuilder private var overlay: some View {
     if case .ended(let message) = model.phase, model.count == 0 {
-      EmptyState(title: "No logs", message: message)
+      EmptyState(title: "No Logs", message: message)
     } else if model.phase == .loading {
       ProgressView("Loading archived logs")
         .frame(maxWidth: .infinity, maxHeight: .infinity)

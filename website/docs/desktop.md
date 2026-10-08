@@ -15,12 +15,12 @@ agents driving them. It runs `stim` for you, so it needs the CLI from
 
 Apps in one linked worktree share a detail page and one sidebar row, with platform
 badges for each app. Selecting the row opens the page; a link or action for one app
-scrolls to that app. The row's context menu has per-app submenus, **Stop all** and
-**Remove worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
+scrolls to that app. The row's context menu has per-app submenus, **Stop All** and
+**Remove Worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
 subtitles only for repeated platforms. The inspector aggregates resources,
 labels each Metro and deduplicates agents. The logs drawer follows app selection
 and has an **App** picker. The actions menu keeps each app's commands plus
-**Stop all** and one **Remove worktree** action.
+**Stop All** and one **Remove Worktree** action.
 
 ## Download
 
@@ -429,8 +429,8 @@ On the Active Workspaces and project wall, active workspaces without running or 
 devices show a **No Running Devices** line under their header, with Metro status
 and error links. CPU stays on the workspace page.
 
-Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
-you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
+Run, Reload App, Start Dev Server and Stop from the workspace or sidebar menus keep
+you on the workspace page, as do Stop or Shut down in the now band and Build and Run and Stop
 on a macOS app card. Open **Last Output** or **Operations** for command details,
 including failed runs. The device viewer's Run, Stop (including a remote session's), Reload web and Close web
 also run without opening a sheet. Progress and failures appear on a line under

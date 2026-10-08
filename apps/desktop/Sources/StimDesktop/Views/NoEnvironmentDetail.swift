@@ -73,7 +73,7 @@ struct NoEnvironmentDetail: View {
     }
     .navigationTitle(worktree.names.title)
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal

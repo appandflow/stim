@@ -50,7 +50,7 @@ in the workspace directory:
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
 - Idle devices: when the `stim gc --json` preview lists idle devices, the
-  sheet offers **Shut down idle** with a duration (30 minutes to 1 day), then
+  sheet offers **Shut Down Idle** with a duration (30 minutes to 1 day), then
   runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
   down like `stim stop` and never deletes them. The preview marks idle and
   unrecognized `stim-*` devices as kept, because `stim gc --delete` never
@@ -172,7 +172,7 @@ archived are dropped.
 ## Archived workspaces
 
 The Archived sidebar filter opens the same workspace page as active workspaces in a read-only variant.
-The header line matches the live page's: an Archived state with the removal age (hover for the exact time), the git chip with branch, PR and Merged, and a menu with **Reveal Folder** (while the folder exists) and **Delete archive**.
+The header line matches the live page's: an Archived state with the removal age (hover for the exact time), the git chip with branch, PR and Merged, and a menu with **Reveal Folder** (while the folder exists) and **Delete Archive**.
 The Status card holds the removal reason, last use, and Retained with a proportion bar and per-kind bytes and expiry dates; the Build card ends with build totals, known cache hits, builds on a remote Mac and errors at removal.
 Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
 with their duration and a link to retained actions. Only Merged is shown as a PR state:
@@ -193,7 +193,7 @@ message. Connect through the Phones page to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
 `stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
-The header menu's **Delete archive** names the archive in a confirmation and permanently removes its
+The header menu's **Delete Archive** names the archive in a confirmation and permanently removes its
 logs, recordings, agent actions and record through `stim gc --delete --cache archived:<id>`. The page
 returns to the previous selection once status stops reporting the archive. Machines
 shows archive count, total size, per-kind sizes and retention setting names separately;
@@ -206,13 +206,13 @@ Archives never fetch resource stats or build plans, and offer no run, reload, st
 Apps in the same linked worktree share one detail page and one sidebar row, with
 platform badges for each app. Selecting the row opens the page; a link or action
 for one app scrolls to its first device or macOS preview. A device deep link
-scrolls to that device. The row's context menu has per-app submenus, **Stop all**
-and **Remove worktree**. Single-app worktrees keep the same layout. The shared
+scrolls to that device. The row's context menu has per-app submenus, **Stop All**
+and **Remove Worktree**. Single-app worktrees keep the same layout. The shared
 canvas puts macOS previews above one ordered grid of all apps' devices. Build cards keep
 platform titles, with a small project subtitle only when multiple apps share
 that platform. The header uses the most urgent app's stage and shows git and
 pull request state once. Its menu keeps each app's actions in a submenu and
-offers **Stop all** and one **Remove worktree** action, with confirmation.
+offers **Stop All** and one **Remove Worktree** action, with confirmation.
 
 The unified inspector sums CPU and memory, aligns chart samples at the newest
 sample, lists every app's processes, and counts the worktree folder once plus
@@ -407,13 +407,13 @@ of `stim status --json`, appears under its project when Not set up is selected.
 It is marked "Not set up". The project comes from the entry's `repository`, so
 the app does not run git in a worktree that may sit in a macOS-protected folder.
 Its page has a header line with a git chip and a worktree actions menu. Run and
-Start dev server buttons run `stim worktree warm` followed by the selected
+Start Dev Server buttons run `stim worktree warm` followed by the selected
 command from the app's directory. When the repository has several apps, an App
 picker selects which one to set up. The page also shows the folder, repository
 and branch, with a Show in Finder link.
 
-Run, Reload app, Start dev server and Stop from a workspace or its sidebar menu,
-Stop (or Shut down) in the now band, and Build and run and Stop on a macOS app card run without
+Run, Reload App, Start Dev Server and Stop from a workspace or its sidebar menu,
+Stop (or Shut down) in the now band, and Build and Run and Stop on a macOS app card run without
 opening an activity sheet. Follow progress on the workspace page and open **Last Output**
 or **Operations** to inspect the command; pending and failed runs remain there.
 The device viewer's Run, Stop (including a remote session's), Reload web and Close web also run without opening
@@ -480,7 +480,7 @@ When `stim status` reports a device's `app` as `stopped` (the device is up but
 the workspace's app process is gone), its tile shows **App not running**, and
 its viewer adds **Run**, which runs `stim ios` or `stim android` (with `--slot <name>` for a
 named slot). Run appears only on a Stim-owned simulator or emulator, which that
-command targets; a physical device gets no Run. Reload app is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
+command targets; a physical device gets no Run. Reload App is disabled when every running local device has a stopped app. An `unknown` app state shows nothing.
 
 A workspace lists its devices like the phone app: running ones first, then
 iOS, Android, Web, physical and remote devices, then by slot name. The order
@@ -545,7 +545,7 @@ The processes under **Now**, **Safe to free now**, **Projects**,
 **Simulators and Emulators** and **Runtimes and System Images** each have a
 header with a disclosure chevron and a count. A collapsed section shows only
 its header. An expanded one shows its first 10 rows in their usual order, then
-**Show All** or **Show fewer**. For **Projects** the 10 are repositories; an
+**Show All** or **Show Fewer**. For **Projects** the 10 are repositories; an
 expanded repository lists all of its worktrees. An expanded **Safe to free
 now** always lists every row, so none of the rows **Free** acts on are hidden.
 Free still previews or confirms its commands first, collapsed or not. The app

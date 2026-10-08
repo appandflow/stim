@@ -263,7 +263,7 @@ struct ProjectRow: View {
         onStopAllLiveWorkspaces: { confirmingStopAll = true })
     }
     .confirmationDialog(
-      "Stop every active workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      "Stop Every Active Workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
       titleVisibility: .visible
     ) {
       Button("Run stim stop", role: .destructive) {
@@ -391,7 +391,7 @@ struct WorkspaceRow: View {
       Text("This also ends the workspace's billable EAS Simulator session.")
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -525,7 +525,7 @@ struct NoEnvironmentRow: View {
         onToggleHidden: { prefs.setHidden(!isHidden, path: worktree.path) })
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
