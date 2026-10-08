@@ -290,10 +290,10 @@ struct RootView: View {
         if case .archived = old {} else { previousSelection = old }
       }
       restoredProject = true
+      if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
       case .overview, .wall:
         projectFilter = nil
-        showingAllWorktrees = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
         if showingAllWorktrees != project { showingAllWorktrees = nil }

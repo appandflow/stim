@@ -179,7 +179,7 @@ struct OverviewView: View {
       ) {
         ForEach(shown) { idleCard($0) }
       }
-      if hidden > 0 || showsAllIdle {
+      if items.count > Overview.idleShown {
         Button(showsAllIdle ? "Show less" : "Show more (\(hidden))") {
           withAnimation(.easeInOut(duration: 0.15)) { showsAllIdle.toggle() }
         }

@@ -57,6 +57,7 @@ struct WallView: View {
                 }
                 .buttonStyle(.hoverRow())
                 .help("Show only active worktrees")
+                .accessibilityLabel("Showing all worktrees. Show only active worktrees")
               }
             }
           }
