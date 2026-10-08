@@ -13,12 +13,11 @@ let current: string | null = null;
 
 /**
  * The id of this CLI invocation: `STIM_RUN_ID` when it holds a valid id (Stim Desktop passes one), else a random one.
- * It is exported back to `STIM_RUN_ID`, so processes this run starts, such as the Metro supervisor, inherit it.
+ * The CLI entry exports it back to `STIM_RUN_ID` so processes the run starts inherit it; this function does not.
  */
 export function runId(env: NodeJS.ProcessEnv = process.env): string {
   if (current === null) {
     current = validRunId(env[RUN_ID_ENV]) ?? randomBytes(6).toString('hex');
-    env[RUN_ID_ENV] = current;
   }
   return current;
 }

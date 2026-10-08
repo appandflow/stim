@@ -9,7 +9,6 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-ndjson-run-'));
 });
 afterEach(() => {
-  delete process.env.STIM_RUN_ID;
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -24,5 +23,4 @@ test('every record a writer appends carries the run id, and a record that has on
     .map((line) => JSON.parse(line));
   expect(one.runId).toMatch(/^[a-f0-9]{12}$/);
   expect(two).toMatchObject({ runId: 'inherited', ts: 5 });
-  expect(process.env.STIM_RUN_ID).toBe(one.runId);
 });

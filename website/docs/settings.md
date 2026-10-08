@@ -711,9 +711,12 @@ recordings are otherwise cleaned up.
 | `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)                                                                         |
 | `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
 | `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                                                                                       |
+| `STIM_RUN_ID`                         | Id for this run, stamped as `runId` on its log records and sent to stim-server                                                                                                   |
 | `STIM_RUN_ID`                         | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
 
 Processes a run starts, such as the Metro supervisor, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
+
+Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so
