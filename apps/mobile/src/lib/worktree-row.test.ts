@@ -106,6 +106,19 @@ describe('worktreeRowSummary', () => {
     expect(summary.platforms).toEqual([{ platform: 'ios', kind: 'running' }]);
   });
 
+  it('gives a single app that never ran no platforms', () => {
+    const summary = worktreeRowSummary([item(env('/w/apps/mobile'))], NOW, null);
+    expect(summary.platforms).toEqual([]);
+  });
+
+  it('keeps a failed build on a single app as a failed platform beside a running one', () => {
+    const summary = worktreeRowSummary([item(mobile({ lastBuilds: failedBuild('android') }))], NOW, null);
+    expect(summary.platforms).toEqual([
+      { platform: 'ios', kind: 'running' },
+      { platform: 'android', kind: 'failed' },
+    ]);
+  });
+
   it('summarizes two running apps as one Running row with a dot per platform', () => {
     const summary = worktreeRowSummary([item(desktop()), item(mobile())], NOW, null);
     expect(summary.status.kind).toBe('running');
