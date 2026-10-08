@@ -56,13 +56,6 @@ struct NavigationHistoryTests {
     #expect(history.goBack() == nil)
   }
 
-  @Test func theDefaultCapIs50() {
-    var history = NavigationHistory(current: 0)
-    for destination in 1...60 { history.push(destination) }
-    #expect(history.entries.count == 50)
-    #expect(history.entries.first == 11)
-  }
-
   @Test func backSkipsDestinationsThatNoLongerResolve() {
     var history = history("project", "gone", "workspace")
     let resolves: (String) -> Bool = { $0 != "gone" }

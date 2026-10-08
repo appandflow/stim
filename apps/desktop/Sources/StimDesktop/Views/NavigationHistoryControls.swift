@@ -36,7 +36,6 @@ final class NavigationController: ObservableObject {
     if let destination = history.goForward(where: resolves) { apply(destination) }
   }
 
-  /// Mouse buttons 4 and 5 and the two-finger swipe, while the main window is the event's window.
   func startMonitoring() {
     guard monitor == nil else { return }
     monitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .swipe]) { [weak self] event in
@@ -90,21 +89,22 @@ struct GoCommands: Commands {
   }
 }
 
-/// The back and forward chevrons at the leading edge of the main window's toolbar.
 struct HistoryButtons: View {
-  @ObservedObject var navigation: NavigationController
+  var navigation: NavigationController
+  var canGoBack: Bool
+  var canGoForward: Bool
 
   var body: some View {
     HStack(spacing: Space.xxs) {
       Button(action: navigation.goBack) {
         Label("Back", systemImage: "chevron.left")
       }
-      .disabled(!navigation.canGoBack)
+      .disabled(!canGoBack)
       .help("Go back")
       Button(action: navigation.goForward) {
         Label("Forward", systemImage: "chevron.right")
       }
-      .disabled(!navigation.canGoForward)
+      .disabled(!canGoForward)
       .help("Go forward")
     }
     .buttonStyle(.icon())

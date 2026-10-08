@@ -157,7 +157,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   building, running, failed), its devices side by side, and its branch and pull
   request status.
 - **Back and forward.** The chevrons at the left of the window toolbar, **Go > Back** (**Cmd+[**) and
-  **Go > Forward** (**Cmd+]**), the mouse back and forward buttons and the two-finger swipe (when macOS swipe between pages is on) step through the
+  **Go > Forward** (**Cmd+]**), the mouse back and forward buttons and the trackpad's swipe between pages (when that macOS setting is on) step through the
   pages you have visited, like Finder. The history keeps the last 50 pages, with the **Showing all worktrees**
   scope of a project page and the device you clicked. Opening something new after going back drops the pages
   ahead. A workspace that was removed or archived since is skipped.

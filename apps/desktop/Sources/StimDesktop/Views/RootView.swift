@@ -134,7 +134,10 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
-        ToolbarItem(placement: .navigation) { HistoryButtons(navigation: navigation) }
+        ToolbarItem(placement: .navigation) {
+          HistoryButtons(
+            navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        }
         if columnVisibility == .detailOnly, !operations.runs.isEmpty {
           ToolbarItem(placement: .navigation) {
             OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
@@ -228,6 +231,8 @@ struct RootView: View {
     .onDisappear {
       notices.removeAll()
       navigation.stopMonitoring()
+      navigation.resolves = { _ in true }
+      navigation.apply = { _ in }
     }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
@@ -512,6 +517,7 @@ struct RootView: View {
     guard !restoredProject, selection == .overview else { return }
     if defaultView == .allDevices {
       restoredProject = true
+      replacesHistory = true
       selection = .wall
       return
     }
@@ -525,7 +531,9 @@ struct RootView: View {
   private var destination: NavigationDestination {
     var showsAll = false
     if case .project(let project) = selection { showsAll = showingAllWorktrees == project }
-    return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focusedDeviceID)
+    var focused: String?
+    if case .environment = selection { focused = focusedDeviceID }
+    return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focused)
   }
 
   private func show(_ destination: NavigationDestination) {

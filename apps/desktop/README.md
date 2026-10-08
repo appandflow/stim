@@ -1450,7 +1450,7 @@ and it stops `stim-server` and the log followers. Command-1 through Command-4 in
 
 The main window keeps a back and forward history, like Finder. Chevron buttons at the
 leading edge of the toolbar, **Go > Back** (Command-[) and **Go > Forward** (Command-]),
-the mouse back and forward buttons and the two-finger trackpad swipe move through it.
+the mouse back and forward buttons and the trackpad's swipe between pages (when that macOS setting is on) move through it.
 A destination is the sidebar selection plus the project page's **Showing all worktrees**
 scope and the device a tile click focused. A sidebar click, a card click, a notification
 action, a deep link or an oversight target adds one; the history keeps the last 50.
