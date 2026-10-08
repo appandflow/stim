@@ -192,9 +192,9 @@ struct WorktreePageTests {
     environments[1].slots = nil
     environments[1].macos = macos
     let cardsOnly = try #require(WorktreePage(path: "/w/b", environments: environments))
-    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/a", focusedID: nil, devices: []) == "macos|/w/a")
-    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/b", focusedID: nil, devices: []) == "macos|/w/b")
-
+    let appDevices = cardsOnly.orderedDevices
+    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/a", focusedID: nil, devices: appDevices) == "/w/a|macos:local")
+    #expect(cardsOnly.canvasScrollTarget(selectedPath: "/w/b", focusedID: nil, devices: appDevices) == "/w/b|macos:local")
   }
 
   @Test func toolbarSelectsAnAppOnlyWhenItAloneHasErrors() throws {
