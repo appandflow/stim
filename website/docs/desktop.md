@@ -402,12 +402,14 @@ build and errors. The grid shows the first six, and **Show more (N)** expands th
 place. Click a card to open the project with all of its worktrees listed, under a
 **Showing all workspaces** chip you can clear to return to the active ones. A project page
 whose worktrees are all inactive says so and has a **Show all** button. A **Recently archived** row and a **Try this** section
-follow. **Try this** suggests up to three features you have not used yet, such as EAS
+follow. **Try this** suggests one feature a day, preferring ones you have not used yet, such as EAS
 development builds and simulators, another Mac for builds or simulators, `stim macos`,
 running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a
 copyable prompt for your coding agent. A tip appears only when it applies, so EAS tips
 need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
-with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's tip card.
+with the **x** and the next one appears; it stays dismissed on this Mac. **Next tip** shows another
+for today. The tip stays the same all day, and the next day shows the least recently shown one. It never repeats the
+sidebar's tip card, and the section is hidden when no tip applies.
 
 **Active workspaces** shows every worktree with something running, building or warming
 as one full-width card. A worktree with several apps, such as `apps/mobile` and

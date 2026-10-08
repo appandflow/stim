@@ -75,8 +75,8 @@ shows six, and **Show more (N)** expands the rest in place. Clicking a card open
 the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show all**. A **Recently archived** row lists the last five
-archives, and **Try this** suggests up to three features with a copyable agent
-prompt each (see below). A single running project gets one centered card.
+archives, and **Try this** suggests one feature a day with a copyable agent
+prompt. **Next tip** shows another one, and the x dismisses a tip for good. A single running project gets one centered card.
 
 **Active workspaces** shows every worktree with something running, building or
 warming as one full-width card. A worktree with several apps (for example

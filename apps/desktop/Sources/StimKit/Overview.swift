@@ -112,8 +112,6 @@ public struct TryThisInputs: Sendable {
 }
 
 public enum TryThis {
-  public static let limit = 3
-
   public static func applicable(_ tip: TryThisTip, inputs: TryThisInputs) -> Bool {
     let remoteMacsSet = inputs.remoteMachines?.isEmpty == false
     switch tip {
@@ -148,29 +146,77 @@ public enum TryThis {
     return runs.contains { $0.offloadedTo != nil }
   }
 
-  /// At most `limit` tips: the ones that apply and are neither dismissed nor the sidebar's current tip, with features
-  /// the workspaces have not used first.
-  public static func select(
+  /// The tips that apply and are neither dismissed nor the sidebar's current tip.
+  public static func candidates(
     inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?
   ) -> [TryThisTip] {
-    let candidates = TryThisTip.allCases.filter {
+    TryThisTip.allCases.filter {
       applicable($0, inputs: inputs) && !dismissed.contains($0)
         && ($0.sidebarTopic == nil || $0.sidebarTopic != sidebarTopic)
     }
-    let inUse = candidates.filter { used($0, workspaces: inputs.workspaces) }
-    let notInUse = candidates.filter { !inUse.contains($0) }
-    return Array((notInUse + inUse).prefix(limit))
   }
+
+  /// Today's tip: the one already shown today while it is still a candidate, otherwise the least recently shown, with
+  /// features the workspaces have not used first.
+  public static func select(
+    inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?, state: TryThisState, now: Date,
+    calendar: Calendar
+  ) -> TryThisTip? {
+    let tips = candidates(inputs: inputs, dismissed: dismissed, sidebarTopic: sidebarTopic)
+    if let current = state.current, current.day == Tips.day(now, calendar: calendar), tips.contains(current.tip) {
+      return current.tip
+    }
+    return tips.min {
+      let (a, b) = (used($0, workspaces: inputs.workspaces), used($1, workspaces: inputs.workspaces))
+      return a == b ? (state.lastShown[$0] ?? .distantPast) < (state.lastShown[$1] ?? .distantPast) : !a
+    }
+  }
+
+  /// The tip after `current` in catalog order, or nil when no other tip is a candidate.
+  public static func next(
+    after current: TryThisTip, inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?
+  ) -> TryThisTip? {
+    let tips = candidates(inputs: inputs, dismissed: dismissed, sidebarTopic: sidebarTopic)
+    let catalog = TryThisTip.allCases
+    let index = catalog.firstIndex(of: current)!
+    return (1..<catalog.count).lazy.map { catalog[(index + $0) % catalog.count] }.first { tips.contains($0) }
+  }
+
+  public static func record(_ tip: TryThisTip, state: inout TryThisState, now: Date, calendar: Calendar) {
+    state.current = .init(tip: tip, day: Tips.day(now, calendar: calendar))
+    state.lastShown[tip] = now
+  }
+}
+
+public struct TryThisState: Codable, Equatable, Sendable {
+  public struct Current: Codable, Equatable, Sendable {
+    public var tip: TryThisTip
+    public var day: String
+  }
+
+  public var current: Current?
+  public var lastShown: [TryThisTip: Date] = [:]
+
+  public init() {}
 }
 
 public struct TryThisStore {
   private static let key = "tips.tryThis.dismissed"
+  private static let stateKey = "tips.tryThis.state"
   private let defaults: UserDefaults
 
   public init(defaults: UserDefaults) { self.defaults = defaults }
 
   public var dismissed: Set<TryThisTip> {
     Set((defaults.stringArray(forKey: Self.key) ?? []).compactMap(TryThisTip.init(rawValue:)))
+  }
+
+  public var state: TryThisState {
+    get {
+      defaults.data(forKey: Self.stateKey).flatMap { try? JSONDecoder().decode(TryThisState.self, from: $0) }
+        ?? TryThisState()
+    }
+    nonmutating set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Self.stateKey) }
   }
 
   public func dismiss(_ tip: TryThisTip) {
