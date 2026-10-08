@@ -210,6 +210,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   const abiKeyed = build.targetAbiOnly && !build.release;
   const localImage = () => (abiKeyed ? emulatorImage(root, slot, target.systemImage, deps) : { systemImage: null });
   let image: EmulatorImage;
+  let hostedAbi: string | null = null;
   let placement: string | undefined;
   if (target.kind === 'hosted') {
     const hostedPlan = await planHostedDevice({
@@ -222,6 +223,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
         ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
       },
       sameKey: (choice) => {
+        if (build.targetAbiOnly && build.release) return !('architecture' in choice && choice.architecture);
         if (!abiKeyed) return true;
         const local = localImage();
         if ('refusal' in local || !('systemImage' in choice)) return null;
@@ -237,6 +239,8 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
       });
     }
     placement = hostedPlan.placement;
+    if (hostedPlan.kind === 'hosted' && 'architecture' in hostedPlan.choice)
+      hostedAbi = hostedPlan.choice.architecture ?? null;
     image =
       hostedPlan.kind === 'hosted'
         ? { systemImage: abiKeyed && 'systemImage' in hostedPlan.choice ? hostedPlan.choice.systemImage : null }
@@ -251,6 +255,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     deviceAbi: () => null,
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,
+    hostedAbi,
   });
 
   let fingerprint;

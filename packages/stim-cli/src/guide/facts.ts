@@ -1626,7 +1626,7 @@ RULES
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
     cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
-    refusal? }
+    placement?, refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
                 --eas-profile, the one EAS CLI computes

@@ -48,9 +48,9 @@ export async function planHostedDevice({
     return { kind: 'hosted', choice, placement: `on ${name}` };
   };
   if (machine !== 'auto') return named(machine);
-  const recorded = readHostedNative(root, platform, slot)[slot];
-  if (recorded) return named(recorded.machine);
   try {
+    const recorded = readHostedNative(root, platform, slot)[slot];
+    if (recorded) return await named(recorded.machine);
     const placed = await automatic(
       { root, slot, platform, selectors, noWait: false },
       { read: () => ({}), write: () => {} },
