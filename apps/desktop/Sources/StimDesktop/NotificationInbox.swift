@@ -34,9 +34,9 @@ final class NotificationInbox: ObservableObject {
     }
   }
 
-  func add(_ entry: InboxEntry) {
+  func add(_ entry: InboxEntry, interrupts: Bool) {
     update { $0.add(entry, now: Date()) }
-    arrivals.send()
+    if interrupts { arrivals.send() }
   }
   func markRead(_ id: String) { update { $0.markRead(id) } }
   func markAllRead(_ filter: InboxFilter) { update { $0.markAllRead(filter) } }
