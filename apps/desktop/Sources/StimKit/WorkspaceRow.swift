@@ -14,6 +14,31 @@ public struct RowStatus: Equatable, Sendable {
   public var tone: Tone
 }
 
+/// One platform a workspace has run, with its own state for the sidebar row.
+public struct PlatformState: Equatable, Sendable {
+  public enum Kind: String, Sendable {
+    case building, failed, running, idle
+  }
+
+  public var platform: String
+  public var kind: Kind
+
+  public var label: String { platformName(platform) }
+  public var spoken: String { "\(label) \(kind.rawValue)" }
+
+  public var tone: Tone {
+    switch kind {
+    case .building: .brand
+    case .failed: .error
+    case .running: .success
+    case .idle: .tertiary
+    }
+  }
+
+  /// Idle is the hollow dot.
+  public var filled: Bool { kind != .idle }
+}
+
 /// Something wrong with a workspace, errors before warnings.
 public struct RowProblem: Equatable, Sendable {
   public enum Kind: String, Sendable {
@@ -104,6 +129,40 @@ extension Workspace {
         label: "Driven by an agent for \(Format.spokenDuration(seconds))", tone: .brand)
     }
     return RowStatus(kind: .running, text: "Running", label: "Running", tone: .success)
+  }
+
+  /// The platforms this workspace has run, in iOS, Android, macOS, Web order: a device, a build in the history or
+  /// last builds, a running build or a macOS run. A failed build shows under the same rule as `rowProblems`.
+  public func platformStates(now: Date) -> [PlatformState] {
+    ["ios", "android", "macos", "web"].compactMap { platform in
+      let history = platform == "web" ? [] : (builds?.builds(for: platform) ?? [])
+      let ran =
+        devices.contains { $0.platform == platform } || !history.isEmpty || build?.platform == platform
+        || (platform == "macos" && macos != nil)
+        || ((platform == "ios" || platform == "android") && lastBuilds?.build(for: platform) != nil)
+      guard ran else { return nil }
+      func state(_ kind: PlatformState.Kind) -> PlatformState { PlatformState(platform: platform, kind: kind) }
+      let building = build?.isRunning == true ? build?.platform == platform : false
+      if building || (platform == "macos" && macos?.build.state == "running") { return state(.building) }
+      var failedAt: String?
+      var failed = false
+      switch platform {
+      case "macos":
+        failed = macos?.build.state == "failed"
+        failedAt = macos?.build.finishedAt ?? macos?.build.startedAt
+      case "web":
+        failed = devices.contains { $0.pageFailed }
+      default:
+        let last = lastBuilds?.build(for: platform)
+        failed = last?.status == "failed"
+        failedAt = last?.finishedAt ?? last?.startedAt
+      }
+      if failed, platform == "web" || isActive || (since(failedAt, now).map { $0 * 1000 < staleMs } ?? false) {
+        return state(.failed)
+      }
+      let up = devices.contains { $0.platform == platform && $0.isRunning } || (platform == "macos" && macos?.state == "running")
+      return state(up ? .running : .idle)
+    }
   }
 
   /// A failed build shows while the workspace is live, or for a day after it failed, like the Needs you notification.
@@ -224,9 +283,17 @@ extension ActivityBadge {
 
 public struct WorktreeRowSummary: Sendable {
   public struct App: Sendable {
-    public var label: String
+    /// The project folder, set only where the platforms do not tell the apps apart.
+    public var name: String?
+    public var platforms: [PlatformState]
     public var status: RowStatus
     public var active: Bool
+
+    var spoken: String? {
+      let states = platforms.map(\.spoken).joined(separator: ", ")
+      guard let name else { return states.isEmpty ? nil : states }
+      return states.isEmpty ? "\(name): \(status.label)" : "\(name): \(states)"
+    }
   }
 
   public var title: String
@@ -241,7 +308,7 @@ public struct WorktreeRowSummary: Sendable {
   public var subtitle: String?
 
   public var label: String {
-    var parts = [title, status.label] + apps.map { "\($0.label): \($0.status.label)" }
+    var parts = [title, status.label] + apps.compactMap(\.spoken)
     if let first = agents.first { parts.append(first.label + (agents.count > 1 ? " +\(agents.count - 1)" : "")) }
     parts += problems
     if let drivers { parts.append("driven by \(drivers)") }
@@ -257,6 +324,13 @@ extension WorktreePage {
     var problems: [String] = []
     let errors = apps.reduce(0) { $0 + ($1.logs?.errorsSinceMarker ?? 0) }
     if errors > 0 { problems.append(countLabel(errors, "error")) }
+    let states = apps.map { $0.platformStates(now: now) }
+    let names = apps.indices.map { i -> String? in
+      guard apps.count > 1 else { return nil }
+      let mine = Set(states[i].map(\.platform))
+      let shared = apps.indices.contains { $0 != i && !mine.isDisjoint(with: states[$0].map(\.platform)) }
+      return mine.isEmpty || shared ? Self.project(apps[i]) : nil
+    }
     for (app, label) in zip(apps, appLabels) {
       for problem in app.rowProblems(now: now) where problem.kind != .errors && problem.kind != .ciFailing {
         problems.append("\(label): \(problem.text)")
@@ -267,7 +341,10 @@ extension WorktreePage {
     let tools = apps.flatMap(\.rowDriverTools).filter { seenTools.insert($0).inserted }
     return WorktreeRowSummary(
       title: apps[0].names.title, status: statusLead(now: now).rowStatus(now: now), active: apps.contains(where: \.isActive),
-      apps: zip(apps, appLabels).map { WorktreeRowSummary.App(label: $1, status: $0.rowStatus(now: now), active: $0.isActive) },
+      apps: apps.indices.map {
+        WorktreeRowSummary.App(
+          name: names[$0], platforms: states[$0], status: apps[$0].rowStatus(now: now), active: apps[$0].isActive)
+      },
       agents: agents, problems: problems, drivers: tools.isEmpty ? nil : tools.joined(separator: ", "),
       remote: apps.reduce(0) { $0 + ($1.remoteDevices?.count ?? 0) },
       git: showsGit ? GitChip(apps[0].worktree) : nil, subtitle: subtitle)
