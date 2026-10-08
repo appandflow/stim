@@ -139,6 +139,13 @@ struct RootView: View {
         let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
           selection = .machine
         }
+        if summary.hasContent {
+          ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
+            summary
+              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+              .clipped()
+          }
+        }
         ToolbarItem(placement: .primaryAction) { Spacer() }
         if showsWorkspace {
           ToolbarItem(placement: .primaryAction) {
@@ -151,11 +158,6 @@ struct RootView: View {
           }
           ToolbarItem(placement: .primaryAction) {
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
-          }
-        }
-        if summary.hasContent {
-          ToolbarItem(id: summaryItemID, placement: .primaryAction) {
-            summary
           }
         }
         if #available(macOS 26.0, *) {
@@ -432,30 +434,31 @@ struct RootView: View {
   }
 
   private var notificationButton: some View {
-    Button {
+    let unread = inbox.inbox.unreadCount
+    return Button {
       selection = .notifications
     } label: {
-      NotificationBell(selected: selection == .notifications)
-        .frame(width: 32, height: 32)
-        .contentShape(Circle())
+      HStack(spacing: Space.xs) {
+        NotificationBell(selected: selection == .notifications)
+        if unread > 0 {
+          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
+        }
+      }
+      .padding(.horizontal, Space.sm)
+      .frame(minWidth: 32, minHeight: 32)
+      .contentShape(Capsule())
     }
     .buttonStyle(.hoverRow(radius: Radius.round, selected: selection == .notifications))
-    .overlay(alignment: .topTrailing) {
-      let unread = inbox.inbox.unreadCount
-      if unread > 0 {
-        Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
-          .offset(x: 4, y: -4)
-          .allowsHitTesting(false)
-      }
-    }
     .accessibilityLabel("Notifications")
     .accessibilityValue("\(inbox.inbox.unreadCount) unread")
     .help("Open notifications")
   }
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
+  private static let bellWidth: CGFloat = 56
+
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - 80
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
@@ -464,8 +467,8 @@ struct RootView: View {
 
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
-  private var summaryItemID: String {
-    "machine-summary-\(tutorial.isOpen)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
+  private func summaryItemID(for summary: MachineSummary) -> String {
+    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(tutorial.isOpen)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
   }
 
   private func restoreLastProject() {
@@ -670,10 +673,13 @@ struct RootView: View {
     case .machine:
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
+    case .overview:
+      OverviewView(
+        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic, selection: $selection,
+        openLogs: openErrors)
     default:
       WallView(
-        store: store, metrics: metrics, project: projectFilter, overview: selection == .overview,
-        selection: $selection, openLogs: openErrors,
+        store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors,
         openDevice: { path, deviceID in
           focusedDeviceID = deviceID
           selection = .environment(path)
@@ -727,12 +733,13 @@ private struct NotificationBell: View {
   }
 
   var body: some View {
-    Image(systemName: "bell")
+    let swing = reduceMotion ? 0.0 : 1.0
+    return Image(systemName: "bell")
       .font(.stim(.callout))
       .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
         content
           .foregroundStyle(value.highlight > 0 ? Palette.primary : (selected ? Palette.primary : Palette.text))
-          .rotationEffect(.degrees(value.angle), anchor: .top)
+          .rotationEffect(.degrees(value.angle * swing), anchor: .top)
       } keyframes: { _ in
         KeyframeTrack(\.angle) {
           CubicKeyframe(-28, duration: 0.14)
@@ -749,11 +756,7 @@ private struct NotificationBell: View {
           LinearKeyframe(0, duration: 0.01)
         }
       }
-      .onReceive(NotificationInbox.shared.arrivals) {
-        if !reduceMotion {
-          wiggles += 1
-        }
-      }
+      .onReceive(NotificationInbox.shared.arrivals) { wiggles += 1 }
   }
 }
 
@@ -768,20 +771,34 @@ struct MachineSummary: View {
   }
 
   @State private var expandedResource: Resource?
-  @State private var resourceFrames: [Resource: CGRect] = [:]
 
-  private var resourceDetailsPresented: Binding<Bool> {
+  private func shows(_ resource: Resource) -> Binding<Bool> {
     Binding(
-      get: { expandedResource != nil },
-      set: { if !$0 { expandedResource = nil } }
+      get: { expandedResource == resource },
+      set: { if !$0, expandedResource == resource { expandedResource = nil } }
     )
+  }
+
+  @ViewBuilder private func popover(_ resource: Resource) -> some View {
+    switch resource {
+    case .cpu: cpuPopover
+    case .memory: memoryPopover
+    case .disk: DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine).presentationBackground(Palette.surface)
+    }
   }
 
   /// macOS 26 draws a glass capsule around a toolbar item even when it draws nothing, so the item is declared only when `row` has content.
   var hasContent: Bool {
-    store.error != nil || store.payload?.capacity != nil || metrics.hasVolumes
-      || (!store.watching && store.updatedAt != nil)
+    store.error != nil || showsCPU || showsMemory || metrics.hasVolumes || (!store.watching && store.updatedAt != nil)
   }
+
+  /// Which parts `row` draws, so the toolbar item is reinserted and measured again when one appears or goes.
+  var contentKey: String {
+    "\(store.error != nil)\(showsCPU)\(showsMemory)\(metrics.hasVolumes)\(!store.watching && store.updatedAt != nil)"
+  }
+
+  private var showsCPU: Bool { store.payload?.capacity != nil && metrics.totalCpuFraction != nil }
+  private var showsMemory: Bool { store.payload?.capacity != nil && metrics.memory != nil }
 
   var body: some View {
     ProposedWidth(width: max(0, width)) {
@@ -793,22 +810,6 @@ struct MachineSummary: View {
       }
     }
     .font(.stim(.callout))
-    .coordinateSpace(name: "machine-summary")
-    .popover(
-      isPresented: resourceDetailsPresented,
-      attachmentAnchor: .rect(
-        .rect(expandedResource.flatMap { resourceFrames[$0] } ?? .zero)),
-      arrowEdge: .bottom
-    ) {
-      switch expandedResource {
-      case .cpu: cpuPopover
-      case .memory: memoryPopover
-      case .disk:
-        DiskPopover(metrics: metrics, gc: gc, openMachine: openMachine)
-          .presentationBackground(Palette.surface)
-      case nil: EmptyView()
-      }
-    }
   }
 
   private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
@@ -831,11 +832,7 @@ struct MachineSummary: View {
           .accessibilityLabel("CPU details")
           .accessibilityValue(formatPercent(cpu * 100))
           .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
-          .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .named("machine-summary"))
-          } action: {
-            resourceFrames[.cpu] = $0
-          }
+          .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
           .onHover { hovering in
             if hovering, expandedResource != nil {
               var transaction = Transaction()
@@ -866,11 +863,7 @@ struct MachineSummary: View {
           .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("Memory details")
           .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
-          .onGeometryChange(for: CGRect.self) {
-            $0.frame(in: .named("machine-summary"))
-          } action: {
-            resourceFrames[.memory] = $0
-          }
+          .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
           .onHover { hovering in
             if hovering, expandedResource != nil {
               var transaction = Transaction()
@@ -903,11 +896,7 @@ struct MachineSummary: View {
         .accessibilityLabel("Disk details")
         .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
         .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
-        .onGeometryChange(for: CGRect.self) {
-          $0.frame(in: .named("machine-summary"))
-        } action: {
-          resourceFrames[.disk] = $0
-        }
+        .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
         .onHover { hovering in
           if hovering, expandedResource != nil {
             var transaction = Transaction()
