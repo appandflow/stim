@@ -209,33 +209,41 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
-      const run = (progress?: BuildProgress) =>
-        runIos({ ...opts, waitConflict: waitFlagConflict(process.argv) }, deps, progress);
-      const completion = root
-        ? await withNativeBuildRun(
-            root,
-            { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
-            async (claim) => {
-              recordWorkspaceUse(root);
-              const progress = startBuildProgress({
-                root,
-                platform: PLATFORM,
-                slot: opts.slot ?? 'default',
-                claim,
-                note: (line) => writeNote(chalk.dim(line)),
-              });
-              try {
-                return await run(progress);
-              } finally {
-                progress.clear();
-              }
-            },
-            { write: (line) => writeNote(chalk.dim(phaseLine('lock', line))) },
-          )
-        : await run();
+      const completion = await runIosOperation(root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
       if (!completion) process.exit(runCancellation() ? 130 : 1);
       else if (completion.uploadsAbandoned) exitAfterFlush(0);
     });
+}
+
+export function runIosOperation(
+  root: string | null,
+  opts: IosCommandOptions = {},
+  deps: Partial<IosDeps> = {},
+  onFailure: (error: FailArgs) => void = () => {},
+): Promise<IosRunCompletion | null> {
+  const run = (progress?: BuildProgress) => runIos(root, opts, deps, progress, onFailure);
+  return root
+    ? withNativeBuildRun(
+        root,
+        { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
+        async (claim) => {
+          recordWorkspaceUse(root);
+          const progress = startBuildProgress({
+            root,
+            platform: PLATFORM,
+            slot: opts.slot ?? 'default',
+            claim,
+            note: (line) => writeNote(chalk.dim(line)),
+          });
+          try {
+            return await run(progress);
+          } finally {
+            progress.clear();
+          }
+        },
+        { write: (line) => writeNote(chalk.dim(phaseLine('lock', line))) },
+      )
+    : run();
 }
 
 function unlessCancelled(
@@ -309,9 +317,11 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
 }
 
 async function runIos(
+  projectRoot: string | null,
   opts: IosCommandOptions = {},
   overrides: Partial<IosDeps> = {},
   progress: BuildProgress = NO_BUILD_PROGRESS,
+  onFailure: (error: FailArgs) => void,
 ): Promise<IosRunCompletion | null> {
   const slot = validateDeviceSlot(opts.slot);
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
@@ -331,12 +341,11 @@ async function runIos(
     note(chalk.dim(phaseLine('remedy', remedy)));
     note(chalk.red(phaseLine('failed', 'STIM_NO_PROJECT')));
     if (json) console.log(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
-    process.exitCode = 1;
+    onFailure({ code: 'STIM_NO_PROJECT', message, remedy });
     return null;
   };
-  const foundRoot = d.findProjectRoot(process.cwd());
-  if (!foundRoot) return refuseProject(NO_PROJECT_REFUSAL);
-  const root = foundRoot;
+  if (!projectRoot) return refuseProject(NO_PROJECT_REFUSAL);
+  const root = projectRoot;
   const projectProblem = appProjectProblem(root);
   if (projectProblem) return refuseProject(projectProblem);
 
@@ -353,7 +362,7 @@ async function runIos(
     );
     if (json)
       console.log(JSON.stringify({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' }));
-    process.exitCode = 1;
+    onFailure({ code, message, remedy: 'Check that STIM_HOME is writable and has free space.' });
     return null;
   }
 
@@ -449,7 +458,7 @@ async function runIos(
       );
     }
     writer?.close?.();
-    process.exitCode = 1;
+    onFailure({ code, message, remedy, lines, logPath, build, lease, setup });
     return null;
   };
 

@@ -260,44 +260,51 @@ export function registerAndroid(program: Command): void {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const result = await withNativeBuildRun(
-        root,
-        { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
-        async (claim) => {
-          recordWorkspaceUse(root);
-          const progress = startBuildProgress({
-            root,
-            platform: PLATFORM,
-            slot: opts.slot ?? 'default',
-            claim,
-            note: (line) => console.error(chalk.dim(line)),
-          });
-          try {
-            return await runAndroid({
-              root,
-              buildMachine: opts.remoteBuild,
-              slot: opts.slot,
-              easProfile: opts.easProfile,
-              json: Boolean(opts.json),
-              metroCheck: opts.metroCheck !== false,
-              useBuildCache: opts.buildCache !== false,
-              variant: opts.variant ?? null,
-              systemImage: opts.systemImage ?? null,
-              deviceProfile: opts.deviceProfile ?? null,
-              remoteDevice: opts.remote ?? null,
-              device: opts.device ?? null,
-              wait: opts.wait,
-              waitConflict: waitFlagConflict(process.argv),
-              progress,
-            });
-          } finally {
-            progress.clear();
-          }
-        },
-        { write: (line) => console.error(chalk.dim(phaseLine('lock', line))) },
-      );
+      const result = await runAndroidOperation(root, { ...opts, waitConflict: waitFlagConflict(process.argv) });
       if (!result.ok) process.exit(runCancellation() ? 130 : 1);
     });
+}
+
+export function runAndroidOperation(
+  root: string,
+  opts: AndroidCommandOptions & { waitConflict?: boolean } = {},
+): Promise<RunAndroidResult> {
+  return withNativeBuildRun(
+    root,
+    { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
+    async (claim) => {
+      recordWorkspaceUse(root);
+      const progress = startBuildProgress({
+        root,
+        platform: PLATFORM,
+        slot: opts.slot ?? 'default',
+        claim,
+        note: (line) => console.error(chalk.dim(line)),
+      });
+      try {
+        return await runAndroid({
+          root,
+          buildMachine: opts.remoteBuild,
+          slot: opts.slot,
+          easProfile: opts.easProfile,
+          json: Boolean(opts.json),
+          metroCheck: opts.metroCheck !== false,
+          useBuildCache: opts.buildCache !== false,
+          variant: opts.variant ?? null,
+          systemImage: opts.systemImage ?? null,
+          deviceProfile: opts.deviceProfile ?? null,
+          remoteDevice: opts.remote ?? null,
+          device: opts.device ?? null,
+          wait: opts.wait,
+          waitConflict: opts.waitConflict,
+          progress,
+        });
+      } finally {
+        progress.clear();
+      }
+    },
+    { write: (line) => console.error(chalk.dim(phaseLine('lock', line))) },
+  );
 }
 
 interface RunAndroidOptions {

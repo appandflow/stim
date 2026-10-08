@@ -1,4 +1,5 @@
 import agent from './agent.ts';
+import api from './api.ts';
 import facts from './facts.ts';
 import metro from './metro.ts';
 import ports from './ports.ts';
@@ -15,6 +16,7 @@ import type { GuideTopic } from './types.ts';
 
 const TOPICS: Record<string, GuideTopic> = {
   agent,
+  api,
   facts,
   metro,
   ports,
