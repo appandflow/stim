@@ -5,7 +5,7 @@ import StimKit
 import StimStores
 @preconcurrency import UserNotifications
 
-/// Checks at launch that the `stim` and, while phones are served, `stim-server` Stim Desktop runs are
+/// Checks at launch that the `stim` and `stim-server` Stim Desktop runs are
 /// recent enough, and whether Stim already opens its devices here. It also drives the setup guide, which opens at
 /// the first launch and from the Help menu.
 @MainActor
@@ -115,9 +115,7 @@ final class Onboarding: ObservableObject {
     let cli = cli
     let defaults = UserDefaults.standard
     let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
-    let serverOverride =
-      defaults.bool(forKey: AppPreferences.Key.servesPhones)
-      ? defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? "" : nil
+    let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
     let offersViewer = !progress.skipsOnboarding && !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
@@ -128,10 +126,7 @@ final class Onboarding: ObservableObject {
         let stim = await StimCLI.resolve(environment: environment, override: stimOverride) { packages }
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
-        var server: StimServerCLI?
-        if let serverOverride {
-          server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
-        }
+        let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
         let viewerKeys =
           compatibility.isCompatible && offersViewer
           ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
@@ -142,12 +137,9 @@ final class Onboarding: ObservableObject {
         let skillPath = SetupChecks.installedSkill(home: home) {
           FileManager.default.fileExists(atPath: $0)
         }
-        var serverCompatibility: CLICompatibility?
-        if let server {
-          serverCompatibility = CLICompatibility.check(
-            executable: server.executable, versionOutput: await server.versionOutput(),
-            minimum: StimServerCLI.minimumVersion)
-        }
+        let serverCompatibility = CLICompatibility.check(
+          executable: server.executable, versionOutput: await server.versionOutput(),
+          minimum: StimServerCLI.minimumVersion)
         return Report(
           stim: compatibility,
           stimPath: stim.executable,
@@ -157,7 +149,7 @@ final class Onboarding: ObservableObject {
           needsRelaunch: compatibility.isCompatible
             && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
-          serverPath: server?.executable,
+          serverPath: server.executable,
           viewerKeys: viewerKeys,
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
@@ -172,11 +164,11 @@ final class Onboarding: ObservableObject {
           nodeBlockingStim: compatibility == .outdated(found: nil)
             ? stim.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlockingServer: serverCompatibility == .outdated(found: nil)
-            ? server?.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
+            ? server.launcher.flatMap(\.runtime).flatMap { $0.isSupported ? nil : $0 } : nil,
           nodeBlocksStim: compatibility == .outdated(found: nil) && stim.launcher != nil
             && stim.launcher?.runtime?.isSupported != true,
-          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server?.launcher != nil
-            && server?.launcher?.runtime?.isSupported != true)
+          nodeBlocksServer: serverCompatibility == .outdated(found: nil) && server.launcher != nil
+            && server.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
       setup.stim = report.stim

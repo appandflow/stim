@@ -84,11 +84,10 @@ struct LocalServerCredential: Codable, Equatable {
   var link: ServerLink {
     guard client != nil else {
       switch controller.state {
-      case .starting: return .connecting
+      case .starting, .off, .running: return .connecting
       case .notReady(.pending, _): return .connecting
       case .notReady(.degraded(let reason), _): return .unavailable("Degraded: \(abbreviatingHome(reason))")
       case .failed(let message): return .unavailable(message)
-      case .off, .running: return .off
       }
     }
     switch state {

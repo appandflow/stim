@@ -2,8 +2,6 @@ import Foundation
 
 /// Stim Desktop's connection to its local stim-server, as a physical device's tile needs it.
 public enum ServerLink: Equatable, Sendable {
-  /// No stim-server runs for Stim Desktop.
-  case off
   case connecting
   /// `features` is nil from a server older than the `features` hello field.
   case open(features: [String]?, capabilities: [String])
@@ -28,8 +26,6 @@ public enum PhysicalScreen: Equatable, Sendable {
         return
       }
       switch link {
-      case .off:
-        self = .message(PhoneApp.Copy.serverOffForViewing("simulator's screen", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
       case .connecting: self = .message("Connecting to stim-server")
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
@@ -59,8 +55,6 @@ public enum PhysicalScreen: Equatable, Sendable {
       return
     }
     switch link {
-    case .off:
-      self = .message(PhoneApp.Copy.serverOffForViewing("device's screen", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):
@@ -83,8 +77,6 @@ public enum PhysicalScreen: Equatable, Sendable {
   /// A macOS app that `stim macos --remote` runs on another Mac, which this Mac's stim-server relays.
   public init(hostedMacosOn link: ServerLink) {
     switch link {
-    case .off:
-      self = .message(PhoneApp.Copy.serverOffForViewing("app's window", phoneApp: FeatureFlags.isEnabled(.phoneApp)))
     case .connecting:
       self = .message("Connecting to stim-server")
     case .unavailable(let reason):

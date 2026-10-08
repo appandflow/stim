@@ -1,6 +1,6 @@
 ---
-title: 'Remote Macs'
-description: 'Set up a remote Mac to build your app or host iOS and Android devices'
+title: "Remote Macs"
+description: "Set up a remote Mac to build your app or host iOS and Android devices"
 ---
 
 import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
@@ -256,6 +256,9 @@ so there is no Check again button:
    links to the Tailscale download for the Mac you want to use; the list
    appears by itself when that Mac joins. When every listed Mac is offline, a
    line under the list tells you to turn on Tailscale on that Mac.
+   `stim-server setup` on the worker Mac gives the same three answers when it
+   cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
+   turn the app on from its menu bar icon, or run `tailscale up`.
 2. **What it does.** Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
@@ -393,13 +396,17 @@ code={`stim settings set remote.machines '["janics-mac-mini"]'
 stim doctor --fix`}
 />
 
-On the worker, inspect `stim-server devices` and approve the printed build
+Stim Desktop on the worker shows each build request and device-host request as a
+notification with **Allow** and **Deny**, including when a stim-server already
+runs there as a LaunchAgent and **Serve to phones** is off. Without Desktop, on the worker, inspect `stim-server devices` and approve the printed build
 request with `stim-server devices grant <build-id> --build`, and the separate
 hosting request with `stim-server devices grant <host-id> --device-host`.
 Use the server package's npx prefix above if it is not installed globally.
 Approve only what you want to use; a listed Mac that never granted an approval
 is not used for it, and `stim doctor` says so.
-Requests lapse after 15 minutes. Run `stim doctor` on the main Mac to check
+Requests lapse after 15 minutes. While a request is pending, `stim doctor --json`
+reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
+`stim doctor --fix` asks again. Run `stim doctor` on the main Mac to check
 approval and compatibility before running the app.
 
 ## Permissions

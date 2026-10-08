@@ -34,6 +34,7 @@ import {
   type ServeRecord,
   type ServerBuild,
   type ServiceSpec,
+  lastLines,
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tailscale.ts';
@@ -733,8 +734,6 @@ export function serverBuild(script: string): ServerBuild | null {
 const describeBuild = (build: ServerBuild) =>
   `stim-server ${build.version}${build.stimBuild ? ` (Stim build ${build.stimBuild})` : ''}`;
 
-const lastLines = (text: string) => text.trim().split('\n').slice(-8).join('\n');
-
 function sameFile(a: string, b: string): boolean {
   try {
     return realpathSync(a) === realpathSync(b);
@@ -765,6 +764,33 @@ function installedIntegrity(staging: string): string | null {
   }
 }
 
+/**
+ * The uploaded package files by package name, as `file:` specs. npm `audit signatures` skips a node only when its
+ * dependent's spec is a file spec (npm lib/utils/verify-signatures.js), so the staging project lists every uploaded
+ * package as a direct dependency and overrides every edge to it with `$name`.
+ */
+async function localPackageSpecs(dir: string, names: string[]): Promise<Record<string, string>> {
+  const specs: Record<string, string> = {};
+  for (const file of names) {
+    const path = join(dir, file);
+    const manifest = await run('/usr/bin/tar', ['-xzOf', path, 'package/package.json'], process.env, 60_000);
+    let name: unknown;
+    try {
+      name = (JSON.parse(manifest.stdout) as { name?: unknown }).name;
+    } catch {
+      name = null;
+    }
+    if (!manifest.ok || typeof name !== 'string' || !name) {
+      throw new ServiceError(
+        `${path} is not an npm package file.${manifest.ok ? '' : `\n${lastLines(manifest.stderr)}`}`,
+      );
+    }
+    if (specs[name]) throw new ServiceError(`${dir} has more than one package file for ${name}.`);
+    specs[name] = `file:${path}`;
+  }
+  return specs;
+}
+
 export async function installServer(
   versions: string,
   source: UpdateSource,
@@ -782,6 +808,7 @@ export async function installServer(
     const registry = [`--registry=${REGISTRY}`, `--@stim-cli:registry=${REGISTRY}`];
     let files: { name: string; sha256: string }[] = [];
     let specs: string[];
+    let localPackages: Record<string, string> | null = null;
     if ('release' in source) {
       specs = [`${SERVER_PACKAGE}@${source.release}`];
     } else {
@@ -793,9 +820,12 @@ export async function installServer(
           .update(readFileSync(join(source.from, name)))
           .digest('hex'),
       }));
-      specs = names.map((name) => join(source.from, name));
+      specs = [];
+      localPackages = await localPackageSpecs(source.from, names);
     }
-    writeFileSync(join(staging, 'package.json'), '{ "private": true }\n');
+    const overrides = localPackages && Object.fromEntries(Object.keys(localPackages).map((name) => [name, `$${name}`]));
+    const project = localPackages ? { private: true, dependencies: localPackages, overrides } : { private: true };
+    writeFileSync(join(staging, 'package.json'), `${JSON.stringify(project, null, 2)}\n`);
     log(
       `Installing ${'release' in source ? `${SERVER_PACKAGE}@${source.release} from ${REGISTRY}` : `${files.length} package file(s) from ${source.from}`}.`,
     );
@@ -817,14 +847,13 @@ export async function installServer(
       NPM_TIMEOUT_MS,
     );
     if (!installed.ok) throw new ServiceError(`npm install failed:\n${lastLines(installed.stderr)}`);
-    // npm audit signatures checks the packages that came from the registry and skips local .tgz files.
     const audit = await run(
       npm,
       ['audit', 'signatures', '--json', '--prefix', staging, ...registry],
       env,
       NPM_TIMEOUT_MS,
     );
-    const problem = signatureProblem(audit.stdout);
+    const problem = signatureProblem(audit.stdout, audit.stderr);
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);
     const script = join(staging, ...SERVER_SCRIPT);
     const build = existsSync(script) ? serverBuild(script) : null;

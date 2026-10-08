@@ -826,7 +826,8 @@ login-shell environment would otherwise replace.
 \`stim-server service update --release <version>\` there moves the service to
 that exact stim-server release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed
-packages of a checkout instead. It waits for offloaded builds and hosted
+packages of a checkout instead, with the same signature check on each npm
+dependency but none for Stim's own packages. It waits for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back when the new server
 exits or does not answer within 90 seconds; \`stim-server service rollback\` returns
 to the previous server. A client Mac approved for builds or device hosting

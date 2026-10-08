@@ -242,6 +242,25 @@ describe('pickOffer', () => {
     expect(codes(offer({ toolchain: { bundler: null } }), IOS)).toEqual([]);
   });
 
+  it('names a missing tool instead of printing null, on either side', () => {
+    const reasons = (offered: BuildOffer, target: BuildTarget) =>
+      offerProblems(offered, target).map((problem) => problem.reason);
+    expect(reasons(offer({ toolchain: { xcode: null, simulatorSdk: null, cocoapods: null } }), IOS)).toEqual([
+      'no Xcode there, Xcode 27.0 / Build version 27A266a here',
+      'no simulator SDK there, simulator SDK 27.0 here',
+      'no CocoaPods there, CocoaPods 1.16.2 here',
+    ]);
+    const bare: BuildTarget = { ...IOS, local: { ...LOCAL, cocoapods: null } };
+    expect(reasons(offer(), bare)).toEqual(['CocoaPods 1.16.2 there, no CocoaPods here']);
+    const macos: BuildTarget = {
+      platform: 'macos',
+      local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+    };
+    expect(reasons(offer({ toolchain: { macosSdk: null } }), macos)).toEqual([
+      'no macOS SDK there, macOS SDK 27.0 here',
+    ]);
+  });
+
   it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });

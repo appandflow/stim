@@ -20,6 +20,31 @@ export type HelloReply =
   | { error: { code: string; message: string } }
   | { failed: string };
 
+type PendingCredential = { state: string; requestedAt: string; expiresAt?: string };
+
+export function isLapsed(credential: PendingCredential): boolean {
+  return credential.state === 'pending' && !!credential.expiresAt && Date.parse(credential.expiresAt) <= Date.now();
+}
+
+export function markApproved<T extends { expiresAt?: string }>(
+  credential: T,
+): Omit<T, 'expiresAt'> & { state: 'approved' } {
+  const { expiresAt: _expiresAt, ...rest } = credential;
+  return { ...rest, state: 'approved' };
+}
+
+export function pendingReport(credential: PendingCredential): { state: 'pending'; expiresAt?: string } {
+  return { state: 'pending', ...(credential.expiresAt ? { expiresAt: credential.expiresAt } : {}) };
+}
+
+export function lapsedLine(machine: string, credential: PendingCredential): string {
+  return `${machine} did not approve this Mac before the request lapsed at ${credential.expiresAt}.`;
+}
+
+export function requestedLine(credential: PendingCredential): string {
+  return `Requested at ${credential.requestedAt}${credential.expiresAt ? `; the request lapses at ${credential.expiresAt}` : ''}.`;
+}
+
 export interface TailnetMachineIo {
   /** `tailscale status --json`, or null when Tailscale is not running. */
   status: () => unknown;

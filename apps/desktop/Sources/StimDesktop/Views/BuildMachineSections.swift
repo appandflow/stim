@@ -114,6 +114,13 @@ struct MachineBuildMachines: View {
   }
 }
 
+extension MachineUpdatePhase {
+  fileprivate var isFailed: Bool {
+    if case .failed = self { return true }
+    return false
+  }
+}
+
 /// The install button of a remote Mac that runs another Stim build, and the progress of an update Desktop asked for.
 struct MachineUpdateLine: View {
   var phase: MachineUpdatePhase?
@@ -122,18 +129,30 @@ struct MachineUpdateLine: View {
 
   var body: some View {
     if phase != nil || needed {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-        if let phase, !phase.isDone { ProgressView().controlSize(.small) }
-        if let phase {
-          Text(verbatim: phase.line)
-            .font(.stim(.footnote))
-            .foregroundStyle(tone(phase))
-            .lineLimit(3)
-            .textSelection(.enabled)
+      VStack(alignment: .leading, spacing: Space.xs) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+          if let phase, !phase.isDone { ProgressView().controlSize(.small) }
+          if let phase, !phase.isFailed {
+            Text(verbatim: phase.line)
+              .font(.stim(.footnote))
+              .foregroundStyle(tone(phase))
+              .lineLimit(3)
+              .textSelection(.enabled)
+          }
+          if needed, phase?.isDone ?? true {
+            Button("Install This Mac's Build", action: update)
+              .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+          }
         }
-        if needed, phase?.isDone ?? true {
-          Button("Install This Mac's Build", action: update)
-            .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+        if let phase, case .failed(let message) = phase {
+          HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
+            Text(verbatim: message)
+              .font(.stim(.footnote))
+              .foregroundStyle(Palette.error)
+              .textSelection(.enabled)
+              .fixedSize(horizontal: false, vertical: true)
+            CopyButton(message, size: .small, help: "Copy the failure text")
+          }
         }
       }
     }

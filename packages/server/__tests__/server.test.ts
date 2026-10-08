@@ -291,6 +291,7 @@ let clients: WebSocket[];
 async function start(
   overrides: {
     host?: ServerOptions['host'];
+    loopbackOnly?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
     authTimeoutMs?: number;
@@ -357,6 +358,7 @@ async function start(
     frameHelper: overrides.frameHelper ?? null,
     foldHelper: overrides.foldHelper,
     record: overrides.record ?? false,
+    loopbackOnly: overrides.loopbackOnly,
     recordLimits: overrides.recordLimits,
     controlLimits: overrides.controlLimits,
     history: overrides.history ?? false,
@@ -2253,6 +2255,17 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);
   });
 
+  it('serves only this Mac when loopback only, refusing peers a tailscale serve route forwards', async () => {
+    const port = await start({ loopbackOnly: true });
+    const local = await fetch(`http://127.0.0.1:${port}/health`);
+    expect(local.status).toBe(200);
+    expect(await local.json()).toMatchObject({ loopbackOnly: true });
+    const forwarded = await fetch(`http://127.0.0.1:${port}/health`, { headers: { 'x-forwarded-for': '100.64.0.2' } });
+    expect(forwarded.status).toBe(403);
+    await expect(connect(port, '100.64.0.2')).rejects.toThrow('HTTP 403');
+    await expect(connect(port)).resolves.toBeDefined();
+  });
+
   it('answers requests from this Mac in full and tailnet peers with the server version only', async () => {
     const port = await start();
     const local = await fetch(`http://127.0.0.1:${port}/health`);
@@ -2333,6 +2346,22 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     await eventually(() => server!.addresses.length === 1);
     await dropped;
     expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
+    monitor.stop();
+  });
+
+  it('reports Tailscale but never listens on its addresses when loopback only', async () => {
+    const running: TailscaleState = { state: 'running', ips: ['::1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
+    const monitor = watchTailscale({
+      env: {},
+      initial: { binary: 'tailscale', state: running },
+      find: () => 'tailscale',
+      read: async () => running,
+      backoffMs: 10,
+      maxMs: 20,
+    });
+    const port = await start({ loopbackOnly: true, tailscaleState: running, tailscaleMonitor: monitor });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(server!.addresses).toEqual([{ host: '127.0.0.1', port }]);
     monitor.stop();
   });
 

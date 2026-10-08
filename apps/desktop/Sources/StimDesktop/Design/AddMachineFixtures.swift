@@ -81,7 +81,7 @@
             case .funneled:
               steps[4] = .init(
                 id: "route", state: .failed, title: "Public route refused", fix: "tailscale funnel --https=7443 off")
-            case .requestLapsed: build.state = .revoked
+            case .requestLapsed: build.state = .lapsed
             case .grantedOther: grants = [.init(capability: .build, id: "other-request")]
             case .awaitingPermission, .approved, .permissionSkipped:
               steps[5].state = .ok

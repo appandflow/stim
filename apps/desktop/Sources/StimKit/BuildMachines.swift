@@ -126,7 +126,7 @@ public enum Tailnet {
 /// Where this Mac stands with one `remote.machines` entry, as `stim doctor --json` reports it.
 public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public enum State: String, Decodable, Sendable {
-    case approved, pending, revoked, invalid, unreachable, unknown
+    case approved, pending, revoked, lapsed, invalid, unreachable, unknown
     case notAsked = "not-asked"
     case nodeChanged = "node-changed"
     case notOnTailnet = "not-on-tailnet"
@@ -142,6 +142,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       case .pending: return "Waiting for approval"
       case .notAsked: return "Not asked"
       case .revoked: return "Revoked"
+      case .lapsed: return "Request lapsed"
       case .nodeChanged: return "Different Mac"
       case .notOnTailnet: return "Not on the tailnet"
       case .tailscaleOff: return "Tailscale is off"
@@ -155,14 +156,14 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       switch self {
       case .approved: return .success
       case .pending, .notOnTailnet, .tailscaleOff, .unreachable: return .warning
-      case .revoked, .nodeChanged, .invalid: return .error
+      case .revoked, .lapsed, .nodeChanged, .invalid: return .error
       case .notAsked, .unknown: return .neutral
       }
     }
 
     /// Whether asking again through `stim doctor --fix` can change it, given whether this Mac already has a request.
     public func canAsk(requested: Bool) -> Bool {
-      self == .notAsked || self == .revoked || (self == .unreachable && !requested)
+      self == .notAsked || self == .revoked || self == .lapsed || (self == .unreachable && !requested)
     }
   }
 
@@ -231,6 +232,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var dnsName: String?
   public var deviceId: String?
   public var requestedAt: String?
+  public var expiresAt: String?
   /// For an approved machine: whether it would take builds now, and each reason it would not.
   public var offloadable: Bool?
   public var reasons: [String]?
@@ -334,6 +336,22 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   /// When a request waiting for approval lapses, as stim-server sets it.
   public static let requestLapse = "The request lapses after 15 minutes."
 
+  public func lapseLine(timeZone: TimeZone = .current, locale: Locale = .current) -> String {
+    guard let expiresAt, let date = Self.parseTimestamp(expiresAt) else { return Self.requestLapse }
+    let formatter = DateFormatter()
+    formatter.locale = locale
+    formatter.timeZone = timeZone
+    formatter.timeStyle = .short
+    formatter.dateStyle = .none
+    return "Waiting for approval until \(formatter.string(from: date))."
+  }
+
+  private static func parseTimestamp(_ text: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+  }
+
   /// Who approves a request waiting for approval, and where; `detail` and the settings row continue it.
   public var approvalPrompt: String { "Someone on \(machine) approves it in Stim Desktop" }
 
@@ -344,9 +362,10 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       return readiness.remedy.map { $0.prefix(1).uppercased() + $0.dropFirst() + "." } ?? "Builds stay on this Mac for now."
     case .pending:
       let grant = approvalCommand.map { " or runs \($0) there" } ?? ""
-      return "\(approvalPrompt)\(grant). \(Self.requestLapse)"
+      return "\(approvalPrompt)\(grant). \(lapseLine())"
     case .notAsked: return "This Mac has not asked it yet."
-    case .revoked: return "It revoked this Mac, denied the request, or the request lapsed."
+    case .revoked: return "It revoked this Mac or denied the request."
+    case .lapsed: return "The request lapsed before anyone on \(machine) approved it. Ask again."
     case .nodeChanged:
       return
         "The name now belongs to a different tailnet node than the one this Mac asked, so Stim does not connect to it. If that Mac was replaced, remove it here, which forgets the old node, then use it for builds again."

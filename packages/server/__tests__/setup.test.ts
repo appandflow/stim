@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { PassThrough } from 'node:stream';
 import { readSetupJournal, type SetupJournal } from '@stim-cli/core/state';
@@ -16,6 +16,7 @@ import {
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
+import { tailscaleInstall } from '../src/tailscale.ts';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
@@ -313,6 +314,21 @@ test.each([
   ['1.16.0-rc.2', '1.16.0-rc.1', 'reuse'],
 ])('managed RC %s targeting %s retains full version ordering', (current, desired, expected) => {
   expect(setupVersionDecision(current, desired, true)).toBe(expected);
+});
+
+const APP = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
+
+test.each([
+  ['the Mac app is present', [APP, '/opt/bin/tailscale'], 'app'],
+  ['only a PATH command is present', ['/opt/bin/tailscale'], 'cli'],
+  ['no binary is present', [], 'none'],
+  ['a tailscale outside PATH is ignored', ['/other/tailscale'], 'none'],
+])('Tailscale install when %s', (_name, present, expected) => {
+  expect(
+    tailscaleInstall({ PATH: ['/usr/bin', '', '/opt/bin'].join(delimiter) }, (path) =>
+      present.includes(path.replaceAll('\\', '/')),
+    ),
+  ).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {

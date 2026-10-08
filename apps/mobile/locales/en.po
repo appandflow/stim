@@ -3357,6 +3357,10 @@ msgstr "Replay off"
 msgid "Report a bug"
 msgstr "Report a bug"
 
+#: src/lib/build-machines.ts
+msgid "Request lapsed"
+msgstr "Request lapsed"
+
 #: src/screens/filters.tsx
 msgid "Reset"
 msgstr "Reset"
