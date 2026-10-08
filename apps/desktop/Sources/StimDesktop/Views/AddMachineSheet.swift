@@ -137,12 +137,11 @@ struct AddMachineSheet: View {
       case .peerOffline, .ready:
         checkLine("Tailscale runs on this Mac", ready: true)
         machineList
-        if model.macList == .offlineOnly {
-          Text("Turn on Tailscale on that Mac to continue.")
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-        if model.reachability == .peerOffline, model.macList == .available, let peer = model.selected {
+        if model.reachability == .peerOffline, let peer = model.selected {
           Text("Open Tailscale on \(peer.mac.hostName) and sign in to the same tailnet.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        } else if model.macList == .offlineOnly {
+          Text("Turn on Tailscale on that Mac to continue.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }

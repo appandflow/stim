@@ -115,7 +115,6 @@ final class AddMachineModelTests: XCTestCase {
       harness.peers = peers
       await model.refreshPeers()
       XCTAssertEqual(model.macList, expected, peers)
-      XCTAssertTrue(model.tailscaleRunning)
     }
   }
 

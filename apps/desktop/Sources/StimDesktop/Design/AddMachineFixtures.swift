@@ -4,7 +4,7 @@
   import SwiftUI
 
   enum AddMachineFixture: String, CaseIterable, Identifiable {
-    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, noMac, peerOffline, ready
+    case tailscaleMissing, tailscaleStoppedApp, tailscaleStoppedCLI, noMac, allOffline, peerOffline, ready
     case chooseBoth, chooseBuilds, chooseHosted, chooseNone, alreadyApproved
     case command, expired, starting, awaitingApproval, awaitingPermission, approved
     case noAnswer, stepFailed, serverTooOld, requestLapsed, grantedOther, funneled, permissionSkipped, noWorkspace
@@ -31,7 +31,7 @@
         """
         {"BackendState":"\(self == .tailscaleStoppedCLI ? "Stopped" : "Running")",
          "Self":{"ID":"nSelf","HostName":"MacBook-Pro","DNSName":"macbook.tail.test."},
-         "Peer":{"one":{"ID":"nMini","HostName":"janics-mac-mini","DNSName":"mini.tail.test.","OS":"macOS","Online":\(self != .peerOffline)},
+         "Peer":{"one":{"ID":"nMini","HostName":"janics-mac-mini","DNSName":"mini.tail.test.","OS":"macOS","Online":\(self != .peerOffline && self != .allOffline)},
          "two":{"ID":"nAir","HostName":"old-air","DNSName":"old-air.tail.test.","OS":"macOS","Online":false}}}
         """.utf8)
       let noMacStatus = Data(
@@ -40,7 +40,9 @@
       let client = Tailnet.selfNode(statusJSON: status)!
       let mac = Tailnet.peers(statusJSON: status).first!.mac
       var wizard = SetupWizard(hasWorkspace: self != .noWorkspace)
-      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .peerOffline, .ready].contains(self) {
+      if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .allOffline, .peerOffline, .ready].contains(
+        self)
+      {
         _ = wizard.apply(.macChosen(mac), now: now)
         if self == .chooseBuilds { _ = wizard.apply(.capabilitiesChanged([.build]), now: now) }
         if self == .chooseHosted { _ = wizard.apply(.capabilitiesChanged([.deviceHost]), now: now) }
@@ -142,6 +144,7 @@
         health: [mac.id: health],
         selfNode: client, ticket: ticket,
         install: self == .tailscaleMissing ? .none : self == .tailscaleStoppedCLI ? .cli : .app)
+      if self == .allOffline { model.selectedId = nil }
       return model
     }
 
