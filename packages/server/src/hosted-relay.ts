@@ -19,6 +19,8 @@ type Event = Record<string, unknown> | Buffer;
 export interface HostedRelayOptions {
   status: () => unknown | Promise<unknown>;
   endpoint?: (pinned: Endpoint) => Endpoint;
+  /** Receives each host connection's timings, and its failures with `failed`. */
+  log?: (event: string, fields: Record<string, unknown>, failed?: boolean) => void;
 }
 
 interface Route {
@@ -47,6 +49,8 @@ export class Upstream {
   private users = 0;
   private features: string[] = [];
   onClose: (() => void) | null = null;
+  connectMs = 0;
+  helloMs = 0;
 
   private readonly token: string;
 
@@ -119,6 +123,7 @@ export class Upstream {
 
   /** Connects and says hello with the token; the host must grant `capability` to this Mac. */
   async open(version: string, capability: 'device-host' | 'build' = 'device-host'): Promise<void> {
+    const started = Date.now();
     await new Promise<void>((resolve, reject) => {
       const done = (error?: Error) => {
         clearTimeout(timer);
@@ -139,11 +144,13 @@ export class Upstream {
       this.socket.once('close', closed);
       this.socket.once('error', failed);
     });
+    this.connectMs = Date.now() - started;
     const reply = await this.request('hello', {
       protocol: 1,
       client: { name: 'stim-server', version },
       auth: { deviceToken: this.token },
     });
+    this.helloMs = Date.now() - started - this.connectMs;
     if ('error' in reply) throw new Error(reply.error.message);
     if (
       !isJsonObject(reply.result) ||
@@ -247,6 +254,7 @@ export class HostConnections {
   /** Checks the credential and pinned node on every call, then joins or opens the connection to that endpoint. */
   async acquire(host: Placement): Promise<Lease> {
     let token = '';
+    const started = Date.now();
     try {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
       if (!credential || credential.state !== 'approved') throw new Error('no approved device-host credential');
@@ -273,10 +281,22 @@ export class HostConnections {
         lease.release();
         throw cause;
       }
+      this.options.log?.('host_connect', {
+        host: host.machine,
+        ms: Date.now() - started,
+        connectMs: entry.connection.connectMs,
+        helloMs: entry.connection.helloMs,
+      });
       return lease;
     } catch (cause) {
       const reason = (cause as Error).message;
-      throw new Error(token ? reason.replaceAll(token, '[redacted]') : reason, { cause });
+      const safe = token ? reason.replaceAll(token, '[redacted]') : reason;
+      this.options.log?.(
+        'host_connect',
+        { host: host.machine, ms: Date.now() - started, error: safe.slice(0, 200) },
+        true,
+      );
+      throw new Error(safe, { cause });
     }
   }
 
