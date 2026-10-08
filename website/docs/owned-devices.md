@@ -532,7 +532,7 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-- `stim stop` releases the live environment and device leases. It ends an owned
+- `stim stop` releases the active environment and device leases. It ends an owned
   remote session. On a physical iPhone, stopping the log collector also closes
   the app; it does not shut down the phone or uninstall anything.
 - `stim worktree remove` releases leases, parks eligible owned iOS simulators and

@@ -228,7 +228,7 @@ STOP DURING A BUILD
 
 CAPACITY
   A booted iOS sim is roughly 1-2 GB of RAM, an Android emulator 2-3 GB. On a
-  16 GB machine plan for 2-3 live environments. Nothing enforces this;
+  16 GB machine plan for 2-3 active environments. Nothing enforces this;
   \`stim status\` is how you check -- it reports every workspace on the
   machine, not just this one.
 
@@ -1660,7 +1660,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             and the command to remove that exact claim.
                             See \`guide errors STIM_AT_CAPACITY\`.
 
-  \`stim doctor\` prints one note echoing the caps and the current live count,
+  \`stim doctor\` prints one note echoing the caps and the current active count,
   but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it
   reports stale build locks, and \`gc --delete\` clears them. Set the caps
   with \`stim settings set concurrency.maxBuilds 2\`, by editing
@@ -1676,7 +1676,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                                  $STIM_HOME. Default 20. Below it, Stim reclaims.
     budget.hardFloorDiskGb       default 5. Still below it after reclaiming,
                                  the run refuses with STIM_LOW_DISK.
-    budget.maxCommittedMemoryGb  the rough memory of live environments, the
+    budget.maxCommittedMemoryGb  the rough memory of active environments, the
                                  figure \`stim status\` prints (a booted
                                  simulator 1.5 GB, an emulator 2.5 GB, a dev
                                  server 0.7 GB). Default 60% of physical memory.

@@ -61,7 +61,7 @@ creates. It does not create, boot, or delete a user-created simulator or
 emulator. A physical device reached with `ios --device` or `android --device`
 is leased for the run and never added to the owned-device registry.
 
-`stim stop` releases a live environment without deleting its local device.
+`stim stop` releases an active environment without deleting its local device.
 `stim worktree remove` reclaims the worktree environment. `stim gc --delete`
 removes orphaned resources. This ownership model makes cleanup safe after an
 agent exits early. [Getting started](./getting-started.md#terms) defines these
