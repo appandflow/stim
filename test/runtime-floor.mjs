@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,6 +34,7 @@ for (const directory of packageDirs) {
 }
 
 const entrypoints = [
+  ['stim', 'createStim'],
   ['@stim-cli/core', 'configDir'],
   ['@stim-cli/core/process-identity', 'captureProcessIdentity'],
   ['@stim-cli/core/ownership-claim', 'tryAcquireClaim'],
@@ -40,6 +50,51 @@ for (const [specifier, exportName] of entrypoints) {
   assert.equal(typeof require(specifier)[exportName], 'function', `require(${specifier}) must load ESM synchronously`);
   const resolved = pathToFileURL(require.resolve(specifier)).href;
   assert.equal(typeof (await import(resolved))[exportName], 'function', `import(${specifier}) must load ESM`);
+}
+
+const apiScratch = mkdtempSync(join(tmpdir(), 'stim-runtime-api-'));
+try {
+  mkdirSync(join(apiScratch, 'node_modules'));
+  symlinkSync(join(repositoryRoot, 'packages', 'stim-cli'), join(apiScratch, 'node_modules', 'stim'), 'junction');
+  const consumer = join(apiScratch, 'consumer.mts');
+  writeFileSync(
+    consumer,
+    `import { createStim, type StimStopResult } from 'stim';
+const result: StimStopResult = await createStim({ projectRoot: '.' }).stop();
+const ok: boolean = result.ok;
+const status: string = result.outcomes.supervisor.status;
+const summary: string = result.summary;
+`,
+  );
+  execFileSync(
+    process.execPath,
+    [
+      join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
+      '--ignoreConfig',
+      '--noEmit',
+      '--strict',
+      '--skipLibCheck',
+      'false',
+      '--target',
+      'ES2022',
+      '--module',
+      'NodeNext',
+      '--moduleResolution',
+      'NodeNext',
+      '--types',
+      'node',
+      '--typeRoots',
+      join(repositoryRoot, 'node_modules', '@types'),
+      consumer,
+    ],
+    { cwd: repositoryRoot, stdio: 'inherit' },
+  );
+  const stim = require('stim').createStim({ projectRoot: apiScratch, home: join(apiScratch, 'home') });
+  const diagnostics = await stim.diagnostics({ tail: 0 });
+  assert.equal(diagnostics.records.length, 0, 'the API worker reads an empty workspace on the runtime floor');
+  assert.ok(diagnostics.directory.startsWith(join(apiScratch, 'home')), 'the API worker uses its explicit home');
+} finally {
+  rmSync(apiScratch, { recursive: true, force: true });
 }
 
 const core = require('@stim-cli/core');

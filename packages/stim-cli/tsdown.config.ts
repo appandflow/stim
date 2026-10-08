@@ -9,6 +9,8 @@ if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${
 export default defineConfig({
   entry: {
     cli: 'bin/node-check.ts',
+    api: 'src/api.ts',
+    'api-run': 'src/api-run.ts',
     'android-cas-compiler': 'bin/android-cas-compiler.ts',
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'pull-requests': 'src/workspace/pull-request.ts',

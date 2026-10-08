@@ -34,6 +34,7 @@ const sidebars: SidebarsConfig = {
         'android-cas',
         'agent-skills',
         'cache-packages',
+        'programmatic-api',
       ],
     },
     'changelog',

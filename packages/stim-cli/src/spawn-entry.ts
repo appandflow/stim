@@ -1,9 +1,16 @@
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export type SpawnEntryName = 'supervisor-run' | 'collector-run' | 'web-run' | 'macos-run' | 'maintenance-run';
+export type SpawnEntryName =
+  | 'api-run'
+  | 'supervisor-run'
+  | 'collector-run'
+  | 'web-run'
+  | 'macos-run'
+  | 'maintenance-run';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
+  'api-run': './api-run.ts',
   'supervisor-run': './supervisor/run.ts',
   'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',

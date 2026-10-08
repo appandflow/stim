@@ -375,6 +375,7 @@ FULL TOPIC LIST
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle release    # Release configurations and ...Release variants
+  stim guide api                  # typed run, stop, diagnostics and cancellation from the main package
   stim guide facts                # the --json payloads
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
   stim guide macos                # Swift Package Debug apps, logs, local preview, --remote on another Mac

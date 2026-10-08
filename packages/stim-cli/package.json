@@ -34,6 +34,11 @@
   ],
   "type": "module",
   "exports": {
+    ".": {
+      "types": "./dist/api.d.mts",
+      "module-sync": "./dist/api.mjs",
+      "default": "./dist/api.mjs"
+    },
     "./package.json": "./package.json",
     "./cache-manifest": {
       "types": "./dist/cache-manifest.d.mts",
