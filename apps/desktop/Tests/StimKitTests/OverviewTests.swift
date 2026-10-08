@@ -168,6 +168,14 @@ struct TryThisTests {
     #expect(select(all, state: &state, at: date(8 + candidates.count)) == first)
   }
 
+  @Test func replacesTodaysTipOnlyWhenItStopsBeingACandidate() {
+    var state = TryThisState()
+    let withEAS = inputs { $0.hasEASProject = true }
+    TryThis.record(.easProfile, state: &state, now: date(8), calendar: calendar)
+    #expect(select(withEAS, state: &state, at: date(8, hour: 12)) == .easProfile)
+    #expect(select(inputs(), state: &state, at: date(8, hour: 13)) != .easProfile)
+  }
+
   @Test func showsTheNextTipRightAwayAfterADismissalAndSkipsTheSidebarsTip() {
     var state = TryThisState()
     let all = inputs()

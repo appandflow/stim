@@ -13,6 +13,7 @@ struct OverviewView: View {
   @State private var showsAllIdle = false
   @State private var pressedCard: SidebarItem?
   @State private var capabilities: [String: ProjectCapabilities] = [:]
+  @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
   @State private var tipState = TryThisStore(defaults: .standard).state
 
@@ -68,6 +69,7 @@ struct OverviewView: View {
         capabilities = await Task.detached {
           Dictionary(uniqueKeysWithValues: roots.map { ($0, ProjectCapabilities.detect(root: $0)) })
         }.value
+        capabilitiesLoaded = true
       }
     }
   }
@@ -259,7 +261,8 @@ struct OverviewView: View {
   }
 
   private var tip: TryThisTip? {
-    TryThis.select(
+    guard capabilitiesLoaded, machines.settings.payload != nil || machines.settings.error != nil else { return nil }
+    return TryThis.select(
       inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic, state: tipState, now: Date(),
       calendar: .current)
   }
@@ -274,8 +277,10 @@ struct OverviewView: View {
 
   private func recordTip(_ tip: TryThisTip) {
     var state = tipState
-    TryThis.record(tip, state: &state, now: Date(), calendar: .current)
-    guard state != tipState else { return }
+    let now = Date()
+    let today = Tips.day(now, calendar: .current)
+    guard state.current?.tip != tip || state.current?.day != today else { return }
+    TryThis.record(tip, state: &state, now: now, calendar: .current)
     tipState = state
     TryThisStore(defaults: .standard).state = state
   }
