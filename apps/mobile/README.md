@@ -89,7 +89,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   the filters, errors (red) before warnings (amber): a machine that is offline
   or refuses the connection, free disk below 5 GB (the default of Stim's
   refuse floor), a failed last build, errors in the logs since the marker,
-  status issues, a running build at more than twice its median, and a live
+  status issues, a running build at more than twice its median, and a running
   simulator or emulator whose app is not running. A workspace that is not active,
   building or holding a remote session, warming and ready ones included, adds only its error issues and a build
   that failed in the last day; the machine status sheet lists every issue. A
