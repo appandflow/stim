@@ -16,14 +16,22 @@ struct NowBand: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Now").font(.stim(.headline))
+      Label {
+        Text("Resource usage").font(.stim(.headline))
+      } icon: {
+        Image(systemName: "memorychip").iconFont(IconSize.small)
+          .accessibilityHidden(true)
+      }
       ViewThatFits(in: .horizontal) {
         HStack(alignment: .top, spacing: Space.md) { tiles }
         VStack(spacing: Space.md) { tiles }
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
         let actionWidth = actionWidth(machine.owners)
-        CollapsibleSection("machine.processes", title: "Processes", items: machine.ranked) { shown in
+        CollapsibleSection("machine.processes", title: "Memory and CPU by process group", items: machine.ranked) { shown in
+          Text("Only the listed process groups are shown; they do not add up to this Mac's total memory.")
+            .font(.stim(.footnote))
+            .foregroundStyle(Palette.secondary)
           Text(
             machine.memorySource == .footprint
               ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
@@ -74,12 +82,12 @@ struct NowBand: View {
 
   @ViewBuilder private var tiles: some View {
     tile(
-      "memorychip", "Memory used",
-      metrics.memory.map { "\(Format.memory($0.usedBytes)) of \(Format.memory($0.totalBytes))" } ?? "\u{2014}",
+      "memorychip", "Memory used on this Mac",
+      metrics.memory.map { "\(Format.memory($0.usedBytes)) of \(Format.memory($0.totalBytes))" } ?? "Unavailable",
       values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
     tile(
       "speedometer", "Mac CPU used by the rows below",
-      metrics.ownersCpu.last.map(formatPercent) ?? "\u{2014}",
+      metrics.ownersCpu.last.map(formatPercent) ?? "Unavailable",
       values: metrics.ownersCpu, peak: 100)
   }
 
@@ -88,7 +96,14 @@ struct NowBand: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
         Text(value).font(.stim(.headline)).monospacedDigit()
+        Text("Recent history").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          .accessibilityHidden(true)
         Sparkline(values: values, minimumPeak: peak).frame(height: 28)
+          .accessibilityElement(children: .ignore)
+          .accessibilityAddTraits(.isImage)
+          .accessibilityLabel(
+            "\(title), recent history. "
+              + (values.isEmpty ? "Unavailable" : "\(values.count) measurements, oldest to newest"))
       }
       .padding(Space.lg)
       .frame(maxWidth: .infinity, alignment: .leading)
@@ -126,9 +141,11 @@ struct NowBand: View {
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       Text(formatPercent(owner.cpuPercent))
+        .accessibilityLabel("CPU, \(formatPercent(owner.cpuPercent))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       Text(Format.memory(Int64(owner.memory) * 1_048_576))
+        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memory) * 1_048_576))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }
