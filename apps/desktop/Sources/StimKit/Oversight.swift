@@ -786,8 +786,8 @@ public enum Oversight {
 
   /// The notifications a machine owes since `previous`, the state the last call returned. Nil `previous` records
   /// what is already true without notifying, so a restart stays quiet. Each workspace and machine problem notifies
-  /// once per episode, under one id per category, so a later episode replaces it. An agent stop notifies `finished`
-  /// once per workspace per live run, not again when the agent drives it again before it goes idle. Times are
+  /// once per episode, under one id per category, so a later episode replaces it. On Stim Desktop an agent stop
+  /// notifies `finished` once per workspace per live run, not again when the agent drives it again before it goes idle. Times are
   /// milliseconds since 1970; `awakeSince` restarts the offline settle time, for a checker that was not running.
   public static func oversee(
     previous: OversightState?, input: OversightInput, prefs: OversightPrefs, now: Double, awakeSince: Double = 0

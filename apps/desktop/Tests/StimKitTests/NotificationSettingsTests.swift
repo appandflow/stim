@@ -23,11 +23,11 @@ struct NotificationSettingsTests {
   @Test func readsQuietHoursAcrossMidnightAndAStoredLevel() throws {
     let defaults = try defaults("NotificationSettingsTests.quiet")
     defaults.set("1320-420", forKey: NotificationSettings.quietHoursKey)
-    defaults.set("off", forKey: NotificationSettings.key(.started))
+    defaults.set("alert", forKey: NotificationSettings.key(.started))
     #expect(NotificationSettings.isQuiet(defaults, minuteOfDay: 23 * 60))
     #expect(NotificationSettings.isQuiet(defaults, minuteOfDay: 6 * 60))
     #expect(!NotificationSettings.isQuiet(defaults, minuteOfDay: 12 * 60))
-    #expect(NotificationSettings.level(.started, defaults) == .off)
+    #expect(NotificationSettings.level(.started, defaults) == .alert)
   }
 
   @Test func keepsALevelTheUserSetForStarted() throws {

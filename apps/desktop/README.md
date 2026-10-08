@@ -1330,7 +1330,9 @@ notifies once per workspace per run in the same way, with its allowance
 returning when the workspace has no item left. A `stim doctor` finding with the
 code `not-an-app` (the folder is not a React Native or Expo app) raises no
 Needs you notification, because agents run stim in such folders; the finding
-stays in doctor and on the workspace page. The first launch with these rules
+stays in doctor and on the workspace page; a `stim` older than the code gives
+the finding none, so it needs the updated CLI. These limits are Desktop's: the
+phone app's rules in `packages/core/oversight.ts` still push every stop. The first launch with these rules
 marks the existing inbox read, once, and later entries are untouched. The first payload after launch records what is already true without
 notifying, except for Needs you, which notifies each item it has not notified
 before. Desktop does not look up pull requests, so it never notifies a pull

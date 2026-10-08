@@ -96,7 +96,8 @@ struct AttentionNoticesTests {
     #expect(admit(["a3"], live: ["/a"]).isEmpty)
     #expect(admit(["a3"], live: []).isEmpty)
     #expect(admit(["a4"], live: ["/a"]) == ["a4"])
-    #expect(admit(["b2"], live: ["/a"], present: ["/a"]) == ["b2"])
+    #expect(admit([], live: ["/a"], present: ["/a"]).isEmpty)
+    #expect(admit(["b2"], live: ["/a"]) == ["b2"])
   }
 
   @Test func letsAMachineItemThroughAlways() {
