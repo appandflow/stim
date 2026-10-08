@@ -76,7 +76,7 @@ prompt each (see below). A single running project gets one centered card.
 
 **Active worktrees** shows every workspace with something running, building or
 warming as one full-width card. The header shows its name and project, the
-Metro port, who drives its devices, CPU, memory and its errors; the device tiles
+Metro port, who drives its devices, CPU, memory and its errors (a card with no running device shows only Metro and errors); the device tiles
 sit under it at the device tile size and wrap onto more rows when they do not
 fit. Clicking a card or its header opens the project (on a project page it opens the
 workspace); clicking a tile opens its workspace with that device focused. A

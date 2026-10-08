@@ -404,7 +404,7 @@ with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's t
 
 **Active worktrees** shows every workspace with something running, building or warming
 as one full-width card. Its header shows the name, project, Metro port, who drives it,
-CPU, memory and errors, with the device tiles under it at the device tile size. The tiles
+CPU, memory and errors (a card with no running device shows only Metro and errors), with the device tiles under it at the device tile size. The tiles
 wrap onto more rows when they do not fit. Click a card or its header to open the
 project, or a tile to open its workspace with that device focused.
 
