@@ -61,7 +61,7 @@ platform "macos": phase prepare, compile, install, then launch, and during
 compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
 planning are detail.step "configure"). It has no cache lookup, so outcome and
 plannedPhases are null; finished runs and their phase times are in
-environments[].builds.macos, where phases includes launch once the app started
+environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
 steps the same way.
 Runtime stdout and stderr become client records; build output becomes build

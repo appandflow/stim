@@ -437,6 +437,18 @@ describe('macOS builds', () => {
     startedAt: '2026-09-24T10:00:00.000Z',
   };
 
+  test('recording a phase for a run the history does not hold changes nothing, and a bad step total is dropped', () => {
+    writeWorkspaceState(root, {
+      buildHistory: {
+        macos: [{ ...macosFinished, result: 'succeeded', slot: 'default', phases: {}, compileSteps: -3 }],
+      },
+    });
+    recordBuildPhase(root, 'macos', '2026-01-01T00:00:00.000Z', 'launch', 5);
+    const [entry] = readBuildHistory(readWorkspaceState(root)).macos!;
+    expect(entry!.phases).toEqual({});
+    expect(entry!.compileSteps).toBeUndefined();
+  });
+
   test('a run reports its phases and SwiftPM counts without a cache outcome, and keeps only history', () => {
     vi.useFakeTimers({ now: T0 });
     try {

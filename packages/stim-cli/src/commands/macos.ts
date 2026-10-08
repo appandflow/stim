@@ -122,8 +122,13 @@ export async function runMacos(
             progress,
           );
           progress.step('launch');
-          const launched = (): void =>
-            recordBuildPhase(root, 'macos', record.build.startedAt, 'launch', progress.durations().launch ?? 0);
+          const launched = (): void => {
+            try {
+              recordBuildPhase(root, 'macos', record.build.startedAt, 'launch', progress.durations().launch ?? 0);
+            } catch (error) {
+              note(`The launch time could not be recorded in the build history: ${(error as Error)?.message || error}`);
+            }
+          };
           if (!remote) {
             const here = await launchHere(root, record);
             launched();
