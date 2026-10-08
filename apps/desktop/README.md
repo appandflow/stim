@@ -1010,17 +1010,15 @@ there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
-Desktop also watches a stim-server that already answers on the port with a
-matching Stim home when **Serve to phones** is off, such as the LaunchAgent
-that `stim-server setup` or `stim-server service install` creates, and adopts
-it as not started by the app, as it does a running server when **Serve to
-phones** is on. The app probes the port on
-its regular poller while the server state is off, so build and device-host
-requests from other Macs reach the Allow / Deny dialog. Turning **Serve to
-phones** off stops a server the app started and never stops watching one it did
-not. A server with another Stim home is not watched. The Phones page shows "A
-stim-server already runs on this Mac, and Desktop shows its build requests."
-while a server the app did not start runs and the toggle is off.
+A stim-server that already answers on the port with a matching Stim home, such as
+the LaunchAgent that `stim-server setup` or `stim-server service install` creates, is
+adopted as not started by the app, whatever **Serve to phones** says, so build and
+device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
+server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
+more) adopts it. A server with another Stim home is not adopted: the sidebar footer
+shows the mismatch and Desktop keeps retrying. Turning **Serve to phones** off restarts a
+server the app started in loopback-only mode and never touches one it did not start;
+turning it on after a failed start tries again.
 
 A server answering health with HTTP 503 appears as **Starting** or
 **Degraded** with its reason in the Phones page; the footer icon shows only Degraded. Desktop keeps

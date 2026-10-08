@@ -248,11 +248,15 @@ final class ServerController: ObservableObject {
   }
 
   /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
-  /// server Desktop did not start is never touched.
+  /// server Desktop did not start is never touched. A failed start is tried again, since the other mode may work.
   private func applyServingMode() {
-    guard process != nil, startedLoopbackOnly != wantsLoopbackOnly else { return }
-    stop()
-    start()
+    guard startedLoopbackOnly != wantsLoopbackOnly else { return }
+    if process != nil {
+      stop()
+      start()
+    } else if case .failed = state {
+      start()
+    }
   }
 
   private func waitForExiting() async {
