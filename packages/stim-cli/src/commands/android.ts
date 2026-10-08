@@ -1,3 +1,4 @@
+import type { RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
@@ -59,7 +60,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
-import { ensureDevServer, ensureWorkspaceStorageSafely } from './native-runtime.ts';
+import { ensureDevServer, type MobileRuntimePreparation, ensureWorkspaceStorageSafely } from './native-runtime.ts';
 import { startDevServer } from './start.ts';
 import {
   readRunEstimates,
@@ -136,7 +137,12 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
-import { finishAndroidRun } from './android/launch.ts';
+import {
+  finishAndroidRun,
+  androidMetroRuntime,
+  androidProcessRuntime,
+  type AndroidRuntimePlan,
+} from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
 
@@ -308,6 +314,7 @@ export function runAndroidOperation(
 }
 
 interface RunAndroidOptions {
+  runtimePlan?: AndroidRuntimePlan;
   automaticDevicePlacement?: typeof automaticDevicePlacement;
   prepareHostedAndroid?: typeof prepareHostedAndroid;
   placeHostedAndroid?: typeof placeHostedAndroid;
@@ -977,12 +984,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const reservedPort = project?.metroPort ?? null;
   let metroPort: number | null = null;
   let devServer: DevServerStart | null = null;
-  let phaseFailure: RunAndroidResult | null = null;
 
-  async function resolveMetroPort(): Promise<boolean> {
-    if (release) {
-      phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
-    } else if (metroCheck) {
+  async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
+    if (metroCheck) {
       const gate = await ensureDevServer({
         root,
         port: reservedPort,
@@ -995,8 +999,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       });
       reclaimed = [...reclaimed, ...gate.reclaimed];
       if (!gate.ok) {
-        phaseFailure = fail(gate.code, gate.message, gate.remedy, { lines: gate.lines });
-        return false;
+        return { ok: false, error: { code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines } };
       }
       metroPort = gate.port;
       devServer = gate.devServer;
@@ -1004,12 +1007,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         'metro',
         `port ${metroPort} (${devServer ? `started: ${devServer.reason}` : `pid ${gate.pid ?? 'unknown, started outside Stim'}`})`,
       );
-      return true;
+      return { ok: true, prepared: { metroPort } };
     } else {
       const pin = metroPortSetting(root);
       if (pin.error) {
-        phaseFailure = fail('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
-        return false;
+        return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }
       metroPort = pin.port ?? reservedPort ?? DEFAULT_METRO_PORT;
       phase(
@@ -1019,11 +1021,24 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           : `no reservation; using ${DEFAULT_METRO_PORT} (not checked)`,
       );
     }
-    if (release) metroPort = null;
-    return true;
+    return { ok: true, prepared: { metroPort } };
   }
 
-  if (!(await resolveMetroPort())) return phaseFailure!;
+  const runtime =
+    options.runtimePlan ??
+    (release
+      ? androidProcessRuntime(async () => {
+          phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
+          return { ok: true, prepared: { metroPort: null } };
+        })
+      : androidMetroRuntime(prepareMetro));
+  const preparation = await runtime.prepare();
+  if (!preparation.ok) {
+    const { code, message, remedy, lines } = preparation.error;
+    return fail(code, message, remedy, { lines });
+  }
+  const runtimePreparation = preparation.prepared;
+  metroPort = runtimePreparation.metroPort;
 
   if (remoteContext) {
     remoteDevice = makeRemoteDeviceDeps(remoteContext.ctx);
@@ -1376,6 +1391,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     try {
       return await finishAndroidRun({
+        runtime,
+        runtimePreparation,
         slot,
         lease: leaseHandle,
         releaseLease,
