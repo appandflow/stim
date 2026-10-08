@@ -1889,7 +1889,7 @@ describe('offloaded builds', () => {
             declined: null,
             cpus: expect.any(Number),
             memoryTotalBytes: expect.any(Number),
-            memoryUsedBytes: expect.any(Number),
+            memoryUsedBytes: expect.toSatisfy((bytes: number) => bytes > 0),
           },
         },
       });

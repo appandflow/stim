@@ -338,7 +338,8 @@ export class BuildHost {
       lockfile = readFileSync(join(area, 'lockfile'), 'utf8');
     } catch {}
     const available = await readAvailableMemory();
-    const memory = available === null ? {} : { memoryTotalBytes: totalmem(), memoryUsedBytes: totalmem() - available };
+    const total = totalmem();
+    const memory = available === null ? {} : { memoryTotalBytes: total, memoryUsedBytes: total - available };
     return {
       result: {
         toolchain,
