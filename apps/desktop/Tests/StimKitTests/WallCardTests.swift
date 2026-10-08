@@ -113,9 +113,12 @@ struct WallCardTests {
         "expectedMs":160000,"expectedPhaseMs":94000,"basis":3}
       """
     let stopped = #""ios":{"udid":"i","name":"iPhone 17","owned":true,"state":"Shutdown"}"#
-    let both = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(stopped),\(android),\(build)")])[0]
-    #expect(both.options.map(\.label) == ["Pixel 9", "iPhone 17"])
-    #expect(both.selected(choice: nil)?.label == "Pixel 9")
+    let both = WallCard.cards(environments: [
+      try devices("/w/a/apps/one", worktree: "/w/a", body: "\(stopped),\(build)"),
+      try devices("/w/a/apps/two", worktree: "/w/a", body: android),
+    ])[0]
+    #expect(both.options.map(\.label) == ["apps/one \u{00B7} iPhone 17", "apps/two \u{00B7} Pixel 9"])
+    #expect(both.selected(choice: nil)?.label == "apps/two \u{00B7} Pixel 9")
 
     let building = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(stopped),\(build)")])[0]
     #expect(building.selected(choice: nil)?.label == "iPhone 17")
