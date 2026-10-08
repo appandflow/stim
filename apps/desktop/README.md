@@ -74,11 +74,11 @@ a row opens the project. A **Recently archived** row lists the last five
 archives, and **Try this** suggests up to three features with a copyable agent
 prompt each (see below). A single running project gets one centered card.
 
-**Active worktrees** shows every worktree with something running, building or
-warming, grouped by worktree with a compact header: its name and project, the
-Metro port, who drives its devices, its memory and its errors. The device tiles
-sit under each header, so several worktrees fit on one screen: worktrees wrap
-across the page, and the tiles of a worktree scroll sideways when they do not fit. Clicking a header opens the project (on a project page it opens the
+**Active worktrees** shows every workspace with something running, building or
+warming as one full-width card. The header shows its name and project, the
+Metro port, who drives its devices, CPU, memory and its errors; the device tiles
+sit under it at the device tile size and wrap onto more rows when they do not
+fit. Clicking a card or its header opens the project (on a project page it opens the
 workspace); clicking a tile opens its workspace with that device focused. A
 worktree with no running device shows a **No running devices** line instead.
 
