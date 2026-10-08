@@ -702,7 +702,7 @@ struct SidebarFooter: View {
   private var agentsTooltip: String {
     let count = drivenDevices.count
     return
-      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
+      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show Active worktrees"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 
