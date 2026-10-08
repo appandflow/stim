@@ -381,7 +381,7 @@ Archives are served on the Mac that retains them, cannot be physical or go
 live, and do not need the original checkout or a replacement at its path.
 
 `archive.detail` takes `{ archive: id }` and returns `{ builds, recordings }`.
-`builds` has the same iOS and Android history shape as a live environment;
+`builds` has the same iOS and Android history shape as an active environment;
 `recordings` lists every retained device slot as `{ platform, slot, spans }`,
 using the replay ranges and omitting empty devices. Missing state or recordings
 returns `{}` or `[]` respectively. `status --json` keeps archive build summaries.
