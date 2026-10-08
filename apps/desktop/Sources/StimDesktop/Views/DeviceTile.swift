@@ -40,7 +40,6 @@ struct DeviceTile: View {
   var onInput: (() -> Void)?
   @State private var isOnscreen = false
   @State private var hovering = false
-  @Environment(\.colorScheme) private var colorScheme
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
   @State private var frameRevision = 0
@@ -214,9 +213,7 @@ struct DeviceTile: View {
         header
           .padding(.horizontal, Space.lg)
           .padding(.vertical, Space.md)
-          .foregroundStyle(Palette.text)
-          .background(highlightsHeaderOnHover ? (hovering ? Color.white : Color(white: 0.95)) : .clear)
-          .environment(\.colorScheme, highlightsHeaderOnHover ? .light : colorScheme)
+          .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
         if replaying, let replay {
@@ -245,13 +242,13 @@ struct DeviceTile: View {
     .overlay {
       RoundedRectangle(cornerRadius: Radius.card)
         .strokeBorder(
-          Color(white: 0.22).opacity(highlightsHeaderOnHover && hovering ? 0.5 : 0),
+          Palette.secondary.opacity(highlightsHeaderOnHover && hovering ? 0.5 : 0),
           lineWidth: 1.5
         )
         .allowsHitTesting(false)
     }
     .shadow(
-      color: Color.black.opacity(highlightsHeaderOnHover && hovering ? 0.12 : 0),
+      color: Palette.shadow.opacity(highlightsHeaderOnHover && hovering ? 0.12 : 0),
       radius: 12,
       y: 4
     )

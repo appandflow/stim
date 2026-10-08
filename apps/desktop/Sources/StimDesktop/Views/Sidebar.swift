@@ -59,13 +59,13 @@ struct Sidebar: View {
       }
     }
     .scrollContentBackground(.hidden)
-    .background(Theme.sidebarBackground)
+    .background(Palette.sidebar)
     .safeAreaInset(edge: .top, spacing: 0) {
       VStack(spacing: 0) {
         brand
         pinned
       }
-      .background(Theme.sidebarBackground)
+      .background(Palette.sidebar)
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
@@ -622,7 +622,7 @@ struct SidebarFooter: View {
     }
     .padding(.horizontal, Space.md)
     .frame(height: 44)
-    .background(Theme.sidebarBackground)
+    .background(Palette.sidebar)
     .overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
   }
 
