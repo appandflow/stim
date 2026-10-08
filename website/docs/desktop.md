@@ -61,9 +61,17 @@ Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, the
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
 refuse servers for another home.
 
-The app updates itself. Release builds report crashes to Sentry with file paths,
-host names, addresses and credentials removed, and send no screenshots or
-performance traces. Every release is listed under
+The app updates itself. Release builds report crashes, app hangs of 2 seconds or
+more and a few handled failures to Sentry, with file paths, host names,
+addresses and credentials removed. They send no screenshots, performance traces
+or usage analytics. The handled failures are a failed `stim` command (the
+command name, exit code and `STIM_*` error code, never its arguments), a
+payload that did not decode (the type and the field names, never values), and
+a `stim-server` that did not start. Each is sent at most once per launch, with
+breadcrumbs of the page kinds you visited, command names with durations and the
+server's state. Builds without a Sentry key, including every development build,
+send nothing. [Crash reports](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#crash-reports)
+lists every field. Every release is listed under
 [desktop-v releases](https://github.com/appandflow/stim/releases?q=desktop-v&expanded=true).
 
 ## Tutorial

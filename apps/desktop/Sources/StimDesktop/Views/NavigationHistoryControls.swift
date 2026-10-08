@@ -7,6 +7,21 @@ struct NavigationDestination: Equatable {
   var selection: SidebarItem?
   var showsAllWorktrees = false
   var focusedDeviceID: String?
+
+  /// The kind of page, which the crash reporter records instead of a project, workspace or worktree name.
+  var pageKind: String {
+    switch selection {
+    case .overview: "overview"
+    case .wall: "wall"
+    case .project: "project"
+    case .environment: "workspace"
+    case .archived: "archived-workspace"
+    case .worktree: "worktree"
+    case .notifications: "notifications"
+    case .machine: "machine"
+    case nil: "none"
+    }
+  }
 }
 
 /// The main window's back and forward history. `resolves` and `apply` are set by `RootView`.
@@ -22,10 +37,17 @@ final class NavigationController: ObservableObject {
 
   func record(_ destination: NavigationDestination) {
     history.push(destination)
+    report(destination)
   }
 
   func replaceCurrent(_ destination: NavigationDestination) {
     history.replaceCurrent(destination)
+    report(destination)
+  }
+
+  private func report(_ destination: NavigationDestination) {
+    Diagnostics.shared.breadcrumb("navigation", destination.pageKind)
+    Diagnostics.shared.tag("page", destination.pageKind)
   }
 
   func goBack() {

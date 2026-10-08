@@ -224,12 +224,14 @@ public struct StimServerCLI: Sendable {
   }
 
   public func pair(port: Int = defaultPort, control: Bool) async throws -> PairingCode {
-    try Self.decoder.decode(
-      PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])))
+    try decodeReporting(
+      PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])),
+      source: .cli, decoder: Self.decoder)
   }
 
   public func devices() async throws -> [PairedDevice] {
-    try Self.decoder.decode(PairedDeviceList.self, from: await run(["devices", "--json"])).devices
+    try decodeReporting(PairedDeviceList.self, from: await run(["devices", "--json"]), source: .cli, decoder: Self.decoder)
+      .devices
   }
 
   public func grant(_ id: String, control: Bool) async throws {

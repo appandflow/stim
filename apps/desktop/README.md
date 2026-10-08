@@ -1737,17 +1737,40 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa, linked statically from its `Sentry` product. It starts Sentry only when the bundle's Info.plist carries a DSN in `StimSentryDSN`. The DSN is not in the repository: `scripts/bundle.sh --release` writes it from the environment, so `swift run`, `swift test`, Stim Dev, a bundle built without it, forks and CI report nothing and send nothing.
 
-| Variable                  | Used by     | Effect                                                                                             |
-| ------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | With `--release`, written into `StimSentryDSN`. Empty or unset turns crash reporting off.          |
-| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With `--release`, the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling. |
-| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                                  |
-| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                                       |
-| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException and `crash` traps, 3 seconds after launch.              |
+| Variable                  | Used by     | Effect                                                                                                                             |
+| ------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | With `--release`, written into `StimSentryDSN`. Empty or unset turns crash reporting off.                                          |
+| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With `--release`, the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling.                                 |
+| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                                                                  |
+| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                                                                       |
+| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException, `crash` traps and `hang` blocks the main thread for 5 seconds, 3 seconds after launch. |
 
 Without all three upload variables or `sentry-cli`, `bundle.sh --release` prints one line to stderr and skips the upload; a failed upload never fails the bundle. The dSYM is made with `dsymutil` from the bundled executable, so its UUIDs match the binary that `scripts/release.sh` later signs.
 
-An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off, tracing, session tracking, app hang tracking, network breadcrumbs and failed-request capture off, so it sends nothing but crash and exception events; macOS has no screenshot or view hierarchy capture. Before it records a breadcrumb or sends an event, the app replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
+An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off and tracing, session tracking, network breadcrumbs, failed-request capture, stack traces on handled events and MetricKit off; macOS has no screenshot or view hierarchy capture. Every event and breadcrumb passes through the scrubber before it leaves the app: it replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
+
+### What is sent
+
+Besides the standard Sentry fields (SDK and release, the OS version and kernel, the Mac model, architecture, memory, locale and time zone, the app's bundle identifier, version and memory use, and a random per-install user id), Desktop sends these events and no others:
+
+| Event                      | When                                                             | Fields                                                                                                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Crash or uncaught error    | The app crashes or raises an uncaught `NSException`.             | The exception type and message, the stack trace and loaded images, scrubbed.                                                                                                                                              |
+| App hang                   | The main thread is blocked for 2 seconds or more.                | `App hanging for at least 2000 ms.`, the stack traces of all threads, scrubbed.                                                                                                                                           |
+| `stim command failed`      | A one-shot `stim` call (`status`, `stats`, `doctor`, ...) fails. | Tags `command` (a command of the CLI's command surface, else `other`), `outcome` (`exited`, `timed-out` or `not-found`), `exit_code`, and `stim_code` when the output names a bare `STIM_*` code. No arguments or output. |
+| `payload decode failed`    | JSON from `stim` or `stim-server` does not decode.               | Tags `source` (`cli` or `server`), `type` (the Swift type), `coding_path` (field names the type declares, with `<key>` for a dictionary key and `[]` for an array index) and `reason`. No values.                         |
+| `stim-server start failed` | Desktop cannot start or adopt `stim-server`.                     | Tag `kind`: `adoption-home-mismatch`, `launch-failed`, `no-answer`, `exited` or `too-old`. No message, path, port or output.                                                                                              |
+
+The three handled events are warnings with a fixed message. Each distinct failure is sent once per launch, and a launch sends at most 20. A command that streams output, such as `stim ios`, and a failed `stim-server` command send no event, because a failing build is not a Desktop fault.
+
+Every event carries two tags that name where the app was: `page` (the kind of the last page: `overview`, `wall`, `project`, `workspace`, `archived-workspace`, `worktree`, `notifications` or `machine`, never a name) and `last_cli_command` (the last `stim` command started), plus `server_state` (`off`, `starting`, `running`, `not-ready` or `failed`). Breadcrumbs hold the last 150 of:
+
+- `navigation`: the page kind.
+- `cli`: `start <command>` and `finish <command>` with `duration_ms` and `exit_code`.
+- `server`: `state <state>`.
+- Sentry's own `app.lifecycle` (active or inactive) and `device.connectivity` (the connection type).
+
+No event or breadcrumb carries a project, workspace, branch, machine or host name, a path, an argument, an output line, a payload value or a token. `Tests/StimKitTests/DiagnosticsTests.swift` and `CrashScrubberTests.swift` check this.
 
 To check a bundle, point the DSN at a local listener, such as `http://<key>@127.0.0.1:<port>/1`, and launch it with `STIM_DESKTOP_CRASH_TEST=crash`, then again without it; the listener receives a gzipped envelope at `/api/1/envelope/`.
 
