@@ -461,11 +461,11 @@ timings. The second run uses `--remote-build local --no-build-cache` to prove
 this Mac can still build and launch. This tests local build readiness; it does
 not deliberately disconnect the worker to trigger automatic fallback.
 
-The sample stops when the test ends or the sheet closes. **Run again** reuses
-the folder. **Delete sample app** in Remote Macs stops it and removes its Stim workspace and sample folder after confirmation, and
-releases its owned simulator (parked for reuse within the parked-simulator limit,
-deleted otherwise). If cleanup fails,
-the folder stays for a retry and Desktop shows the failure.
+The sample stops when the test ends. **Run again** reuses the folder. When the
+sheet closes, Desktop removes the sample's Stim workspace and folder and releases
+its owned simulator (parked for reuse within the parked-simulator limit, deleted
+otherwise). This cleanup is best effort and silent; if it fails, the leftover sample stays
+until the next wizard reuses it or its removal succeeds.
 
 ## Undo
 

@@ -134,6 +134,23 @@ final class SampleBuildModelTests: XCTestCase {
     XCTAssertFalse(harness.files.contains(harness.sample.folder))
   }
 
+  @MainActor func testDiscardRemovesAnExistingSampleAndIgnoresFailures() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.discard()
+    XCTAssertTrue(harness.events.isEmpty)
+
+    harness.files.insert(harness.sample.folder)
+    harness.files.insert(harness.sample.folder.appendingPathComponent(".git"))
+    await model.discard()
+    XCTAssertFalse(harness.files.contains(harness.sample.folder))
+
+    harness.files.insert(harness.sample.folder)
+    harness.failedCommand = ["stop"]
+    await model.discard()
+    XCTAssertTrue(harness.files.contains(harness.sample.folder))
+  }
+
   @MainActor func testSampleWithoutGitRepositoryIsInitializedSoWorkspaceRemovalReclaimsIt() async throws {
     let harness = Harness()
     harness.files.insert(harness.sample.folder)

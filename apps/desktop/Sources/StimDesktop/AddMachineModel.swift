@@ -218,7 +218,10 @@ final class AddMachineModel {
     stopped = true
     polling?.cancel()
     polling = nil
-    Task { await sample?.end() }
+    Task {
+      await sample?.end()
+      await sample?.discard()
+    }
     if modeWritten, !finished {
       modeWritten = false
       Task { await restoreMode() }

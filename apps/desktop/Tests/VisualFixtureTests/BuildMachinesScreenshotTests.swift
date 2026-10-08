@@ -26,9 +26,9 @@
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
         working: nil, progress: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true,
-        addDisabled: false, sampleExists: false,
+        addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
-        remove: { _ in }, deleteSample: {}, thisMac: EmptyView()
+        remove: { _ in }, thisMac: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
