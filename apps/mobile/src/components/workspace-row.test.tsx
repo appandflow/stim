@@ -20,19 +20,31 @@ import { homeSections } from '@/lib/home-list';
 
 import { WorkspaceGroupRow, WorktreeRow } from './workspace-row';
 
-let mockPresence = { online: true, cached: false, lastSeenAt: null as number | null };
+let mockPresence = {
+  online: true,
+  cached: false,
+  lastSeenAt: null as number | null,
+};
 let mockStatus = receiveStatus(fixture.payload as StatusPayload);
 afterEach(() => {
   mockPresence = { online: true, cached: false, lastSeenAt: null };
 });
-jest.mock('expo-router', () => ({ useIsFocused: () => false, useRouter: () => ({ push: jest.fn() }) }));
+jest.mock('expo-router', () => ({
+  useIsFocused: () => false,
+  useRouter: () => ({ push: jest.fn() }),
+}));
 jest.mock('@/hooks/machines', () => ({
   useMachinePresence: () => mockPresence,
   useMachineStatus: () => mockStatus,
   useMachineUsage: () => null,
-  useMacById: () => ({ mac: { name: 'Mac', endpoint: 'ws://mac' }, state: { kind: 'disconnected' } }),
+  useMacById: () => ({
+    mac: { name: 'Mac', endpoint: 'ws://mac' },
+    state: { kind: 'disconnected' },
+  }),
 }));
-jest.mock('@/hooks/machine-details', () => ({ useMachineDetails: () => ({ kind: 'unsupported' }) }));
+jest.mock('@/hooks/machine-details', () => ({
+  useMachineDetails: () => ({ kind: 'unsupported' }),
+}));
 jest.mock('@/hooks/usage-history', () => ({ useUsageHistory: () => [] }));
 jest.mock('@/hooks/section-state', () => ({
   useSectionState: () => [{ collapsed: false, showAll: true }, () => {}],
@@ -46,7 +58,9 @@ jest.mock('@/components/sheet-screen', () => ({
 }));
 jest.mock('@/hooks/large-text', () => ({ useLargeText: () => false }));
 jest.mock('@/components/build-progress', () => ({ PhaseBar: () => null }));
-jest.mock('@/components/agent-sessions', () => ({ AgentSessionLine: () => null }));
+jest.mock('@/components/agent-sessions', () => ({
+  AgentSessionLine: () => null,
+}));
 jest.mock('@/components/text', () => ({
   Text: jest.requireActual<typeof import('react-native')>('react-native').Text,
 }));
@@ -55,7 +69,9 @@ jest.mock('@/components/touch', () => ({
 }));
 jest.mock('react-native-reanimated', () => ({
   __esModule: true,
-  default: { View: jest.requireActual<typeof import('react-native')>('react-native').View },
+  default: {
+    View: jest.requireActual<typeof import('react-native')>('react-native').View,
+  },
   useReducedMotion: () => true,
   FadeInUp: { duration: () => undefined },
   FadeOutUp: { duration: () => undefined },
@@ -67,7 +83,7 @@ jest.mock('@/components/icon', () => ({
   },
 }));
 
-it('shows the branch and git state once while each app opens its original route and errors', async () => {
+it('shows a multi-app checkout as one row that opens the checkout and the app with errors', async () => {
   const app = (folder: string, live: boolean): HomeItem => ({
     key: `mac\n/checkout/${folder}`,
     macId: 'mac',
@@ -85,7 +101,14 @@ it('shows the branch and git state once while each app opens its original route 
       worktree: {
         path: '/checkout',
         branch: 'feat/monorepo',
-        git: { changed: 15, untracked: 0, upstream: 'origin/main', ahead: 0, behind: 0, mergedInto: null },
+        git: {
+          changed: 15,
+          untracked: 0,
+          upstream: 'origin/main',
+          ahead: 0,
+          behind: 0,
+          mergedInto: null,
+        },
       },
     },
   });
@@ -99,14 +122,12 @@ it('shows the branch and git state once while each app opens its original route 
   );
   expect(screen.getAllByText('feat/monorepo')).toHaveLength(1);
   expect(screen.getAllByText('15 changed')).toHaveLength(1);
-  expect(screen.getByText('Ready')).toBeTruthy();
   expect(screen.getByText('Running')).toBeTruthy();
-  await fireEvent.press(screen.getByRole('button', { name: /^feat\/monorepo, / }));
+  expect(screen.queryByText('Ready')).toBeNull();
+  expect(screen.queryByText('apps/mobile')).toBeNull();
+  expect(screen.queryByText('apps/desktop')).toBeNull();
+  await fireEvent.press(screen.getByLabelText(/^feat\/monorepo, /));
   expect(open).toHaveBeenLastCalledWith(desktop, false, true);
-  await fireEvent.press(screen.getByText('apps/mobile'));
-  expect(open).toHaveBeenLastCalledWith(mobile, false);
-  await fireEvent.press(screen.getByText('apps/desktop'));
-  expect(open).toHaveBeenLastCalledWith(desktop, false);
   await fireEvent.press(screen.getByText('2 errors'));
   expect(open).toHaveBeenLastCalledWith(desktop, true);
 });
@@ -121,7 +142,14 @@ it('announces source-only git work without workspace controls and shows last see
     facts: {
       path: '/source',
       branch: 'feat/source',
-      git: { changed: 3, untracked: 2, upstream: 'origin/main', ahead: 2, behind: 1, mergedInto: null },
+      git: {
+        changed: 3,
+        untracked: 2,
+        upstream: 'origin/main',
+        ahead: 2,
+        behind: 1,
+        mergedInto: null,
+      },
       pullRequest: {
         number: 2440,
         url: 'https://github.com/appandflow/stim/pull/2440',
@@ -205,7 +233,11 @@ it('renders archives in the shared row with app labels, removal facts and monoto
   const now = Date.parse('2026-09-25T04:23:09.012Z');
   const archive = fixture.payload.archived[0];
   const items = mergeArchives([
-    { id: 'mac', name: 'Mac', status: { ...fixture.payload, archived: [archive] } as StatusPayload },
+    {
+      id: 'mac',
+      name: 'Mac',
+      status: { ...fixture.payload, archived: [archive] } as StatusPayload,
+    },
   ]);
   const workspace = homeSections(items)[0].data[0];
   if (!('apps' in workspace)) throw new Error('Expected archived checkout');
