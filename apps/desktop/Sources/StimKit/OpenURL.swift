@@ -35,7 +35,7 @@ public enum LaunchResponse: Equatable, Sendable {
 
 /// A device open request comes from `stim ios` or `stim android` launching on its own, so it navigates only when
 /// nothing the user was looking at is replaced: no main window was open, or the window already shows the launched
-/// workspace, the Overview or the Active worktrees page. Any other page keeps the selection and gets a notice card with a Show action.
+/// workspace, the Overview or the Active workspaces page. Any other page keeps the selection and gets a notice card with a Show action.
 public func launchResponse(page: LaunchPage, mainWindowOpen: Bool, workspacePath: String) -> LaunchResponse {
   guard mainWindowOpen else { return .navigate }
   switch page {

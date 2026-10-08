@@ -409,7 +409,7 @@ copyable prompt for your coding agent. A tip appears only when it applies, so EA
 need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
 with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's tip card.
 
-**Active worktrees** shows every worktree with something running, building or warming
+**Active workspaces** shows every worktree with something running, building or warming
 as one full-width card. A worktree with several apps, such as `apps/mobile` and
 `apps/desktop`, gets one card; each app is a labelled group inside it with its own
 Metro port, errors, CPU and memory, followed by its device tiles. Click an app's label
@@ -421,9 +421,9 @@ wrap onto more rows when they do not fit. Click a card or its header to open the
 project (on a project page, the worktree), or a tile to open its
 workspace with that device focused.
 
-On the Active worktrees and project wall, offscreen previews pause and reconnect when you return to them.
+On the Active workspaces and project wall, offscreen previews pause and reconnect when you return to them.
 
-On the Active worktrees and project wall, active workspaces without running or building
+On the Active workspaces and project wall, active workspaces without running or building
 devices show a **No running devices** line under their header, with Metro status
 and error links. CPU stays on the workspace page.
 
@@ -462,7 +462,7 @@ uses **Launching app** and **Verifying launch** labels.
 
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
-Command-Q to quit. Command-1 through Command-4 open Overview, Active worktrees, Notifications and Machines.
+Command-Q to quit. Command-1 through Command-4 open Overview, Active workspaces, Notifications and Machines.
 The bell at the top right opens Notifications and shows the unread count; it stays visible when there are no unread notifications.
 
 Stim Desktop checks the npm registry once a day for a newer `stim`. When the
