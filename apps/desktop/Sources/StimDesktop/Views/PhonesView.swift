@@ -34,8 +34,9 @@ struct PhonesView: View {
         }
       }
       Section("Server") {
-        Toggle(PhoneApp.serverPage(phoneApp: flags.phoneApp).serveToggleTitle, isOn: $servesPhones)
-          .onChange(of: servesPhones) { _, on in on ? server.start() : server.stopServing() }
+        if flags.phoneApp {
+          Toggle(PhoneApp.serverPage(phoneApp: flags.phoneApp).serveToggleTitle, isOn: $servesPhones)
+        }
         serverState
         if !servesPhones, !server.isOwned, server.isResponding {
           Text("A stim-server already runs on this Mac, and Desktop shows its build requests.")

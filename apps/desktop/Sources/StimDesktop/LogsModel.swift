@@ -95,7 +95,9 @@ final class LogsModel: ObservableObject {
   @Published private(set) var archiveSlots: [String] = []
   private var archiveID: String?
 
-  func loadArchive(_ archive: ArchivedWorkspace, query: LogQuery, server: ServerClient?) async {
+  func loadArchive(
+    _ archive: ArchivedWorkspace, query: LogQuery, server: ServerClient?, unavailable: String = "Connecting to stim-server"
+  ) async {
     session += 1
     let generation = session
     follower.stop()
@@ -116,7 +118,7 @@ final class LogsModel: ObservableObject {
     phase = .loading
     onChange?(.reset)
     guard let server else {
-      phase = .ended(PhoneApp.Copy.archivedLogsOffline(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
+      phase = .ended(unavailable)
       return
     }
     do {

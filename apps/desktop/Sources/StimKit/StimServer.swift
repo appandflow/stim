@@ -50,9 +50,11 @@ public struct ServerHealth: Decodable, Equatable, Sendable {
   /// The `tailscale serve` route read on this request, present while Tailscale runs.
   public var route: ServeRoute?
   public var nativeViewerOpened: Bool?
+  /// True when the server serves this Mac only, so phones and other Macs cannot connect through it.
+  public var loopbackOnly: Bool?
 
   enum CodingKeys: String, CodingKey {
-    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened
+    case server, name, version, stim, stimHome, tailscale, route, nativeViewerOpened, loopbackOnly
     case protocolVersion = "protocol"
   }
 
@@ -214,7 +216,7 @@ public struct StimServerCLI: Sendable {
     return decoder
   }()
 
-  public static let minimumVersion = SemanticVersion("1.11.0")!
+  public static let minimumVersion = SemanticVersion("1.17.2")!
 
   /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {
@@ -251,10 +253,11 @@ public struct StimServerCLI: Sendable {
   /// Starts the server on `port`; it runs until terminated.
   public func serve(
     port: Int = defaultPort,
+    loopbackOnly: Bool = false,
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    let command = try command(["--port", String(port)])
+    let command = try command(["--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : []))
     return try ProcessStream.start(
       executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
       environment: environment, onLine: onLine, onExit: onExit)

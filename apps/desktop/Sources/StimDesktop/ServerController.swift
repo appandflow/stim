@@ -52,6 +52,7 @@ final class ServerController: ObservableObject {
 
   @Published private(set) var state = State.off {
     didSet {
+      if case .failed = state { if case .failed = oldValue {} else { failedAt = Date() } } else { failedAt = nil }
       if case .running = state {
         if case .running = oldValue {} else { reloadDevices() }
       } else {
@@ -74,7 +75,10 @@ final class ServerController: ObservableObject {
   private var generation = 0
   private var devicesEpoch = 0
   private var missedProbes = 0
-  private var watching = false
+  private var startedLoopbackOnly = true
+  private var failedAt: Date?
+  private var retriesFailure = true
+  static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
 
   static let devicesInterval: Duration = .seconds(10)
@@ -84,7 +88,10 @@ final class ServerController: ObservableObject {
     active: Self.devicesInterval, inactive: Self.inactiveDevicesInterval, isActive: { NSApplication.shared.isActive },
     tick: { [weak self] in
       guard let self else { return }
-      if isResponding { refresh() } else { watch() }
+      applyServingMode()
+      retryFailure()
+      guard isResponding else { return }
+      refresh()
     })
 
   var port: Int {
@@ -106,6 +113,28 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// Why the server is unusable, or nil while it starts, runs or waits for its Stim home.
+  var problem: String? {
+    switch state {
+    case .failed(let message): return message
+    case .notReady(.degraded(let reason), _): return "Degraded: \(reason)"
+    case .off, .starting, .running, .notReady(.pending, _): return nil
+    }
+  }
+
+  /// A failure that can clear by itself, such as a port another program held for a moment, is retried from the
+  /// poller after `retryAfter` seconds. A server too old for `--loopback-only` is not.
+  private func retryFailure() {
+    guard retriesFailure, case .failed = state, let failedAt, Date().timeIntervalSince(failedAt) >= Self.retryAfter else {
+      return
+    }
+    start()
+  }
+
+  func retry() {
+    if case .failed = state { start() } else { refresh() }
+  }
+
   var isOwned: Bool {
     switch state {
     case .running(_, let owned), .notReady(_, let owned): return owned
@@ -118,11 +147,21 @@ final class ServerController: ObservableObject {
     return false
   }
 
+  private var wantsLoopbackOnly: Bool {
+    !PhoneApp.listensOnTailnet(
+      phoneApp: FeatureFlags.isEnabled(.phoneApp),
+      servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
+  }
+
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
-    if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
+    start()
     devicesPoller.start()
-    watch()
+    NotificationCenter.default.addObserver(
+      forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      MainActor.assumeIsolated { self?.applyServingMode() }
+    }
     NotificationCenter.default.addObserver(
       forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
     ) { [weak self] _ in
@@ -152,6 +191,7 @@ final class ServerController: ObservableObject {
     generation += 1
     let current = generation
     state = .starting
+    retriesFailure = true
     missedProbes = 0
     Task {
       await waitForExiting()
@@ -165,9 +205,11 @@ final class ServerController: ObservableObject {
       let cli = await cli()
       guard current == generation else { return }
       output = []
+      startedLoopbackOnly = wantsLoopbackOnly
       do {
         process = try cli.serve(
           port: port,
+          loopbackOnly: startedLoopbackOnly,
           onLine: { line in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line.text, generation: current) } }
           },
@@ -205,40 +247,22 @@ final class ServerController: ObservableObject {
     state = .off
   }
 
-  func stopServing() {
-    switch state {
-    case .running(_, owned: false), .notReady(_, owned: false): return
-    default: break
+  /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
+  /// server Desktop did not start is never touched. A failed start is tried again, since the other mode may work.
+  private func applyServingMode() {
+    guard startedLoopbackOnly != wantsLoopbackOnly else { return }
+    if process != nil {
+      stop()
+      start()
+    } else if case .failed = state {
+      start()
     }
-    stop()
-    watch()
   }
 
   private func waitForExiting() async {
     guard let process = exiting else { return }
     await Task.detached { Self.waitForExit(process) }.value
     if exiting === process { exiting = nil }
-  }
-
-  private func watch() {
-    guard case .off = state, !watching, !UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else { return }
-    watching = true
-    let current = generation
-    Task {
-      defer { watching = false }
-      await waitForExiting()
-      guard let probe = await StimServerCLI.health(port: port) else { return }
-      let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-      guard current == generation, case .off = state else { return }
-      let serverHome: String? =
-        switch probe {
-        case .ready(let health): health.stimHome
-        case .notReady(_, let stimHome): stimHome
-        }
-      if let serverHome, !StimHome.adopts(serverHome: serverHome, resolved: resolved) { return }
-      missedProbes = 0
-      state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
-    }
   }
 
   func restart() {
@@ -273,9 +297,19 @@ final class ServerController: ObservableObject {
   }
 
   func pairPhone(control: Bool) async throws -> PairingCode {
+    guard UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) else {
+      throw ServerError(code: "not-connected", message: "Turn on Serve to phones to pair a phone.")
+    }
     let cli = await cli()
     guard isRunning, case .ready(let before) = await StimServerCLI.health(port: port) else {
       throw ServerError(code: "not-connected", message: "Could not verify the phone connection. Try again.")
+    }
+    if before.loopbackOnly == true {
+      throw ServerError(
+        code: "not-connected",
+        message:
+          "The stim-server on this port serves this Mac only, so a phone could not connect. Stop it, or quit the Stim Desktop that started it, and try again."
+      )
     }
     if before.tailscale.isRunning && before.route?.state != "routed" {
       throw ServerError(
@@ -321,7 +355,7 @@ final class ServerController: ObservableObject {
           guard missedProbes >= 2 else { return }
           missedProbes = 0
           state = .off
-          if UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones) { start() }
+          start()
         }
       }
     }
@@ -442,6 +476,12 @@ final class ServerController: ObservableObject {
     guard generation == self.generation else { return }
     process = nil
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
+    retriesFailure = !detail.contains("Unknown option '--loopback-only'")
+    if !retriesFailure {
+      state = .failed(
+        "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")
+      return
+    }
     state = .failed("stim-server exited with status \(status).\(detail.isEmpty ? "" : "\n\(detail)")")
   }
 }
