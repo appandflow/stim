@@ -323,7 +323,8 @@ final class AddMachineModel {
     } catch { self.error = error.localizedDescription }
   }
 
-  var canGoBack: Bool { page == .setup && !busy && !cancelling && wizard.canGoBack }
+  /// Not once the remote stim-server answered 503: setup is already running there.
+  var canGoBack: Bool { page == .setup && !busy && !cancelling && !checkingJournal && !serverNotReady && wizard.canGoBack }
 
   /// Steps back one step. A command that was shown is dropped and a fresh ticket drafted, so it can no longer
   /// match this wizard.
@@ -331,7 +332,6 @@ final class AddMachineModel {
     guard canGoBack else { return }
     _ = wizard.apply(.back, now: now)
     error = nil
-    serverNotReady = false
     manualPort = ""
     commandKnown = nil
     draftTicket = dependencies.ticket(dependencies.now())

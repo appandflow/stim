@@ -425,8 +425,9 @@ public struct SetupWizard: Sendable {
       }
   }
 
-  /// Going back changes nothing on either Mac only while no setup journal has arrived and no setting was written:
-  /// choosing capabilities, or a command that no one has run yet.
+  /// Going back writes nothing and asks nothing of the remote Mac only while no setup journal has arrived and no
+  /// setting was written: choosing capabilities, or a command that may not have been run yet. A command run just
+  /// before going back can still install on the remote Mac; the wizard then forgets its ticket.
   public var canGoBack: Bool {
     switch phase {
     case .choose: return true

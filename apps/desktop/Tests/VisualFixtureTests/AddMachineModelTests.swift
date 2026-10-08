@@ -239,6 +239,23 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertTrue(harness.writes.isEmpty)
   }
 
+  @MainActor func testBackFromAnExpiredUnrunCommandReturnsToCapabilities() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    harness.now = harness.now.addingTimeInterval(1801)
+    await model.send(.tick)
+    XCTAssertEqual(model.wizard.phase, .expiredCommand)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertNil(model.wizard.ticket)
+  }
+
   @MainActor func testBackIsRefusedOnceSetupStartedOrFinished() async {
     let harness = Harness()
     let model = harness.make()
