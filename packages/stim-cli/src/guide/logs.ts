@@ -68,7 +68,7 @@ FLAGS
   --slot <name>   only this slot's records plus, once it has launched, the
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
-  --source <s...>  metro, client, device, build, agent, maintenance (one or more), or all.
+  --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -230,6 +230,30 @@ stim logs does not show them. Read them with jq:
 Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
 Mac. They carry no arguments, tokens or tickets.
+
+Placement records use src: placement and sit in the run's build log
+(build-*.ndjson), so a new run replaces the previous run's. A run writes one
+record per decision it makes (a build that compiles and has a remote Mac to
+consider, or ios/android --remote auto), with event build_placement,
+device_placement or placement_fallback. A cache hit, a project with no paired
+remote Mac and a named --remote target write none:
+  stim logs --source placement
+  stim logs --source placement --json
+Fields: kind (build or device), platform, settings [{ key, value, from }] with
+from flag, env, setting or default (remote.build and remote.buildMode for a
+build, ios.remote or android.remote for a device), candidates [{ machine, code,
+msg, detail? }], choice { machine, code, msg } with machine local when the run
+stays on this Mac, and fallback { code, msg, machine? } when a remote Mac that
+was meant to take the run did not (level warn). The msg is the same text the
+placement: and build: phase lines print.
+Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
+(detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
+declined, memory, no-capacity. Choice codes for a build: placed, named,
+forced, this-mac-busy, this-mac-free, mode-off, local-selected, no-remote-mac,
+unsupported; fallback codes: no-remote-mac-took-it, offload-failed, fallback.
+Choice codes for a device: placed, sticky, this-mac-free, no-remote-mac,
+device-count-unknown, no-host-admits. Machine names appear in these records;
+they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips

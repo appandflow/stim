@@ -54,6 +54,13 @@ struct WallCardTests {
   let ios = #""ios":{"udid":"i","name":"iPhone 17","owned":false,"state":"Booted"}"#
   let android = #""android":{"name":"Pixel","owned":true,"physical":false,"state":"detected","deviceProfile":"pixel_9"}"#
 
+  @Test func namesAMacAppByItsDisplayNameWhenTheRecordHasOne() throws {
+    let named = macosApp.replacingOccurrences(
+      of: "\"product\":\"Stim\",", with: "\"product\":\"Stim\",\"displayName\":\"Stim \u{00B7} wt\",")
+    let card = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: named)])[0]
+    #expect(card.options.map(\.label) == ["Stim \u{00B7} wt"])
+  }
+
   @Test func offersDevicesIncludingTheMacAppAndLabelsThemByAppOnlyWhenThereAreSeveral() throws {
     let single = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(android),\(ios),\(macosApp)")])[0]
     #expect(single.options.map(\.label) == ["iPhone 17", "Pixel 9", "Stim"])

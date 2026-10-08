@@ -1,3 +1,4 @@
+import { buildPlacementRecord, type PlacementCandidate } from '../placement-log.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { machineCapacity, type MacosBuild } from '@stim-cli/core/state';
@@ -23,7 +24,7 @@ import { getConcurrencyLimits } from '../workspace/config.ts';
 import { logLines } from './run.ts';
 import { macosDir } from './state.ts';
 import { repoRoot } from '../workspace/worktree.ts';
-import { resolveBundleExtras, stageBundle, validateInfoPlist } from './stage.ts';
+import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from './stage.ts';
 
 async function tool(
   root: string,
@@ -60,6 +61,7 @@ export async function buildMacosBundle({
   infoPlist,
   bundle,
   bundleId,
+  displayName,
   scratch,
   writer,
   note,
@@ -74,6 +76,7 @@ export async function buildMacosBundle({
   infoPlist: string;
   bundle: string;
   bundleId: string;
+  displayName?: string;
   scratch: string;
   writer: NdjsonWriter;
   note: (line: string) => void;
@@ -97,7 +100,22 @@ export async function buildMacosBundle({
     note(msg);
   };
   let offloadFallback: string | null = null;
+  let asked: PlacementCandidate[] = [];
+  let failedMachine: string | undefined;
   const fallBack = (reason: string) => {
+    writer.write(
+      buildPlacementRecord({
+        platform: 'macos',
+        buildMachine,
+        candidates: asked,
+        event: 'placement_fallback',
+        fallback: {
+          code: failedMachine ? 'offload-failed' : 'no-remote-mac-took-it',
+          reason,
+          machine: failedMachine,
+        },
+      }),
+    );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     offloadFallback = reason;
     if (record) record.offloadFallback = reason;
@@ -139,9 +157,19 @@ export async function buildMacosBundle({
           machines,
           selected: buildMachine,
           note: (line) => write(`offload: ${line}`),
+          onCandidates: (each) => (asked = each),
         });
         if (typeof chosen === 'string') throw new Error(chosen);
         choice = chosen;
+        failedMachine = chosen.machine;
+        writer.write(
+          buildPlacementRecord({
+            platform: 'macos',
+            buildMachine,
+            candidates: asked,
+            chose: { machine: chosen.machine, reason: `${placement.reason}${placementLoad(chosen)}` },
+          }),
+        );
         write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
         const outcome = await offloadBuild({
           choice,
@@ -187,6 +215,10 @@ export async function buildMacosBundle({
           if (!existsSync(join(outcome.artifactPath, 'Contents', 'Resources', destination)))
             throw new Error(`The fetched macOS bundle lacks declared resource ${destination}.`);
         }
+        if (displayName !== undefined) {
+          setBundleName(join(outcome.artifactPath, 'Contents', 'Info.plist'), displayName);
+          getExecutor().runFile('codesign', ['--force', '--sign', '-', outcome.artifactPath]);
+        }
         getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
         promote(outcome.artifactPath);
         if (record) {
@@ -195,6 +227,13 @@ export async function buildMacosBundle({
         }
         return { bundleId, offloadedTo: outcome.machine, offloadFallback: null, handoff: outcome.handoff ?? null };
       }
+      writer.write(
+        buildPlacementRecord({
+          platform: 'macos',
+          buildMachine,
+          stays: { code: placement.code, reason: placement.reason },
+        }),
+      );
       write(`placement: here (${placement.reason})`);
     } catch (error) {
       fallBack(error instanceof Error ? error.message : String(error));
@@ -227,7 +266,7 @@ export async function buildMacosBundle({
       );
       progress.step('install');
       const staged = join(staging, `${product}.app`);
-      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
+      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras, displayName);
       promote(staged);
       return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
     } finally {

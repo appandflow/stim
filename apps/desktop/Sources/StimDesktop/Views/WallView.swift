@@ -67,6 +67,7 @@ struct WallView: View {
             },
             openDevice: openDevice, openLogs: openLogs)
         }
+        .finiteAccessibilityFrame()
         .padding(Space.xxxl)
       }
     }

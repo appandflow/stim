@@ -1673,6 +1673,15 @@ script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the
 app's Appearance setting.
 
+`scripts/ax-finite.swift` walks a running app's accessibility tree and prints
+every element whose position, size or frame is not finite, with its ancestors.
+agent-device cannot encode such an element, so its `snapshot` fails. Run
+`swift scripts/ax-finite.swift <pid>` against a `stim macos` copy, with the
+window small enough that the Overview's lower sections are scrolled out of
+view. SwiftUI reports a lazy container with no realized children at
+(inf, inf), so give every `LazyVGrid` and `LazyVStack` the
+`finiteAccessibilityFrame()` modifier. The terminal needs Accessibility access.
+
 ## SwiftUI playground
 
 Run the DEBUG playground without starting the normal app's CLI, server, notification service or updater:
