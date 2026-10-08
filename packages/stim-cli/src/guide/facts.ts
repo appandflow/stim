@@ -980,8 +980,8 @@ RULES
               "ready"    its last warm succeeded and nothing has run there
                          since: no start, ios, android, web or reload, for
                          at most 2 hours
-              "live"     live is true: Metro, a device, Chrome or a remote
-                         session of it runs
+              "live"     the workspace is active (live is true): Metro, a
+                         device, Chrome or a remote session of it runs
               "idle"     none of these
   phaseSince  when the warm started ("warming") or finished ("ready"); null
               for "live" and "idle"
@@ -1009,8 +1009,8 @@ RULES
   The first kind that applies wins:
 
   kind        "building"      a build runs; platform names it
-              "warming"       phase is "warming" and nothing is live
-              "ready"         phase is "ready" and nothing is live
+              "warming"       phase is "warming" and nothing is active
+              "ready"         phase is "ready" and nothing is active
               "build-failed"  the newest run of either platform failed;
                               platform names it
               "running"       live is true or a remote session runs
@@ -1490,7 +1490,7 @@ RULES
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
   \`status --watch\` runs one du at a time off its refresh path, and measures
-  a folder at most every 5 minutes while its environment is live and every
+  a folder at most every 5 minutes while its environment is active and every
   hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
   one-shot status only reads, so the fields appear once a watcher, such as
   stim-server or Stim Desktop, has measured.
@@ -1610,7 +1610,7 @@ RULES
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
   device activity, and one run of the footprint helper. It is null when no
-  simulator is booted, no workspace is live and no build runs: status then
+  simulator is booted, no workspace is active and no build runs: status then
   runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },

@@ -33,7 +33,7 @@ export function isSettingUp(env: EnvironmentState): boolean {
   return !env.live && (env.phase === 'warming' || env.phase === 'ready');
 }
 
-/** Whether the home list shows the workspace under Live: it is active or being set up. */
+/** Whether the home list shows the workspace under Active: it is active or being set up. */
 export function isShownLive(env: EnvironmentState): boolean {
   return isActive(env) || isSettingUp(env);
 }

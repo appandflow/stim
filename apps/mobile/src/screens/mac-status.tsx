@@ -519,7 +519,7 @@ function serverLine(stim: string, version: string): string {
 }
 
 function capacityLine(capacity: NonNullable<StatusPayload['capacity']>): string {
-  const live = plural(capacity.liveCount, { one: '# live workspace', other: '# live workspaces' });
+  const live = plural(capacity.liveCount, { one: '# active workspace', other: '# active workspaces' });
   const held = (capacity.committedMb / 1024).toFixed(1);
   const total = Math.round(capacity.totalMemoryMb / 1024);
   const over = capacity.overCapacity ? t`, over comfortable capacity` : '';
@@ -964,7 +964,7 @@ function AttentionRows({
           {workspaceTitleAt(group.path, status)}
         </Text>
         <Text variant="caption" tone={group.live ? 'success' : 'tertiary'}>
-          {group.live ? t`live` : t`idle`}
+          {group.live ? t`active` : t`idle`}
         </Text>
       </View>
       {group.items.map((item, index) => (

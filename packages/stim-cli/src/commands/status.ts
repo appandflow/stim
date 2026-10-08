@@ -820,8 +820,8 @@ function renderStatus(
   out.push(
     chalk.dim(
       machine?.memorySource === 'footprint'
-        ? `\n${cap.liveCount} live environment(s) use ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)}.`
-        : `\n${cap.liveCount} live environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
+        ? `\n${cap.liveCount} active environment(s) use ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)}.`
+        : `\n${cap.liveCount} active environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
   const volumes = readVolumes(cwdRoot || process.cwd());
