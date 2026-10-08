@@ -47,7 +47,7 @@ import Testing
 
   @Test func namesADisconnectedPhoneBeforeTheServerState() throws {
     #expect(
-      PhysicalScreen(device: try phone("android", connection: "disconnected"), link: .off, now: now)
+      PhysicalScreen(device: try phone("android", connection: "disconnected"), link: .connecting, now: now)
         == .message("Disconnected. Plug the phone into this Mac and allow USB debugging."))
     #expect(
       PhysicalScreen(device: try phone("ios", connection: "unknown"), link: open, now: now)

@@ -51,8 +51,9 @@ import {
 } from '../src/tailscale.ts';
 
 const USAGE = `Usage:
-  stim-server [--port <n>] [--env KEY=VALUE]... [--path-prepend <dir>]...
+  stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     serve paired clients (default port ${DEFAULT_PORT});
+                                    --loopback-only serves this Mac only (127.0.0.1, no remote peers);
                                     --env and --path-prepend apply after the login shell's environment
   stim-server setup --client <node-id> --ticket <t> --expires <iso>
                     [--build] [--device-host] [--port <n>] [--label <name>]
@@ -115,7 +116,7 @@ function macName(tailscale: TailscaleState): string {
   return (tailscale.state === 'running' && tailscale.hostName) || hostname();
 }
 
-async function serve(port: number, extraEnv: string[], pathPrepend: string[]): Promise<void> {
+async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
@@ -136,6 +137,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
       name: macName(tailscale),
       host: captureHost,
       hosts: ['127.0.0.1'],
+      ...(loopbackOnly ? { loopbackOnly: true } : {}),
       port,
       stimCli: stim.cli,
       stimVersion: stim.version,
@@ -170,13 +172,14 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[]): P
     }
     if (note) console.error(note);
   };
-  await announce(tailscaleBinary, tailscale);
-  monitor.onChange((snapshot, previous) => {
-    const { state } = snapshot;
-    if (state.state === 'running') console.log('Tailscale is running.');
-    else if (previous.state.state === 'running') console.error('Tailscale stopped.');
-    if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
-  });
+  if (!loopbackOnly)
+    monitor.onChange((snapshot, previous) => {
+      const { state } = snapshot;
+      if (state.state === 'running') console.log('Tailscale is running.');
+      else if (previous.state.state === 'running') console.error('Tailscale stopped.');
+      if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
+    });
+  if (!loopbackOnly) await announce(tailscaleBinary, tailscale);
   const shutdown = () => {
     monitor.stop();
     void server
@@ -351,6 +354,7 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       port: { type: 'string' },
+      'loopback-only': { type: 'boolean' },
       json: { type: 'boolean' },
       control: { type: 'boolean' },
       read: { type: 'boolean' },
@@ -387,7 +391,10 @@ async function main(): Promise<void> {
   if ((values.release !== undefined || values.from !== undefined) && !service) {
     fail(`--release and --from apply only to \`service update\`.\n${USAGE}`);
   }
-  if (command === undefined) return serve(port, extraEnv, pathPrepend);
+  if (values['loopback-only'] && command !== undefined) {
+    fail(`--loopback-only applies only to serving.\n${USAGE}`);
+  }
+  if (command === undefined) return serve(port, extraEnv, pathPrepend, values['loopback-only'] === true);
   const grant = command === 'devices' && sub === 'grant';
   if (values.read && !grant) fail(`--read applies only to \`devices grant\`.\n${USAGE}`);
   if (values.build && !grant) fail(`--build applies only to \`devices grant\`.\n${USAGE}`);

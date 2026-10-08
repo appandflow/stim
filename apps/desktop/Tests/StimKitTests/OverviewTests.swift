@@ -81,9 +81,9 @@ struct TryThisTests {
     }
   }
 
-  @Test func hidesThePhoneTipWithoutThePhoneAppFlag() {
-    #expect(!TryThis.applicable(.physicalDevice, inputs: inputs()))
-    #expect(TryThis.applicable(.physicalDevice, inputs: inputs { $0.phoneApp = true }))
+  @Test func suggestsRunningOnAPhysicalDeviceWithoutTheStimMobileApp() {
+    #expect(TryThis.applicable(.physicalDevice, inputs: inputs()))
+    #expect(TryThis.select(inputs: inputs(), dismissed: [], sidebarTopic: nil).contains(.physicalDevice))
   }
 
   @Test func skipsDismissedTipsAndTheOneTheSidebarShows() {

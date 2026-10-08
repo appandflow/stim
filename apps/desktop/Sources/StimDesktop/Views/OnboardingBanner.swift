@@ -7,7 +7,6 @@ import SwiftUI
 struct OnboardingBanner: View {
   @ObservedObject var onboarding: Onboarding
   @EnvironmentObject private var actions: ActionCenter
-  @AppStorage(AppPreferences.Key.servesPhones) private var servesPhones = false
   @ObservedObject private var flags = FeatureFlagStore.shared
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var showsCommand = false
@@ -21,7 +20,6 @@ struct OnboardingBanner: View {
     }
     .frame(maxWidth: .infinity)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: onboarding.report.flatMap(currentKind))
-    .onChange(of: servesPhones) { onboarding.check() }
   }
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {

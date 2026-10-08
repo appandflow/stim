@@ -33,6 +33,16 @@ export function findTailscale(env: NodeJS.ProcessEnv): string | null {
   return executable(MAC_APP_BINARY) ? MAC_APP_BINARY : null;
 }
 
+export type TailscaleInstall = 'app' | 'cli' | 'none';
+
+export function tailscaleInstall(
+  env: NodeJS.ProcessEnv,
+  isExecutable: (path: string) => boolean = executable,
+): TailscaleInstall {
+  if (isExecutable(MAC_APP_BINARY)) return 'app';
+  return (env.PATH ?? '').split(delimiter).some((dir) => dir && isExecutable(join(dir, 'tailscale'))) ? 'cli' : 'none';
+}
+
 function parseTailscaleStatus(value: unknown): TailscaleState {
   if (!isJsonObject(value) || typeof value.BackendState !== 'string')
     return { state: 'unavailable', reason: '`tailscale status --json` printed no BackendState' };
