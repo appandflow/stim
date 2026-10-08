@@ -14,7 +14,10 @@ function verify() {
     const app = processes
       .split('\n')
       .map((line) => line.trim().split(/\s+/))
-      .find((fields) => /^\d+$/.test(fields[0]) && fields.slice(2).join(' ').includes(facts.bundleId));
+      .find(
+        (fields) =>
+          /^\d+$/.test(fields[0]) && fields.slice(2).join(' ').startsWith(`UIKitApplication:${facts.bundleId}[`),
+      );
     assert.ok(app, 'iOS app must have a running process');
     return app[0];
   } else if (platform === 'android') {
