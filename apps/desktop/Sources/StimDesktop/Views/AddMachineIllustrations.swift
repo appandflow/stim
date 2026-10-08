@@ -6,6 +6,7 @@ import SwiftUI
 struct AddMachineIllustration: View {
   enum Scene: Equatable {
     case tailnet(connected: Bool)
+    case noMac
     case tailscaleSwitch
     case tailscaleUp
     case capabilities(Set<SetupCapability>)
@@ -20,6 +21,7 @@ struct AddMachineIllustration: View {
     Group {
       switch scene {
       case .tailnet(let connected): TailnetArt(connected: connected)
+      case .noMac: TailnetArt(connected: false, badge: "questionmark.circle.fill")
       case .tailscaleSwitch: TailscaleSwitchArt()
       case .tailscaleUp:
         ZStack {
@@ -60,6 +62,7 @@ private struct MacGlyph: View {
 /// This Mac and the build Mac, joined over the tailnet; the link breaks when this Mac has no Tailscale.
 private struct TailnetArt: View {
   var connected: Bool
+  var badge = "xmark.circle.fill"
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
   var body: some View {
@@ -87,7 +90,7 @@ private struct TailnetArt: View {
         .frame(width: 84, height: 20)
         .overlay {
           if !connected {
-            Image(systemName: "xmark.circle.fill")
+            Image(systemName: badge)
               .font(.system(size: 18, weight: .semibold))
               .foregroundStyle(Palette.onBrand, Palette.tertiary)
               .background(Circle().fill(Palette.background).padding(2))
