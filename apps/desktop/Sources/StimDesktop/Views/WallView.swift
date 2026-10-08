@@ -10,17 +10,17 @@ struct WallView: View {
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
-  @State private var containerWidth: CGFloat = 0
+  @State private var pressedCard: String?
 
   var body: some View {
-    let groups = WorktreePage.groups(environments: store.environments(in: project).filter(\.isActive))
+    let active = store.environments(in: project).filter(\.isActive)
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-    } else if groups.isEmpty {
+    } else if active.isEmpty {
       EmptyState(
         title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
@@ -33,183 +33,64 @@ struct WallView: View {
           if let project {
             Text(store.title(of: project)).font(.stim(.title))
           }
-          FlowLayout(spacing: Space.xxl, lineSpacing: Space.xxl, topAligned: true) {
-            ForEach(groups, id: \.id) { page in
-              WorktreeSection(
-                page: page, store: store, metrics: metrics, tileHeight: tileSize.screenHeight,
-                openHeader: { selection = project == nil ? .project(store.project(of: page.apps[0])) : .environment(page.id) },
-                openLogs: openLogs, openDevice: openDevice
-              )
-              .frame(maxWidth: containerWidth > 0 ? containerWidth - Space.xxxl * 2 : .infinity, alignment: .leading)
+          ForEach(active) { env in
+            let devices = env.orderedDevices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
+            let open = {
+              pressedCard = nil
+              selection = project == nil ? .project(store.project(of: env)) : .environment(env.path)
+            }
+            Card(fill: devices.isEmpty ? Palette.surface : .clear, border: Palette.border, clipsContent: false) {
+              VStack(alignment: .leading, spacing: Space.lg) {
+                Button(action: open) {
+                  WorkspaceHeader(
+                    env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
+                    openLogs: { openLogs(env.path) }
+                  )
+                }
+                .buttonStyle(CardPressStyle())
+                .accessibilityLabel(env.names.title)
+                if let macos = env.macos {
+                  MacosAppCard(app: macos, workspace: env.path)
+                }
+                if devices.isEmpty && env.macos == nil {
+                  Label("No running devices", systemImage: "iphone.gen3")
+                    .font(.stim(.callout))
+                    .foregroundStyle(Palette.secondary)
+                    .labelStyle(.titleAndIcon)
+                } else if !devices.isEmpty {
+                  FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
+                    ForEach(devices) { device in
+                      Button {
+                        openDevice(env.path, device.id)
+                      } label: {
+                        DeviceTile(
+                          device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
+                          build: env.runningBuild(for: device), pausesWhenOffscreen: true,
+                          highlightsHeaderOnHover: true
+                        )
+                      }
+                      .buttonStyle(CardPressStyle(highlightsDevice: true))
+                    }
+                  }
+                }
+              }
+              .padding(Space.xl)
+              .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: open)
+            .hoverHighlight(radius: Radius.card)
+            .modifier(CardPressAppearance(pressed: pressedCard == env.path))
+            .onPreferenceChange(CardPressedKey.self) { pressed in
+              if pressed {
+                pressedCard = env.path
+              } else if pressedCard == env.path {
+                pressedCard = nil
+              }
             }
           }
         }
         .padding(Space.xxxl)
-      }
-      .onGeometryChange(for: CGFloat.self) {
-        $0.size.width
-      } action: {
-        containerWidth = $0
-      }
-    }
-  }
-}
-
-private struct WorktreeSection: View {
-  var page: WorktreePage
-  var store: StatusStore
-  var metrics: MetricsStore
-  var tileHeight: Double
-  var openHeader: () -> Void
-  var openLogs: (String) -> Void
-  var openDevice: (String, String) -> Void
-
-  private struct Tile: Identifiable {
-    var env: Workspace
-    var device: DeviceRef
-    var id: String { "\(env.path)|\(device.id)" }
-  }
-
-  var body: some View {
-    let tiles = page.apps.flatMap { env in
-      env.orderedDevices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }.map { Tile(env: env, device: $0) }
-    }
-    let project = store.project(of: page.apps[0])
-    HeaderAboveContent(spacing: Space.md, minimumWidth: 260) {
-      VStack(alignment: .leading, spacing: Space.md) {
-        WorktreeHeader(page: page, project: project, openHeader: openHeader, openLogs: openLogs)
-        ForEach(page.apps) { env in
-          if let build = env.build, build.isRunning {
-            BuildProgressBar(build: build)
-          } else if !env.live, env.isSettingUp {
-            SetupBadge(env: env)
-          }
-          if let macos = env.macos {
-            MacosAppCard(app: macos, workspace: env.path)
-          }
-        }
-      }
-      if tiles.isEmpty {
-        if page.apps.allSatisfy({ $0.macos == nil }) {
-          Label("No running devices", systemImage: "iphone.gen3")
-            .font(.stim(.callout))
-            .foregroundStyle(Palette.secondary)
-            .labelStyle(.titleAndIcon)
-        }
-      } else {
-        ScrollView(.horizontal, showsIndicators: false) {
-          HStack(alignment: .top, spacing: Space.lg) {
-            ForEach(tiles) { tile in
-              Button {
-                openDevice(tile.env.path, tile.device.id)
-              } label: {
-                DeviceTile(
-                  device: tile.device, screenHeight: tileHeight, workspace: tile.env.path,
-                  build: tile.env.runningBuild(for: tile.device), pausesWhenOffscreen: true, highlightsHeaderOnHover: true
-                )
-              }
-              .buttonStyle(CardPressStyle(highlightsDevice: true))
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-private struct HeaderAboveContent: Layout {
-  var spacing: CGFloat
-  var minimumWidth: CGFloat
-
-  private func width(_ proposal: ProposedViewSize, _ subviews: Subviews) -> CGFloat {
-    let content = subviews.dropFirst().map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
-    return min(max(minimumWidth, content), proposal.width ?? .infinity)
-  }
-
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    guard let header = subviews.first else { return .zero }
-    let width = width(proposal, subviews)
-    let headerHeight = header.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
-    let rest = subviews.dropFirst().map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0
-    return CGSize(width: width, height: headerHeight + (rest > 0 ? spacing + rest : 0))
-  }
-
-  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-    guard let header = subviews.first else { return }
-    let width = bounds.width
-    let headerHeight = header.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
-    header.place(at: bounds.origin, proposal: ProposedViewSize(width: width, height: headerHeight))
-    for view in subviews.dropFirst() {
-      view.place(
-        at: CGPoint(x: bounds.minX, y: bounds.minY + headerHeight + spacing),
-        proposal: ProposedViewSize(width: width, height: nil))
-    }
-  }
-}
-
-struct WorktreeHeader: View {
-  var page: WorktreePage
-  var project: Project
-  var openHeader: () -> Void
-  var openLogs: (String) -> Void
-
-  var body: some View {
-    let first = page.apps[0]
-    let ports = Array(Set(page.apps.compactMap { $0.metro })).sorted { $0.port < $1.port }
-    let activities = page.apps.flatMap { $0.devices.filter(\.isRunning).map(\.activity) }
-    let drives = page.apps.contains { $0.devices.contains { $0.isRunning && $0.activity?.state == "driven" } }
-    let memoryMb = page.apps.reduce(0) { $0 + ($1.memoryMb ?? 0) }
-    let errorApps = page.apps.filter { ($0.logs?.errorsSinceMarker ?? 0) > 0 }
-    let errors = errorApps.reduce(0) { $0 + ($1.logs?.errorsSinceMarker ?? 0) }
-    let tracksErrors = page.apps.contains { $0.logs?.errorsSinceMarker != nil }
-    VStack(alignment: .leading, spacing: Space.sm) {
-      title(first)
-      chips(ports, drives, activities, memoryMb, errors, errorApps, tracksErrors)
-    }
-  }
-
-  private func title(_ first: Workspace) -> some View {
-    Button(action: openHeader) {
-      HStack(spacing: Space.lg) {
-        Text(first.names.title).font(.stim(.headline)).lineLimit(1).truncationMode(.middle)
-        if project.name != first.names.title {
-          Text(project.name).font(.stim(.callout)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
-        }
-        if let inCheckout = first.names.inCheckout {
-          Text(inCheckout).font(.stim(.callout)).foregroundStyle(Palette.tertiary).lineLimit(1).fixedSize()
-        }
-      }
-      .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .accessibilityLabel(first.names.title)
-  }
-
-  private func chips(
-    _ ports: [Metro], _ drives: Bool, _ activities: [DeviceActivity?], _ memoryMb: Int, _ errors: Int,
-    _ errorApps: [Workspace], _ tracksErrors: Bool
-  ) -> some View {
-    FlowLayout(spacing: Space.md, lineSpacing: Space.sm) {
-      ForEach(ports, id: \.port) { metro in
-        Pill(tone: metro.running ? .neutral : .error) {
-          StatusDot(color: metro.running ? Palette.success : Palette.error)
-          Text("Metro")
-          Text(":\(String(metro.port))").font(.stim(.caption, mono: true))
-        }
-        .help("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Metro on port \(String(metro.port)), \(metro.running ? "running" : "stopped")")
-      }
-      if drives { DriversPill(activities: activities) }
-      if memoryMb > 0 { MemoryPill(mb: memoryMb, source: page.apps[0].memorySource) }
-      if tracksErrors, errors > 0 {
-        Button {
-          openLogs(errorApps[0].path)
-        } label: {
-          Pill(tone: .error) { Text(countLabel(errors, "error")) }
-        }
-        .buttonStyle(.hoverRow())
-        .help("\(countLabel(errors, "error")) in the logs since the last marker \u{2014} click to open the logs")
       }
     }
   }
