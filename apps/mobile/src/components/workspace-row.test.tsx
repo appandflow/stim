@@ -132,6 +132,47 @@ it('shows a multi-app checkout as one row that opens the checkout and the app wi
   expect(open).toHaveBeenLastCalledWith(desktop, true);
 });
 
+describe('single-app row platforms', () => {
+  const single = (extra: Partial<HomeItem['env']> = {}): HomeItem => ({
+    key: 'mac\n/checkout',
+    macId: 'mac',
+    macName: 'MacBook',
+    project: 'stim',
+    title: 'feat/single',
+    inCheckout: '.',
+    env: { path: '/checkout', live: true, memoryMb: 0, warnings: [], worktree: { path: '/checkout' }, ...extra },
+  });
+  const renderRow = async (item: HomeItem) => {
+    const workspace = homeSections([item])[0].data[0];
+    if (!('apps' in workspace)) throw new Error('Expected a registered checkout');
+    return render(
+      <WorkspaceGroupRow workspace={workspace} now={Date.now()} folder showsMachine={false} onOpen={() => {}} />,
+    );
+  };
+
+  it('lists the platforms that ran and drops the device names', async () => {
+    const screen = await renderRow(
+      single({
+        ios: { name: 'sim', udid: 'u', owned: true, state: 'Booted' },
+        lastBuilds: {
+          android: { platform: 'android', status: 'failed', startedAt: new Date().toISOString() },
+        },
+      } as unknown as Partial<HomeItem['env']>),
+    );
+    expect(screen.getByText('iOS')).toBeTruthy();
+    expect(screen.getByText('Android')).toBeTruthy();
+    expect(screen.queryByText('iOS, Android')).toBeNull();
+  });
+
+  it('shows no platform line for an app that never ran', async () => {
+    const screen = await renderRow(single({ live: false }));
+    expect(screen.queryByText('iOS')).toBeNull();
+    expect(screen.queryByText('Android')).toBeNull();
+    expect(screen.queryByText('macOS')).toBeNull();
+    expect(screen.queryByText('Web')).toBeNull();
+  });
+});
+
 it('announces source-only git work without workspace controls and shows last seen when its machine is offline', async () => {
   const item: HomeWorktree = {
     key: 'mac\nsource',
