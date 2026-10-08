@@ -178,6 +178,8 @@ export interface BuildHistoryEntry extends LastBuildReport {
   configuration: string | null;
   cacheKey: string | null;
   phases: Partial<Record<BuildPhase, number>>;
+  /** A `stim macos` run's SwiftPM step total; absent for other runs and when the build reported none. */
+  compileSteps?: number;
 }
 
 /** One compiler error from a failed build: where it is, when the tool said, and its message. */

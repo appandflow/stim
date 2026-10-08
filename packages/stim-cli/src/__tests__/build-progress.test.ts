@@ -11,6 +11,7 @@ import {
   completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
+  recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
   type ActiveBuildRecord,
@@ -462,7 +463,11 @@ describe('macOS builds', () => {
       now += 60_000;
       progress.step('install');
       now += 3_000;
-      recordFinishedBuild(root, macosFinished, { now: () => now });
+      expect(progress.steps()).toBe(40);
+      recordFinishedBuild(root, { ...macosFinished, compileSteps: progress.steps() }, { now: () => now });
+      progress.step('launch');
+      now += 1_500;
+      recordBuildPhase(root, 'macos', macosFinished.startedAt, 'launch', progress.durations().launch!);
       progress.clear();
       releaseClaim(claim);
 
@@ -473,7 +478,8 @@ describe('macOS builds', () => {
         expect.objectContaining({
           platform: 'macos',
           result: 'succeeded',
-          phases: { prepare: 2_000, compile: 60_000, install: 3_000 },
+          phases: { prepare: 2_000, compile: 60_000, install: 3_000, launch: 1_500 },
+          compileSteps: 40,
         }),
       ]);
     } finally {
