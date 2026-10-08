@@ -28,7 +28,7 @@ struct AddMachineSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Add a Remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
           HStack(spacing: Space.md) {
@@ -62,9 +62,9 @@ struct AddMachineSheet: View {
       model.stop()
       dismiss()
     }
-    .confirmationDialog("Cancel setup for \(name)?", isPresented: $confirmsCancel) {
-      Button("Cancel setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
-      Button("Keep setting up", role: .cancel) {}
+    .confirmationDialog("Cancel Setup for \(name)?", isPresented: $confirmsCancel) {
+      Button("Cancel Setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
+      Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
         "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
@@ -116,7 +116,7 @@ struct AddMachineSheet: View {
 
   private var pickContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Choose a Mac on your tailnet").font(.stim(.title))
+      Text("Choose a Mac on Your Tailnet").font(.stim(.title))
       if model.checkingTailscale {
         HStack(spacing: Space.sm) {
           ProgressView().controlSize(.small)
@@ -166,7 +166,7 @@ struct AddMachineSheet: View {
 
   @ViewBuilder private var machineList: some View {
     if model.peers.isEmpty {
-      Text("No other Mac on your tailnet yet").font(.stim(.headline))
+      Text("No Other Mac on Your Tailnet Yet").font(.stim(.headline))
       Text("Install Tailscale on the Mac you want to use and sign in with the same account.")
         .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       Button("Download Tailscale", systemImage: "arrow.down.circle") {
@@ -373,7 +373,7 @@ struct AddMachineSheet: View {
         .padding(Space.sm).frame(width: 120)
         .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.small))
         .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.tertiary.opacity(0.4)))
-        Button("Use port") { Task { await model.useManualPort() } }.disabled(model.busy)
+        Button("Use Port") { Task { await model.useManualPort() } }.disabled(model.busy)
       }
     case .expired: Text("The ticket expired before approval. Generate a New command.")
     case .stepFailed(let step, let detail, let fix):
@@ -399,7 +399,7 @@ struct AddMachineSheet: View {
       if let sample = model.sample {
         if case .failed(_, let message, _) = sample.test.state {
           Text(message).foregroundStyle(Palette.error)
-          Button("Retry sample") { sample.prepare() }
+          Button("Retry Sample") { sample.prepare() }
         }
       }
     }
@@ -431,7 +431,7 @@ struct AddMachineSheet: View {
       Spacer()
       if wizard.phase == .cancelled {
         if model.error != nil {
-          Button("Retry undo") { Task { await model.send(.cancel) } }.disabled(model.busy || model.cancelling)
+          Button("Retry Undo") { Task { await model.send(.cancel) } }.disabled(model.busy || model.cancelling)
         }
         Button("Close") {
           model.stop()
@@ -449,7 +449,7 @@ struct AddMachineSheet: View {
         if step == 3 {
           Button("Next") { Task { await model.openSummary() } }.disabled(model.busy || model.toolsBlock)
         } else if model.page == .test {
-          Button("Back to summary") { Task { await model.closeTest() } }.disabled(model.sample?.running == true)
+          Button("Back to Summary") { Task { await model.closeTest() } }.disabled(model.sample?.running == true)
         } else if step == 4 {
           Button("Done") {
             Task {
@@ -466,7 +466,7 @@ struct AddMachineSheet: View {
         } else if wizard.phase == .approved {
           Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {
-          Button("New command") { Task { await model.newCommand() } }.disabled(model.busy)
+          Button("New Command") { Task { await model.newCommand() } }.disabled(model.busy)
         }
       }
     }

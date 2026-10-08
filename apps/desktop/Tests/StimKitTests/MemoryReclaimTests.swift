@@ -20,7 +20,7 @@ import Testing
       "memoryNotices":[]
       """)
     let offer = try #require(GcReport.reclaim(for: watchman, in: gc))
-    #expect(offer.isAvailable && offer.title == "Reclaim memory" && offer.stops == 1)
+    #expect(offer.isAvailable && offer.title == "Reclaim Memory" && offer.stops == 1)
     #expect(offer.consequence.hasPrefix("Shuts down the watchman daemon to free "))
     #expect(offer.bytes == 4_456_448_000 && offer.staleRoots == 1)
     #expect(offer.command(cwd: "/h") == StimCommand(["gc", "--delete", "--json", "--cache", "watchman"], cwd: "/h"))
@@ -45,7 +45,7 @@ import Testing
       """)
     let offer = try #require(GcReport.reclaim(for: watchman, in: gc))
     #expect(offer.isAvailable)
-    #expect(offer.stops == 0 && offer.title == "Remove stale roots")
+    #expect(offer.stops == 0 && offer.title == "Remove Stale Roots")
     #expect(offer.consequence.hasPrefix("Removes 1 stale watchman root."))
     #expect(offer.keptReasons == ["used by Metro"])
   }
@@ -70,7 +70,7 @@ import Testing
   @Test func stillOffersTheStopWhenGcReportsNoSize() throws {
     let gc = try report(#""memory":[{"kind":"watchman","cacheKind":"watchman","pid":41,"bytes":null,"reclaimable":true}]"#)
     let offer = try #require(GcReport.reclaim(for: watchman, in: gc))
-    #expect(offer.stops == 1 && offer.bytes == 0 && offer.title == "Reclaim memory")
+    #expect(offer.stops == 1 && offer.bytes == 0 && offer.title == "Reclaim Memory")
     #expect(offer.consequence.hasPrefix("Shuts down the watchman daemon."))
   }
 

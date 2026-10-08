@@ -51,9 +51,9 @@ public struct PhonePairing: Sendable {
 
     public var title: String {
       switch self {
-      case .app: return "Get the app"
+      case .app: return "Get the App"
       case .tailscale: return "Tailscale"
-      case .serve: return "Turn on serving"
+      case .serve: return "Turn On Serving"
       case .pair: return "Pair"
       case .done: return "Done"
       }

@@ -15,7 +15,7 @@ struct PairPhoneSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Pair a phone").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Pair a Phone").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(PhonePairing.Step.allCases, id: \.self) { step in
           let done = step < wizard.step || wizard.step == .done
           let current = step == wizard.step && !done
@@ -71,18 +71,18 @@ struct PairPhoneSheet: View {
   private var appContent: some View {
     Group {
       PhoneAppsArt()
-      Text("Get the apps on your phone").font(.stim(.title))
+      Text("Get the Apps on Your Phone").font(.stim(.title))
       HStack(alignment: .top, spacing: Space.md) {
         appCard {
           Text("Stim Mobile").font(.stim(.headline))
           Text("Install Stim Mobile from your TestFlight invitation.").foregroundStyle(Palette.secondary)
-          Link("How to get Stim Mobile", destination: URL(string: "https://stim.appandflow.com/docs/phone-app#install")!)
+          Link("How to Get Stim Mobile", destination: URL(string: "https://stim.appandflow.com/docs/phone-app#install")!)
         }
         appCard {
           Text("Tailscale").font(.stim(.headline))
           QRCodeImage(text: "https://apps.apple.com/app/tailscale/id1470499037").frame(width: 112, height: 112)
           Text("Scan with your phone's camera to get Tailscale.").foregroundStyle(Palette.secondary)
-          Link("Open App Store page", destination: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!)
+          Link("Open App Store Page", destination: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!)
         }
       }
     }
@@ -104,7 +104,7 @@ struct PairPhoneSheet: View {
       case .missing: AddMachineIllustration(scene: .tailnet(connected: false))
       case .checking, .running: PhoneTailnetArt()
       }
-      Text("Connect both to your tailnet").font(.stim(.title))
+      Text("Connect Both to Your Tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
         Text("This Mac").font(.stim(.headline))
         switch wizard.tailscale {
@@ -133,7 +133,7 @@ struct PairPhoneSheet: View {
           .buttonStyle(.stim(.primary, .regular))
         }
         Divider()
-        Text("Your phone").font(.stim(.headline))
+        Text("Your Phone").font(.stim(.headline))
         Text("Open Tailscale on your phone and sign in with the same account as this Mac.").foregroundStyle(Palette.secondary)
       }
     }
@@ -142,7 +142,7 @@ struct PairPhoneSheet: View {
   private var serveContent: some View {
     Group {
       PhoneServeArt()
-      Text("Turning on serving").font(.stim(.title))
+      Text("Turning On Serving").font(.stim(.title))
       checkRow(wizard.serverCheck) {
         switch wizard.server {
         case .running: Text("Stim server is running")
@@ -181,7 +181,7 @@ struct PairPhoneSheet: View {
               let url = detector.matches(in: error, range: NSRange(error.startIndex..., in: error))
                 .compactMap(\.url).first(where: { $0.scheme == "https" && $0.host == "login.tailscale.com" })
             {
-              Link("Open Tailscale setup", destination: url)
+              Link("Open Tailscale Setup", destination: url)
             }
             Button("Try Again") { model.send(.retry) }.buttonStyle(.stim())
           }
@@ -218,8 +218,8 @@ struct PairPhoneSheet: View {
     VStack(alignment: .leading, spacing: Space.sm) {
       Text("Scan with Stim Mobile").font(.stim(.title))
       Picker("Access", selection: Binding(get: { wizard.control }, set: { model.send(.access(control: $0)) })) {
-        Text("View only").tag(false)
-        Text("View and control").tag(true)
+        Text("View Only").tag(false)
+        Text("View and Control").tag(true)
       }.pickerStyle(.segmented)
       Text(
         wizard.control
@@ -248,7 +248,7 @@ struct PairPhoneSheet: View {
               .font(.stim(.callout, mono: true)).foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
           }
         }
-        DisclosureGroup("Can't scan? Enter the endpoint and token", isExpanded: $model.manualExpanded) {
+        DisclosureGroup("Can't Scan? Enter the Endpoint and Token", isExpanded: $model.manualExpanded) {
           VStack(spacing: Space.sm) {
             detail("Endpoint", code.qr.endpoint)
             detail("Token", code.qr.pairingToken, secret: true)

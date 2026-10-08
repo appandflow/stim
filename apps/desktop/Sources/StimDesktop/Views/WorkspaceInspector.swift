@@ -46,7 +46,7 @@ struct Inspector: View {
             SectionLabel(title: archive == nil ? "App / native logs" : "Logs")
             Spacer(minLength: Space.sm)
             if archive?.logsExpired != true {
-              Button("Show logs") {
+              Button("Show Logs") {
                 var query = LogQuery()
                 if archive == nil { query.sources = [.client, .device] }
                 openLogs(query)
@@ -283,7 +283,7 @@ struct MetroLogsSection: View {
         HStack {
           SectionLabel(title: "Metro")
           Spacer(minLength: Space.sm)
-          Button("Show logs", action: openLogs)
+          Button("Show Logs", action: openLogs)
             .buttonStyle(.stim())
             .fixedSize()
             .help("Open Metro logs in the workspace log viewer")
@@ -300,7 +300,7 @@ struct MetroLogsSection: View {
           Text(health.rawValue).foregroundStyle(Palette.tertiary)
           if !showsHeading {
             Spacer(minLength: Space.sm)
-            Button("Show logs", action: openLogs).buttonStyle(.stim()).fixedSize()
+            Button("Show Logs", action: openLogs).buttonStyle(.stim()).fixedSize()
           }
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
@@ -376,7 +376,7 @@ struct WorktreeInspector: View {
           HStack {
             SectionLabel(title: "App / native logs")
             Spacer(minLength: Space.sm)
-            Button("Show logs") {
+            Button("Show Logs") {
               var query = LogQuery()
               query.sources = [.client, .device]
               openLogs(nil, query)
@@ -467,7 +467,7 @@ struct WorkspaceWorkSection: View {
           if actions.expired {
             InlineEmpty("Agent actions expired")
           } else {
-            Button("Show agent actions", action: openActions).buttonStyle(.stim())
+            Button("Show Agent Actions", action: openActions).buttonStyle(.stim())
           }
         }
       }

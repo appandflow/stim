@@ -32,7 +32,7 @@ struct AdvancedSettingsView: View {
             .disabled(!flags.hasOverrides)
         }
       } header: {
-        Text("Feature flags")
+        Text("Feature Flags")
       } footer: {
         Text("Flags are stored on this Mac only.").foregroundStyle(Palette.tertiary)
       }

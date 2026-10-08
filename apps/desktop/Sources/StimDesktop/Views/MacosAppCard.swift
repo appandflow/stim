@@ -43,7 +43,7 @@ struct MacosAppCard: View {
             }
             .disabled(actions.active(for: workspace) != nil)
           }
-          Button("Build and run", systemImage: "play.fill") {
+          Button("Build and Run", systemImage: "play.fill") {
             actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
           }
           .nativeControlStyle(.primary)
@@ -62,7 +62,7 @@ struct MacosAppCard: View {
             Button {
               permissions.openSetup()
             } label: {
-              Label("Allow viewer permissions", systemImage: "exclamationmark.triangle.fill")
+              Label("Allow Viewer Permissions", systemImage: "exclamationmark.triangle.fill")
             }
             .buttonStyle(.borderless)
             .foregroundStyle(Palette.warning)

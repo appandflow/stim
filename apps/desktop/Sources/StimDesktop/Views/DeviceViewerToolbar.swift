@@ -186,11 +186,11 @@ struct DeviceViewerToolbar: View {
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
     {
       if takenOver {
-        Button("Release control", systemImage: "hand.raised.fill") { takenOver = false }
+        Button("Release Control", systemImage: "hand.raised.fill") { takenOver = false }
           .nativeIconStyle()
           .fixedSize()
           .help("Release control so an agent can drive this device again (Escape).")
-          .accessibilityLabel("Release control")
+          .accessibilityLabel("Release Control")
       } else {
         Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
           .tutorialAnchor(.viewerControl, workspace: env.path)
@@ -213,7 +213,7 @@ struct DeviceViewerToolbar: View {
       .fixedSize()
       .disabled(busy)
       .help("stim stop: ends the remote session with the rest of the workspace")
-      .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
         Button("Run stim stop", role: .destructive) {
           actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
         }
@@ -226,7 +226,7 @@ struct DeviceViewerToolbar: View {
 
   @ViewBuilder private func webControls(_ browser: WebBrowser, busy: Bool) -> some View {
     if let url = URL(string: browser.currentURL), ["http", "https"].contains(url.scheme) {
-      Button("Open in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
+      Button("Open in Browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
         .labelStyle(.iconOnly)
         .nativeIconStyle()
         .help("Open \(browser.currentURL) in your default browser. Stim's Chrome and its profile are not involved.")

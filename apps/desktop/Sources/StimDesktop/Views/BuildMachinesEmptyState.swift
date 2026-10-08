@@ -52,7 +52,7 @@ struct BuildMachinesEmptyState: View {
         } else {
           BuildMachineArt()
         }
-        Text(tailscaleOff ? "Tailscale is off" : "No remote Macs").font(.stim(.headline))
+        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Macs").font(.stim(.headline))
         Text(
           tailscaleOff
             ? "Turn on Tailscale on this Mac. Remote Macs reach it over your tailnet, and they show up here once it is connected."

@@ -12,7 +12,7 @@ struct PhoneSetupStep: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Pair your phone (optional)").font(.stim(.title)).accessibilityAddTraits(.isHeader)
+      Text("Pair Your Phone (Optional)").font(.stim(.title)).accessibilityAddTraits(.isHeader)
       Text(
         "Stim Mobile shows this Mac's workspaces, devices and logs over Tailscale. It is read-only unless you allow control."
       )

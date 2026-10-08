@@ -153,7 +153,7 @@ orientations, and the Duo home screen stays portrait.
 When the Desktop viewer is open and the installed devicectl supports hinge
 observation, its preset selection follows changes made by other controllers.
 Arbitrary angles leave all presets unselected. Older tools retain the posture
-Desktop last requested. **Hinge angle** opens a slider from 0 to 180 degrees
+Desktop last requested. **Hinge Angle** opens a slider from 0 to 180 degrees
 while **Control** is on; release it to apply the selected angle. Selecting the
 current preset does nothing.
 When its observed angle is below 180 degrees, the Desktop viewer projects the

@@ -550,7 +550,7 @@ leased until <time>" for each one.`,
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
-                  maxLoadPerCore?, declined? }; an older stim-server omits the
+                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy

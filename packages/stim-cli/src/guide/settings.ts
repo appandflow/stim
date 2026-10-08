@@ -622,7 +622,7 @@ DEVICE HOSTING
 Only \`doctor --fix\` asks for device-host access. A person on that Mac
 approves the printed id with \`stim-server devices grant <id> --device-host\`.
 A person can also run \`stim-server setup\` on the worker: one node, one ticket,
-one expiry, at most one request per capability, with per-grant y/N in a
+one expiry, at most one request per capability, with a per-grant Y/n question (Enter approves) in a
 terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
 approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
