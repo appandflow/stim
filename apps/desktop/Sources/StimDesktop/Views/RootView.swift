@@ -437,15 +437,25 @@ struct RootView: View {
     return Button {
       selection = .notifications
     } label: {
-      HStack(spacing: Space.xs) {
-        NotificationBell(selected: selection == .notifications)
-        if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
+      NotificationBell(selected: selection == .notifications)
+        .padding(.trailing, 6)
+        .frame(width: 46, height: 36)
+        .overlay(alignment: .topTrailing) {
+          if unread > 0 {
+            Text(unread > 99 ? "99+" : "\(unread)")
+              .font(.system(size: 9, weight: .bold))
+              .monospacedDigit()
+              .foregroundStyle(.white)
+              .fixedSize()
+              .padding(.horizontal, 4)
+              .frame(minWidth: 15, minHeight: 15)
+              .background(Capsule().fill(Palette.brand))
+              .padding(.top, 3)
+              .padding(.trailing, 5)
+              .allowsHitTesting(false)
+          }
         }
-      }
-      .padding(.horizontal, Space.sm)
-      .frame(minWidth: 32, minHeight: 32)
-      .contentShape(Capsule())
+        .contentShape(Capsule())
     }
     .buttonStyle(.hoverRow(radius: Radius.round, selected: selection == .notifications))
     .accessibilityLabel("Notifications")
@@ -735,7 +745,7 @@ private struct NotificationBell: View {
   var body: some View {
     let swing = reduceMotion ? 0.0 : 1.0
     return Image(systemName: "bell")
-      .font(.stim(.callout))
+      .font(.system(size: 17))
       .keyframeAnimator(initialValue: Wiggle(), trigger: wiggles) { content, value in
         content
           .foregroundStyle(value.highlight > 0 ? Palette.primary : (selected ? Palette.primary : Palette.text))
