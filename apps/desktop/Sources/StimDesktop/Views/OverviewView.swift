@@ -14,6 +14,7 @@ struct OverviewView: View {
   @State private var pressedCard: SidebarItem?
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
+  @State private var tipState = TryThisStore(defaults: .standard).state
 
   private static let cardWidth: CGFloat = 340
 
@@ -45,7 +46,7 @@ struct OverviewView: View {
     let idle = Overview.idleProjects(
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
     let archived = Overview.recentlyArchived(store.payload?.archived ?? [])
-    let tips = tips
+    let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
         title: "Nothing here yet",
@@ -57,7 +58,7 @@ struct OverviewView: View {
           runningSection(running)
           if !idle.isEmpty { idleSection(idle) }
           if !archived.isEmpty { archivedSection(archived) }
-          if !tips.isEmpty { tipsSection(tips) }
+          if let tip { tipSection(tip) }
         }
         .padding(Space.xxxl)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -246,7 +247,7 @@ struct OverviewView: View {
     }
   }
 
-  private var tips: [TryThisTip] {
+  private var tipInputs: TryThisInputs {
     var inputs = TryThisInputs()
     inputs.remoteMachines =
       machines.settings.error == nil
@@ -254,44 +255,65 @@ struct OverviewView: View {
     inputs.hasEASProject = capabilities.values.contains { $0.eas }
     inputs.hasMacosTarget = capabilities.values.contains { $0.macos }
     inputs.workspaces = store.payload?.environments ?? []
-    return TryThis.select(inputs: inputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic)
+    return inputs
   }
 
-  private func tipsSection(_ tips: [TryThisTip]) -> some View {
+  private var tip: TryThisTip? {
+    TryThis.select(
+      inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic, state: tipState, now: Date(),
+      calendar: .current)
+  }
+
+  private func showNextTip(after tip: TryThisTip) {
+    guard
+      let next = TryThis.next(
+        after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic)
+    else { return }
+    recordTip(next)
+  }
+
+  private func recordTip(_ tip: TryThisTip) {
+    var state = tipState
+    TryThis.record(tip, state: &state, now: Date(), calendar: .current)
+    guard state != tipState else { return }
+    tipState = state
+    TryThisStore(defaults: .standard).state = state
+  }
+
+  private func tipSection(_ tip: TryThisTip) -> some View {
     section("Try this") {
-      let columns = Array(repeating: GridItem(.flexible(), spacing: Space.xl, alignment: .top), count: tips.count)
-      LazyVGrid(columns: columns, alignment: .leading, spacing: Space.xl) {
-        ForEach(tips, id: \.self) { tip in
-          let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
-          Card {
-            VStack(alignment: .leading, spacing: Space.md) {
-              HStack(alignment: .top) {
-                Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
-                Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
-                IconButton(systemImage: "xmark", help: "Dismiss this tip") {
-                  TryThisStore(defaults: .standard).dismiss(tip)
-                  dismissedTips.insert(tip)
-                }
-              }
-              Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-              Text(prompt)
-                .font(.stim(.caption, mono: true))
-                .foregroundStyle(Palette.secondary)
-                .lineLimit(6)
-                .padding(Space.md)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
-              HStack {
-                Spacer(minLength: 0)
-                CopyButton(prompt, title: "Copy prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
-              }
+      let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
+      let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
+      Card {
+        VStack(alignment: .leading, spacing: Space.md) {
+          HStack(alignment: .top) {
+            Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
+            Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            IconButton(systemImage: "xmark", help: "Dismiss this tip") {
+              TryThisStore(defaults: .standard).dismiss(tip)
+              dismissedTips.insert(tip)
             }
-            .padding(Space.xl)
+          }
+          Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          Text(prompt)
+            .font(.stim(.caption, mono: true))
+            .foregroundStyle(Palette.secondary)
+            .lineLimit(6)
+            .padding(Space.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
+          HStack {
+            if hasNext { Button("Next tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
+            Spacer(minLength: 0)
+            CopyButton(prompt, title: "Copy prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
           }
         }
+        .padding(Space.xl)
       }
+      .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
+      .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
     }
   }
 }

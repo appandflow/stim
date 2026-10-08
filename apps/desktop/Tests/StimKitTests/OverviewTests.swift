@@ -122,9 +122,29 @@ struct TryThisTests {
     #expect([TryThisTip.easProfile, .easSimulator, .macos].allSatisfy { TryThis.applicable($0, inputs: project) })
   }
 
+  let calendar: Calendar = {
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = TimeZone(identifier: "UTC")!
+    return calendar
+  }()
+
+  func date(_ day: Int, hour: Int = 9) -> Date {
+    calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour))!
+  }
+
+  func select(
+    _ inputs: TryThisInputs, dismissed: Set<TryThisTip> = [], sidebar: TipTopic? = nil, state: inout TryThisState,
+    at now: Date
+  ) -> TryThisTip? {
+    let tip = TryThis.select(
+      inputs: inputs, dismissed: dismissed, sidebarTopic: sidebar, state: state, now: now, calendar: calendar)
+    if let tip { TryThis.record(tip, state: &state, now: now, calendar: calendar) }
+    return tip
+  }
+
   @Test func offersNoRemoteMacTipOnceRemoteMachinesIsSetOrUnreadable() {
     for machines in [["mini"], nil] as [[String]?] {
-      let tips = TryThis.select(
+      let tips = TryThis.candidates(
         inputs: inputs { $0.remoteMachines = machines }, dismissed: [], sidebarTopic: nil)
       #expect(!tips.contains(.remoteBuild) && !tips.contains(.hostedSimulator))
     }
@@ -132,25 +152,61 @@ struct TryThisTests {
 
   @Test func suggestsRunningOnAPhysicalDeviceWithoutTheStimMobileApp() {
     #expect(TryThis.applicable(.physicalDevice, inputs: inputs()))
-    #expect(TryThis.select(inputs: inputs(), dismissed: [], sidebarTopic: nil).contains(.physicalDevice))
+    #expect(TryThis.candidates(inputs: inputs(), dismissed: [], sidebarTopic: nil).contains(.physicalDevice))
   }
 
-  @Test func skipsDismissedTipsAndTheOneTheSidebarShows() {
-    let tips = TryThis.select(inputs: inputs(), dismissed: [.web], sidebarTopic: .buildMachine)
-    #expect(!tips.contains(.web) && !tips.contains(.remoteBuild))
-    #expect(tips.contains(.hostedSimulator))
+  @Test func keepsTheSameTipAllDayAndRotatesToTheLeastRecentlyShownTheNextDay() {
+    var state = TryThisState()
+    let all = inputs()
+    let candidates = TryThis.candidates(inputs: all, dismissed: [], sidebarTopic: nil)
+    let first = select(all, state: &state, at: date(8))
+    #expect(first == candidates.first)
+    #expect(select(all, state: &state, at: date(8, hour: 23)) == first)
+    var seen = [first]
+    for day in 9..<(8 + candidates.count) { seen.append(select(all, state: &state, at: date(day))) }
+    #expect(Set(seen.compactMap { $0 }).count == candidates.count)
+    #expect(select(all, state: &state, at: date(8 + candidates.count)) == first)
   }
 
-  @Test func showsAtMostThreePreferringFeaturesNotYetUsed() throws {
+  @Test func showsTheNextTipRightAwayAfterADismissalAndSkipsTheSidebarsTip() {
+    var state = TryThisState()
+    let all = inputs()
+    let first = select(all, state: &state, at: date(8))!
+    let second = select(all, dismissed: [first], state: &state, at: date(8, hour: 10))
+    #expect(second != nil && second != first)
+    let sidebar = TryThisTip.allCases.first { $0.sidebarTopic != nil }!
+    state = TryThisState()
+    state.current = .init(tip: sidebar, day: "2026-10-08")
+    let picked = select(all, sidebar: sidebar.sidebarTopic, state: &state, at: date(8))
+    #expect(picked != sidebar)
+    #expect(select(all, dismissed: Set(TryThisTip.allCases), state: &state, at: date(8)) == nil)
+  }
+
+  @Test func nextTipFollowsTheCatalogAndNeverReturnsTheSidebarsTip() {
+    let all = inputs()
+    let catalog = TryThis.candidates(inputs: all, dismissed: [], sidebarTopic: .buildMachine)
+    #expect(!catalog.contains(.remoteBuild))
+    #expect(TryThis.next(after: catalog[0], inputs: all, dismissed: [], sidebarTopic: .buildMachine) == catalog[1])
+    #expect(TryThis.next(after: .remoteBuild, inputs: all, dismissed: [], sidebarTopic: .buildMachine) == .hostedSimulator)
+    let only = Set(TryThisTip.allCases).subtracting([.web])
+    #expect(TryThis.next(after: .web, inputs: all, dismissed: only, sidebarTopic: nil) == nil)
+  }
+
+  @Test func prefersFeaturesNotYetUsedAndRemembersTheStateAcrossLaunches() throws {
     let usedWeb = try workspace(
       ",\"web\":{\"running\":true,\"url\":\"http://localhost:8081/\",\"headless\":true,\"viewport\":\"1x1\",\"profile\":\"p\"}")
     var tips = inputs { $0.workspaces = [usedWeb] }
     tips.remoteMachines = []
-    let picked = TryThis.select(inputs: tips, dismissed: [], sidebarTopic: nil)
-    #expect(picked.count == 3)
-    #expect(!picked.contains(.web))
-    let onlyWeb = TryThis.select(inputs: tips, dismissed: Set(TryThisTip.allCases).subtracting([.web]), sidebarTopic: nil)
-    #expect(onlyWeb == [.web])
+    var state = TryThisState()
+    for day in 8..<20 { #expect(select(tips, state: &state, at: date(day)) != .web) }
+    let onlyWeb = Set(TryThisTip.allCases).subtracting([.web])
+    #expect(select(tips, dismissed: onlyWeb, state: &state, at: date(21)) == .web)
+
+    let name = "TryThisTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: name)!
+    defer { defaults.removePersistentDomain(forName: name) }
+    TryThisStore(defaults: defaults).state = state
+    #expect(TryThisStore(defaults: defaults).state == state)
   }
 
   @Test func readsWhichFeaturesTheWorkspacesAlreadyUse() throws {
