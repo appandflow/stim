@@ -45,7 +45,7 @@ struct SettingsView: View {
     .frame(width: 780, height: 640)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .onAppear {
       if tab == "phones", !flags.phoneApp { tab = "app" }
       if SettingScope(rawValue: tab) != nil {
@@ -69,7 +69,11 @@ struct SettingsView: View {
 
   private var stimSettings: some View {
     let selected = SettingScope(rawValue: scope) ?? .machine
-    return VStack(alignment: .leading, spacing: 0) {
+    return ScopeSettingsView(
+      scope: selected, model: model, workspace: $workspace, workspaces: workspacePaths,
+      title: { store.names(ofPath: $0).title }
+    )
+    .safeAreaInset(edge: .top, spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
         Picker("Scope", selection: $scope) {
           Text("Machine").tag(SettingScope.machine.rawValue)
@@ -79,17 +83,16 @@ struct SettingsView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .tint(Palette.brand)
         .frame(maxWidth: .infinity)
         Text(ScopeSettingsView.caption(for: selected)).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+          .frame(maxWidth: .infinity).multilineTextAlignment(.center)
       }
       .padding(.horizontal, Space.xl)
       .padding(.top, Space.xl)
       .background(Palette.background)
-      ScopeSettingsView(
-        scope: selected, model: model, workspace: $workspace, workspaces: workspacePaths,
-        title: { store.names(ofPath: $0).title }
-      )
     }
+    .background(Palette.background)
   }
 
   private var workspacePaths: [String] {
@@ -107,12 +110,15 @@ struct ScopeSettingsView: View {
   var title: (String) -> String
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 0) {
-      header
-      Rectangle().fill(Palette.border).frame(height: 1)
-      content
-    }
-    .background(Palette.background)
+    content
+      .safeAreaInset(edge: .top, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+          header
+          Rectangle().fill(Palette.border).frame(height: 1).padding(.horizontal, Space.xl)
+        }
+        .background(Palette.background)
+      }
+      .background(Palette.background)
   }
 
   private var header: some View {
