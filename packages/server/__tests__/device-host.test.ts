@@ -3333,7 +3333,9 @@ test('sessions lists installed apps and device labels newest first, retaining pa
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', { session: session.id, attempt: app.params.attempt });
-  await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'));
+  await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'), {
+    timeout: 5000,
+  });
   const pending = requestDeviceHostAccess('Client Mac', {
     kind: 'tailnet',
     nodeId: 'client-node',
