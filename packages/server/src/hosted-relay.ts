@@ -264,6 +264,7 @@ export class HostConnections {
       const endpoint = this.options.endpoint?.(pinned) ?? pinned;
       const key = JSON.stringify([host.machine, token, endpoint.url, endpoint.servername, endpoint.host]);
       let entry = this.open.get(key);
+      const created = !entry;
       if (!entry) {
         const connection = new Upstream(endpoint, token);
         const opened = { connection, ready: connection.open(this.version) };
@@ -284,8 +285,7 @@ export class HostConnections {
       this.options.log?.('host_connect', {
         host: host.machine,
         ms: Date.now() - started,
-        connectMs: entry.connection.connectMs,
-        helloMs: entry.connection.helloMs,
+        ...(created ? { connectMs: entry.connection.connectMs, helloMs: entry.connection.helloMs } : { reused: true }),
       });
       return lease;
     } catch (cause) {

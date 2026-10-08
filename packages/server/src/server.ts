@@ -995,7 +995,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       clearTimeout(timer);
       runId = validRunId(params.client.runId);
       tracker.identify({ id: null, runId });
-      const probeStarted = Date.now();
       const probing = hostHealth();
       const whoisStarted = Date.now();
       const identity = await identify();
@@ -1056,8 +1055,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
       sampler.start();
+      const probeWaited = Date.now();
       const host = options.host ? await probing : undefined;
-      if (options.host) tracker.step(id, 'probe', Date.now() - probeStarted);
+      if (options.host) tracker.step(id, 'probe', Date.now() - probeWaited);
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },

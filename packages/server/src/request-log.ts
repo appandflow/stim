@@ -1,6 +1,7 @@
 import { createDebugLog, type DebugLog } from '@stim-cli/core/state';
 
 const SLOW_MS = 1000;
+const METHOD = /^[a-z][a-z0-9.-]{0,47}$/;
 const ERROR_REPEAT_MS = 60_000;
 const MAX_REMEMBERED = 256;
 
@@ -65,7 +66,7 @@ export function createRequestLog({
         begin(id, method) {
           if (id === null) return;
           if (inflight.size >= MAX_REMEMBERED) inflight.delete(inflight.keys().next().value!);
-          inflight.set(id, { method, start: now(), steps: {} });
+          inflight.set(id, { method: METHOD.test(method) ? method : 'unknown', start: now(), steps: {} });
         },
         step(id, name, ms) {
           const entry = inflight.get(id);

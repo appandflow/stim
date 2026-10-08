@@ -68,5 +68,6 @@ test('a method name cannot add a field or a line to the service log', () => {
   tracker.begin(1, 'x ms=0 error=none\nstim-server: forged');
   tracker.reply({ id: 1, error: { code: 'bad-request' } });
   expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain('method=unknown ');
   expect(lines[0]).not.toMatch(/\n| ms=0 error=none/);
 });

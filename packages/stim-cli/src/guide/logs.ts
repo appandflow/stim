@@ -241,8 +241,11 @@ code) and "host_connect ... error=<reason_with_underscores>" when its connection
 Mac fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
-whois and probe are the hello's Tailscale identity and host permission steps)
-and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>", also as
+whois and probe are the hello's Tailscale identity lookup and its wait for
+the host permission probe; a method name that is not a plain dotted lowercase
+name is logged as unknown)
+and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
+timings when an open connection was shared), also as
 records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
 
 DEBUG LOGS
