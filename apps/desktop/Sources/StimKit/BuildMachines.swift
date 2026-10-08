@@ -191,8 +191,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     /// What the Busy pill adds: the load when it is at its limit, else the builds it runs, else the load.
     var busyDetail: String? {
       let load = loadPerCore.map { "load \(formatLoad($0))/core" }
-      if let loadPerCore, let maxLoadPerCore, loadPerCore >= maxLoadPerCore { return " (\(load!))" }
-      return (buildsText ?? load).map { " (\($0))" }
+      let atLimit = loadPerCore.map { load in maxLoadPerCore.map { load >= $0 } ?? false } ?? false
+      return (atLimit ? load : buildsText ?? load).map { " (\($0))" }
     }
 
     /// The builds it runs, such as "1/2 builds" or "3 builds"; nil when it reported no count.
@@ -201,6 +201,9 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       if let maxBuilds, maxBuilds > 0 { return "\(builds)/\(maxBuilds) builds" }
       return "\(builds) \(builds == 1 ? "build" : "builds")"
     }
+
+    /// A byte count from a remote Mac's JSON number; nil when it is not a whole number that fits.
+    private static func wholeBytes(_ value: Double) -> Int64? { Int64(exactly: value.rounded()) }
 
     /// The load, memory and free disk it reported, with the icon and format the toolbar's resource summary uses.
     /// The CPU entry is the 5-minute load per core, since the offer carries no CPU percentage.
@@ -213,17 +216,15 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
             kind: .cpu, label: "Load", value: "\(formatLoad(loadPerCore))/core",
             tone: fraction.map(UsageThresholds.cpu(fraction:)) ?? .normal))
       }
-      if let memoryUsedBytes, let memoryTotalBytes {
+      if let used = memoryUsedBytes.flatMap(Self.wholeBytes), let total = memoryTotalBytes.flatMap(Self.wholeBytes) {
         items.append(
           MachineResource(
-            kind: .memory, label: "RAM",
-            value: Format.memoryPair(usedBytes: Int64(memoryUsedBytes), totalBytes: Int64(memoryTotalBytes)), tone: .normal))
+            kind: .memory, label: "RAM", value: Format.memoryPair(usedBytes: used, totalBytes: total), tone: .normal))
       }
-      if let diskFreeBytes {
+      if let free = diskFreeBytes.flatMap(Self.wholeBytes) {
         items.append(
           MachineResource(
-            kind: .disk, label: "Disk", value: "\(Format.freeSpace(diskFreeBytes)) free",
-            tone: UsageThresholds.disk(freeBytes: Int64(diskFreeBytes))))
+            kind: .disk, label: "Disk", value: "\(Format.fileSize(free)) free", tone: UsageThresholds.disk(freeBytes: free)))
       }
       return items
     }

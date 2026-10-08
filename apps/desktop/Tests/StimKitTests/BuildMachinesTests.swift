@@ -255,7 +255,7 @@ import Testing
     #expect(
       mini.capacity?.resources == [
         MachineResource(kind: .cpu, label: "Load", value: "0.6/core", tone: .normal),
-        MachineResource(kind: .disk, label: "Disk", value: "825 GB free", tone: .normal),
+        MachineResource(kind: .disk, label: "Disk", value: "825.2 GB free", tone: .normal),
       ])
     #expect(
       mini.problemLines == [
