@@ -10,8 +10,12 @@ public struct StatusPayload: Decodable, Sendable {
   public var archivedUsage: ArchivedUsage?
   /// The same payload as the oversight rules read it; nil when it does not decode as one.
   public var oversight: OversightStatus?
+  /// Absent from a `stim` before 1.16, and nil when the block does not decode.
+  public var maintenance: MaintenanceStatus?
 
-  enum CodingKeys: String, CodingKey { case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage }
+  enum CodingKeys: String, CodingKey {
+    case environments, capacity, unprovisionedWorktrees, machine, archived, archivedUsage, maintenance
+  }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -30,6 +34,7 @@ public struct StatusPayload: Decodable, Sendable {
     }
     archivedUsage = try c.decodeIfPresent(ArchivedUsage.self, forKey: .archivedUsage)
     oversight = try? OversightStatus(from: decoder)
+    maintenance = try? c.decodeIfPresent(MaintenanceStatus.self, forKey: .maintenance)
   }
 }
 

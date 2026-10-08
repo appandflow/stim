@@ -1,10 +1,14 @@
 import AppKit
+import Combine
 import StimKit
 import StimStores
 
 /// Runs Stim's cleanup commands on a schedule while the app runs: `stim gc --idle` for idle devices,
 /// a nightly `stim gc --delete` bounded by age, and an unbounded `stim gc --delete` when free disk falls under
 /// the Stim budget. It also removes worktrees whose pull request was merged or closed, when `stim gc` finds them safe.
+/// When the CLI's own automatic maintenance is on (`MaintenanceStatus.cleansAutomatically`), the CLI clears build
+/// outputs, trims caches and removes finished worktrees, so the disk-pressure run and the finished-pull-request
+/// removal stand down; idle shutdown and the nightly run stay, because the CLI does not do them.
 /// Every run goes through the CLI on the machine action slot, so it never overlaps a cleanup the user
 /// started, and is recorded in the activity log.
 @MainActor
@@ -24,6 +28,8 @@ final class AutopilotRunner: ObservableObject {
   @Published private(set) var finishedPullRequests: [PullRequestCleanup.Flag] = []
   /// Why the last pull request check could not ask GitHub, or nil when it could.
   @Published private(set) var pullRequestCheck: String?
+  /// The CLI's automatic maintenance as the last `stim status --json` reported it; nil from a `stim` without it.
+  @Published private(set) var cliMaintenance: MaintenanceStatus?
 
   private let status: StatusStore
   private let actions: ActionCenter
@@ -43,6 +49,7 @@ final class AutopilotRunner: ObservableObject {
   private var lastPullRequestPoll: Date?
   private var pullRequestVerdict: (candidates: Set<String>, at: Date, nextEligible: Date?)?
   private var activation: NSObjectProtocol?
+  private var maintenanceSubscription: AnyCancellable?
 
   init(
     status: StatusStore, actions: ActionCenter, gc: GcReportStore, disks: DiskVolumeStore, settings: MachineSettingsStore,
@@ -55,7 +62,12 @@ final class AutopilotRunner: ObservableObject {
     self.settings = settings
     self.cli = cli
     log = AutopilotLog.decode(UserDefaults.standard.data(forKey: AppPreferences.Key.autopilotLog))
+    maintenanceSubscription = status.$payload.map { $0?.maintenance }.removeDuplicates().sink { [weak self] in
+      self?.cliMaintenance = $0
+    }
   }
+
+  private var cliCleansAutomatically: Bool { cliMaintenance?.cleansAutomatically == true }
 
   private var defaults: UserDefaults { .standard }
 
@@ -210,6 +222,7 @@ final class AutopilotRunner: ObservableObject {
       return
     }
     let acts = defaults.bool(forKey: AppPreferences.Key.autopilotPressure)
+    if acts, !plan.isEmpty, status.payload == nil || cliCleansAutomatically { return }
     if acts, !plan.isEmpty, actions.active(for: ActionCenter.machineKey) == nil,
       lastPressureRun.map({ Date().timeIntervalSince($0) >= Self.pressureRetry }) ?? true
     {
@@ -294,6 +307,7 @@ final class AutopilotRunner: ObservableObject {
         self.pullRequestVerdict = (candidates, now, report.flatMap(PullRequestCleanup.nextEligible))
         guard let report else { return }
         self.finishedPullRequests = PullRequestCleanup.flagged(report)
+        guard !self.cliCleansAutomatically else { return }
         self.removeFinished(
           PullRequestCleanup.stillRemovable(
             PullRequestCleanup.removable(report), environments: self.status.payload?.environments ?? [],
