@@ -1,7 +1,6 @@
 import Foundation
 
-/// What a device tile says about its device: the header action it offers, a status line, and whether it is still
-/// working. Shut down, booting, live, hosted starting, hosted failed and missing devices each read differently.
+/// What a device tile says about its device: the header action it offers, a status line, and whether it is still working.
 public struct DeviceTileStatus: Equatable, Sendable {
   public enum Phase: Equatable, Sendable {
     case live
@@ -28,10 +27,21 @@ public struct DeviceTileStatus: Equatable, Sendable {
 
   /// `canControl` is whether the device's stream takes input; `building` is whether a build for the device runs.
   public init(device: DeviceRef, canControl: Bool, building: Bool) {
-    let noun = device.platform == "android" ? "emulator" : "simulator"
-    if let machine = device.hostedMachine {
+    self.init(
+      platform: device.platform, hostedMachine: device.hostedMachine, state: device.state, isRunning: device.isRunning,
+      isPhysical: device.isPhysical, canControl: canControl, building: building)
+  }
+
+  /// The same mapping from raw facts, for a surface that has no `DeviceRef`, such as a hosted macOS app. `platform` is
+  /// `ios`, `android`, `web` or `macos`; a hosted `state` is `ready`, `stopped`, `unverified`, `unknown` or `unreachable`.
+  public init(
+    platform: String, hostedMachine: String?, state: String, isRunning: Bool, isPhysical: Bool = false, canControl: Bool,
+    building: Bool
+  ) {
+    let noun = ["android": "emulator", "macos": "app", "web": "page"][platform] ?? "simulator"
+    if let machine = hostedMachine {
       let name = machineName(machine)
-      switch device.state {
+      switch state {
       case "ready": self.init(.live, action: canControl ? .control : .view)
       case "stopped": self.init(.shutDown)
       case "unverified" where building:
@@ -40,13 +50,13 @@ public struct DeviceTileStatus: Equatable, Sendable {
       }
       return
     }
-    if device.state == "missing" {
+    if state == "missing" {
       self.init(.missing, message: "The \(noun) no longer exists.")
-    } else if device.state == "Booting" {
+    } else if state == "Booting" {
       self.init(.booting, message: "Booting \(noun)", progress: true)
-    } else if device.isRunning {
+    } else if isRunning {
       self.init(.live, action: canControl ? .control : .view)
-    } else if device.isPhysical {
+    } else if isPhysical {
       self.init(.disconnected, action: .view)
     } else if building {
       self.init(.booting)

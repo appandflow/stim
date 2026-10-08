@@ -102,4 +102,29 @@ import Testing
     #expect(Format.estimateSuffix(elapsedMs: 63_000, expectedMs: 49_000) == "")
     #expect(Format.estimateSuffix(elapsedMs: 10_000, expectedMs: nil) == "")
   }
+
+  @Test func everyPlatformMapsTheSameStatesToTheSameStatusAndActions() {
+    for platform in ["ios", "android", "macos", "web"] {
+      let noun = ["android": "emulator", "macos": "app", "web": "page"][platform] ?? "simulator"
+      func status(_ state: String, host: String? = nil, running: Bool = false, building: Bool = false) -> DeviceTileStatus {
+        DeviceTileStatus(
+          platform: platform, hostedMachine: host, state: state, isRunning: running, canControl: true, building: building)
+      }
+      #expect(status("stopped").phase == .shutDown)
+      #expect(status("stopped").headerAction == nil)
+      #expect(status("Booting").message == "Booting \(noun)")
+      #expect(status("x", building: true).phase == .booting)
+      #expect(status("detected", running: true).headerAction == .control)
+      #expect(status("ready", host: "mini", running: true).headerAction == .control)
+      let starting = status("unverified", host: "mini", building: true)
+      #expect(starting.message == "Starting \(noun) on mini")
+      #expect(starting.showsProgress && starting.headerAction == nil)
+      let failed = status("unreachable", host: "mini")
+      #expect(failed.phase == .hostedFailed && failed.message == "Cannot confirm the \(noun) on mini")
+      #expect(failed.headerAction == nil)
+      let missing = status("missing")
+      #expect(missing.phase == .missing && missing.message == "The \(noun) no longer exists.")
+      #expect(missing.headerAction == nil)
+    }
+  }
 }
