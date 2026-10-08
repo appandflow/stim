@@ -35,7 +35,7 @@ public struct InboxEntry: Codable, Hashable, Identifiable, Sendable {
     body = notification.body
     target = notification.target
     self.date = date
-    read = false
+    read = suppressed == .muted
     self.suppressed = suppressed
     remedy = notification.remedy
   }

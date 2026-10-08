@@ -1345,6 +1345,7 @@ describe('a directory that is not an app', () => {
     const reported = findings().find((f) => /not a React Native or Expo app/.test(f.title));
     assert(reported);
     expect(reported.level).toBe('cost');
+    expect(reported.code).toBe('not-an-app');
     expect(reported.detail).toContain(join(project, 'package.json'));
     expect(reported.detail).toMatch(/STIM_NO_PROJECT/);
     expect(reported.fix).toMatch(/app directory/);

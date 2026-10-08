@@ -1323,7 +1323,17 @@ running, and a finished pull request's worktree the autopilot keeps. Each item
 notifies once per episode, and the ids still active are kept in the app's
 preferences so a restart does not repeat them. Each
 workspace notifies once per episode, and a later notification replaces the
-earlier one. The first payload after launch records what is already true without
+earlier one. An agent stop notifies **Work finished** once per workspace per
+live run: a stop after the agent drives the workspace again before it goes idle
+adds nothing, and an idle workspace starts a new run when it goes live. Needs you
+notifies once per workspace per run in the same way, with its allowance
+returning when the workspace has no item left. A `stim doctor` finding with the
+code `not-an-app` (the folder is not a React Native or Expo app) raises no
+Needs you notification, because agents run stim in such folders; the finding
+stays in doctor and on the workspace page; a `stim` older than the code gives
+the finding none, so it needs the updated CLI. These limits are Desktop's: the
+phone app's rules in `packages/core/oversight.ts` still push every stop. The first launch with these rules
+marks the existing inbox read, once, and later entries are untouched. The first payload after launch records what is already true without
 notifying, except for Needs you, which notifies each item it has not notified
 before. Desktop does not look up pull requests, so it never notifies a pull
 request ready for review; a merged branch notifies once git finds it merged. The
@@ -1333,12 +1343,14 @@ through stim-server counts as an agent driving it, because Desktop cannot read
 stim-server's leases. The phone app and stim-server do read them, and do not count such a phone as an agent.
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
-**Off**. Every category is Silent by default, except **A Mac asks to build
-here**, which is Alert because a request lapses after 15 minutes. While the main
+**Off**. **Work started** is Off by default, and **A Mac asks to build here**
+is Alert because a request lapses after 15 minutes; every other category is
+Silent. A level you set yourself is kept. While the main
 window is in front, every new Alert or Silent entry gives the top-right bell one
 small wiggle and turns it purple for under a second, and bumps its unread count;
 several arrivals within two seconds wiggle once, and the bell stays still while
-Notifications is open. Off entries only bump the count. Under Reduce Motion the
+Notifications is open. Off entries are stored already read, so they neither wiggle
+the bell nor count as unread. Under Reduce Motion the
 bell keeps the colour and skips the wiggle. A build or
 device-hosting request, which lapses after 15 minutes, and a machine problem
 at Alert level also open a card in the window's top right corner, newest on top,

@@ -65,4 +65,45 @@ struct AttentionNoticesTests {
     #expect(remedyCommand("npm install", workspace: "/a") == nil)
     #expect(remedyCommand("stim stop", workspace: nil) == nil)
   }
+
+  @Test func raisesNothingForAFolderThatIsNotAnApp() {
+    let items = setupItems([
+      DoctorReport(
+        project: "/r",
+        findings: [
+          .init(
+            code: notAnAppFindingCode, level: "cost", title: "This directory is not a React Native or Expo app", detail: "",
+            fix: nil),
+          .init(code: "ccache", level: "cost", title: "ccache is off", detail: "", fix: nil),
+        ])
+    ])
+    #expect(items.count == 2)
+    let result = update([], items)
+    #expect(result.notifications.map(\.id) == ["setup-ccache:/r"])
+  }
+
+  private func notice(_ id: String, _ path: String) -> OversightNotification {
+    OversightNotification(
+      id: id, category: .attention, title: "t", body: "b", quiet: true, thread: nil, target: .workspace(path: path))
+  }
+
+  @Test func allowsOneAttentionPerWorkspacePerRun() {
+    var runs = AttentionRuns()
+    func admit(_ ids: [String], live: Set<String>, present: Set<String> = ["/a", "/b"]) -> [String] {
+      runs.admit(ids.map { notice($0, $0.hasPrefix("b") ? "/b" : "/a") }, live: live, present: present).map(\.id)
+    }
+    #expect(admit(["a1", "a2", "b1"], live: ["/a"]) == ["a1", "b1"])
+    #expect(admit(["a3"], live: ["/a"]).isEmpty)
+    #expect(admit(["a3"], live: []).isEmpty)
+    #expect(admit(["a4"], live: ["/a"]) == ["a4"])
+    #expect(admit([], live: ["/a"], present: ["/a"]).isEmpty)
+    #expect(admit(["b2"], live: ["/a"]) == ["b2"])
+  }
+
+  @Test func letsAMachineItemThroughAlways() {
+    var runs = AttentionRuns()
+    let machine = OversightNotification(
+      id: "m", category: .attention, title: "t", body: "b", quiet: true, thread: nil, target: .machine)
+    #expect(runs.admit([machine, machine], live: [], present: []).count == 2)
+  }
 }

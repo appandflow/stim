@@ -13,6 +13,7 @@ final class OversightNotifier: ObservableObject {
   private let machine: String
   var keptWorktrees: @MainActor () -> [PullRequestCleanup.Flag] = { [] }
   private var attention = Set(UserDefaults.standard.stringArray(forKey: NotificationSettings.attentionKey) ?? [])
+  private var attentionRuns = AttentionRuns()
   private let awakeSince = Date().timeIntervalSince1970 * 1000
   private var state: OversightState?
   private var volumes: [OversightInput.Volume]?
@@ -91,7 +92,8 @@ final class OversightNotifier: ObservableObject {
       attention = result.active
       UserDefaults.standard.set(attention.sorted(), forKey: NotificationSettings.attentionKey)
     }
-    return result.notifications
+    let live = Set((store.payload?.oversight?.environments ?? []).filter { !Oversight.isIdle($0) }.map(\.path))
+    return attentionRuns.admit(result.notifications, live: live, present: result.paths)
   }
 
   private func memoryPressure() -> MemoryPressureLevel? {

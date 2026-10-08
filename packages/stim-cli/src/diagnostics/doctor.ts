@@ -1172,7 +1172,7 @@ function androidCcacheFindings(
 function checkAppProject(projectRoot: string): Finding | null {
   const problem = appProjectProblem(projectRoot);
   if (!problem) return null;
-  return finding(
+  const result = finding(
     'cost',
     problem.kind === 'unreadable'
       ? 'This package.json does not parse'
@@ -1180,6 +1180,8 @@ function checkAppProject(projectRoot: string): Finding | null {
     `${problem.message} \`stim start\`, \`stim ios\` and \`stim android\` refuse here with STIM_NO_PROJECT, so nothing below was measured against an app.`,
     problem.remedy,
   );
+  if (problem.kind === 'not-an-app') result.code = 'not-an-app';
+  return result;
 }
 
 function agentDeviceIsOnPath(): boolean {
