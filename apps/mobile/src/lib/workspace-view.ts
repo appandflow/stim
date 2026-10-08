@@ -246,8 +246,8 @@ export function diskParts(env: EnvironmentState): DiskPart[] | null {
   const splitOut = parts.some((part) => part.kind === 'nodeModules');
   const labels = {
     nodeModules: 'node_modules',
-    worktree: splitOut ? t`Rest of Worktree` : t`Worktree`,
-    build: t`Build Output`,
+    worktree: splitOut ? t`Rest of worktree` : t`Worktree`,
+    build: t`Build output`,
   };
   return parts.length ? parts.map((part) => ({ ...part, label: labels[part.kind] })) : null;
 }
@@ -497,7 +497,7 @@ export function phaseName(phase: BuildPhase): string {
     case 'prepare':
       return t`Prepare`;
     case 'cache-lookup':
-      return t`Cache Lookup`;
+      return t`Cache lookup`;
     case 'wait':
       return t`Wait`;
     case 'prebuild':

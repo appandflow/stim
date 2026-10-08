@@ -1041,8 +1041,8 @@ msgid "Build Machines"
 msgstr "Build Machines"
 
 #: src/lib/workspace-view.ts
-msgid "Build Output"
-msgstr "Build Output"
+msgid "Build output"
+msgstr "Build output"
 
 #: src/lib/machine-report.ts
 msgid "Build outputs of {workspace}"
@@ -1202,8 +1202,8 @@ msgid "Cache Hits"
 msgstr "Cache Hits"
 
 #: src/lib/workspace-view.ts
-msgid "Cache Lookup"
-msgstr "Cache Lookup"
+msgid "Cache lookup"
+msgstr "Cache lookup"
 
 #: src/lib/format.ts
 msgid "Cache miss"
@@ -3370,8 +3370,8 @@ msgid "resources not measured"
 msgstr "resources not measured"
 
 #: src/lib/workspace-view.ts
-msgid "Rest of Worktree"
-msgstr "Rest of Worktree"
+msgid "Rest of worktree"
+msgstr "Rest of worktree"
 
 #: src/hooks/app-update.ts
 msgid "Restart"
