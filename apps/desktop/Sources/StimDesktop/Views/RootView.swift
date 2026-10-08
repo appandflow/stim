@@ -35,6 +35,7 @@ struct RootView: View {
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
+  @State private var showingAllWorktrees: Project?
   @State private var focusedDeviceID: String?
   @State private var logQuery = LogQuery()
   @State private var archivedLogQuery = LogQuery()
@@ -289,11 +290,13 @@ struct RootView: View {
         if case .archived = old {} else { previousSelection = old }
       }
       restoredProject = true
+      if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
       case .overview, .wall:
         projectFilter = nil
         openRequests.selectedWorkspace = nil
       case .project(let project):
+        if showingAllWorktrees != project { showingAllWorktrees = nil }
         projectFilter = project
         lastProjectPath = project.root
         openRequests.selectedWorkspace = store.environments(in: project).first?.path
@@ -685,10 +688,17 @@ struct RootView: View {
     case .overview:
       OverviewView(
         store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic, selection: $selection,
-        openLogs: openErrors)
+        openLogs: openErrors,
+        openIdleProject: { project in
+          showingAllWorktrees = project
+          selection = .project(project)
+        })
     default:
       WallView(
-        store: store, metrics: metrics, project: projectFilter, selection: $selection, openLogs: openErrors,
+        store: store, metrics: metrics, project: projectFilter,
+        scope: projectFilter.map { ProjectPage.scope(of: $0, showingAll: showingAllWorktrees) } ?? .active,
+        setScope: { showingAllWorktrees = $0 == .all ? projectFilter : nil },
+        selection: $selection, openLogs: openErrors,
         openDevice: { path, deviceID in
           focusedDeviceID = deviceID
           selection = .environment(path)

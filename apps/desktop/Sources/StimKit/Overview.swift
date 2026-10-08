@@ -14,6 +14,13 @@ public struct IdleProject: Hashable, Identifiable, Sendable {
 
 public enum Overview {
   public static let archivedShown = 5
+  public static let idleShown = 6
+
+  /// The idle projects to show: all of them when `expanded`, otherwise the first `idleShown`.
+  public static func visibleIdle(_ items: [IdleProject], expanded: Bool) -> (shown: [IdleProject], hidden: Int) {
+    guard !expanded, items.count > idleShown else { return (items, 0) }
+    return (Array(items.prefix(idleShown)), items.count - idleShown)
+  }
 
   /// The projects without an active workspace, most recently used first, then by name.
   public static func idleProjects(
@@ -193,5 +200,34 @@ public struct ProjectCapabilities: Equatable, Sendable {
       if stim.contains("\"macos\"") || package.contains(".executableTarget") { result.macos = true }
     }
     return result
+  }
+}
+
+/// Which of a project's worktrees its page lists.
+public enum ProjectScope: Sendable {
+  case active, all
+}
+
+public enum ProjectPage {
+  public enum Content: Equatable, Sendable {
+    /// The worktrees to list, active ones first.
+    case worktrees([Workspace])
+    /// The project has worktrees but none is active, and the scope is `active`.
+    case noneActive
+    case empty
+  }
+
+  /// A project page shows all worktrees only for the project the user opened from an idle row; any other
+  /// navigation starts at the active worktrees.
+  public static func scope(of project: Project, showingAll: Project?) -> ProjectScope {
+    showingAll == project ? .all : .active
+  }
+
+  public static func content(environments: [Workspace], scope: ProjectScope) -> Content {
+    let active = environments.filter(\.isActive)
+    switch scope {
+    case .active: return active.isEmpty ? (environments.isEmpty ? .empty : .noneActive) : .worktrees(active)
+    case .all: return environments.isEmpty ? .empty : .worktrees(active + environments.filter { !$0.isActive })
+    }
   }
 }

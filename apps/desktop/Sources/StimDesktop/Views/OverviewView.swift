@@ -9,6 +9,8 @@ struct OverviewView: View {
   var sidebarTopic: TipTopic?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  var openIdleProject: (Project) -> Void
+  @State private var showsAllIdle = false
   @State private var pressedCard: SidebarItem?
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
@@ -52,7 +54,7 @@ struct OverviewView: View {
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.xxl) {
-          if !running.isEmpty { runningSection(running) }
+          runningSection(running)
           if !idle.isEmpty { idleSection(idle) }
           if !archived.isEmpty { archivedSection(archived) }
           if !tips.isEmpty { tipsSection(tips) }
@@ -77,7 +79,16 @@ struct OverviewView: View {
   }
 
   private func runningSection(_ items: [(summary: ProjectSummary, worktrees: [WorktreePage])]) -> some View {
-    section("Running") {
+    section("Active") {
+      if items.isEmpty {
+        Card {
+          InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
+            .font(.stim(.callout))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Space.xl)
+            .padding(.vertical, Space.lg)
+        }
+      }
       LazyVGrid(
         columns: [
           GridItem(.adaptive(minimum: Self.cardWidth, maximum: Self.cardWidth * 1.4), spacing: Space.xl, alignment: .top)
@@ -160,47 +171,58 @@ struct OverviewView: View {
   }
 
   private func idleSection(_ items: [IdleProject]) -> some View {
-    section("Idle projects") {
-      Card {
-        VStack(spacing: 0) {
-          ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-            if index > 0 { Rectangle().fill(Palette.border).frame(height: 1) }
-            idleRow(item)
-          }
+    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle)
+    return section("Idle projects") {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: Space.lg, alignment: .top)],
+        alignment: .leading, spacing: Space.lg
+      ) {
+        ForEach(shown) { idleCard($0) }
+      }
+      if items.count > Overview.idleShown {
+        Button(showsAllIdle ? "Show less" : "Show more (\(hidden))") {
+          withAnimation(.easeInOut(duration: 0.15)) { showsAllIdle.toggle() }
         }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .foregroundStyle(Palette.primary)
       }
     }
   }
 
-  private func idleRow(_ item: IdleProject) -> some View {
+  private func idleCard(_ item: IdleProject) -> some View {
     Button {
-      selection = .project(item.project)
+      openIdleProject(item.project)
     } label: {
-      HStack(spacing: Space.lg) {
-        Text(store.title(of: item.project)).font(.stim(.headline)).foregroundStyle(Palette.text).lineLimit(1)
-        Text(countLabel(item.workspaces, "worktree")).font(.stim(.callout)).foregroundStyle(Palette.tertiary).fixedSize()
-        Spacer(minLength: Space.lg)
-        if let pullRequest = item.pullRequest {
-          Pill(tone: pullRequest.state == "draft" ? .neutral : .brand) {
-            Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
+      Card {
+        VStack(alignment: .center, spacing: Space.md) {
+          Text(store.title(of: item.project)).font(.stim(.headline)).foregroundStyle(Palette.text).lineLimit(1)
+          Text(
+            [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+              .compactMap { $0 }.joined(separator: " \u{00B7} ")
+          )
+          .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+          FlowLayout(spacing: Space.sm, lineSpacing: Space.sm) {
+            if let pullRequest = item.pullRequest {
+              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand) {
+                Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
+              }
+            }
+            if let failed = item.failedBuild {
+              Pill(tone: .error) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
+            }
+            if item.errors > 0 {
+              Pill(tone: .error) { Text(countLabel(item.errors, "error")) }
+            }
           }
         }
-        if let failed = item.failedBuild {
-          Pill(tone: .error) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
-        }
-        if item.errors > 0 {
-          Pill(tone: .error) { Text(countLabel(item.errors, "error")) }
-        }
-        if let date = item.lastActivity {
-          Text(Format.age(Date().timeIntervalSince(date))).font(.stim(.callout)).foregroundStyle(Palette.tertiary).fixedSize()
-        }
-        Image(systemName: "chevron.right").font(.stim(.caption)).foregroundStyle(Palette.tertiary)
+        .padding(Space.lg)
+        .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
+        .multilineTextAlignment(.center)
+        .contentShape(Rectangle())
       }
-      .padding(.horizontal, Space.xl)
-      .padding(.vertical, Space.lg)
-      .contentShape(Rectangle())
     }
-    .buttonStyle(.hoverRow(radius: 0))
+    .buttonStyle(CardPressStyle())
+    .hoverHighlight(radius: Radius.card)
     .accessibilityHint("Open project")
   }
 

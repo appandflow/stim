@@ -65,12 +65,16 @@ The bell at the top right opens **Notifications** and shows the unread count.
 **Overview**, **Active worktrees** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls.
 
-**Overview** is the default launch page. Running projects come first, as cards
-with a live preview of one device each; **Show more (N)** counts the other
-running devices and worktrees, and clicking a card opens the project. Idle
-projects follow in a compact list, newest activity first, with the pull request
-that is open, a failed last build and the errors since the last marker; clicking
-a row opens the project. A **Recently archived** row lists the last five
+**Overview** is the default launch page. The **Active** section comes first, as
+cards with a live preview of one device each; **Show more (N)** counts the other
+running devices and worktrees, and clicking a card opens the project. With nothing
+running it says where active projects will appear. **Idle projects** follow as
+compact cards in an adaptive grid, newest activity first, with the pull request
+that is open, a failed last build and the errors since the last marker. The grid
+shows six, and **Show more (N)** expands the rest in place. Clicking a card opens
+the project with all its worktrees, under a **Showing all worktrees** chip that
+returns to the active ones; the saved sidebar filter does not change. A project
+page whose worktrees are all inactive offers **Show all**. A **Recently archived** row lists the last five
 archives, and **Try this** suggests up to three features with a copyable agent
 prompt each (see below). A single running project gets one centered card.
 
