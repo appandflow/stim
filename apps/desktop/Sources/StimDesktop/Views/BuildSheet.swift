@@ -91,7 +91,7 @@ struct BuildSheet: View {
               if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
             } else {
               EmptyState(
-                title: "No \(platformName(platform)) build recorded",
+                title: "No \(platformName(platform)) Build Recorded",
                 message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
               )
               .padding(Space.xxl)
@@ -145,7 +145,7 @@ struct BuildSheet: View {
           if let query = LogQuery.build(
             platform: "macos", slot: "default", startedAt: macos.build.startedAt, finishedAt: macos.build.finishedAt)
           {
-            Button("Build logs") {
+            Button("Build Logs") {
               dismiss()
               revealLogs(query)
             }.buttonStyle(.stim())
@@ -216,7 +216,7 @@ struct BuildSheet: View {
           )
           checkButton
         }
-        Button("Open in logs panel") {
+        Button("Open in Logs Panel") {
           if let query = run.flatMap({
             LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
           }) {

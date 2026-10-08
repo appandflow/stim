@@ -22,7 +22,7 @@ struct OverviewView: View {
   var body: some View {
     if store.payload == nil {
       if let error = store.error {
-        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -50,7 +50,7 @@ struct OverviewView: View {
     let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
-        title: "Nothing here yet",
+        title: "Nothing Here Yet",
         message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true)
     } else {
@@ -310,9 +310,9 @@ struct OverviewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
           HStack {
-            if hasNext { Button("Next tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
+            if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
             Spacer(minLength: 0)
-            CopyButton(prompt, title: "Copy prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+            CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
           }
         }
         .padding(Space.xl)

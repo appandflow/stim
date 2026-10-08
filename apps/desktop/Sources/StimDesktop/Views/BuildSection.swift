@@ -54,7 +54,7 @@ struct BuildSection: View {
             platform: "macos", slot: "default", startedAt: macos.build.startedAt,
             finishedAt: macos.build.finishedAt)
           {
-            Button("Build logs") { openLogs(query) }
+            Button("Build Logs") { openLogs(query) }
               .buttonStyle(.stim())
               .fixedSize()
           }
@@ -116,14 +116,14 @@ struct BuildSection: View {
           RunningBuildDetail(env: env, build: building)
         } else {
           VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Text("Last Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
             lastBuild(platform)
           }
           if !readOnly {
             Divider().overlay(Palette.border)
             VStack(alignment: .leading, spacing: Space.sm) {
               HStack {
-                Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+                Text("Next Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
                 Spacer(minLength: Space.sm)
                 checkButton(platform, entry: entry)
               }
@@ -397,7 +397,7 @@ struct BuildDiagnosticsView: View {
           .textSelection(.enabled)
       }
       if diagnostics.count > 1 {
-        Button(expanded ? "Show fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
+        Button(expanded ? "Show Fewer" : "Show \(countLabel(diagnostics.count - 1, "more error", plural: "more errors"))") {
           expanded.toggle()
         }
         .buttonStyle(.link)

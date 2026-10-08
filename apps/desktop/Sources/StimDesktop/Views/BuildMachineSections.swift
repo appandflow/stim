@@ -9,7 +9,7 @@ struct ThisMacPlacements: View {
   var body: some View {
     if !(model.entries ?? []).isEmpty, let offload = model.stats.value?.offload, !offload.placements.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        Text("Where builds ran").font(.stim(.headline))
+        Text("Where Builds Ran").font(.stim(.headline))
         Text(
           "Today: \(offload.today.here) here, \(offload.today.offloaded) on a remote Mac, \(offload.today.fellBack) here after trying one."
         )
