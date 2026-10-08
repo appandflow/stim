@@ -101,7 +101,7 @@ export function buildPlacementRecord({
   return placementRecord({
     ...base,
     event: outcome.event ?? 'build_placement',
-    choice: { machine: 'local', code, msg: reason },
+    choice: { machine: 'local', code, msg: 'building on this Mac' },
     fallback: { code, msg: reason, ...(machine ? { machine } : {}) },
   });
 }
