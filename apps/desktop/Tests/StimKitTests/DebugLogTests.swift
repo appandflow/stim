@@ -16,10 +16,12 @@ import Testing
     "setup ticket abcdEFGH0123ijklMNOP4567qrstUVWX8901yzAB",
     "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
     "open https://host.example/pair?token=abc123def456&x=1",
+    "error STIM_BAD_ARG: unknown flag --token abc123def456 (run: desktop-1)",
   ])
   func redactsSecretShapes(_ line: String) {
     let redacted = DebugLogRedaction.redact(line)
     #expect(redacted.contains(DebugLogRedaction.placeholder))
+    #expect(DebugLogRedaction.redact(redacted) == redacted)
     for secret in ["abc123def456", "0123456789abcdef", "abcdEFGH0123", "abc.def-123", "eyJzdWIi", "key@o1"] {
       #expect(!redacted.contains(secret), "\(secret) survived in \(redacted)")
     }

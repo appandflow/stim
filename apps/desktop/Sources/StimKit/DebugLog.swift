@@ -25,6 +25,7 @@ public enum DebugLog {
   }
 
   public static let subsystem = "dev.stim.desktop"
+  private static let pid = ProcessInfo.processInfo.processIdentifier
 
   public static var logURL: URL {
     FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stim/Desktop.log")
@@ -68,7 +69,7 @@ public enum DebugLog {
       case .warning: logger?.warning("\(text, privacy: .public)")
       case .error: logger?.error("\(text, privacy: .public)")
       }
-      file.append("\(file.timestamp(now)) \(level.label) \(category.rawValue) \(text)\n")
+      file.append("\(file.timestamp(now)) \(pid) \(level.label) \(category.rawValue) \(text)\n")
     }
   }
 
@@ -196,7 +197,7 @@ final class LockedValue<Value>: @unchecked Sendable {
   func withLock<T>(_ body: (inout Value) -> T) -> T { lock.withLock { body(&value) } }
 }
 
-/// Appends lines to a file and keeps `maxBytes` per file and `keep` older files (`Desktop.1.log`, `Desktop.2.log`, ...).
+/// Appends lines to a file (O_APPEND, so Desktop copies sharing the path interleave whole lines) and keeps `maxBytes` per file and `keep` older files (`Desktop.1.log`, `Desktop.2.log`, ...).
 public final class DebugLogFile: @unchecked Sendable {
   let queue = DispatchQueue(label: "dev.stim.desktop.debuglog", qos: .utility)
   private let url: URL
@@ -235,10 +236,11 @@ public final class DebugLogFile: @unchecked Sendable {
   private func open() {
     let fm = FileManager.default
     try? fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    if !fm.fileExists(atPath: url.path) { fm.createFile(atPath: url.path, contents: nil) }
-    guard let handle = try? FileHandle(forWritingTo: url) else { return }
-    size = Int((try? handle.seekToEnd()) ?? 0)
-    self.handle = handle
+    let descriptor = Darwin.open(url.path, O_WRONLY | O_APPEND | O_CREAT, 0o600)
+    guard descriptor >= 0 else { return }
+    var info = stat()
+    size = fstat(descriptor, &info) == 0 ? Int(info.st_size) : 0
+    handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
   }
 
   private func rotate() {
@@ -277,7 +279,7 @@ public enum DebugLogRedaction {
     let patterns: [(String, String)] = [
       ("(?i)\\bbearer\\s+[\\w.~+/=-]+", "Bearer \(placeholder)"),
       ("(?i)(--\(secretName))(?:=|\\s+)(?:\"[^\"]*\"|'[^']*'|\\S+)", "$1=\(placeholder)"),
-      ("(?i)(\"?\(secretName)\"?\\s*[:=]\\s*)(?:\"[^\"]*\"|'[^']*'|[^\\s,&}\\]]+)", "$1\(placeholder)"),
+      ("(?i)(\"?\(secretName)\"?\\s*[:=]\\s*)(?!\\[redacted\\])(?:\"[^\"]*\"|'[^']*'|[^\\s,&}\\]]+)", "$1\(placeholder)"),
       ("(?i)([a-z][a-z0-9+.-]*://)[^\\s/@]+@", "$1\(placeholder)@"),
       ("(?i)([?&](?:token|ticket|secret|key|code|pair\\w*)=)[^\\s&]+", "$1\(placeholder)"),
       ("\\beyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+\\b", placeholder),

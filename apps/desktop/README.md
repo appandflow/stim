@@ -1733,6 +1733,23 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 `scripts/release.sh <version>` builds the signed, notarized universal DMG and zip; see [RELEASING.md](./RELEASING.md).
 
+## Debug log
+
+Stim Desktop keeps a local debug log for finding out what happened when something goes wrong. It stays on this Mac: nothing is uploaded. Lines go to `~/Library/Logs/Stim/Desktop.log`, which rotates at 2 MB and keeps three older files (`Desktop.1.log` to `Desktop.3.log`, about 8 MB in all), and to `os.Logger` under the subsystem `dev.stim.desktop` with the categories `app`, `cli`, `server`, `decode`, `navigation`, `stall`, `sampler` and `stream`, so Console.app can filter them. Each line is `<time> <pid> <level> <category> <message>`; Desktop copies that run side by side append to the same file and are told apart by pid.
+
+By default it records warnings and errors only: `stim` and `stim-server` runs that fail (exit status, `STIM_*` error code, last stderr lines), main-thread stalls, sampler gaps (why CPU, RAM or disk could not be measured), JSON decode failures (the type and coding path, never the payload), and device stream errors. A stall is a main-thread block of 250 ms or more; the line names the sidebar destination and the last CLI command. The watchdog is one utility-queue timer, four wakeups a second, and one empty block on the main queue per tick.
+
+Debug level adds every CLI run with its arguments and working directory, each `STIM_RUN_ID`, navigation, stim-server state changes and stream start and stop. Turn it on with a defaults key, then relaunch:
+
+```sh
+defaults write dev.stim.desktop debugLogging -bool YES
+defaults delete dev.stim.desktop debugLogging   # back to the default level
+```
+
+A Stim Dev or `stim macos` copy has another bundle id; pass `-debugLogging YES` as a launch argument instead.
+
+Every `stim` and `stim-server` process Desktop starts gets `STIM_RUN_ID=desktop-<12 hex digits>`, the same id the log line carries, so a Desktop action can be followed into the CLI and server. Desktop never logs environment values. Before a line is written, `DebugLogRedaction` replaces token, ticket, secret, password, authorization and DSN values, `--token`-style flag values, bearer values, URL credentials, JWTs and long opaque strings. Help > Reveal Debug Log shows the file in Finder. Help > Copy Diagnostics copies the log path, the Desktop, macOS, `stim` and `stim-server` versions and the output of `stim doctor --json` for the selected workspace, redacted the same way.
+
 ## Crash reports
 
 Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa, linked statically from its `Sentry` product. It starts Sentry only when the bundle's Info.plist carries a DSN in `StimSentryDSN`. The DSN is not in the repository: `scripts/bundle.sh --release` writes it from the environment, so `swift run`, `swift test`, Stim Dev, a bundle built without it, forks and CI report nothing and send nothing.
