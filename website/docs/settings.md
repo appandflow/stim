@@ -757,9 +757,9 @@ See [archived workspaces](./worktrees.md#archived-workspaces) for privacy and de
 
 ## Automatic maintenance
 
-`maintenance.mode` is `report` by default: a pass measures, plans and logs and
-deletes nothing. `on` also removes what `stim gc --delete` would remove under
-the caps and floors below, and `off` disables passes.
+`maintenance.mode` is `on` by default: a pass removes what `stim gc --delete`
+would remove under the caps and floors below and logs every action. `report`
+measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs
@@ -767,7 +767,7 @@ or remove its worktree. GB and MB below mean GiB and MiB.
 
 | Setting                               | Type                     | Default           | Environment override                         |
 | ------------------------------------- | ------------------------ | ----------------- | -------------------------------------------- |
-| `maintenance.mode`                    | off / report / on        | report            | `STIM_MAINTENANCE`                           |
+| `maintenance.mode`                    | off / report / on        | on                | `STIM_MAINTENANCE`                           |
 | `maintenance.pressureCheckMinutes`    | integer >= 1             | 1 minute          | `STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES`    |
 | `maintenance.sizeCheckMinutes`        | integer >= 1             | 60 minutes        | `STIM_MAINTENANCE_SIZE_CHECK_MINUTES`        |
 | `maintenance.maxLoadPerCore`          | number > 0               | 4                 | `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`         |

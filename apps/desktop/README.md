@@ -666,6 +666,25 @@ status under **Autopilot activity**.
   merged PRs". Without `gh`, or signed out, nothing is removed by this option;
   the nightly cleanup still removes worktrees git shows as merged.
 
+**Stim's automatic maintenance.** When `stim status --json` reports
+`maintenance.mode` `on` (the default from stim 1.17.3) with valid settings and
+no unresolved claim, the CLI clears build outputs, trims caches and removes
+finished worktrees on its own. The app then skips two of the options above: the
+disk-pressure `stim gc --delete` run, and `stim worktree remove` for finished
+pull requests (it still polls `gh` and notifies in **Needs you** about the
+finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
+running, because the CLI does not do them: the nightly run is also what deletes
+unused and parked devices and removes clean idle worktrees by age. With a `stim`
+older than 1.17.3, or `maintenance.mode` set to `report` or `off`, or while the
+status payload has not loaded, the app runs everything as before. It also
+removes finished worktrees itself when the CLI's worktree check has not run in
+the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
+and when the CLI's last pass was blocked while disk is still under the budget it
+posts the pressure notification with **Do it** instead of running `stim gc
+--delete` on its own. The
+**Autopilot** section shows the last pass (actions and bytes freed) while the
+CLI cleans automatically.
+
 While free disk is under the budget, the Machine page shows the plan, such as
 "Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
 free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and

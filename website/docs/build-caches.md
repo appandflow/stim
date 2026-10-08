@@ -258,9 +258,10 @@ shared caches on a different volume. The same values can live in the machine con
 ## Automatic maintenance
 
 CLI commands and `status --watch` start a detached maintenance pass when a
-check is due. In the default `report` mode a pass only measures, plans and
-logs. In `on` mode it also removes what `stim gc --delete` would remove, under
-the caps and floors in [settings](./settings.md#automatic-maintenance).
+check is due. In the default `on` mode a pass removes what `stim gc --delete`
+would remove, under the caps and floors in
+[settings](./settings.md#automatic-maintenance). In `report` mode it only
+measures, plans and logs.
 Disk and memory pressure are checked every minute, Stim-owned directory sizes
 every hour, finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
@@ -319,12 +320,13 @@ default and is reported there.
 A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
 with the holder and recovery guidance.
 
-The default mode is `report`, or `off` under `STIM_HOME` or `CI` unless
-`STIM_MAINTENANCE` is explicit. Let passes act, or turn them off, with:
-
-<StimTabs code="stim settings set maintenance.mode on" />
+The default mode is `on`, or `off` under `STIM_HOME` or `CI` unless
+`STIM_MAINTENANCE` is explicit. Passes delete by default. Turn them off, or
+keep only the plan and the log, with:
 
 <StimTabs code="stim settings set maintenance.mode off" />
+
+<StimTabs code="stim settings set maintenance.mode report" />
 
 Pin one workspace with `stim settings set maintenance.keep true` in its project.
 

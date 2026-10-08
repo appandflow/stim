@@ -34,7 +34,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const settings = resolveMaintenanceSettings(null, {})!;
+const settings = resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'report' })!;
 const budget = {
   minFreeDiskMb: 20 * 1024,
   hardFloorDiskMb: 5 * 1024,
@@ -138,6 +138,7 @@ test('maintenance settings reject unknown modes and invalid ranges before they c
     expect(settingValueError(definition, good)).toBeNull();
   }
   expect(coerceSettingText(settingDefinition('maintenance.logChecks')!, '1')).toBe(true);
+  expect(resolveMaintenanceSettings(null, {})?.mode).toBe('on');
   expect(resolveMaintenanceSettings(null, { STIM_HOME: home })?.mode).toBe('off');
   expect(resolveMaintenanceSettings(null, { CI: '1' })?.mode).toBe('off');
   expect(

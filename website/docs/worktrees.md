@@ -284,6 +284,10 @@ stim gc --delete
 stim gc --delete --worktrees --older-than 3`}
 />
 
+Automatic maintenance (`maintenance.mode`, on by default) removes finished
+worktrees on its own, by the same rules as `gc --delete`; turn that off with
+`maintenance.removeFinishedWorktrees false`.
+
 `gc` lists every linked worktree that has a Stim workspace and says why each
 one is removed or kept. A worktree is finished when its branch is merged into
 the default branch, or when its pull request was merged or closed, and plain

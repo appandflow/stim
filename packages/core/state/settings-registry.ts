@@ -506,7 +506,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'maintenance.mode',
     type: { kind: 'choice', choices: ['off', 'report', 'on'] },
     scopes: MACHINE,
-    default: 'report',
+    default: 'on',
     env: 'STIM_MAINTENANCE',
     scopedHomeValue: 'off',
     ciValue: 'off',
