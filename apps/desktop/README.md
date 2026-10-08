@@ -72,7 +72,7 @@ running it says where active projects will appear. **Idle projects** follow as
 compact cards in an adaptive grid, newest activity first, with the pull request
 that is open, a failed last build and the errors since the last marker. The grid
 shows six, and **Show more (N)** expands the rest in place. Clicking a card opens
-the project with all its worktrees, under a **Showing all worktrees** chip that
+the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show all**. A **Recently archived** row lists the last five
 archives, and **Try this** suggests up to three features with a copyable agent

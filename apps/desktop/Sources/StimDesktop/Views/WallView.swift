@@ -52,7 +52,7 @@ struct WallView: View {
                   setScope(.active)
                 } label: {
                   Pill {
-                    Text("Showing all worktrees")
+                    Text("Showing all workspaces")
                     Image(systemName: "xmark").font(.stim(.caption))
                   }
                 }
