@@ -165,7 +165,6 @@ public struct StimCLI: Sendable {
       command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra },
       timeout: timeout)
     request.captureStderr = true
-    request.timeout = timeout
     let result = try await request.run()
     if result.timedOut, let timeout { throw Failure.timedOut(seconds: Int(timeout)) }
     return (result.status, result.stdout, stderrTail(result.stderrText))
