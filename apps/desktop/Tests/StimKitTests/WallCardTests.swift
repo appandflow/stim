@@ -94,4 +94,15 @@ struct WallCardTests {
     #expect([700, 1000, 1499].map { WallCard.columns(forWidth: $0) } == [2, 2, 2])
     #expect([1500, 2200].map { WallCard.columns(forWidth: $0) } == [3, 3])
   }
+
+  @Test func joinsAMacAppRunAndADevicelessAppOfOneWorktreeIntoOneCard() throws {
+    let cards = WallCard.cards(environments: [
+      try devices("/w/a/apps/mobile", worktree: "/w/a", body: #""supervisor":{"healthy":true}"#),
+      try devices("/w/a/apps/desktop", worktree: "/w/a", body: macosApp),
+    ])
+    #expect(cards.count == 1)
+    #expect(cards[0].apps.map(\.label) == ["apps/desktop", "apps/mobile"])
+    #expect(cards[0].options.map(\.label) == ["apps/desktop \u{00B7} Mac app"])
+    #expect(cards[0].selected(choice: nil)?.isStreamable == true)
+  }
 }

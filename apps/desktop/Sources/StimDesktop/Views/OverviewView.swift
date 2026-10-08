@@ -17,6 +17,8 @@ struct OverviewView: View {
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
   @State private var tipState = TryThisStore(defaults: .standard).state
 
+  private static let cardWidth: CGFloat = 340
+
   var body: some View {
     if store.payload == nil {
       if let error = store.error {
