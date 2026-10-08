@@ -68,6 +68,12 @@ CI. Format and lint its Swift sources with `scripts/format.sh` and
 `node apps/desktop/scripts/generate-tokens.mjs` after changing either file. Keep
 its `Sources` ASCII-only, with `\u{XXXX}` escapes; `node apps/desktop/scripts/check-ascii.mjs` checks it.
 
+Every Desktop change must build and launch the worktree's `apps/desktop` through
+`stim macos` from that directory. Follow `stim guide macos` for the
+version-matched workflow. When verification needs interaction, use agent-device
+with `AGENT_DEVICE_MACOS_APP_BACKEND=native`. Check `stim logs --errors`, then
+run `stim stop` from that directory to stop the workspace's owned app.
+
 The read-only phone app lives in `apps/mobile`, an Expo app in the pnpm
 workspace named `stim-mobile`; see its README. Of the root checks above, only
 `pnpm run knip` covers it. Run `pnpm run format:check`, `pnpm run lint`,
