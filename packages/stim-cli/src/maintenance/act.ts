@@ -96,6 +96,7 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
   const aged = action.olderThanDays !== undefined;
   const result = pruneCache(cache, {
     olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
+    byMtime: true,
     protect: (context.protect ??= cacheEntryProtection()),
     ...(aged ? {} : { evictBytes: action.bytes }),
   });

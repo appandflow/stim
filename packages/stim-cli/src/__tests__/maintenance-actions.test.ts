@@ -90,7 +90,7 @@ function cacheEntry(root: string, platform: string, key: string, daysAgo: number
   const dir = join(root, platform, key);
   mkdirSync(join(dir, 'App.app'), { recursive: true });
   writeFileSync(join(dir, 'App.app', 'blob'), 'x'.repeat(MB));
-  utimesSync(dir, ago(daysAgo), ago(daysAgo));
+  utimesSync(dir, new Date(), ago(daysAgo));
   return dir;
 }
 
@@ -229,7 +229,7 @@ test('the age sweep removes only what is provably stale', async () => {
     mkdirSync(entry, { recursive: true });
     writeFileSync(join(entry, 'blob'), 'x'.repeat(4096));
   }
-  utimesSync(oldEntry, ago(20), ago(20));
+  utimesSync(oldEntry, new Date(), ago(20));
   register({ dir: cache, name: 'Shared cache' });
   const gone = join(projects, 'removed-cache');
   mkdirSync(gone);

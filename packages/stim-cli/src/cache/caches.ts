@@ -240,11 +240,13 @@ export function pruneCache(
     now = Date.now(),
     protect,
     evictBytes,
+    byMtime = false,
   }: {
     olderThanDays?: number;
     now?: number;
     protect?: (entry: string) => string | null;
     evictBytes?: number;
+    byMtime?: boolean;
   } = {},
 ): { removed: number; bytes: number; skipped: string | null; failed?: number; protectedEntries?: number } {
   const cutoff = now - (olderThanDays as number) * 24 * 60 * 60 * 1000;
@@ -263,7 +265,7 @@ export function pruneCache(
   for (const entry of entries) {
     try {
       const st = statSync(entry);
-      const used = Math.max(st.atimeMs, st.mtimeMs);
+      const used = byMtime ? st.mtimeMs : Math.max(st.atimeMs, st.mtimeMs);
       if (used >= cutoff) continue;
       if (protect?.(entry)) {
         protectedEntries++;
