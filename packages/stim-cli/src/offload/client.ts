@@ -224,7 +224,6 @@ export function pickOffer({
   return { order: ranked.map((each) => each.index), reasons, candidates };
 }
 
-/** Disk, busy and unreachable stay as they are, a missing runtime is a missing device, every other toolchain gap is a version mismatch. */
 function problemCode({ code }: OffloadProblem): string {
   return code === 'disk' || code === 'busy' || code === 'unreachable'
     ? code

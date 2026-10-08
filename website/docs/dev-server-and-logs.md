@@ -347,7 +347,7 @@ and, in a monorepo, names the nearest registered descendant app with logs.
 
 ### Placement decisions
 
-Every `stim ios`, `stim android` and `stim macos` run records where it put the
+A `stim ios`, `stim android` or `stim macos` run that decides where to build or host records where it put the
 build and the device. Read the records with:
 
 <StimTabs

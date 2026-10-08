@@ -700,7 +700,17 @@ export async function acquireAndroidArtifact(
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
     if (!storeKey || !storeHash) {
-      if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
+      const reason = 'the build fingerprint or cache key is unavailable';
+      if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
+      else
+        writer.write(
+          buildPlacementRecord({
+            platform: PLATFORM,
+            buildMachine,
+            event: 'placement_fallback',
+            fallback: { code: 'fallback', reason, machine: choice.machine },
+          }),
+        );
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);

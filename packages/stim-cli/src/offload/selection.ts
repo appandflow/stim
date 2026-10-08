@@ -69,7 +69,7 @@ export function buildPlacementSettings(selected: string): PlacementSetting[] {
     },
     {
       key: 'remote.buildMode',
-      value: OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
+      value: selected === 'local' ? 'off' : OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
       from: settingSource(undefined, process.env.STIM_REMOTE_BUILD_MODE, remote?.buildMode),
     },
   ];

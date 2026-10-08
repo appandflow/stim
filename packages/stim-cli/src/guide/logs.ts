@@ -223,9 +223,11 @@ failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
 Placement records use src: placement and sit in the run's build log
-(build-*.ndjson), so a new run replaces the previous run's. Every ios, android
-and macos run writes one record per decision, with event build_placement,
-device_placement or placement_fallback:
+(build-*.ndjson), so a new run replaces the previous run's. A run writes one
+record per decision it makes (a build that compiles and has a remote Mac to
+consider, or ios/android --remote auto), with event build_placement,
+device_placement or placement_fallback. A cache hit, a project with no paired
+remote Mac and a named --remote target write none:
   stim logs --source placement
   stim logs --source placement --json
 Fields: kind (build or device), platform, settings [{ key, value, from }] with
