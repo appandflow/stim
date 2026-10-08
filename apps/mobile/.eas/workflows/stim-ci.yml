@@ -43,4 +43,4 @@ jobs:
         with:
           name: stim-ci-android
           type: other
-          path: ../../stim-ci-results/android
+          path: stim-ci-results/android
