@@ -165,7 +165,7 @@ export {
 export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 
 interface AndroidCommandOptions {
-  buildMachine?: string;
+  remoteBuild?: string;
   easProfile?: string;
   slot?: string;
   json?: boolean;
@@ -197,7 +197,7 @@ export function registerAndroid(program: Command): void {
     )
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
-      '--build-machine <value>',
+      '--remote-build <value>',
       'Build on auto, local, or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
@@ -238,7 +238,7 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from hosting.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy',
       (value) => {
         if (!parseMachine(value))
           throw new InvalidArgumentError('expected eas, proxy, auto, or a tailnet machine name');
@@ -275,7 +275,7 @@ export function registerAndroid(program: Command): void {
           try {
             return await runAndroid({
               root,
-              buildMachine: opts.buildMachine,
+              buildMachine: opts.remoteBuild,
               slot: opts.slot,
               easProfile: opts.easProfile,
               json: Boolean(opts.json),

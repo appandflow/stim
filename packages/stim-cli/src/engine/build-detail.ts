@@ -12,6 +12,14 @@ const GRADLE_TASK = /^> Task (:\S+)/;
  */
 const XCODE_TARGET_DONE = /^(Touch|RegisterExecutionPolicyException|CodeSign)$/;
 const GRADLE_CONFIGURE = /^> Configure project /;
+/**
+ * SwiftPM prints `[done / total] name` once it plans the build (with U+2009 thin spaces around the slash in Swift 6.4
+ * output), `[done/total] Compiling ...` in older toolchains; Swift 6.4 names the target being worked on, and
+ * `<product>-product` is the link of a product.
+ */
+const SWIFTPM_PROGRESS = /^\[(\d+)\s*\/\s*(\d+)\](?:\s+(.*))?$/;
+const SWIFTPM_CONFIGURE =
+  /^(Fetching|Fetched|Computing version|Computed|Creating working copy|Working copy of)\b|^\[(Pre-planning|Planning|Using on-disk description)/;
 
 const XCODE_STEPS: [RegExp, NativeBuildStep][] = [
   [
@@ -66,6 +74,7 @@ function shortXcodeAction(action: string, args: string, target: string): string 
 export type BuildToolLine =
   | { kind: 'total'; unit: 'targets'; total: number }
   | { kind: 'configure' }
+  | { kind: 'count'; done: number; total: number; step: NativeBuildStep; line: string | null }
   | {
       kind: 'unit';
       unit: 'targets' | 'tasks';
@@ -75,8 +84,24 @@ export type BuildToolLine =
       finished: boolean;
     };
 
-/** What one line of xcodebuild or Gradle output says about the build's progress, or null for any other line. */
+function swiftpmStep(text: string): NativeBuildStep {
+  return /^Linking\b|-product$/.test(text) ? 'link' : 'compile';
+}
+
+/** What one line of xcodebuild, Gradle or SwiftPM output says about the build's progress, or null for any other line. */
 export function parseBuildToolLine(msg: string): BuildToolLine | null {
+  const counted = SWIFTPM_PROGRESS.exec(msg);
+  if (counted) {
+    const text = counted[3]?.trim() ?? '';
+    return {
+      kind: 'count',
+      done: Number(counted[1]),
+      total: Number(counted[2]),
+      step: swiftpmStep(text),
+      line: text ? clip(text) : null,
+    };
+  }
+  if (SWIFTPM_CONFIGURE.test(msg)) return { kind: 'configure' };
   const graph = TARGET_GRAPH.exec(msg);
   if (graph) return { kind: 'total', unit: 'targets', total: Number(graph[1]) };
   if (XCODE_CONFIGURE.test(msg) || GRADLE_CONFIGURE.test(msg)) return { kind: 'configure' };
@@ -116,7 +141,8 @@ export interface BuildDetailParser {
 
 /**
  * Accumulates a build's tool output into its detail: xcodebuild counts the distinct targets it finished against the
- * total its dependency graph note gives; Gradle counts the task lines it printed and has no total.
+ * total its dependency graph note gives; Gradle counts the task lines it printed and has no total; SwiftPM reports
+ * its own `[done / total]` counts, which the parser passes through.
  */
 export function createBuildDetailParser(): BuildDetailParser {
   let seen = false;
@@ -125,6 +151,7 @@ export function createBuildDetailParser(): BuildDetailParser {
   let total: number | null = null;
   let line: string | null = null;
   let tasks = 0;
+  let counted: { done: number; total: number } | null = null;
   const targets = new Set<string>();
   return {
     push(msg) {
@@ -140,6 +167,13 @@ export function createBuildDetailParser(): BuildDetailParser {
         step = 'configure';
         return true;
       }
+      if (parsed.kind === 'count') {
+        unit = 'steps';
+        counted = { done: parsed.done, total: parsed.total };
+        step = parsed.step;
+        if (parsed.line) line = parsed.line;
+        return true;
+      }
       unit = parsed.unit;
       if (parsed.unit === 'tasks') tasks += 1;
       else if (parsed.finished) targets.add(parsed.id);
@@ -149,6 +183,9 @@ export function createBuildDetailParser(): BuildDetailParser {
     },
     detail(updatedAt) {
       if (!seen) return null;
+      if (unit === 'steps' && counted) {
+        return { step, unit, done: Math.min(counted.done, counted.total), total: counted.total, line, updatedAt };
+      }
       const done = unit === 'tasks' ? tasks : unit === 'targets' ? targets.size : null;
       return {
         step,

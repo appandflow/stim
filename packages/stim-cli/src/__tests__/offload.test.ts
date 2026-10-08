@@ -106,14 +106,14 @@ describe('offloadPlacement', () => {
       true,
       'this Mac is busy: load at or above 2/core (load 8.2/core, 0 builds)',
     ],
-    ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'offload.mode is force'],
+    ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'remote.buildMode is force'],
     [
       'off on a saturated Mac',
       { ...base, mode: 'off' as const, here: { ...IDLE, builds: 3 } },
       false,
-      'offload.mode is off',
+      'remote.buildMode is off',
     ],
-    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no build machine is paired'],
+    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no remote Mac is paired'],
     [
       'force for a device build',
       { ...base, mode: 'force' as const, unsupported: 'device builds build here' },
@@ -404,7 +404,7 @@ describe('explicit build placement', () => {
     expect(() => parseBuildMachineOption('')).toThrow(expect.objectContaining({ code: 'commander.invalidArgument' }));
   });
 
-  it('strict placement ignores local load and offload.mode off, but still requires a pairing', () => {
+  it('strict placement ignores local load and remote.buildMode off, but still requires a pairing', () => {
     const base = { selected: 'mini', mode: 'off' as const, here: IDLE, machines: 1, unsupported: null };
     expect(offloadPlacement(base).offload).toBe(true);
     expect(() => offloadPlacement({ ...base, machines: 0 })).toThrow(
@@ -424,13 +424,13 @@ describe('explicit build placement', () => {
     expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
       expect.objectContaining({
         code: 'STIM_OFFLOAD_REFUSED',
-        message: `mini: ${unsupported}, so a named build machine cannot take it`,
+        message: `mini: ${unsupported}, so a named remote Mac cannot take it`,
       }),
     );
   });
 
   it.each(['auto', 'local'])(
-    '%s keeps unsupported Release and device builds here even when offload.mode is force',
+    '%s keeps unsupported Release and device builds here even when remote.buildMode is force',
     (selected) => {
       for (const unsupported of ['Release builds build here', 'device builds build here']) {
         expect(offloadPlacement({ selected, mode: 'force', here: IDLE, machines: 1, unsupported }).offload).toBe(false);

@@ -39,7 +39,7 @@ export interface RunSample {
 
 export type RunHistory = Partial<Record<StatsPlatform, Partial<Record<RunOutcomeKind, RunSample[]>>>>;
 
-/** Where a compiling build ran: here, on a build machine, or here after offloading it failed. */
+/** Where a compiling build ran: here, on a remote Mac, or here after offloading it failed. */
 export const PLACEMENT_DECISIONS = ['here', 'offloaded', 'fell-back'] as const;
 
 type PlacementDecision = (typeof PLACEMENT_DECISIONS)[number];

@@ -25,6 +25,7 @@ final class BuildMachinesModel {
   private(set) var stats = Fetched<MachineStats>()
   private(set) var updates: [String: MachineUpdatePhase] = [:]
   private var statusRefreshes: [String: Task<Void, Never>] = [:]
+  private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
 
@@ -153,7 +154,7 @@ final class BuildMachinesModel {
   }
 
   var entries: [String]? {
-    settings.payload.map { $0.entry("offload.machines")?.value.strings ?? [] }
+    settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
   }
 
   func addMachine(checkout: String?) -> AddMachineModel {
@@ -183,8 +184,8 @@ final class BuildMachinesModel {
 
   var settingsFailure: String? {
     if let error = settings.error { return error }
-    guard let payload = settings.payload, payload.entry("offload.machines") == nil else { return nil }
-    return "This stim has no offload.machines setting; update it."
+    guard let payload = settings.payload, payload.entry("remote.machines") == nil else { return nil }
+    return "This stim has no remote.machines setting; update it."
   }
 
   func refresh(checkout: String?) async {
@@ -227,10 +228,12 @@ final class BuildMachinesModel {
   func refreshStatuses(checkout: String?, ask: Bool) async {
     guard let checkout else { return }
     if let pending = statusRefreshes[checkout] {
+      let started = refreshedEntries[checkout]
       await pending.value
-      if ask { await refreshStatuses(checkout: checkout, ask: true) }
+      if ask || started != entries { await refreshStatuses(checkout: checkout, ask: ask) }
       return
     }
+    refreshedEntries[checkout] = entries
     let task = Task {
       await fetchStatuses(checkout: checkout, ask: ask)
       hostingCheckedAt[checkout] = now()
@@ -248,9 +251,9 @@ final class BuildMachinesModel {
     switch result {
     case .success(let report):
       checks[checkout] = Check(
-        statuses: report.buildMachines ?? [], hosts: report.deviceHosts,
-        problem: report.buildMachines == nil ? .unsupported : nil)
-      updateAutomatically(report.buildMachines ?? [], checkout: checkout)
+        statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
+        problem: report.remoteMachines == nil ? .unsupported : nil)
+      updateAutomatically(report.remoteMachines ?? [], checkout: checkout)
     case .failure(let error):
       checks[checkout] = Check(
         statuses: check(in: checkout)?.statuses ?? [], hosts: check(in: checkout)?.hosts,
@@ -275,7 +278,7 @@ final class BuildMachinesModel {
     working = entry
     progress = "Removing \(entry)\u{2026}"
     defer { progress = nil }
-    let result = await settings.write("offload.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
+    let result = await settings.write("remote.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
     switch result {
     case .success(.written):
       writeFailure = nil

@@ -132,11 +132,11 @@ public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, 
   func check(_ title: String, done: Bool = false) -> TerminalLine {
     TerminalLine(text: title + (done ? " (already done)" : ""), kind: .ok)
   }
-  var lines = [
-    TerminalLine(text: "$ stim-server setup", kind: .command),
+  var lines = [TerminalLine(text: "$ stim-server setup", kind: .command)]
+  guard !capabilities.isEmpty else { return lines }
+  lines += [
     check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil),
-    check("Stim Host installed"), check("LaunchAgent dev.stim.server running"),
-    check("tailnet route https 7443 (no Funnel)"),
+    check("Stim Host installed"), check("LaunchAgent running"), check("tailnet route https 7443 (no Funnel)"),
   ]
   if capabilities.contains(.build) { lines.append(check("approved \(known.clientName) for builds", done: known.buildApproved)) }
   if capabilities.contains(.deviceHost) {
@@ -147,19 +147,70 @@ public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, 
   return lines
 }
 
-public func journalLines(_ journal: SetupJournal) -> [TerminalLine] {
+/// The setup journal as short lines in the preview's wording: no node or request ids, no tool details.
+public func journalLines(_ journal: SetupJournal, clientName: String) -> [TerminalLine] {
   [TerminalLine(text: "$ stim-server setup", kind: .command)]
-    + journal.steps.filter { $0.id != "summary" }.flatMap { step in
-      let kind: TerminalLine.Kind
-      switch step.state {
-      case .ok: kind = .ok
-      case .failed: kind = .failed
-      case .skipped: kind = .skipped
-      case .running, .pending: kind = .pending
-      }
-      return [TerminalLine(text: step.title + (step.detail.map { ": \($0)" } ?? ""), kind: kind)]
-        + (step.fix.map { [TerminalLine(text: $0, kind: .output)] } ?? [])
+    + journal.steps.compactMap { setupStepLine($0, clientName: clientName) }
+}
+
+/// One journal step in the preview's wording, with its state as the line's kind; nil for steps the mirror hides.
+public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> TerminalLine? {
+  let kind: TerminalLine.Kind
+  switch step.state {
+  case .ok: kind = .ok
+  case .failed: kind = .failed
+  case .skipped: kind = .skipped
+  case .running, .pending: kind = .pending
+  }
+  let running = step.state == .running
+  let text: String
+  switch step.id {
+  case "summary": return nil
+  case "preflight": text = running ? "checking the tailnet node" : "tailnet node verified"
+  case "server":
+    if step.state == .ok, step.title.hasPrefix("stim-server ") {
+      text = step.title.hasSuffix(" installed") ? step.title : step.title + " installed"
+    } else {
+      text = running ? "installing stim-server" : "stim-server"
     }
+  case "host": text = running ? "installing Stim Host" : "Stim Host installed"
+  case "service": text = running ? "starting the LaunchAgent" : "LaunchAgent running"
+  case "route":
+    let port = step.detail?.range(of: "https port ").map { step.detail![$0.upperBound...] }.map(String.init)
+    text = running ? "checking the tailnet route" : port.map { "tailnet route https \($0) (no Funnel)" } ?? "tailnet route"
+  case "approve":
+    if step.state == .ok { return nil }
+    text = running ? "waiting for approval in Terminal" : "approval missing"
+  case "approve.build", "approve.device-host":
+    let what = step.id == "approve.build" ? "builds" : "hosted simulators"
+    switch step.state {
+    case .ok: text = "approved \(clientName) for \(what)" + (step.title.hasPrefix("Already") ? " (already done)" : "")
+    case .failed: text = "\(what) refused"
+    default: text = "approving \(clientName) for \(what)"
+    }
+  case "permissions.screenRecording", "permissions.deviceControl":
+    let name = step.id == "permissions.screenRecording" ? "Screen recording permission" : "Device control permission"
+    switch step.state {
+    case .skipped: text = name + " skipped"
+    case .running: text = name + ": click Allow on that Mac"
+    case .pending: text = name + " not granted"
+    default: text = name
+    }
+  case "tools":
+    if step.state == .ok { return nil }
+    text = "checking tools"
+  case "journal": text = "setup journal not written"
+  default:
+    if step.id.hasPrefix("tools.") {
+      let tool = String(step.id.dropFirst("tools.".count))
+      text = step.state == .ok ? tool : tool + " missing"
+    } else {
+      text = step.title
+    }
+  }
+  return TerminalLine(
+    text: step.state == .failed && step.id != "approve.build" && step.id != "approve.device-host" ? text + " failed" : text,
+    kind: kind)
 }
 
 public enum SetupPortProbe {
@@ -264,7 +315,7 @@ public struct SetupWizard: Sendable {
       self.mac = mac
       phase = .choose
     case .capabilitiesChanged(let capabilities):
-      guard phase == .choose, !capabilities.isEmpty else { return [] }
+      guard phase == .choose else { return [] }
       self.capabilities = capabilities
     case .next(let ticket), .newCommand(let ticket):
       guard mac != nil, !capabilities.isEmpty, phase != .cancelled else { return [] }
@@ -283,7 +334,6 @@ public struct SetupWizard: Sendable {
       guard ticket != nil, phase != .cancelled else { return [] }
       self.port = port
       self.journal = journal
-      mirrorHostPermissions()
       revokeIds.formUnion(journal.granted.map(\.id))
       phase = .running
       if !hasWorkspace { return [] }
@@ -305,7 +355,6 @@ public struct SetupWizard: Sendable {
     case .doctorReported(let build, let host):
       self.build = build
       self.host = host
-      mirrorHostPermissions()
       if ticket == nil { preStateKnown = true }
       if ticket != nil, preStateKnown {
         for capability in capabilities {
@@ -332,24 +381,6 @@ public struct SetupWizard: Sendable {
       return [.askDoctor(ticket: ticket.value)]
     }
     return []
-  }
-
-  private mutating func mirrorHostPermissions() {
-    if journal?.done == true, let permissions = host?.host, host?.state == .approved {
-      for index in 0..<(journal?.steps.count ?? 0) {
-        let granted: Bool
-        switch journal?.steps[index].id {
-        case "permissions.screenRecording": granted = permissions.screenRecording
-        case "permissions.deviceControl": granted = permissions.accessibility
-        default: continue
-        }
-        journal?.steps[index].state = granted ? .ok : .skipped
-        if granted {
-          journal?.steps[index].detail = nil
-          journal?.steps[index].fix = nil
-        }
-      }
-    }
   }
 
   private func hasApproval(_ capability: SetupCapability) -> Bool {
@@ -409,5 +440,70 @@ public struct SetupWizard: Sendable {
     if isLapsed, let ticket, now < ticket.expiresAt { return .requestLapsed }
     if journal == nil, let issued = commandIssuedAt, now.timeIntervalSince(issued) >= 180 { return .noAnswer }
     return nil
+  }
+}
+
+/// The wizard's pages after setup; `setup` covers picking a Mac, choosing capabilities and the setup command.
+public enum SetupPage: Sendable { case setup, tools, test, summary }
+
+/// What the wizard reads again in the background; it has no Check again button.
+public enum SetupRefresh: Hashable, Sendable {
+  /// `tailscale status` and the peers' health.
+  case peers
+  /// This Mac's existing approvals on the chosen Mac, before the command.
+  case approvals
+  /// The setup journal on the chosen Mac.
+  case journal
+  /// `stim doctor` for the requests this run made.
+  case doctor
+  /// The chosen Mac's tools.
+  case tools
+
+  public var interval: TimeInterval {
+    switch self {
+    case .journal: return 1
+    case .peers, .doctor: return 5
+    case .approvals: return 10
+    case .tools: return 10
+    }
+  }
+}
+
+extension SetupWizard {
+  /// The reads that keep `page` current. Nothing refreshes once the test starts or setup is cancelled.
+  public func refreshes(page: SetupPage) -> [SetupRefresh] {
+    switch page {
+    case .tools: return [.tools]
+    case .test, .summary: return []
+    case .setup: break
+    }
+    switch phase {
+    case .pick: return [.peers]
+    case .choose: return [.approvals]
+    case .cancelled: return []
+    case .command, .running, .approved, .expiredCommand:
+      var reads: [SetupRefresh] = phase == .expiredCommand ? [] : [.journal]
+      if journal != nil, entriesWritten { reads.append(.doctor) }
+      return reads
+    }
+  }
+}
+
+/// When each background read last ran, so `due` returns only the reads whose interval has passed.
+public struct SetupRefreshClock: Sendable {
+  private var last: [SetupRefresh: Date] = [:]
+  public init() {}
+
+  public mutating func due(_ reads: [SetupRefresh], now: Date) -> [SetupRefresh] {
+    let due = reads.filter { read in last[read].map { now.timeIntervalSince($0) >= read.interval } ?? true }
+    for read in due { last[read] = now }
+    return due
+  }
+
+  public mutating func ran(_ read: SetupRefresh, now: Date) { last[read] = now }
+
+  /// Marks every read in `reads` as run now.
+  public mutating func ran(_ reads: [SetupRefresh], now: Date) {
+    for read in reads { last[read] = now }
   }
 }

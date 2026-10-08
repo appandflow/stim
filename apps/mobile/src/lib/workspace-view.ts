@@ -759,7 +759,10 @@ export function currentPhaseLabel(build: BuildReport): { phase: string; counts: 
   const detail = compileDetail(build);
   const remote = remoteBuild(build, 0);
   const phase = detail?.step ? stepName(detail.step) : (remote?.phase ?? phaseName(build.phase));
-  if ((detail?.unit !== 'tasks' && detail?.unit !== 'targets') || typeof detail.done !== 'number')
+  if (
+    (detail?.unit !== 'tasks' && detail?.unit !== 'targets' && detail?.unit !== 'steps') ||
+    typeof detail.done !== 'number'
+  )
     return { phase, counts: null };
   const { done, unit, total } = detail;
   return {

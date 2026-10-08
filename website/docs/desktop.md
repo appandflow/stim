@@ -48,7 +48,8 @@ On a build machine, Stim Desktop shows build requests from other Macs as a
 notification and inbox entry with **Allow** and **Deny**. It watches a
 stim-server already running there even when **Serve to phones** is off.
 Placement is set by config or agents: use
-`stim settings set ios.remote auto --scope workspace` (or `android.remote`),
+`stim settings set ios.remote auto --scope machine` (or `android.remote`; a
+workspace, repo or committed value overrides the machine default),
 or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
 Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
@@ -87,11 +88,11 @@ The panel follows a small iOS app in its own worktree. It shows:
 - **App logs:** find the tagged error; **Crash me** and **Slow request** are optional checks.
 - **Agent actions and replay:** watch the agent drive the simulator and inspect its recording. If recording is off, the panel points to Settings.
 - **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
-- **Watch on your phone:** **Pair a phone** opens Settings > Phones > Pair. If the server is off, **Turn on Serve to phones** opens Phones so you can enable it. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
-- **Build on another Mac:** **Add build machine** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
+- **Watch on your phone:** **Pair a phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
+- **Build on another Mac:** **Add remote Mac** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Finish and archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels. The page also shows removal and last activity, retention dates and sizes, build totals, final branch head, PR number and title (only Merged is treated as a final state), and ended agent sessions.
 
-<PromptBox title="Try an approved build machine">
+<PromptBox title="Try an approved remote Mac">
 {`Continue the Stim tutorial: machine`}
 </PromptBox>
 
@@ -134,6 +135,15 @@ agent's output and revert the tutorial edit before trying again. Desktop can
 show refusals for removals started from its own workspace actions.
 
 ## What it does
+
+:::note[Phone app feature flag]
+Stim Desktop hides everything about the phone app unless the **Phone app**
+feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+**Settings > Advanced > Feature flags**. A Mac that already serves phones or has
+a paired phone starts with it on. Turning the flag off does not stop a running
+`stim-server` or revoke pairings.
+:::
 
 - **Every workspace at a glance.** Each workspace shows its stage (warming,
   building, running, failed), its devices side by side, and its branch and pull
@@ -178,7 +188,7 @@ show refusals for removals started from its own workspace actions.
   summaries. **Details** opens a sheet with a platform switch, recent runs,
   elapsed time and estimate, phase timings, the wait holder, build and device
   slot waits with capacity counts and elapsed wait time, cache lookup and
-  full miss reason with changed sources and baseline, build machine and offload
+  full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
   plan with **Check**. The header's running-build progress opens the current
   run in the same sheet. **Open in logs panel** opens the selected run in the
@@ -198,20 +208,20 @@ show refusals for removals started from its own workspace actions.
   Stim never trims or deletes the shared runner builds, sessions, logs and other state or the hosted driver dir; a workspace's own agent-device dir goes only with its workspace.
   Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
-  configured build machine for its readiness, capacity and build history.
+  configured remote Mac for its readiness, capacity and build history.
   Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
   in each popover opens the Machines page. CPU covers live workspace processes,
   while memory covers the whole Mac.
-  **Link machine** opens the existing **Build Machines** settings flow, whose
+  **Link machine** opens the existing **Remote Macs** settings flow, whose
   **Add...** button walks through picking a Mac, choosing Builds and Hosted
   simulators, and running a generated `stim-server setup` command in Terminal on
   that Mac. Running it there, and answering its y/N question for each request, is
   the approval. Desktop mirrors the setup live and waits for both approvals.
-  A build machine on another Stim build offers **Install This Mac's Build**. It
+  A remote Mac on another Stim build offers **Install This Mac's Build**. It
   installs this Mac's npm release there, or this checkout's own build when the
   machine allows it with `server.acceptClientBuilds`. The update goes over the
   tailnet, with no ssh, and the old server comes back if the new one does not
-  start. **Settings > Build Machines** can keep them on this Mac's Stim version automatically.
+  start. **Settings > Remote Macs** can keep them on this Mac's Stim version automatically.
   A removed selection returns to **This Mac**; remote selections have no local
   cleanup actions. Select checklist items to enable **Free space**;
   cleanup previews or confirms the selection before deleting anything.
@@ -445,11 +455,12 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones**, turn on **Serve to
-   phones**, choose **Set up connection** if needed, then **Pair a Phone…**.
-   Setup keeps existing Tailscale routes and never enables Funnel. If Tailscale
-   asks to enable HTTPS, approve its browser setup and retry. Pairing waits for a
-   verified private route; a timeout changes nothing.
+3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+   Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
+   tailnet route, shows a code and waits for the phone. Setup keeps existing
+   Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
+   approve its browser setup and retry. Pairing waits for a verified private
+   route; a timeout changes nothing.
 
 Revoking a paired phone closes its active connections on the next pairing
 check. The server checks pairings on changes and once a second. If QR pairing
@@ -458,8 +469,8 @@ chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
 
-On the hosting Mac, **Stim > Settings > Phones > Hosted here**, below **Device
-hosting approvals**, lists the simulators, emulators and apps approved Macs run
+On the hosting Mac, **Stim > Settings > Remote Macs > Running here**, below
+**Macs using this Mac**, lists the simulators, emulators and apps approved Macs run
 here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every
@@ -479,41 +490,43 @@ link opens its newest archive; an optional `&archive=<id>` opens a specific arch
 belonging to that path at once. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
 
-## Add a build machine
+## Add a remote Mac
 
-**Settings > Build Machines** lists your build machines with a status
+**Settings > Remote Macs** lists your remote Macs with a status
 (**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Build Machine…**, which guides you through all six steps: pick a
-Mac on your tailnet, choose Builds and/or Hosted simulators, run setup there,
-compare tools, test a sample build, and review settings and undo commands. Run
-the generated setup command in Terminal while signed in at the build Mac and
-answer each y/N approval there. Permission prompts appear on that Mac. There
-is no SSH option.
+offers **Add Remote Mac…**, which guides you through five steps:
 
-Tool fixes can be copied to run there. **Install This Mac's Build** handles a
-Stim build mismatch, and **Check Android** adds Java and Android SDK checks.
-Desktop prepares a pinned Expo blank SDK 58 sample in its own Application
-Support folder from step 2. It uses that checkout for setup requests if you have
-no listed workspace. The test verifies an offloaded build and launch, then
-forces a local build without the build cache to prove this Mac can still build.
-Live output, phase timings and a speed comparison show the results. The sample
-workspace stops when the test ends or the sheet closes. **Run again** reuses the
-folder; **Delete sample app** in Build Machines stops it and removes its Stim workspace and sample folder after confirmation, and
-releases its owned simulator (parked for reuse within the parked-simulator limit,
-deleted otherwise). If cleanup fails,
-the folder stays for a retry and Desktop shows the failure.
+1. Check Tailscale and pick a Mac on your tailnet.
+2. Choose Builds and/or Hosted simulators.
+3. Run setup there.
+4. Compare tools.
+5. Choose when to offload.
 
-Done keeps the approved entries and selects Auto / Always / Never. When the
-wizard turned offloading off, a passed test defaults to Auto; a failed or skipped
-test keeps Never selected unless you choose otherwise. Existing machine settings
-keep their effective mode. Cancel removes only settings the wizard added and
-shows revoke commands for the build Mac. The summary explains how to undo setup;
-Stim Host permissions remain in System Settings until you remove them.
+Run the generated setup command in Terminal while signed in at the build Mac
+and answer each y/N approval there. Permission prompts appear on that Mac.
+There is no SSH option. The wizard refreshes by itself; there is no Check again
+button.
 
-See [Remote machines](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
+Only a problem that stops the chosen capability blocks the Tools step. A Stim
+build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
+differences, such as a different global CocoaPods or missing Android tools, are
+warnings that say what they cost and offer copyable fixes.
+
+The last step offers a **Try it** agent prompt and `stim ios --remote-build
+<machine>`. It sets **Builds** (`remote.buildMode`, Auto by default for your
+first remote Mac). With Hosted simulators chosen, it also sets **Simulators**
+(`ios.remote` and `android.remote` for this Mac). **Run a
+test build with a sample app** runs the optional sample test in Desktop's own
+pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
+you have no listed workspace. **Delete sample app** in Remote Macs removes it.
+Cancel removes only settings the wizard added and shows revoke commands for the
+build Mac. **Remove** in Remote Macs shows the optional cleanup to run on that
+Mac.
+
+See [Remote Macs](./remote-machines.md) for requirements, CLI setup, permissions and troubleshooting.
 
 ## SwiftUI playground for contributors
 
@@ -528,7 +541,7 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests build machines, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `hosting.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests remote Macs, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't suggest again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct
@@ -538,23 +551,23 @@ notice is showing. Only builds that start after Desktop first sees status count.
 Usage is stored locally in Desktop preferences: the latest 30 active days and,
 until the thresholds are met, the workspace paths and build IDs counted.
 
-Tips cover build machines, phone pairing, the tutorial, hiding workspaces when
+Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
 there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
 simulators. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next tip** cycles through the remaining choices. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
 
-Tips and suggestions share state for build machines, phone pairing, and
+Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
 suggestion suppresses the matching tip. Once that tip has been shown, the
 matching suggestions (new Mac, slow cold builds, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
-**File > Add Build Machine…** (**Cmd+Shift+B**) always opens the existing build
+**File > Add Remote Mac…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no build machine is configured. With another Mac on the tailnet it
-offers **Add Build Machine…**; otherwise it explains how to connect both Macs
+card when no remote Mac is configured. With another Mac on the tailnet it
+offers **Add Remote Mac…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link machine** button is also available. Build
 machines are not a step in the first-run setup guide.

@@ -10,8 +10,8 @@ public struct StimCLI: Sendable {
     case toolNotFound(String)
     /// The exit status and the last lines the process wrote to stderr, empty when it wrote none.
     case exited(Int32, stderr: String = "")
-    /// The command line that ran past its limit and was stopped, and the limit in seconds.
-    case timedOut(command: String, seconds: Int)
+    /// The command ran past the seconds it was given and was stopped.
+    case timedOut(seconds: Int)
 
     public var errorDescription: String? {
       switch self {
@@ -19,10 +19,10 @@ public struct StimCLI: Sendable {
         return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
       case .toolNotFound(let name):
         return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
-      case .timedOut(let command, let seconds):
-        return "\(command) did not finish within \(seconds / 60) minutes and was stopped. Try again."
       case .exited(let code, let stderr):
         return stderr.isEmpty ? "stim exited with status \(code)." : "stim exited with status \(code): \(stderr)"
+      case .timedOut(let seconds):
+        return "stim did not answer within \(seconds) seconds."
       }
     }
   }
@@ -109,21 +109,20 @@ public struct StimCLI: Sendable {
     try JSONDecoder().decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd))
   }
 
-  /// The `offload.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
+  /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
   /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
   /// platform keeps `--fix` from cleaning Android build state in that checkout.
   public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
-    try await machineAccess(cwd: cwd, ask: ask).buildMachines
+    try await machineAccess(cwd: cwd, ask: ask).remoteMachines
   }
 
-  public static let askTimeout: TimeInterval = 120
-
   /// Both build and device-host access states. Extra environment applies only to this doctor process.
-  /// A run with `ask` stops after `askTimeout` and throws `Failure.timedOut`; a plain check has no limit.
-  public func machineAccess(cwd: String, ask: Bool, extraEnvironment: [String: String] = [:]) async throws -> DoctorReport {
+  public func machineAccess(
+    cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+  ) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
     return try JSONDecoder().decode(
-      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: ask ? Self.askTimeout : nil)
+      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30))
     )
   }
 
@@ -147,26 +146,28 @@ public struct StimCLI: Sendable {
     return .refused(refusal)
   }
 
-  func run(_ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil)
-    async throws -> Data
-  {
-    let (status, data, stderr) = try await execute(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
+  func run(
+    _ args: [String], cwd: String? = nil, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
+  ) async throws -> Data {
+    let (status, data, stderr) = try await execute(
+      args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout)
     guard status == 0 else { throw Failure.exited(status, stderr: stderr) }
     return data
   }
 
   private func execute(
     _ args: [String], cwd: String?, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
-  ) async throws -> (Int32, Data, String) {
+  ) async throws -> (
+    Int32, Data, String
+  ) {
     let command = try command(args)
     var request = ProcessRequest(
-      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra })
+      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra },
+      timeout: timeout)
     request.captureStderr = true
     request.timeout = timeout
     let result = try await request.run()
-    if result.timedOut {
-      throw Failure.timedOut(command: "stim " + args.joined(separator: " "), seconds: Int(timeout ?? 0))
-    }
+    if result.timedOut, let timeout { throw Failure.timedOut(seconds: Int(timeout)) }
     return (result.status, result.stdout, stderrTail(result.stderrText))
   }
 

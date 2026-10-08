@@ -43,7 +43,7 @@ import Testing
       DoctorReport.self,
       from: Data(
         #"""
-        {"project":"/p","findings":[],"buildMachines":[{"machine":"mini","state":"approved","host":{"name":"Mini","screenRecording":true,"accessibility":false}}],
+        {"project":"/p","findings":[],"remoteMachines":[{"machine":"mini","state":"approved","host":{"name":"Mini","screenRecording":true,"accessibility":false}}],
         "deviceHosts":[{"machine":"mini","state":"approved","deviceId":"host-id","host":{"name":"Mini","screenRecording":true,"accessibility":false}},
         {"machine":"air","state":"pending"}]}
         """#.utf8))
@@ -51,7 +51,7 @@ import Testing
     #expect(report.deviceHosts?.first?.host?.screenRecording == true)
     #expect(report.deviceHosts?.first?.host?.accessibility == false)
     #expect(report.deviceHosts?.last?.host == nil)
-    #expect(report.buildMachines?.first?.host == report.deviceHosts?.first?.host)
+    #expect(report.remoteMachines?.first?.host == report.deviceHosts?.first?.host)
     #expect(try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8)).deviceHosts == nil)
   }
 
@@ -127,12 +127,12 @@ import Testing
       DoctorReport.self,
       from: Data(
         #"""
-        {"project":"/p","findings":[],"buildMachines":[
+        {"project":"/p","findings":[],"remoteMachines":[
           {"machine":"mini","state":"pending","dnsName":"mini.tail1.ts.net","deviceId":"ab12","requestedAt":"2026-09-28T12:00:00.000Z","expiresAt":"2026-09-28T21:05:00.000Z"},
           {"machine":"old:7444","state":"node-changed"},{"machine":"x","state":"from-the-future"},
           {"machine":"late","state":"lapsed","deviceId":"cd34"}]}
         """#.utf8))
-    let machines = try #require(report.buildMachines)
+    let machines = try #require(report.remoteMachines)
     #expect(machines.map(\.state) == [.pending, .nodeChanged, .unknown, .lapsed])
     let utc = TimeZone(identifier: "UTC")!
     let british = Locale(identifier: "en_GB")
@@ -146,21 +146,21 @@ import Testing
     #expect(machines.map(\.approvalCommand) == ["stim-server devices grant ab12 --build", nil, nil, nil])
     #expect(
       try JSONDecoder().decode(DoctorReport.self, from: Data(#"{"project":"/p","findings":[]}"#.utf8))
-        .buildMachines == nil)
+        .remoteMachines == nil)
   }
 
   @Test func readsReadinessAsReadyOrTheFirstReasonWithItsRemedy() throws {
     let url = try #require(Bundle.module.url(forResource: "doctor", withExtension: "json", subdirectory: "Fixtures"))
-    let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).buildMachines)
+    let machines = try #require(try JSONDecoder().decode(DoctorReport.self, from: Data(contentsOf: url)).remoteMachines)
     #expect(
       machines.map(\.readiness.line) == [
-        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the build machine",
+        "Ready", "Busy (load 8.2/core)", "Stim build differs \u{2014} update the remote Mac",
       ])
     #expect(machines.map(\.readiness.tone) == [.success, .warning, .error])
     #expect(machines[2].readiness.reasons == "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here")
     #expect(
       machines.map(\.detail) == [
-        "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the build machine.",
+        "Builds can run on this Mac.", "Builds stay on this Mac for now.", "Update the remote Mac.",
       ])
     let older = try JSONDecoder().decode(
       BuildMachineStatus.self,
@@ -225,7 +225,7 @@ import Testing
     let build = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build a there, b here"},{"code":"other","reason":"odd"}]}"#
     )
-    #expect(build.problemLines.map(\.fix) == [.advice("Update the build machine."), nil])
+    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote Mac."), nil])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(

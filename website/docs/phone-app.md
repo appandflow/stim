@@ -8,9 +8,18 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
+:::note[Phone app feature flag]
+Stim Desktop hides everything about the phone app unless the **Phone app**
+feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+steps of the setup guide and tutorial, and phone suggestions. Turn it on in
+**Settings > Advanced > Feature flags**. A Mac that already serves phones or has
+a paired phone starts with it on. Turning the flag off does not stop a running
+`stim-server` or revoke pairings.
+:::
+
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
-workspaces, builds, devices and logs. Pairings are read-only by default;
-you can allow a phone to control devices and run Reload and Stop from the Mac.
+workspaces, builds, devices and logs. Choose view-only or view-and-control access
+when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
 It can keep connections to several paired Macs.
 
 ## Install
@@ -51,15 +60,20 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Serve to phones
 
-On the Mac, open **Stim > Settings > Phones** and turn on **Serve to phones**.
-Desktop runs the server while it is open, or uses one already running.
-Choose **Set up connection** when a private route is missing. If Tailscale
-asks to enable HTTPS, approve its browser setup and retry. Pairing remains
-unavailable until the route is verified.
+On the Mac, open **Stim > Settings > Phones > Pair a Phone...**, or choose
+**Pair a Phone...** in the first-run guide's **Pair your phone** step. The wizard
+walks through getting Stim Mobile and Tailscale on your phone, connecting both
+devices to the same tailnet, turning on serving, scanning a code, and confirming
+the paired phone. Checks update automatically.
 
-The route is private to the tailnet. Setup preserves existing routes and
-never enables Funnel. Do not put this server behind a Funneled port: that
-makes its handlers public, and pairing refuses.
+Desktop runs the server while it is open, or uses one already running. The
+wizard turns on serving and uses its authenticated loopback `route.setup`
+request to configure a private tailnet-only route. Setup preserves existing
+routes and never enables Funnel. If Tailscale asks to enable HTTPS, open
+**Open Tailscale setup**, approve it in your browser, then choose **Try Again**.
+The wizard waits until the route is verified. A route exposing the server
+through Funnel refuses setup and pairing: remove that Funnel handler before
+using a tailnet-only route.
 
 For a standalone server, use the
 [server's Tailscale instructions](https://github.com/appandflow/stim/blob/main/packages/server/README.md#tailscale)
@@ -68,17 +82,23 @@ viewing and server-delivered notifications.
 
 ## Pair your phone
 
-1. In Desktop's **Settings > Phones**, choose **Pair a Phone...**.
+1. Follow the Desktop wizard to **Scan with Stim Mobile**. Choose **View only**
+   or **View and control** for this phone.
 2. In the phone app, choose **Pair with your Mac** from the welcome screen,
    or **Pair a machine** from Machines. Allow the camera and scan the QR code.
-3. Name the machine and choose **Save** to open the workspace list.
+3. Name the machine and choose **Save** to open the workspace list. Desktop
+   waits for the phone, then shows its name and access on the success screen.
 
-The code pairs one phone and expires after five minutes. It is consumed once;
-a second phone needs a new code. If scanning fails or camera access is denied,
-choose **Enter the endpoint and token instead** and copy the **Endpoint** and **Token** from
-Desktop into the phone's fields. Manual entry uses the same single-use code.
-Choose **New Code** on the Mac when it expires, and **Retry** on the phone
-when a failed scan needs another attempt.
+The single-use code pairs one phone and expires after five minutes. A second
+phone needs a new code. Desktop replaces expired codes automatically up to
+three times, then offers **Show a New Code**. Changing access also generates a
+new code; the previous code stays valid until it expires.
+
+If scanning fails or camera access is denied, expand **Can't scan? Enter the
+endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
+button; the token is hidden until you choose the eye button. Choose **Enter the
+endpoint and token instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
+the phone when a failed scan needs another attempt.
 
 A standalone server can print the same pairing payload:
 
@@ -109,7 +129,7 @@ A read-only phone can see workspace status, builds, logs, device screens and
 replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
-To allow input, turn on **Allow control** for the phone in Desktop's
+To allow input, choose **Allow Control** from the phone's menu in Desktop's
 **Settings > Phones**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow control** action
@@ -142,7 +162,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Phones**, choose **Revoke** for the phone, or run
+In Desktop's **Settings > Phones**, choose **Revoke...** from the phone's menu, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
@@ -165,24 +185,24 @@ wait can overlap compilation. Older CLIs omit this information.
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
 and controlled through the main Mac's relay, with **Serve to phones** enabled.
-See [remote machines](./remote-machines.md) for host setup.
+See [remote Macs](./remote-machines.md) for host setup.
 
 The phone cannot start a build, create a worktree, edit or stage source files,
-set up a build machine, or approve access requests. Have your coding agent run
+set up a remote Mac, or approve access requests. Have your coding agent run
 the app on the Mac, then watch it from the phone. It does not run your project's
 native app on the phone itself.
 
 ### Archived workspaces
 
 Choose **Archived** in Filters to see removed workspaces in the same repository
-and worktree groups as live ones. Rows keep their branch or folder title and app
+and worktree groups as active ones. Rows keep their branch or folder title and app
 label, with removal time, size and an expiry indicator. A PR snapshot shows its
 number and title; only a merged outcome shows a state label.
 
 An archive uses the workspace page with read-only Status, Build, Logs and Work
 cards. Status shows removal, last activity, retention dates, size by content and
 activity totals. Build opens the shared history sheet, including durations,
-cache results, failures and build machines. Logs reads saved archive logs. Work
+cache results, failures and remote Macs. Logs reads saved archive logs. Work
 shows ended sessions, their durations and the branch's final commit. Recordings
 replace devices and open replay at the recorded time, including notification
 links. Expired logs and recordings are marked.

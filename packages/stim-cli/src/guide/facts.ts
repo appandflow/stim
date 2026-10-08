@@ -266,8 +266,8 @@ leased until <time>" for each one.`,
                   looked up", which is a different fact from "nothing was found"
   buildMachine    selected auto, local or machine name, including cache hits
   builtOn         here or machine name when a build ran; absent otherwise
-  offloadedTo     only on an app a build machine compiled: its
-                  offload.machines entry (see \`guide settings\`). cacheHit is
+  offloadedTo     only on an app a remote Mac compiled: its
+                  remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
   offloadFallback only on an app compiled here after the run considered
                   offloading it: why it built here -- one reason per
@@ -416,7 +416,7 @@ leased until <time>" for each one.`,
                   sets its own CMake compiler launcher, or a Gradle run whose
                   native work was all up to date. None of the three is an
                   error, and this field is separate from cacheHit. On an
-                  offloaded APK it is the build machine's ccache
+                  offloaded APK it is the remote Mac's ccache
   logs            the workspace log directory
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
@@ -516,20 +516,20 @@ leased until <time>" for each one.`,
                   android would reclaim, in the \`reclaimed\` shape without
                   freedMb, and is empty while under budget
   deviceHosts     one { machine, state, dnsName?, deviceId?, requestedAt?, expiresAt?,
-                  host? } per hosting.machines entry. state is "approved",
+                  host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "node-changed", "not-on-tailnet",
                   "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Tokens stay private.
                   Only --fix asks for access or forgets removed names.
-                  An approved hosting machine does not imply build approval
-                  or change ios/android placement; see \`guide settings\`.
+                  A remote Mac approved for device hosting does not imply
+                  build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
                   expiresAt is when a pending request lapses; "lapsed" is
                   a pending request whose expiry passed. --fix asks again.
-  buildMachines   one { machine, state, dnsName?, deviceId?, requestedAt?,
+  remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
-                  offload.machines entry; state is "approved", "pending", "not-asked",
+                  remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
                   before approval), "node-changed",
                   "not-on-tailnet", "tailscale-off", "unreachable" or
@@ -554,7 +554,7 @@ leased until <time>" for each one.`,
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
-                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no offload.machines and an online tailnet Mac; open Stim Desktop Settings > Build machines > Add
+                  offload-candidate is a note after 3+ successful local cold builds in 7 days average over 3 min, with no remote.machines and an online tailnet Mac; open Stim Desktop Settings > Remote Macs > Add
 
 ON FAILURE
   \`start\`, \`ios\`, \`android\` and \`web\` all print the error contract instead,
@@ -984,8 +984,8 @@ RULES
               "ready"    its last warm succeeded and nothing has run there
                          since: no start, ios, android, web or reload, for
                          at most 2 hours
-              "live"     live is true: Metro, a device, Chrome or a remote
-                         session of it runs
+              "live"     the workspace is active (live is true): Metro, a
+                         device, Chrome or a remote session of it runs
               "idle"     none of these
   phaseSince  when the warm started ("warming") or finished ("ready"); null
               for "live" and "idle"
@@ -1013,8 +1013,8 @@ RULES
   The first kind that applies wins:
 
   kind        "building"      a build runs; platform names it
-              "warming"       phase is "warming" and nothing is live
-              "ready"         phase is "ready" and nothing is live
+              "warming"       phase is "warming" and nothing is active
+              "ready"         phase is "ready" and nothing is active
               "build-failed"  the newest run of either platform failed;
                               platform names it
               "running"       live is true or a remote session runs
@@ -1268,8 +1268,8 @@ RULES
              finished request, status "ok" or "failed", durationMs from the
              request to the end of the response
 
-  Each entry of environments also carries build: null, or the ios or android
-  run that holds this workspace's native-run.lock:
+  Each entry of environments also carries build: null, or the ios, android or
+  macos run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
@@ -1294,6 +1294,11 @@ RULES
                    finishes during the build adds no device time. An
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
+                   A stim macos run enters only prepare, compile (SwiftPM,
+                   with detail), install (staging the bundle, or fetching
+                   it from a build machine) and launch. It has no cache
+                   lookup: outcome is null, plannedPhases is null, and
+                   builds.macos holds its finished runs and their phases.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1343,20 +1348,24 @@ RULES
                    reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
                    script, dex, package or sign; null before one is known
-    unit           "targets" for xcodebuild, "tasks" for Gradle
+    unit           "targets" for xcodebuild, "tasks" for Gradle, "steps" for
+                   SwiftPM (stim macos)
     done           xcodebuild: targets it finished (a target counts once
                    xcodebuild touches or signs its product, so an
                    incremental build can end below total); Gradle: tasks
-                   it reported so far
+                   it reported so far; SwiftPM: the done of its latest
+                   [done / total] line
     total          xcodebuild: targets in its dependency graph; Gradle: null,
-                   since its plain output gives no total
+                   since its plain output gives no total; SwiftPM: the
+                   total of its latest [done / total] line, which can grow
+                   as SwiftPM plans more of the build
     line           the latest compile, link or task line, paths shortened
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
                    every 2 seconds
   placement        where the build runs: "local", or while it is offloaded
                    { host, phase, startedAt, phaseStartedAt }. host is the
-                   offload.machines entry; phase is the step there: sync,
+                   remote.machines entry; phase is the step there: sync,
                    deps, prebuild, pods, build (xcodebuild or Gradle) or fetch;
                    startedAt is when the offload started and phaseStartedAt
                    when that step did. Meanwhile phase above follows it as
@@ -1410,7 +1419,7 @@ RULES
   lookup, and create no lastBuild record or failed-run stats.
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
-  offloadedTo  only on a run a build machine compiled: its name
+  offloadedTo  only on a run a remote Mac compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1443,7 +1452,7 @@ RULES
   last 10 runs, newest first. Its newest entry that is not "interrupted" is
   the run lastBuilds reports, once a run has recorded builds.
 
-  builds         { ios?, android? }, each a list of lastBuilds entries
+  builds         { ios?, android?, macos? }, each a list of lastBuilds entries
                  with { result, slot, configuration, cacheKey, phases }
   result         "succeeded", "failed", "cancelled" (Stim stopped the run
                  after an interrupt or \`stim stop\`) or "interrupted": its
@@ -1485,7 +1494,7 @@ RULES
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
   \`status --watch\` runs one du at a time off its refresh path, and measures
-  a folder at most every 5 minutes while its environment is live and every
+  a folder at most every 5 minutes while its environment is active and every
   hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
   one-shot status only reads, so the fields appear once a watcher, such as
   stim-server or Stim Desktop, has measured.
@@ -1605,7 +1614,7 @@ RULES
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
   device activity, and one run of the footprint helper. It is null when no
-  simulator is booted, no workspace is live and no build runs: status then
+  simulator is booted, no workspace is active and no build runs: status then
   runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },
@@ -1672,7 +1681,7 @@ RULES
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
   lastPodsMs once the project has compiled or installed pods, and
-  offloadedRuns, offloadedRunMs and lastOffloadHost once a build machine
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a remote Mac
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
@@ -1791,10 +1800,10 @@ BUILD PLACEMENT (\`offload\`)
   decision, reason, machine?, buildMs?, slotWaitMs?, deviceSlotWaitMs?, localEstimateMs?, failed? }.
   slotWaitMs and deviceSlotWaitMs are whole milliseconds waiting for build
   and owned-device slots respectively, present only when positive.
-  decision is "here", "offloaded", or "fell-back" (it tried a build machine
+  decision is "here", "offloaded", or "fell-back" (it tried a remote Mac
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
-  while this Mac has room) or "offload.mode is off" (which prints no line),
+  while this Mac has room) or "remote.buildMode is off" (which prints no line),
   or for a fallback the cause, prefixed by the machine it concerns, such as
   "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's

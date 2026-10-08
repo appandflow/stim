@@ -59,7 +59,7 @@ export function tryAcquireBuildSlotClaim({
   return null;
 }
 
-/** Build slots held for a build machine's offloaded builds, which run under another Stim home. */
+/** Build slots held for a remote Mac's offloaded builds, which run under another Stim home. */
 function liveOffloadedSlots(): number {
   let names: string[];
   try {
@@ -81,7 +81,7 @@ function liveOffloadedSlots(): number {
 /**
  * How busy this Mac is for native builds. `loadPerCore` is the 5-minute load average divided by the CPU count,
  * rounded to one decimal. `builds` counts this Stim home's runs that hold a live native-run claim and are in
- * prebuild, pods or compile here, not on a build machine, plus the build slots this Mac holds for other Macs'
+ * prebuild, pods or compile here, not on a remote Mac, plus the build slots this Mac holds for other Macs'
  * offloaded builds. `maxBuilds` is `concurrency.maxBuilds`, 0 when unlimited.
  */
 export interface MachineCapacity {
@@ -93,9 +93,9 @@ export interface MachineCapacity {
 }
 
 function maxLoadPerCore(): number {
-  const value = loadConfig()?.offload?.maxLoadPerCore;
+  const value = loadConfig()?.server?.maxLoadPerCore;
   if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value;
-  return settingDefinition('offload.maxLoadPerCore')!.default as number;
+  return settingDefinition('server.maxLoadPerCore')!.default as number;
 }
 
 function liveNativeBuilds(): number {

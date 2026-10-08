@@ -228,7 +228,7 @@ export async function acquireAndroidArtifact(
 ): Promise<AndroidArtifactResult> {
   const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   let fallbackMachine: string | null = null;
-  let hereReason = 'no build machine is paired';
+  let hereReason = 'no remote Mac is paired';
   let slotWaitMs: number | undefined;
   const buildMachine = record.buildMachine ?? 'auto';
   const fallBack = (reason: string, line: string = reason) => {

@@ -393,7 +393,7 @@ Stim supports two optional remote backends:
 - `proxy` connects through an Agent Device daemon that already owns a session.
 - `eas` creates and owns an EAS simulator session.
 
-A named `--build-machine` refuses physical and `--remote` cache misses with
+A named `--remote-build` refuses physical and `--remote` cache misses with
 `STIM_OFFLOAD_REFUSED`. Use `auto` or `local` for those builds; an existing
 cache hit with a listed paired name needs no worker. Unlisted or unpaired
 names refuse at setup before checking the cache. See [machine settings](./settings.md#machine-settings).
@@ -532,7 +532,7 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-- `stim stop` releases the live environment and device leases. It ends an owned
+- `stim stop` releases the active environment and device leases. It ends an owned
   remote session. On a physical iPhone, stopping the log collector also closes
   the app; it does not shut down the phone or uninstall anything.
 - `stim worktree remove` releases leases, parks eligible owned iOS simulators and
@@ -640,7 +640,7 @@ stim status
 stim reload ios
 stim stop`} />
 
-Set `ios.remote` to that name for a workspace default. `eas` and `proxy` keep
+Set `ios.remote` to that name for a default: `--scope machine` for every app on this Mac, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
 Android on an approved Mac when this Mac is full or busy; see
 [automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
@@ -648,7 +648,7 @@ The host boots headless; this Mac's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
 Model and runtime selectors use the host's installed choices. The build targets
-its simulator architecture. `--build-machine` independently selects a compatible
+its simulator architecture. `--remote-build` independently selects a compatible
 Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
@@ -804,7 +804,7 @@ that config. Run stim stop when finished. If the host refuses, report its reason
 ## Paired Mac hosting approval
 
 Device-host approval is separate from build offloading and phone control. On the
-client Mac, set `hosting.machines` to the expected tailnet names, then run
+client Mac, set `remote.machines` to the expected tailnet names, then run
 `stim doctor --fix` in an app directory to request approval. Doctor stores a
 separate private, node-pinned credential and reports its state under
 `deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.

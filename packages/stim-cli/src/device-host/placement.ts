@@ -62,7 +62,7 @@ export function decideDevicePlacement(
           (here.memoryPressure !== 'normal'
             ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
             : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
-  if (!offers.length) return local('no hosting machines configured; ' + localReason);
+  if (!offers.length) return local('no remote Macs configured; ' + localReason);
   if (count === null) return local(localReason);
   if (!cannotTake && here.memoryPressure === 'normal' && !here.budgetRefusal && here.loadPerCore < here.maxLoadPerCore)
     return local(localReason);
@@ -100,7 +100,7 @@ export function decideDevicePlacement(
     );
   const machines = admitted.map(({ machine, offer }) => ({
     machine,
-    reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit build machine,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
+    reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote Mac,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
   }));
   return { kind: 'host', machines, reason: machines[0]!.reason, skipped };
 }

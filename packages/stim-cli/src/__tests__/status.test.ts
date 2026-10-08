@@ -1107,7 +1107,7 @@ test.each([
       },
     });
     const logs = await runStatus();
-    expect(logs.join('\n')).toContain(`build machine ${buildMachine}, built on ${actual}`);
+    expect(logs.join('\n')).toContain(`build placement ${buildMachine}, built on ${actual}`);
     const program = new Command();
     statusCommand(program);
     const lines: string[] = [];

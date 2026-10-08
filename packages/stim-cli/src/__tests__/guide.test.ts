@@ -848,7 +848,7 @@ test('the web topic names every web setting and every stim web flag, and the age
 
 test('hosting setup routes approval through doctor and a separate person-granted capability', () => {
   const settings = renderTopic('settings');
-  expect(settings).toContain('hosting.machines');
+  expect(settings).toContain('remote.machines');
   expect(settings).toContain('doctor --fix');
   expect(settings).toContain('stim-server devices grant <id> --device-host');
   expect(settings).toContain('stim-server setup');
@@ -871,12 +871,12 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
   expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
-test('agents tell the user about build machines and the phone app and never set them up', () => {
+test('agents tell the user about remote Macs and the phone app and never set them up', () => {
   for (const topic of ['agent', 'settings']) {
     const rendered = renderTopic(topic);
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
-    expect(body).toContain('Stim Desktop > Settings > Build machines > Add');
+    expect(body).toContain('Stim Desktop > Settings > Remote Macs > Add');
     expect(body).toContain('Pair a Phone');
   }
   const settings = renderTopic('settings');
@@ -902,12 +902,12 @@ test.each([registerIos, registerAndroid, macosCommand])(
     const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
     register(program);
     const command = program.commands[0]!;
-    command.parseOptions(['--build-machine', 'mini']);
-    expect(command.opts().buildMachine).toBe('mini');
-    expect(() => command.parseOptions(['--build-machine', ''])).toThrow(
+    command.parseOptions(['--remote-build', 'mini']);
+    expect(command.opts().remoteBuild).toBe('mini');
+    expect(() => command.parseOptions(['--remote-build', ''])).toThrow(
       expect.objectContaining({ code: 'commander.invalidArgument' }),
     );
-    expect(renderSection('lifecycle', 'options')).toContain('--build-machine');
+    expect(renderSection('lifecycle', 'options')).toContain('--remote-build');
   },
 );
 

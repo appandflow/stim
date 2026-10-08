@@ -122,10 +122,11 @@ public struct ArchivedWorkspace: Decodable, Hashable, Identifiable, Sendable {
   }
 
   public static func newestFirst(_ archives: [Self]) -> [Self] {
-    archives.sorted {
-      let a = parseTimestamp($0.removedAt) ?? .distantPast
-      let b = parseTimestamp($1.removedAt) ?? .distantPast
-      return a == b ? $0.id > $1.id : a > b
+    let removed: [String: Date] = Dictionary(
+      archives.map { ($0.id, parseTimestamp($0.removedAt) ?? .distantPast) }, uniquingKeysWith: { first, _ in first })
+    return archives.sorted { a, b in
+      let (x, y) = (removed[a.id] ?? .distantPast, removed[b.id] ?? .distantPast)
+      return x == y ? a.id > b.id : x > y
     }
   }
 

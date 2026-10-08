@@ -2,7 +2,7 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// This Mac's build machines: the `offload.machines` it builds on, each with its state from `stim doctor`. Adding
+/// This Mac's remote Macs: the `remote.machines` it builds on, each with its state from `stim doctor`. Adding
 /// one opens the wizard, which does the tailnet discovery and the setup. Stim Desktop changes the setting with
 /// `stim settings` and asks for access with `stim doctor --fix`; approving happens on the other Mac.
 struct BuildMachinesView: View {
@@ -15,6 +15,12 @@ struct BuildMachinesView: View {
   @State private var detailed: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
+  @ObservedObject private var server = ServerController.shared
+  @State private var hosted = HostedSessionsModel()
+  @State private var revokingClient: PairedDevice?
+  @State private var stoppingSession: HostedSession?
+
+  private var hostClients: [PairedDevice] { server.devices.filter { $0.isBuildClient || $0.isDeviceHostClient } }
 
   private var checkout: String? {
     doctorCheckout(for: workspace, in: store.payload?.environments ?? [], project: store.project(ofPath:))?.path
@@ -32,7 +38,12 @@ struct BuildMachinesView: View {
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
       showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
-      deleteSample: { confirmsDeleteSample = true }
+      deleteSample: { confirmsDeleteSample = true },
+      showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
+      thisMac: ThisMacAccessSections(
+        clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
+        review: { BuildRequestPrompt.present(id: $0.id) }, revoke: { revokingClient = $0 },
+        stop: { stoppingSession = $0 })
     )
     .background(Palette.background)
     .onReceive(OpenRequests.shared.$addMachine) { request in
@@ -46,6 +57,35 @@ struct BuildMachinesView: View {
       }
     }
     .task { await model.load(checkout: checkout) }
+    .task {
+      while !Task.isCancelled {
+        server.reloadDevices()
+        await hosted.refresh()
+        try? await Task.sleep(for: .seconds(5))
+      }
+    }
+    .confirmationDialog(
+      revokingClient.map { "\($0.pendingUntil == nil ? "Revoke" : "Deny") \($0.name)?" } ?? "",
+      isPresented: .init(get: { revokingClient != nil }, set: { if !$0 { revokingClient = nil } }),
+      presenting: revokingClient
+    ) { device in
+      Button(device.pendingUntil == nil ? "Revoke" : "Deny", role: .destructive) { server.revoke(device) }
+    } message: { device in
+      Text(
+        device.isDeviceHostClient
+          ? "That Mac's device hosting approval is removed. It must ask again."
+          : device.pendingUntil != nil
+            ? "That Mac cannot build here unless it asks again." : "That Mac can no longer build here and must ask again.")
+    }
+    .confirmationDialog(
+      stoppingSession.map { "Stop \($0.client.name)'s \($0.device ?? $0.app ?? "session")?" } ?? "",
+      isPresented: .init(get: { stoppingSession != nil }, set: { if !$0 { stoppingSession = nil } }),
+      presenting: stoppingSession
+    ) { session in
+      Button("Stop", role: .destructive) { Task { await hosted.stop(session) } }
+    } message: { _ in
+      Text("This ends the session and deletes or parks its device on this Mac.")
+    }
     .task(id: PollKey(waiting: waiting, checkout: checkout)) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
@@ -90,19 +130,27 @@ struct BuildMachinesView: View {
         "Stops the sample workspace and removes its Stim workspace and Stim Desktop's SDK 58 sample folder, and releases its owned simulator: Stim parks it for reuse within the parked-simulator limit and deletes it otherwise. The next wizard creates the sample again."
       )
     }
-    .confirmationDialog(
-      "Stop building on \(removing ?? "")?", isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-      presenting: removing
-    ) { entry in
-      Button("Remove", role: .destructive) { Task { await model.remove(entry, checkout: checkout) } }
-    } message: { entry in
-      Text(removalMessage(entry))
+    .sheet(isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
+      if let entry = removing {
+        RemoveMachineSheet(
+          entry: entry, message: removalMessage(entry),
+          requests: [statuses?.first { $0.machine == entry }?.deviceId, hostRequest(entry)].compactMap { $0 },
+          cancel: { removing = nil },
+          remove: {
+            removing = nil
+            Task { await model.remove(entry, checkout: checkout) }
+          })
+      }
     }
+  }
+
+  private func hostRequest(_ entry: String) -> String? {
+    model.check(in: checkout)?.hosts?.first { OffloadMachines.name($0.machine) == OffloadMachines.name(entry) }?.deviceId
   }
 
   private func removalMessage(_ entry: String) -> String {
     guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
-      return "Builds on this Mac stop going to it."
+      return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
     }
     return "Builds stop going to it, and this Mac forgets the old node and asks again any listed Mac that has not approved it."
   }
@@ -116,7 +164,7 @@ struct BuildMachinesView: View {
     if let failure = model.writeFailure ?? model.settingsFailure { return failure }
     guard checkout != nil, let problem = model.check(in: checkout)?.problem else { return nil }
     switch problem {
-    case .unsupported: return "This stim does not report build machines; update it."
+    case .unsupported: return "This stim does not report remote Macs; update it."
     case .failed(let message): return "stim doctor failed: \(message)"
     }
   }
@@ -129,8 +177,8 @@ private struct PollKey: Hashable {
   var checkout: String?
 }
 
-/// The Build Machines tab for the state it is given: a progress view, the empty state, or the list.
-struct BuildMachinesContent: View {
+/// The Remote Macs tab for the state it is given: a progress view, the empty state, or the list.
+struct BuildMachinesContent<ThisMac: View>: View {
   var entries: [String]?
   var statuses: [BuildMachineStatus]?
   var hosts: [BuildMachineStatus]?
@@ -150,10 +198,23 @@ struct BuildMachinesContent: View {
   var showDetails: (String) -> Void
   var remove: (String) -> Void
   var deleteSample: () -> Void
+  var showsThisMac = false
+  var thisMac: ThisMac
 
   var body: some View {
     if let entries {
-      if entries.isEmpty {
+      if entries.isEmpty, showsThisMac {
+        Form {
+          Section {
+            notices
+            BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
+            if sampleExists { deleteSampleButton }
+          }
+          thisMac
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+      } else if entries.isEmpty {
         VStack(spacing: 0) {
           notices.padding([.horizontal, .top], Space.xl)
           BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
@@ -162,6 +223,13 @@ struct BuildMachinesContent: View {
       } else {
         list(entries)
       }
+    } else if showsThisMac {
+      Form {
+        Section { ProgressView().frame(maxWidth: .infinity) }
+        thisMac
+      }
+      .formStyle(.grouped)
+      .scrollContentBackground(.hidden)
     } else {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -188,6 +256,7 @@ struct BuildMachinesContent: View {
           let status = statuses?.first { $0.machine == entry }
           BuildMachineRow(
             entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            failed: canAsk && failure != nil && status == nil,
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             progress: working == entry ? progress : nil,
@@ -196,9 +265,9 @@ struct BuildMachinesContent: View {
         }
       } header: {
         HStack {
-          Text("Build machines")
+          Text("Remote Macs")
           Spacer()
-          Button("Add Build Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
+          Button("Add Remote Mac\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
         }
       } footer: {
         if !canAsk {
@@ -207,12 +276,13 @@ struct BuildMachinesContent: View {
       }
       Section {
         VStack(alignment: .leading, spacing: Space.xxs) {
-          Toggle("Keep build machines on this Mac's Stim version", isOn: $updatesAutomatically)
-          Text("When this Mac's Stim changes, update stim-server on approved build machines so builds can keep offloading.")
+          Toggle("Keep remote Macs on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved remote Macs so builds can keep offloading.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       }
       if sampleExists { Section { deleteSampleButton } }
+      thisMac
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
@@ -227,6 +297,7 @@ private struct BuildMachineRow: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
+  var failed: Bool
   var refreshing: Bool
   var capabilities: [String]
   var working: Bool
@@ -250,6 +321,8 @@ private struct BuildMachineRow: View {
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)
+          } else if failed {
+            Pill("Couldn\u{2019}t check", tone: .warning, size: .small)
           }
         }
         if let status {
@@ -305,7 +378,43 @@ private struct BuildMachineRow: View {
   }
 }
 
-struct BuildMachineDetails: View {
+/// Removing a remote Mac: what changes on this Mac, and the optional cleanup to run on that Mac itself.
+private struct RemoveMachineSheet: View {
+  var entry: String
+  var message: String
+  var requests: [String]
+  var cancel: () -> Void
+  var remove: () -> Void
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
+      Text("Stop using \(entry)?").font(.stim(.headline))
+      Text(message).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      VStack(alignment: .leading, spacing: Space.sm) {
+        Text("Optional, on \(entry):").font(.stim(.footnote, weight: .semibold))
+        if !requests.isEmpty {
+          Text("Revoke this Mac's access").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          ForEach(requests, id: \.self) { CopyableCommand(command: "stim-server devices revoke \($0)") }
+        }
+        Text("Stop stim-server there if nothing else uses it").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        CopyableCommand(command: "stim-server service uninstall")
+      }
+      Text(
+        "If ios.remote or android.remote names \(entry), simulators stop starting until you change it, for example with stim settings unset ios.remote."
+      )
+      .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      HStack {
+        Spacer()
+        Button("Cancel", action: cancel).buttonStyle(.stim(.secondary)).keyboardShortcut(.cancelAction)
+        Button("Remove", action: remove).buttonStyle(.stim(.destructive))
+      }
+    }
+    .padding(Space.xxl)
+    .frame(width: 460)
+  }
+}
+
+private struct BuildMachineDetails: View {
   var entry: String
   var status: BuildMachineStatus?
   var capabilities: [String]

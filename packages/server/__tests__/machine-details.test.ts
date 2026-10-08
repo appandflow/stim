@@ -125,7 +125,7 @@ describe('buildClients', () => {
 describe('BuildMachinesCache', () => {
   const run = (args: string[]) => Promise.resolve({ ok: true as const, stdout: JSON.stringify({ args }) });
 
-  it('runs no doctor when offload.machines names none, and says why when no workspace can run it', () => {
+  it('runs no doctor when remote.machines names none, and says why when no workspace can run it', () => {
     const calls: string[] = [];
     const counted = (args: string[]) => {
       calls.push(args[0]!);
@@ -144,13 +144,13 @@ describe('BuildMachinesCache', () => {
     expect(calls).not.toContain('doctor');
   });
 
-  it('says to update a stim whose doctor reports no build machines, once settled', async () => {
+  it('says to update a stim whose doctor reports no remote Macs, once settled', async () => {
     const cache = new BuildMachinesCache();
     expect(cache.snapshot(run, { cwd: '/app' })).toEqual({ buildMachines: null, buildMachinesPending: true });
     await flush();
     expect(cache.snapshot(run, { cwd: '/app' })).toMatchObject({
       buildMachines: null,
-      buildMachinesError: 'This stim does not report build machines; update it.',
+      buildMachinesError: 'This stim does not report remote Macs; update it.',
     });
   });
 
@@ -171,7 +171,7 @@ describe('BuildMachinesCache', () => {
     expect(second).toEqual(first);
     expect(calls).toEqual(['doctor']);
 
-    load.resolve({ ok: true, stdout: JSON.stringify({ buildMachines: [{ machine: 'mini', state: 'approved' }] }) });
+    load.resolve({ ok: true, stdout: JSON.stringify({ remoteMachines: [{ machine: 'mini', state: 'approved' }] }) });
     await flush();
 
     expect(cache.snapshot(runOnce, { cwd: '/app' })).toEqual({
@@ -187,7 +187,7 @@ describe('BuildMachinesCache', () => {
     const cache = new BuildMachinesCache(60_000, () => now);
     const runOnce = (args: string[]) => {
       calls.push(args[0]!);
-      return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ buildMachines: [] }) });
+      return Promise.resolve({ ok: true as const, stdout: JSON.stringify({ remoteMachines: [] }) });
     };
 
     cache.snapshot(runOnce, { cwd: '/app' });

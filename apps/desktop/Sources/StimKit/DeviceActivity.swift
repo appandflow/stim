@@ -56,9 +56,7 @@ public enum ActivityBadge: Equatable, Sendable {
   }
 
   private static func date(_ text: String) -> Date? {
-    let formatter = ISO8601DateFormatter()
-    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-    return formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    parseTimestamp(text)
   }
 }
 

@@ -39,7 +39,7 @@ public struct Build: Decodable, Hashable, Sendable {
   /// Identifies one run: a new run in the same slot has a new `startedAt`.
   public var key: String { "\(platform)|\(slot)|\(startedAt)" }
 
-  /// The build machine this build was offloaded to and the step it runs there; nil for a local build.
+  /// The remote Mac this build was offloaded to and the step it runs there; nil for a local build.
   public func remote(at now: Date) -> RemoteBuild? {
     guard case .remote(let host, let step, _, let stepStartedAt) = placement else { return nil }
     return RemoteBuild(
@@ -117,7 +117,7 @@ public func steadyFraction(_ key: String, _ fraction: Double) -> Double {
   shownFractions.steady(key, fraction)
 }
 
-/// `local`, or the build machine a build was offloaded to (its `offload.machines` entry), the step it runs there
+/// `local`, or the remote Mac a build was offloaded to (its `remote.machines` entry), the step it runs there
 /// (`sync`, `deps`, `prebuild`, `pods`, `build` or `fetch`) and when the offload and that step started.
 public enum BuildPlacement: Decodable, Hashable, Sendable {
   case local
@@ -138,7 +138,7 @@ public enum BuildPlacement: Decodable, Hashable, Sendable {
   }
 }
 
-/// A running build on a build machine: the machine's name, the step it runs there and how long that step has run.
+/// A running build on a remote Mac: the machine's name, the step it runs there and how long that step has run.
 public struct RemoteBuild: Equatable, Sendable {
   public var host: String
   public var phase: String
@@ -153,7 +153,7 @@ public struct RemoteBuild: Equatable, Sendable {
   }
 }
 
-/// A build machine's `offload.machines` entry without its `:port`.
+/// A remote Mac's `remote.machines` entry without its `:port`.
 public func machineName(_ entry: String) -> String {
   guard let colon = entry.lastIndex(of: ":"), entry[entry.index(after: colon)...].allSatisfy(\.isNumber),
     colon != entry.index(before: entry.endIndex)

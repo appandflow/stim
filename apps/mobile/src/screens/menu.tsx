@@ -148,7 +148,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
                   onPress={() =>
                     go({ pathname: '/mac/[id]/workspace', params: { id: recent.macId, path: recent.path } })
                   }
-                  accessibilityLabel={recent.live ? t`${title}, live` : title}
+                  accessibilityLabel={recent.live ? t`${title}, active` : title}
                   style={styles.recent}
                 >
                   <Icon

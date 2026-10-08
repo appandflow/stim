@@ -90,21 +90,21 @@ building, unverified and hosted macOS apps keep their workspace untouched.
 Runtime locks, state, logs and the project's own `.build` stay; the next
 `stim macos` performs a full Swift build and restages the app.
 
-`--build-machine <auto|local|name>` overrides `STIM_OFFLOAD_MACHINE` and the
-machine setting `offload.machine` (default `auto`). `local` builds here. A name
-requires the matching configured and paired worker, ignoring `offload.mode` and
+`--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and the
+machine setting `remote.build` (default `auto`). `local` builds here. A name
+requires the matching configured and paired worker, ignoring `remote.buildMode` and
 this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
 reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
-`stim settings get offload.machines`. Run `stim doctor --fix` to ask for build
+`stim settings get remote.machines`. Run `stim doctor --fix` to ask for build
 access if not paired; a person on the worker finds the id with
 `stim-server devices` and approves it with `stim-server devices grant <id> --build`.
 Invalid, unlisted or unpaired selections refuse before stopping the running app
-or changing its build record. To change placement, rerun with `--build-machine auto`
-or `--build-machine local`.
+or changing its build record. To change placement, rerun with `--remote-build auto`
+or `--remote-build local`.
 
-With `auto`, `offload.mode` also places these SwiftPM Debug builds: `auto` builds here while
-this Mac has capacity, `force` uses an approved build machine when one accepts,
-and `off` always builds here. Configure `offload.machines` and approve build
+With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
+this Mac has capacity, `force` uses an approved remote Mac when one accepts,
+and `off` always builds here. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and
@@ -126,6 +126,14 @@ locally with the same supervisor and ownership checks. The build record carries
 (absent before a build runs), plus `errorCode` for typed failures. It retains
 `offloadedTo` for a remote build or `offloadFallback` for a fallback, and build
 logs show placement and its reason.
+
+While a macOS build runs, `stim status --json` reports it as `environments[].build` with
+`platform: "macos"`, the same phases and progress as iOS and Android builds: `prepare`,
+`compile`, `install` and `launch`. During `compile`, `detail` carries SwiftPM's
+`[done / total]` counts with `unit: "steps"`, and fetching and planning packages show as the
+`configure` step. A macOS build has no cache lookup, so `outcome` and `plannedPhases` are `null`;
+finished runs and the time each phase took are in `environments[].builds.macos`. Stim Desktop shows them in the
+workspace's build card.
 
 Stim Desktop offers **Build and run**, **Open app** (for an app on this Mac) and **Stop** on the
 workspace's app card, with a live preview that updates itself while the app runs. The preview follows the app's front standard window, its
@@ -261,13 +269,13 @@ available.
 
 `stim macos --remote <machine>` builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
-[`hosting.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
+[`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
 a person on that Mac approves the request with
 `stim-server devices grant <id> --device-host`, then run `stim doctor` once more.
 Stim connects only to the Mac's pinned tailnet node. If the host refuses or is
 unreachable, the command fails; it never launches the app locally instead.
 
-The `--remote` value is a hosting Mac name from `hosting.machines`. macOS
+The `--remote` value is a remote Mac name from `remote.machines`. macOS
 refuses `eas` and `proxy` because it has neither backend. It also refuses `auto`
 until automatic placement ships. These reserved names are case-insensitive and
 trimmed; they refuse with `STIM_BAD_ARG` before state access or a connection.
@@ -296,7 +304,7 @@ stim stop`}
 />
 
 Hosted delivery carries the staged bundle, including declared resources and
-compiled assets. When `offload.mode` built the app on the hosting Mac itself
+compiled assets. When `remote.buildMode` built the app on the hosting Mac itself
 (the same tailnet node), the host copies the files from the build it kept for
 this Mac instead of receiving them again over the tailnet. It admits only bytes
 that match the digests of the bundle Stim verified here, and it needs both the

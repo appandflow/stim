@@ -1,7 +1,7 @@
 import { deviceHostMachinesFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 
-/** A separately approved hosting machine, pinned before sending its device token. */
+/** A separately approved remote Mac, pinned before sending its device token. */
 export interface DeviceHostMachineCredential {
   machine: string;
   nodeId: string;

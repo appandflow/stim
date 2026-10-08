@@ -28,7 +28,7 @@
         working: nil, progress: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false, sampleExists: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
-        remove: { _ in }, deleteSample: {}
+        remove: { _ in }, deleteSample: {}, thisMac: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
@@ -51,7 +51,7 @@
 
     @MainActor func testBuildMachinesScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_BUILD_MACHINES_SHOTS"] else {
-        throw XCTSkip("Set STIM_BUILD_MACHINES_SHOTS to render build machine fixtures.")
+        throw XCTSkip("Set STIM_BUILD_MACHINES_SHOTS to render remote Mac fixtures.")
       }
       _ = NSApplication.shared
       BrandAssets.registerFonts()

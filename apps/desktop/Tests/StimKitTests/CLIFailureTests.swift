@@ -40,6 +40,22 @@ struct CLIFailureTests {
     #expect(error?.localizedDescription == "stim exited with status 2: first\nsecond\nerror: disk full")
   }
 
+  @Test func stopsADoctorCheckThatNeverReturns() async throws {
+    let dir = try scratchDirectory()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let stim = try fake(in: dir, name: "stim", "#!/bin/sh\nexec sleep 30\n")
+    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
+
+    let error = await #expect(throws: StimCLI.Failure.self) {
+      try await cli.machineAccess(cwd: dir.path, ask: false, timeout: 1)
+    }
+    guard case .timedOut(let seconds) = error else {
+      Issue.record("expected timedOut, got \(String(describing: error))")
+      return
+    }
+    #expect(seconds == 1)
+  }
+
   @Test func throwsNotFoundWithoutRunningAnythingWhenStimIsMissing() async {
     let cli = StimCLI(environment: ["PATH": "/nonexistent"])
 

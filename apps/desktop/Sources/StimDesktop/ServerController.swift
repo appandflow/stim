@@ -92,11 +92,6 @@ final class ServerController: ObservableObject {
     return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
   }
 
-  /// Build clients, and Macs waiting for approval to build here, newest first.
-  var buildClients: [PairedDevice] { devices.filter(\.isBuildClient) }
-
-  var deviceHostClients: [PairedDevice] { devices.filter(\.isDeviceHostClient) }
-
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
 
   var isRunning: Bool {
@@ -253,24 +248,28 @@ final class ServerController: ObservableObject {
   }
 
   func setupConnection() {
-    guard isRunning, !settingUpConnection else { return }
+    Task { await setUpConnection() }
+  }
+
+  func setUpConnection() async -> String? {
+    guard isRunning else { return "The Stim server is not running. Try again." }
+    guard !settingUpConnection else { return "Connection setup is already running. Try again." }
     settingUpConnection = true
     connectionError = nil
-    Task {
-      defer { settingUpConnection = false }
-      guard let client = ServerSession.shared.client, client.isOpen else {
-        connectionError = "The local Desktop connection is not ready. Try again."
-        return
-      }
-      do {
-        _ = try await client.request("route.setup", [:])
-        refresh()
-      } catch let error as ServerError where error.code == "unknown-method" {
-        connectionError = "Update stim-server to set up the phone connection from Desktop."
-      } catch {
-        connectionError = error.localizedDescription
-      }
+    defer { settingUpConnection = false }
+    guard let client = ServerSession.shared.client, client.isOpen else {
+      connectionError = "The local Desktop connection is not ready. Try again."
+      return connectionError
     }
+    do {
+      _ = try await client.request("route.setup", [:])
+      refresh()
+    } catch let error as ServerError where error.code == "unknown-method" {
+      connectionError = "Update stim-server to set up the phone connection from Desktop."
+    } catch {
+      connectionError = error.localizedDescription
+    }
+    return connectionError
   }
 
   func pairPhone(control: Bool) async throws -> PairingCode {
@@ -281,7 +280,7 @@ final class ServerController: ObservableObject {
     if before.tailscale.isRunning && before.route?.state != "routed" {
       throw ServerError(
         code: "not-connected",
-        message: "Set up the phone connection in the Phones tab before pairing. A verified tailnet-only route is required.")
+        message: "Pairing needs a verified tailnet-only route. Turn on serving first.")
     }
     let code = try await cli.pair(port: port, control: control)
     if before.tailscale.isRunning || !code.isLocalOnly {
@@ -289,7 +288,7 @@ final class ServerController: ObservableObject {
         let dnsName = after.tailscale.dnsName, code.qr.endpoint == after.route?.endpoint(dnsName: dnsName)
       else {
         throw ServerError(
-          code: "not-connected", message: "The phone connection changed or could not be verified. Try again in the Phones tab.")
+          code: "not-connected", message: "The phone connection changed or could not be verified. Try again.")
       }
     }
     return code
@@ -353,6 +352,7 @@ final class ServerController: ObservableObject {
         }
         .sorted { $0.pairedAt > $1.pairedAt }
         devicesError = nil
+        FeatureFlags.seed(servesPhones: false, pairedPhones: self.devices.filter(\.isPhone).count)
       case .failure(let error):
         devicesError = error.localizedDescription
       }

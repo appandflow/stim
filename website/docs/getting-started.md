@@ -70,7 +70,7 @@ stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
-stim stop             # release the live environment
+stim stop             # release the active environment
 stim worktree remove  # after the work is preserved`}
 />
 
@@ -247,7 +247,7 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
 
-Use [remote machines](./remote-machines.md) to build or run on an approved Mac,
+Use [remote Macs](./remote-machines.md) to build or run on an approved Mac,
 and the [phone app](./phone-app.md) to watch workspaces, devices and logs away
 from your desk.
 

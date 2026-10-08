@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                  |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                      |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                          |
-| `ios.remote`                  | `proxy`, `eas`, an approved hosting Mac, or `auto` when this Mac is full or busy                           |
+| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                            |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                      |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                           |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                              |
@@ -112,7 +112,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.variant`             | Gradle build variant                                                                                       |
 | `android.keystore`            | Release keystore path                                                                                      |
 | `android.keystorePassword`    | Release keystore password source                                                                           |
-| `android.remote`              | `proxy`, `eas`, an approved hosting Mac, or `auto` when this Mac is full or busy                           |
+| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                            |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only) |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                         |
 | `metro.publicUrl`             | Existing public Metro URL                                                                                  |
@@ -346,14 +346,16 @@ excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
 
-`hosting.machines` names Macs that may host owned simulator sessions, by
-MagicDNS name and optional serve port (default 7443). Name each node and port
-once. Set it with
-`stim settings set hosting.machines '["janics-mac-mini"]'`, then run
-`stim doctor --fix` in an app directory. A person on the hosting Mac approves
-the printed id with `stim-server devices grant <id> --device-host`.
-Hosting approval is separate from `offload.machines` and grants no read,
-control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
+`remote.machines` names the remote Macs this Mac may build on and host owned
+simulator sessions on, by MagicDNS name and optional serve port (default 7443).
+Name each node and port once. Set it with
+`stim settings set remote.machines '["janics-mac-mini"]'`, then run
+`stim doctor --fix` in an app directory. Build and device-host approvals are
+separate, and a remote Mac is used only for what it approved; a listed Mac that
+never granted one is not used for it, and doctor reports it. For hosting, a
+person on the remote Mac approves the printed id with
+`stim-server devices grant <id> --device-host`. Hosting approval grants no
+read, control or build access. [`stim macos --remote <machine>`](./macos.md#run-it-on-another-mac)
 runs a macOS app on an approved machine. [iOS placement](./owned-devices.md#run-ios-on-another-mac) uses
 `stim ios|android --remote <machine>` or `ios.remote` / `android.remote` and the same approval. `auto` places on an approved Mac when this Mac is full or busy. To view or control a hosted macOS app, a person on
 that Mac approves Screen & System Audio Recording and Device Control and Data Access
@@ -371,7 +373,7 @@ or forgets names removed from the setting. A pending request reports its
 `expiresAt`. A concurrent approval inspection
 reports `busy` instead of rotating a pending token.
 
-On a hosting Mac, `hosting.agentDriver` names the tool it starts so a client's
+On a remote Mac that hosts, `hosting.agentDriver` names the tool it starts so a client's
 coding agent can drive the macOS apps, iOS simulators and Android emulators it hosts for that client. The default,
 `none`, starts nothing. For macOS, `agent-device` starts its shared daemon only when it
 can lease a single app (its `macos-app` lease backend);
@@ -379,29 +381,28 @@ otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
 an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both Macs need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both Macs. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
 
-For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
+For a setup walkthrough covering build and hosting approvals, see [Remote Macs](./remote-machines.md).
 
-`offload.machines` lists the Macs on your tailnet that may build for this one,
-by MagicDNS name (`janics-mac-mini`), optionally with the port of their
-`tailscale serve` route (`janics-mac-mini:7444`; default 7443). Set it with
-`stim settings set offload.machines '["janics-mac-mini"]'`, then run
-`stim doctor --fix` in any app directory: it asks each named Mac for build access and pins that
-Mac's tailnet node. Approve the request on the build machine with
+For builds, the same `remote.machines` list names the Macs on your tailnet
+that may build for this one, optionally with the port of their
+`tailscale serve` route (`janics-mac-mini:7444`; default 7443).
+`stim doctor --fix` in any app directory asks each named Mac for build access and pins that
+Mac's tailnet node. Approve the request on the remote Mac with
 `stim-server devices grant <id> --build`; doctor prints the exact command.
 Stim connects to a named Mac only while it is still the pinned node, and never
-sends its token to another. Doctor reports each machine's pairing state.
+sends its token to another. Doctor reports each remote Mac's build pairing state under `remoteMachines`.
 
-`offload.machine` is a machine setting, defaulting to `auto`. On `ios`,
-`android` and `macos`, `--build-machine <auto|local|name>` overrides
-`STIM_OFFLOAD_MACHINE`, which overrides the setting. A blank environment value
+`remote.build` is a machine setting, defaulting to `auto`. On `ios`,
+`android` and `macos`, `--remote-build <auto|local|name>` overrides
+`STIM_REMOTE_BUILD`, which overrides the setting. A blank environment value
 is unset. Trimmed `auto`/`local` are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
-- `auto` follows `offload.mode`, with the existing local fallback on failure.
+- `auto` follows `remote.buildMode`, with the existing local fallback on failure.
 - `local` keeps the build on this Mac for this run.
-- A tailnet name requires a matching entry in `offload.machines`, already
-  paired and approved. It ignores `offload.mode` and this Mac's load and slots.
+- A tailnet name requires a matching entry in `remote.machines`, already
+  paired and approved. It ignores `remote.buildMode` and this Mac's load and slots.
 
 A named selection never prompts for pairing, uses another machine or falls
 back locally. Missing configuration/pairing, denied or pending approval,
@@ -409,10 +410,10 @@ unreachability or changed pinned identity, incompatible toolchain/CPU/runtime,
 low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
 message names the worker and the concrete reason. Run `stim doctor --fix` to
-ask for build access if not paired. Check `stim settings get offload.machines`;
+ask for build access if not paired. Check `stim settings get remote.machines`;
 a person on the worker finds the id with `stim-server devices` and grants build
 access with `stim-server devices grant <id> --build`. To change placement,
-rerun with `--build-machine auto` or `--build-machine local`.
+rerun with `--remote-build auto` or `--remote-build local`.
 
 Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
 and unknown simulator runtime builds refuse a named worker on a cache miss.
@@ -427,34 +428,34 @@ local xcodebuild, Gradle or SwiftPM compile.
 Copy this prompt to your agent:
 
 ```text
-Run stim ios --build-machine janics-mac-mini. If it refuses, report the
+Run stim ios --remote-build janics-mac-mini. If it refuses, report the
 STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
 ```
 
-With `offload.machine` set to `auto`, `offload.mode` decides where `stim ios` compiles a simulator Debug build and
+With `remote.build` set to `auto`, `remote.buildMode` decides where `stim ios` compiles a simulator Debug build and
 where `stim android` compiles an emulator debug build, and where `stim macos`
 compiles a SwiftPM Debug build:
 
 - `auto` (default) builds here while this Mac has capacity: a free
   `concurrency.maxBuilds` slot (always, with no build limit) and a load per
-  core under `offload.maxLoadPerCore`. Otherwise it builds on a machine that
+  core under `server.maxLoadPerCore`. Otherwise it builds on a machine that
   accepts the build and is expected to be faster: any accepting machine while
   every slot here is busy, or a machine less loaded than this Mac while only
-  the load here is high. A build machine too old to report its load is used
+  the load here is high. A remote Mac too old to report its load is used
   only while every slot here is busy.
-- `force` builds on a build machine whenever one accepts the build.
+- `force` builds on a remote Mac whenever one accepts the build.
 - `off` always builds here.
 
 Load per core is the 5-minute load average divided by the CPU count.
-`offload.maxLoadPerCore` (default 2) is also the busy threshold for automatic
+`server.maxLoadPerCore` (default 2) is also the busy threshold for automatic
 iOS and Android device placement. It is the load per core at which a Mac
-counts as saturated: this Mac stops preferring itself, and a build machine
+counts as saturated: this Mac stops preferring itself, and a remote Mac
 declines offloaded builds.
 
-`STIM_OFFLOAD_MODE` overrides it for one command in `auto`. Device, Release and
+`STIM_REMOTE_BUILD_MODE` overrides it for one command in `auto`. Device, Release and
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
 iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
-builds can use a separate `--build-machine`, targeting the hosting Mac's
+builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
@@ -504,15 +505,15 @@ offloaded app lands only in this Mac's build cache, not in a remote cache
 provider. A project whose `xcodebuild` changes its own fingerprinted inputs
 builds on the machine, fails the fingerprint check there; `auto` builds here and a named selection
 refuses, so
-set `offload.mode` to `off` for it. The `--json` payload and `lastBuilds` carry
+set `remote.buildMode` to `off` for it. The `--json` payload and `lastBuilds` carry
 `offloadedTo`, or `offloadFallback` with the reason it built here,
 `stim status` shows the machine and its step while a build runs there, and
 `stim stats` counts offloaded runs apart from cold runs and keeps where each
 compiling build ran and why (see [`stats`](./commands.md#stats)). On the
-build machine, stim-server's `machine.details` reports the builds it ran for
+remote Mac, stim-server's `machine.details` reports the builds it ran for
 each client Mac.
 
-On the build machine, `offload.workerRoot` (an absolute path; default
+On the remote Mac, `server.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
 home per client and repository and one Gradle home per client. Put it on a
@@ -520,26 +521,26 @@ large volume. It runs one offloaded build at a time and boots or installs
 nothing. It declines a build while that volume has less than 10 GB free,
 while its own Stim builds and the offloaded one fill its
 `concurrency.maxBuilds`, or while its load per core is at or above its
-`offload.maxLoadPerCore`. While an offloaded build runs, it holds one of the
-build machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
+`server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
+remote Mac's `concurrency.maxBuilds` slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
 
-For Android builds, start stim-server on the build machine with `JAVA_HOME`
+For Android builds, start stim-server on the remote Mac with `JAVA_HOME`
 pointing at a JDK of the same major version as the clients (otherwise it
 uses the macOS default JDK, which `java_home` may not find, for example with
 Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
 `~/Library/Android/sdk`). After an Android build, the client's Gradle daemon
-stays warm for `offload.gradleDaemonIdleMinutes` (default 30; `0` stops it
+stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
 15 seconds. A new value applies from the next daemon. The daemon never holds
 a build slot. While none of the client's builds runs, stim-server stops it
 sooner when a build of the client is cancelled, when the client is revoked, and when
-the build machine has less than 2 GB of memory available. Deleting the
+the remote Mac has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
-To keep stim-server running on the build machine across logins, run
+To keep stim-server running on the remote Mac across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
 that starts at login and restarts the server if it exits, and `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
@@ -551,7 +552,7 @@ reports the process, its health, the route, Stim Host's permissions and
 whether its Stim build matches the `stim` on PATH. Doctor points to this
 command when a named machine does not answer.
 
-Offload needs the same Stim build on both Macs. To move the build machine's
+Offload needs the same Stim build on both Macs. To move the remote Mac's
 service to another build, run one of these there:
 
 ```bash
@@ -573,13 +574,13 @@ approvals, Stim Host, the pinned `--env` and `--path-prepend` values or the
 serve route.
 
 A client Mac this machine approved for builds or device hosting can request
-the same update over its tailnet connection, so the build machine keeps up
+the same update over its tailnet connection, so the remote Mac keeps up
 without ssh. It can always ask for an npm release. It can send its own packed
-build only while `server.acceptClientBuilds` is true on the build machine; it
+build only while `server.acceptClientBuilds` is true on the remote Mac; it
 is false by default:
 
 ```bash
-stim settings set server.acceptClientBuilds true   # on the build machine
+stim settings set server.acceptClientBuilds true   # on the remote Mac
 ```
 
 Replacing a loaded service waits up to 45 seconds for its existing listeners to
@@ -609,7 +610,7 @@ a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 `budget` keeps parallel agents from filling the disk or memory. It is on by
 default. Before `stim start`, `stim ios`, or `stim android` builds or boots
 anything, Stim checks free disk on the volumes that hold the app and
-`$STIM_HOME`, and the estimated memory of live environments:
+`$STIM_HOME`, and the estimated memory of active environments:
 
 | Key                           | Default                | Effect                                                                                   |
 | ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
@@ -699,8 +700,8 @@ recordings are otherwise cleaned up.
 | `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                |
 | `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb` |
 | `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`          |
-| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of live environments, in GB, before idle ones are reclaimed                                |
-| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Live workspaces before idle ones are reclaimed                                                              |
+| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                              |
+| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                            |
 | `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
 | `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
 | `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |

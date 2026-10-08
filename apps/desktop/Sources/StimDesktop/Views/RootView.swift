@@ -207,6 +207,10 @@ struct RootView: View {
     }
     .onReceive(openRequests.$pairsPhone) { pair in
       guard pair else { return }
+      guard PhoneApp.opensPairing(phoneApp: FeatureFlags.isEnabled(.phoneApp)) else {
+        openRequests.pairsPhone = false
+        return
+      }
       settingsTab = "phones"
       openSettings()
     }

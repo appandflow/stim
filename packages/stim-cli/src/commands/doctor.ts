@@ -233,7 +233,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; ask each machine in offload.machines for build access. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = findProjectRoot(process.cwd());
@@ -304,13 +304,14 @@ export default function doctorCommand(
           : []),
         ...(checksMacos ? [{ platform: 'macos' as const, local: macosToolchain() }] : []),
       ];
-      const buildMachines = await inspectBuildMachines({
+      const remoteMachines = await inspectBuildMachines({
         fix: opts.fix === true,
         check: checksIos || checksAndroid || checksMacos ? offloadCheck(root, offloadTargets) : null,
       });
-      findings.push(...buildMachines.findings);
+      findings.push(...remoteMachines.findings);
       const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
-      findings.push(...deviceHosts.findings);
+      const reported = new Set(remoteMachines.findings.map((each) => each.title));
+      findings.push(...deviceHosts.findings.filter((each) => !reported.has(each.title)));
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
@@ -328,7 +329,7 @@ export default function doctorCommand(
             stim,
             budget: budget.report,
             maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
-            buildMachines: buildMachines.machines,
+            remoteMachines: remoteMachines.machines,
             deviceHosts: deviceHosts.machines,
             findings,
           }),
