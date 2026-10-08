@@ -18,10 +18,11 @@ $STIM_HOME/archive by default. See stim guide cleanup archive.
 
 MAINTENANCE
 
-Automatic maintenance has three modes. report (the default) measures, plans
-and logs, and never deletes anything. on also runs the disk actions below
-through gc's own removal code. off disables it. It is off in CI and scoped
-STIM_HOME homes unless STIM_MAINTENANCE is explicit.
+Automatic maintenance has three modes. on (the default) runs the disk actions
+below through gc's own removal code and logs each one. report measures, plans
+and logs, and never deletes anything. off disables it. It is off in CI and
+scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
+or CI run never deletes on its own.
 Commands trigger a detached pass when a check is due: disk and memory pressure
 (every minute), directory sizes (hourly), finished worktrees (every 15
 minutes) and the age sweep (daily). guide, settings and help do not trigger
@@ -62,7 +63,8 @@ caches.ccacheMaxGb.
   stim status --json              maintenance observations and recent records
   stim logs --source maintenance  this workspace's maintenance records
   stim gc                         live pressure and cached-size preview
-  stim settings set maintenance.mode off
+  stim settings set maintenance.mode off     turn automatic cleanup off
+  stim settings set maintenance.mode report  plan and log, delete nothing
 
 The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
 maintenance.logMaxMb with the old generation retained for

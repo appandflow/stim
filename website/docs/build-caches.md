@@ -319,12 +319,13 @@ default and is reported there.
 A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
 with the holder and recovery guidance.
 
-The default mode is `report`, or `off` under `STIM_HOME` or `CI` unless
-`STIM_MAINTENANCE` is explicit. Let passes act, or turn them off, with:
-
-<StimTabs code="stim settings set maintenance.mode on" />
+The default mode is `on`, or `off` under `STIM_HOME` or `CI` unless
+`STIM_MAINTENANCE` is explicit. Passes delete by default. Turn them off, or
+keep only the plan and the log, with:
 
 <StimTabs code="stim settings set maintenance.mode off" />
+
+<StimTabs code="stim settings set maintenance.mode report" />
 
 Pin one workspace with `stim settings set maintenance.keep true` in its project.
 
