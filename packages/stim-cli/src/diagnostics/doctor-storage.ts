@@ -1,10 +1,11 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DoctorPlatform, Finding } from './doctor.ts';
-import { apkOutputsDir } from '../engine/gradle.ts';
+
 import { sharedBuildCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { filesystemDevice, temporaryRoot } from '../temporary.ts';
 import { repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
+import { apkOutputsDir } from '../integrations/react-native-build.ts';
 
 export function checkStorageLayout(
   projectRoot: string,

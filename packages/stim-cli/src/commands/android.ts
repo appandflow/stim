@@ -6,6 +6,7 @@ import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
 import { parseMachine } from '@stim-cli/core/state';
+import { buildAndroid } from '../integrations/react-native-build.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -108,7 +109,7 @@ import {
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 import { planPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import { buildAndroid } from '../engine/gradle.ts';
+
 import { CCACHE_NOT_RUN, resolveCcache } from '../engine/ccache.ts';
 import { swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
