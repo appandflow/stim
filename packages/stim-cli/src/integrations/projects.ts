@@ -79,6 +79,7 @@ const reactNativeProject: ProjectIntegration = {
       ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
       platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
       validate: () => problem,
+      android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
     };
   },
 };

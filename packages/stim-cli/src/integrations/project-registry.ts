@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
+import type { AndroidProject } from './android-project.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
 
 export type ProjectPlatform = 'ios' | 'android' | 'macos' | 'web';
@@ -17,6 +18,7 @@ interface ProjectMatch {
   application: boolean;
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
+  android?(): Promise<AndroidProject>;
   validate?(operation: ProjectOperation): ProjectProblem | null | undefined;
 }
 
@@ -28,6 +30,7 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
+  selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
   detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[];
@@ -41,32 +44,43 @@ function canonicalPath(path: string): string {
   }
 }
 
+function operationSelection(
+  root: string,
+  matches: readonly (ProjectMatch & { id: string })[],
+  operation: ProjectOperation,
+): { match: ProjectMatch & { id: string } } | { problem: ProjectProblem } {
+  const results = matches.flatMap((match) => {
+    const problem = match.validate?.(operation);
+    return problem === undefined ? [] : [{ match, problem }];
+  });
+  const unreadable = results.find(({ problem }) => problem?.kind === 'unreadable');
+  if (unreadable?.problem) return { problem: unreadable.problem };
+  const providers = results.filter(({ problem }) => problem === null);
+  if (providers.length > 1)
+    return {
+      problem: {
+        kind: 'ambiguous',
+        message: `Multiple project integrations support ${operation} at ${root}: ${providers.map(({ match }) => match.id).join(', ')}.`,
+        remedy: 'Run this from the directory of the app you intend to use, with one integration for this operation.',
+      },
+    };
+  if (providers.length === 1) return { match: providers[0]!.match };
+  return {
+    problem: results[0]?.problem ?? {
+      kind: 'not-an-app',
+      message: `No project integration supports ${operation} at ${root}.`,
+      remedy: 'Run this from the directory of a supported app.',
+    },
+  };
+}
+
 function operationProblem(
   root: string,
   matches: readonly (ProjectMatch & { id: string })[],
   operation: ProjectOperation,
 ): ProjectProblem | null {
-  const results = matches.flatMap((match) => {
-    const problem = match.validate?.(operation);
-    return problem === undefined ? [] : [{ id: match.id, problem }];
-  });
-  const unreadable = results.find(({ problem }) => problem?.kind === 'unreadable');
-  if (unreadable?.problem) return unreadable.problem;
-  const providers = results.filter(({ problem }) => problem === null);
-  if (providers.length > 1)
-    return {
-      kind: 'ambiguous',
-      message: `Multiple project integrations support ${operation} at ${root}: ${providers.map(({ id }) => id).join(', ')}.`,
-      remedy: 'Run this from the directory of the app you intend to use, with one integration for this operation.',
-    };
-  if (providers.length === 1) return null;
-  return (
-    results[0]?.problem ?? {
-      kind: 'not-an-app',
-      message: `No project integration supports ${operation} at ${root}.`,
-      remedy: 'Run this from the directory of a supported app.',
-    }
-  );
+  const selected = operationSelection(root, matches, operation);
+  return 'problem' in selected ? selected.problem : null;
 }
 
 export function createProjectRegistry(integrations: readonly ProjectIntegration[]): ProjectRegistry {
@@ -107,6 +121,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return ownedRootProblem(root, matches) ?? operationProblem(root, matches, operation);
   }
 
+  function selectAndroid(root: string): ReturnType<ProjectRegistry['selectAndroid']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'android');
+    if ('problem' in selected) return selected;
+    if (selected.match.android) return { load: selected.match.android };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide an Android operation.`,
+        remedy: 'Use an integration with an Android build and runtime recipe.',
+      },
+    };
+  }
+
   function isMobileProject(root: string): boolean {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -132,5 +163,5 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return ordered.filter((platform) => platforms.has(platform));
   }
 
-  return { findProjectRoot, projectProblem, isMobileProject, keepsWorkspace, detectPlatforms };
+  return { findProjectRoot, projectProblem, selectAndroid, isMobileProject, keepsWorkspace, detectPlatforms };
 }
