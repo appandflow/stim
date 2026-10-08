@@ -731,7 +731,7 @@ describe('oversee, what needs a person', () => {
     expect(watch(T0 + 5 * MIN, [expired])).toHaveLength(1);
   });
 
-  it('notifies one item per workspace per run, and another once the workspace went live again', () => {
+  it('notifies one item per workspace per run, and another once the workspace stops being idle', () => {
     const expired = (...ids: ('ios' | 'android')[]) =>
       env({
         physicalDevices: ids.map((platform) => Object.assign(lease(T0), { platform, id: platform, name: platform })),
@@ -747,6 +747,17 @@ describe('oversee, what needs a person', () => {
     ]);
     expect(watch(T0 + 5 * MIN, [env()])).toEqual([]);
     expect(watch(T0 + 6 * MIN, [expired('ios')])).toHaveLength(1);
+  });
+
+  it('does not count an item present at the first look against the run', () => {
+    const lease2 = (...ids: ('ios' | 'android')[]) =>
+      env({
+        physicalDevices: ids.map((platform) => Object.assign(lease(T0), { platform, id: platform, name: platform })),
+      });
+    expect(watch(T0, [lease2('ios')])).toEqual([]);
+    expect(watch(T0 + MIN, [lease2('ios', 'android')])).toEqual([
+      `attention lease-android-default:${PATH}: Lease on android expired`,
+    ]);
   });
 
   it('records what is already true at the first look without notifying', () => {

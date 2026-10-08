@@ -747,7 +747,8 @@ on started or finished. Each category has its own level:
 
 Work started defaults to Off and every other category to Silent. A level you
 chose is kept. Settings saved before levels keep what was off off, and give
-each category that was on its default level.
+each category that was on its default level, so an old on for Work started
+becomes Off.
 
 - **Work started**: a workspace began warming, or an agent first drove one of
   its devices. It is grouped per Mac, and opens the workspace or the device
@@ -781,9 +782,9 @@ workspace, or the Mac, and gives a one-line cause. A workspace notifies once
 per episode, and a later notification of the same category replaces the
 earlier one instead of stacking. An agent stop notifies **Work finished** once
 per workspace per run, and **Needs you** comes once per workspace per run. A
-run for **Work finished** ends when the workspace has no live session; **Needs
-you** starts over when the workspace goes live again or has no item left. A pull request that became ready
-or merged keeps its own notification. What is already true when you turn
+run for **Work finished** ends when the workspace goes idle; **Needs you**
+starts over when the workspace stops being idle or has no item left. A pull
+request that became ready or merged keeps its own notification. What is already true when you turn
 notifications on does not notify. **Quiet hours** hold notifications: a
 problem that still holds when they end notifies then, and work that started
 or finished during them does not. Four or more notifications at once become

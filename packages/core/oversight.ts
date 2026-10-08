@@ -146,11 +146,11 @@ interface WorkspaceEntry {
   finished: boolean;
   /** Whether this run already notified that the agent stopped; the workspace going idle ends the run. */
   finishedInRun: boolean;
-  /** Whether the workspace had a live session at the last look, so a session that starts a new run is seen. */
-  live: boolean;
+  /** Whether the workspace was not idle at the last look, so the look that starts a new run is seen. */
+  running: boolean;
   /** Ids of the `attention` items already notified, so each notifies once per episode. */
   attention: string[];
-  /** Whether this run already raised an `attention` notification; it ends when the workspace goes live again or has no item left. */
+  /** Whether this run already raised an `attention` notification; it starts over when the workspace stops being idle or has no item left. */
   attentionRaised: boolean;
   loops: { ios?: Loop; android?: Loop };
   pr: { number: number; ready: boolean; merged: boolean } | null | undefined;
@@ -499,10 +499,15 @@ function overseeStart(run: Run, { env, entry, notify, driven }: WorkspaceLook): 
   event(run, notify('started', body, deviceTarget(env, first)));
 }
 
+/** Whether the workspace has no live session and is not warming: the end of a run, and the start of the next when it stops being idle. */
+function isIdle(env: OversightEnvironment): boolean {
+  return !env.live && (env.phase === undefined || env.phase === 'idle');
+}
+
 /** Work finishes when the agent stops after a green build; it looks stuck when nothing happens for too long. */
 function overseeProgress(run: Run, { env, entry, notify, devices, driven }: WorkspaceLook): void {
   const { now } = run;
-  const idle = !env.live && (env.phase === undefined || env.phase === 'idle');
+  const idle = isIdle(env);
   const building = env.build?.state === 'running';
   const newest = newestBuild(env);
   const green = newest?.status === 'ok';
@@ -591,7 +596,7 @@ function overseeMerge(run: Run, { env, entry, notify }: WorkspaceLook, prev: Wor
 
 /**
  * What only a person can fix, notified once per episode and at most once per workspace per run; what an agent
- * handles is left out. The allowance returns when the workspace goes live again or has no item left.
+ * handles is left out. The allowance returns when the workspace stops being idle or has no item left.
  */
 function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev: WorkspaceEntry | undefined): void {
   const items = workspaceItems(env, {
@@ -612,16 +617,17 @@ function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev:
     pending.push({ item, target });
   }
   let raised = entry.attentionRaised;
-  if (pending.length === 0 || (env.live && !prev?.live)) raised = false;
+  if (pending.length === 0 || (!isIdle(env) && !prev?.running)) raised = false;
   for (const { item, target } of pending) {
     if (prev?.attention?.includes(item.id) || raised) {
       entry.attention.push(item.id);
       continue;
     }
     const notification = { ...notify('attention', item.body, target), id: item.id };
+    const sent = run.notifications.length;
     if (lasting(run, notification)) {
       entry.attention.push(item.id);
-      raised = true;
+      if (run.notifications.length > sent) raised = true;
     }
   }
   entry.attentionRaised = raised;
@@ -646,7 +652,7 @@ function overseeWorkspace(
     stuckAt: prev?.stuckAt ?? null,
     finished: prev?.finished ?? false,
     finishedInRun: prev?.finishedInRun ?? false,
-    live: env.live,
+    running: !isIdle(env),
     attention: [],
     attentionRaised: prev?.attentionRaised ?? false,
     loops: {},
