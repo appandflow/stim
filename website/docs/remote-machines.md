@@ -1,6 +1,6 @@
 ---
-title: "Remote Macs"
-description: "Set up a remote Mac to build your app or host iOS and Android devices"
+title: 'Remote Macs'
+description: 'Set up a remote Mac to build your app or host iOS and Android devices'
 ---
 
 import StimTabs, { StimInstallTabs } from '@site/src/components/StimTabs';
