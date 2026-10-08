@@ -304,7 +304,7 @@ export async function confirmSetup(input: Interface, question: string, timeoutMs
   input.on('SIGINT', interrupt);
   input.on('close', interrupt);
   try {
-    return /^(y|yes)$/i.test((await input.question(question, { signal: controller.signal })).trim());
+    return /^(|y|yes)$/i.test((await input.question(question, { signal: controller.signal })).trim());
   } catch (error) {
     if (controller.signal.reason instanceof SetupRefusal) throw controller.signal.reason;
     if ((error as Error).name === 'AbortError') return false;
@@ -317,6 +317,17 @@ export async function confirmSetup(input: Interface, question: string, timeoutMs
   }
 }
 
+const discardInput = () => undefined;
+
+export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?: boolean }): Promise<void> {
+  if (!stream.isTTY) return;
+  stream.on('data', discardInput);
+  stream.resume();
+  await sleep(300);
+  stream.off('data', discardInput);
+  stream.pause();
+}
+
 export function defaultSetupDeps(): SetupDeps {
   return {
     now: Date.now,
@@ -325,8 +336,10 @@ export function defaultSetupDeps(): SetupDeps {
     display: setupDisplayFor(process.stdout.isTTY === true, process.env, (text) => void process.stdout.write(text)),
     stdout: (line) => console.log(line),
     stderr: (line) => console.error(line),
-    confirm: (question, timeoutMs) =>
-      confirmSetup(createInterface({ input: process.stdin, output: process.stderr }), question, timeoutMs),
+    confirm: async (question, timeoutMs) => {
+      await discardTypedAhead(process.stdin);
+      return confirmSetup(createInterface({ input: process.stdin, output: process.stderr }), question, timeoutMs);
+    },
     permissionWait(ms) {
       if (!process.stdin.isTTY) return sleep(ms).then(() => false);
       return new Promise((resolve, reject) => {
@@ -563,11 +576,11 @@ const capabilityNoun = (capability: SetupCapability) => (capability === 'build' 
 function approvalQuestion(concise: boolean, name: string, capability: SetupCapability, nodeId: string): string {
   if (!concise) {
     const verb = capability === 'build' ? 'build on this Mac' : 'host simulators on this Mac';
-    return `${name} (node ${nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [y/N] `;
+    return `${name} (node ${nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [Y/n] `;
   }
   const action =
     capability === 'build' ? 'build here (runs its project code' : 'host simulators here (runs its app code';
-  return `Approve ${name} to ${action} on this Mac)? [y/N] `;
+  return `Approve ${name} to ${action} on this Mac)? [Y/n] `;
 }
 
 function serverText(desktop: boolean, decision: string, version: string): string {

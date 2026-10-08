@@ -237,7 +237,7 @@ outside it moves to its own issue and pull request.
   `stim-server devices grant <id> --build`, or by running `stim-server setup`
   on the worker. Running setup is the worker-side approval: a person on the
   worker pre-approves at most one request per capability, from one node,
-  carrying one ticket, until one expiry, with a per-grant y/N confirmation in
+  carrying one ticket, until one expiry, with a per-grant Y/n confirmation (Enter approves) in
   a terminal (`--yes` otherwise). An SSH-driven run is not offered. Setup
   never enables Funnel or changes TCC. There is no pairing code for build.
   It never comes with `read` or `control`, and an honest loopback connection
@@ -286,7 +286,7 @@ outside it moves to its own issue and pull request.
   build, and permits the client's native app code in its own hosted simulator.
   A person on the worker approves it by id or runs `stim-server setup` there:
   at most one request per capability, from one node, carrying one ticket,
-  until one expiry, with a per-grant y/N confirmation in a terminal (`--yes`
+  until one expiry, with a per-grant Y/n confirmation (Enter approves) in a terminal (`--yes`
   otherwise). An SSH-driven run is not offered. Setup never changes TCC or
   enables Funnel; the person approves normal macOS permission prompts.
   The server owns its opaque journal under `server/device-host-sessions/` and

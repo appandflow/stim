@@ -227,7 +227,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **Link Machine** opens the existing **Remote Macs** settings flow, whose
   **Add...** button walks through picking a Mac, choosing Builds and Hosted
   simulators, and running a generated `stim-server setup` command in Terminal on
-  that Mac. Running it there, and answering its y/N question for each request, is
+  that Mac. Running it there, and answering its Y/n question for each request, is
   the approval. Desktop mirrors the setup live and waits for both approvals.
   A remote Mac on another Stim build offers **Install This Mac's Build**. It
   installs this Mac's npm release there, or this checkout's own build when the
@@ -555,7 +555,7 @@ offers **Add Remote Mac…**, which guides you through five steps:
 5. Choose when to offload.
 
 Run the generated setup command in Terminal while signed in at the build Mac
-and answer each y/N approval there. Permission prompts appear on that Mac.
+and answer each Y/n approval there. Permission prompts appear on that Mac.
 There is no SSH option. The wizard refreshes by itself; there is no Check again
 button.
 
