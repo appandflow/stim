@@ -159,7 +159,7 @@ struct WorkspaceCardView: View {
         SetupBadge(env: settingUp).frame(maxWidth: 360)
       } else {
         Label(
-          card.apps.contains { $0.workspace.metro?.running == true } ? "Metro running, no device yet" : "No running devices",
+          card.apps.contains { $0.workspace.metro?.running == true } ? "Metro Running, No Device Yet" : "No Running Devices",
           systemImage: "iphone.gen3"
         )
         .font(.stim(.callout))
