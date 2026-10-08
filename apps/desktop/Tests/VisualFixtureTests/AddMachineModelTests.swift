@@ -197,6 +197,71 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertGreaterThan(reads(), before, "the poll must read doctor every 5 seconds while it reads the journal every second")
   }
 
+  @MainActor func testBackFromCapabilitiesReturnsToPickingAMac() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    XCTAssertFalse(model.canGoBack, "nothing precedes picking a Mac")
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .pick)
+    XCTAssertNil(model.wizard.mac)
+    XCTAssertNil(model.wizard.build)
+    await model.pick()
+    XCTAssertEqual(model.wizard.phase, .choose)
+  }
+
+  @MainActor func testBackFromAnUnrunCommandDropsItsTicketAndIssuesANewOne() async throws {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    let shown = try XCTUnwrap(model.command)
+    let shownTicket = try XCTUnwrap(model.wizard.ticket)
+    XCTAssertEqual(model.wizard.phase, .command)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertNil(model.wizard.ticket)
+    XCTAssertNotEqual(model.draftTicket, shownTicket)
+    model.setCapability(.deviceHost, enabled: false)
+    await model.next()
+    XCTAssertNotEqual(model.wizard.ticket, shownTicket)
+    XCTAssertNotEqual(model.command, shown)
+    XCTAssertFalse(try XCTUnwrap(model.command).contains("--device-host"))
+    XCTAssertTrue(harness.writes.isEmpty)
+  }
+
+  @MainActor func testBackIsRefusedOnceSetupStartedOrFinished() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await waitUntil { model.wizard.journal != nil }
+    XCTAssertEqual(model.wizard.phase, .running)
+    XCTAssertFalse(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .running)
+    XCTAssertNotNil(model.wizard.ticket)
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    XCTAssertFalse(model.canGoBack)
+    await model.openTools()
+    XCTAssertFalse(model.canGoBack, "Tools")
+    await model.openSummary()
+    XCTAssertFalse(model.canGoBack, "Done")
+  }
+
   @MainActor func testDoneKeepsASimulatorTargetTheWizardDoesNotOffer() async {
     let harness = Harness()
     harness.remotes = ["ios.remote": "eas", "android.remote": "eas"]

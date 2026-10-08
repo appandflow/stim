@@ -32,13 +32,23 @@ struct AddMachineSheet: View {
         Text("Add a remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
-          HStack(spacing: Space.md) {
+          let row = HStack(spacing: Space.md) {
             Image(systemName: index < step ? "checkmark.circle.fill" : index == step ? "circle.inset.filled" : "circle")
             Text(title).font(.stim(.callout, weight: index == step ? .semibold : .regular))
           }
           .foregroundStyle(index == step ? Palette.accent : index > step ? Palette.tertiary : Palette.secondary)
           .frame(height: 30)
-          .accessibilityLabel(title + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+          if index < step, model.canGoBack {
+            Button {
+              while step > index, model.canGoBack { model.goBack() }
+            } label: {
+              row.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title), done, go back")
+          } else {
+            row.accessibilityLabel(title + (index < step ? ", done" : index == step ? ", current step" : ", waiting"))
+          }
         }
         Spacer()
       }
@@ -441,16 +451,19 @@ struct AddMachineSheet: View {
 
   private var footer: some View {
     HStack(spacing: Space.md) {
+      if showsBack {
+        Button("Back") { model.goBack() }.buttonStyle(.bordered).tint(Palette.text).disabled(!model.canGoBack)
+      }
       if model.busy { ProgressView().controlSize(.small) }
       Spacer()
       if wizard.phase == .cancelled {
         if model.error != nil {
           Button("Retry undo") { Task { await model.send(.cancel) } }.disabled(model.busy || model.cancelling)
         }
-        Button("Close") {
+        forward("Close", disabled: model.busy || model.error != nil) {
           model.stop()
           dismiss()
-        }.disabled(model.busy || model.error != nil)
+        }
       } else {
         Button("Cancel") {
           if wizard.entriesWritten || wizard.journal != nil {
@@ -459,31 +472,46 @@ struct AddMachineSheet: View {
             model.stop()
             dismiss()
           }
-        }.disabled((model.busy && !model.preparingSample) || model.cancelling)
+        }
+        .buttonStyle(.bordered).tint(Palette.text)
+        .keyboardShortcut(.cancelAction)
+        .disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
-          Button("Next") { Task { await model.openSummary() } }.disabled(model.busy || model.toolsBlock)
+          forward("Next", disabled: model.busy || model.toolsBlock) { Task { await model.openSummary() } }
         } else if model.page == .test {
-          Button("Back to summary") { Task { await model.closeTest() } }.disabled(model.sample?.running == true)
+          forward("Back to summary", disabled: model.sample?.running == true) { Task { await model.closeTest() } }
         } else if step == 4 {
-          Button("Done") {
+          forward("Done", disabled: model.busy) {
             Task {
               await model.finish()
               if model.finished { dismiss() }
             }
-          }.disabled(model.busy)
+          }
         } else if step == 0 {
-          Button("Next") { Task { await model.pick() } }.disabled(
-            model.reachability != .ready || model.selfNode == nil || model.busy)
+          forward("Next", disabled: model.reachability != .ready || model.selfNode == nil || model.busy) {
+            Task { await model.pick() }
+          }
         } else if step == 1 {
-          Button("Next") { Task { await model.next() } }.disabled(
-            wizard.capabilities.isEmpty || model.version == nil || model.selfNode == nil || model.busy)
+          forward(
+            "Next",
+            disabled: wizard.capabilities.isEmpty || model.version == nil || model.selfNode == nil || model.busy
+          ) { Task { await model.next() } }
         } else if wizard.phase == .approved {
-          Button("Next") { Task { await model.openTools() } }.disabled(model.busy)
+          forward("Next", disabled: model.busy) { Task { await model.openTools() } }
         } else if wizard.failure(now: model.now) == .expired || isGrantedOther {
-          Button("New command") { Task { await model.newCommand() } }.disabled(model.busy)
+          forward("New command", disabled: model.busy) { Task { await model.newCommand() } }
         }
       }
     }
+  }
+
+  private var showsBack: Bool { step > 0 && model.page != .test && wizard.phase != .cancelled }
+
+  private func forward(_ title: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+    Button(title, action: action)
+      .buttonStyle(.borderedProminent)
+      .keyboardShortcut(.defaultAction)
+      .disabled(disabled)
   }
 
   private func expiryTime(_ date: Date) -> String {
