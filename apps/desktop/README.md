@@ -1448,6 +1448,17 @@ in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
 and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active worktrees, Notifications and Machines.
 
+The main window keeps a back and forward history, like Finder. Chevron buttons at the
+leading edge of the toolbar, **Go > Back** (Command-[) and **Go > Forward** (Command-]),
+the mouse back and forward buttons and the two-finger trackpad swipe move through it.
+A destination is the sidebar selection plus the project page's **Showing all worktrees**
+scope and the device a tile click focused. A sidebar click, a card click, a notification
+action, a deep link or an oversight target adds one; the history keeps the last 50.
+Navigating after going back drops the forward entries. Back and forward skip a workspace,
+worktree, archive or project that Stim no longer lists, and a button is disabled when
+nothing before or after resolves. The launch page choice restores a destination in place,
+so Back does not return to Overview from it.
+
 ## Notice cards
 
 News the user can act on later shows as a card at the main window's bottom

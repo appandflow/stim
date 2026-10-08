@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 enum MainWindow {
-  private static func isMain(_ window: NSWindow) -> Bool {
+  static func isMain(_ window: NSWindow) -> Bool {
     window.identifier?.rawValue.hasPrefix("main") == true
   }
 

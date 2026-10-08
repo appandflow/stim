@@ -31,6 +31,8 @@ struct RootView: View {
   @StateObject private var tutorial = TutorialModel()
   @State private var selection: SidebarItem? = .overview
   @State private var previousSelection: SidebarItem? = .overview
+  @StateObject private var navigation = NavigationController()
+  @State private var replacesHistory = false
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
@@ -132,6 +134,7 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
+        ToolbarItem(placement: .navigation) { HistoryButtons(navigation: navigation) }
         if columnVisibility == .detailOnly, !operations.runs.isEmpty {
           ToolbarItem(placement: .navigation) {
             OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
@@ -177,6 +180,20 @@ struct RootView: View {
         ? InspectorToggle(isShown: inspector != .hidden || tutorial.isOpen, toggle: toggleInspector) : nil
     )
     .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
+    .focusedSceneValue(
+      \.historyNavigation,
+      HistoryNavigation(
+        canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward, back: navigation.goBack,
+        forward: navigation.goForward)
+    )
+    .onChange(of: destination) { _, destination in
+      if replacesHistory {
+        replacesHistory = false
+        navigation.replaceCurrent(destination)
+      } else {
+        navigation.record(destination)
+      }
+    }
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
     .task(id: [windowSize.width, detailRoom]) { await settleInspectorFit() }
     .onGeometryChange(for: CGSize.self) {
@@ -201,11 +218,17 @@ struct RootView: View {
       NativeViewerPermissionsView(permissions: nativePermissions)
     }
     .onAppear {
+      navigation.resolves = resolves
+      navigation.apply = show
+      navigation.startMonitoring()
       store.start()
       tutorial.configure(cli: cli)
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
-    .onDisappear { notices.removeAll() }
+    .onDisappear {
+      notices.removeAll()
+      navigation.stopMonitoring()
+    }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
@@ -467,10 +490,12 @@ struct RootView: View {
   }
 
   private static let bellWidth: CGFloat = 56
+  private static let historyButtonsWidth: CGFloat = 64
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
+      - Self.historyButtonsWidth
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
@@ -493,7 +518,33 @@ struct RootView: View {
     guard defaultView == .lastProject, !lastProjectPath.isEmpty else { return }
     guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
     restoredProject = true
+    replacesHistory = true
     selection = .project(entry.project)
+  }
+
+  private var destination: NavigationDestination {
+    var showsAll = false
+    if case .project(let project) = selection { showsAll = showingAllWorktrees == project }
+    return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focusedDeviceID)
+  }
+
+  private func show(_ destination: NavigationDestination) {
+    selection = destination.selection
+    showingAllWorktrees = nil
+    if destination.showsAllWorktrees, case .project(let project)? = destination.selection { showingAllWorktrees = project }
+    focusedDeviceID = destination.focusedDeviceID
+  }
+
+  /// Whether the destination's page still exists. Without a status payload nothing can be told yet.
+  private func resolves(_ destination: NavigationDestination) -> Bool {
+    guard let payload = store.payload else { return true }
+    switch destination.selection {
+    case .environment(let path): return WorktreePage(path: path, environments: payload.environments) != nil
+    case .worktree(let path): return payload.unprovisionedWorktrees?.contains { $0.path == path } == true
+    case .archived(let id): return payload.archived?.contains { $0.id == id } == true
+    case .project(let project): return store.projectList.contains { $0.project == project }
+    default: return true
+    }
   }
 
   /// `@Published` emits before the property changes, so both values arrive as arguments.
