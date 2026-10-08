@@ -50,6 +50,7 @@ import {
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
 import { DEFAULT_METRO_PORT } from '../engine/app-install.ts';
+import { createIosSimSnapshot } from '../devices/ios.ts';
 import { didSetUpDevice, ensureOwnedDevice } from '../engine/device.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { REMOTE_SESSION_ERROR, binOnPath } from '../engine/device-remote.ts';
@@ -617,7 +618,8 @@ async function runIos(
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
-    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget);
+    const simSnapshot = createIosSimSnapshot();
+    const budget = await iosPlacementBudget(d, root, note, Boolean(hostedTarget), remoteSelection.budget, simSnapshot);
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d);
@@ -696,6 +698,7 @@ async function runIos(
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
+        sims: () => simSnapshot.read().filter((sim) => sim.available),
       });
       if (capacity) {
         if (capacity.code === 'STIM_AT_CAPACITY') {
@@ -733,6 +736,7 @@ async function runIos(
           flags: { deviceSlotWait, deviceType, runtime, runtimeFlag: resolveRuntime(opts.runtime, null), simulatorApp },
           note,
           out: note,
+          simSnapshot,
         });
       } catch (e) {
         return fail(ownedSimFailure(e));

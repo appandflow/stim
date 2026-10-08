@@ -19,6 +19,7 @@ import {
 } from '../engine/device-capacity.ts';
 import { ClaimRefusedError } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
+import { enforceBudget } from '../budget.ts';
 import {
   allConsolePortsAndSerials,
   getProject,
@@ -32,7 +33,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
-import { ownedSimName } from '../devices/ios.ts';
+import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeChildProcess, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
@@ -1497,6 +1498,52 @@ describe('ensureOwnedDevice: ios', () => {
       }
     },
   );
+
+  test('the budget gate, capacity check and device setup of a cache hit share one simulator listing', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
+      const { run, exec } = iosExecutor([
+        {
+          udid: 'U1',
+          name: 'stim-app (iPhone 17 Pro 26.2)',
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        },
+      ]);
+      setExecutor(exec);
+      const simSnapshot = createIosSimSnapshot();
+      const limits = { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 1_000_000, maxLiveWorkspaces: 10 };
+      const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
+      expect(outcome.status).toBe('ok');
+      expect(
+        checkDeviceCapacity({
+          platform: 'ios',
+          project: getProject(root),
+          max: 5,
+          sims: () => simSnapshot.read().filter((sim) => sim.available),
+          adb: () => makeAdbDevices(),
+          booting: [],
+        }),
+      ).toBeNull();
+      const device = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        simSnapshot,
+      });
+      expect(await ensureBooted({ platform: 'ios', projectPath: root, device, timeoutMs: 5000, pollMs: 5 })).toEqual({
+        ok: true,
+        udid: 'U1',
+      });
+      expect(run.filter((cmd) => cmd.includes('simctl list devices'))).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   test('a reused booted sim shut down after device setup is booted again, not refused', async () => {
     const root = projectDir();
