@@ -27,16 +27,18 @@ struct SettingsView: View {
       AppPreferencesView(stimHome: store.stimHome)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
-      PhonesView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
-        .tabItem { Label(serverPage.title, systemImage: serverPage.systemImage) }
-        .tag("phones")
+      if flags.phoneApp {
+        PhonesView(server: ServerController.shared, stimHome: store.stimHome)
+          .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+          .tag("phones")
+      }
       BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
         .tabItem { Label("Remote Macs", systemImage: "hammer") }
         .tag("build-machines")
       stimSettings
         .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }
         .tag("stim-settings")
-      AdvancedSettingsView()
+      AdvancedSettingsView(server: ServerController.shared, settings: machine, stimHome: store.stimHome)
         .tabItem { Label("Advanced", systemImage: "gearshape.2") }
         .tag("advanced")
     }
@@ -45,6 +47,7 @@ struct SettingsView: View {
     .foregroundStyle(Palette.text)
     .tint(Palette.brand)
     .onAppear {
+      if tab == "phones", !flags.phoneApp { tab = "app" }
       if SettingScope(rawValue: tab) != nil {
         scope = tab
         tab = "stim-settings"
@@ -63,8 +66,6 @@ struct SettingsView: View {
       model.load(directory: path)
     }
   }
-
-  private var serverPage: PhoneApp.ServerPage { PhoneApp.serverPage(phoneApp: flags.phoneApp) }
 
   private var stimSettings: some View {
     let selected = SettingScope(rawValue: scope) ?? .machine

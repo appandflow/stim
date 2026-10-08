@@ -107,7 +107,7 @@ struct OnboardingBanner: View {
     guard let server = report.server else { return AnyView(EmptyView()) }
     let missing = server == .missing
     return AnyView(
-      popupCard(kind: .server, icon: PhoneApp.serverPage(phoneApp: flags.phoneApp).systemImage, tone: .warning) {
+      popupCard(kind: .server, icon: flags.phoneApp ? "iphone.gen3.radiowaves.left.and.right" : "server.rack", tone: .warning) {
         Text(PhoneApp.Copy.serverPopupTitle(missing: missing, phoneApp: flags.phoneApp))
           .font(.stim(.headline))
         Text(PhoneApp.Copy.serverPopupDetail(minimum: StimServerCLI.minimumVersion.description, phoneApp: flags.phoneApp))

@@ -94,17 +94,13 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
       PhoneApp.Copy.screenPermissionRequest(phoneApp: false),
       PhoneApp.Copy.viewerAppError(phoneApp: false),
       PhoneApp.Copy.notificationRulesPrefix(phoneApp: false),
-      PhoneApp.Copy.serverPageName(phoneApp: false),
       PhoneApp.Copy.serverPopupTitle(missing: true, phoneApp: false),
       PhoneApp.Copy.serverPopupDetail(minimum: "1.0.0", phoneApp: false),
-      PhoneApp.Copy.clients(phoneApp: false),
-      PhoneApp.Copy.tailscaleDown(phoneApp: false),
       PhoneApp.Copy.recordingFooter(phoneApp: false),
     ]
   }
   for text in offCopy() { #expect(!text.lowercased().contains("phone"), "\(text)") }
   #expect(PhoneApp.Copy.screenPermissionUse(phoneApp: true).contains("phone"))
-  #expect(PhoneApp.Copy.serverPageName(phoneApp: true) == "Phones")
 }
 
 @Test func theServerListensBeyondLoopbackOnlyWhenThePhoneAppServesPhones() {

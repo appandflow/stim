@@ -119,8 +119,7 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides the Phones page (the page stays as **Server**, without **Serve to
-phones** and pairing), the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+**Phone app** is off by default. Off, Desktop hides the Phones page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
 phones in copy. It never revokes a pairing. Desktop's own stim-server then listens on loopback only. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
@@ -976,7 +975,7 @@ request that a `tailscale serve --https` route forwards to the port, so paired p
 Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones until
 they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in **Settings > Phones** (**Server** with the Phone app off). A test copy can move the port from 7787 with
+choose in **Settings > Advanced**. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
@@ -1035,17 +1034,17 @@ phone paired, the tab shows an empty state with **Pair a Phone...**. A
 problem that stops phones from connecting shows as one line above the list:
 serving off (**Turn On**), or Tailscale off, a missing route or a Funneled
 route (**Fix...**, which opens the wizard at its Tailscale step). Below the
-list, the **Server** section holds **Serve to phones**, the server's version
-and port, and the `stim-server` executable override; **Record device screens
-for replay** follows it. With the Phone app flag off, the tab is **Server**: the
-same sections under **Run stim-server**, plus the Tailscale and route sections
-with **Set up connection**, and no phone list.
+list, the **Server** section holds **Serve to phones** and the server's version
+and port. With the Phone app flag off there is no Phones tab. **Settings >
+Advanced** holds **Record device screens for replay** and a **stim-server**
+section with the server's status, **Try Again** after a failure and the
+executable override.
 
 Macs that build or host devices here are listed on the Remote Macs tab, see
 [Macs using this Mac](#macs-using-this-mac).
 
 When Tailscale runs, the wizard's **Turn on serving** step (or **Set up
-connection** on the Server page) configures and verifies a dedicated
+connection**) configures and verifies a dedicated
 tailnet-only HTTPS proxy to the server's loopback port. It uses port 7443 or the
 next free port, keeps an existing route unchanged and never enables Funnel. This
 action uses Desktop's authenticated local control connection; a phone or
