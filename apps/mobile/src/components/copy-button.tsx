@@ -120,6 +120,7 @@ export function CopyButton({
       onPress={() => void copy(typeof text === 'function' ? text() : text)}
       accessibilityLabel={copied ? `${copiedTitle ?? t`Copied`}, ${label}` : label}
       hitSlop={{ top: 8, bottom: 8, left: theme.space.md, right: theme.space.md }}
+      style={{ minHeight: 44, justifyContent: 'center' }}
     >
       <CopyPill copied={copied} title={title} copiedTitle={copiedTitle} filled={filled} showsIcon={showsIcon} />
     </Touch>
