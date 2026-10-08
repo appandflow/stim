@@ -18,7 +18,7 @@ Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
-The Stim phone viewer's control toolbar offers **Shake** and **Slow animations**
+The Stim phone viewer's control toolbar offers **Shake** and **Slow Animations**
 for owned iOS simulators when the paired server supports them. Slow animations
 shows the confirmed simulator state. These options require control access and
 are hidden on older servers or devices that do not support them. They use
@@ -147,7 +147,7 @@ An iPhone Duo simulator shows its active screen, with the frame fitted to
 that screen. Both screens appear side by side until the active screen is
 known. While **Control** is on, its tile has a **Fold / Unfold** button that sweeps the simulated hinge to the other posture. The
 button needs the bundled app, and because it uses private iOS interfaces, a
-new iOS runtime can break it. **Rotate left** and **Rotate right** work in
+new iOS runtime can break it. **Rotate Left** and **Rotate Right** work in
 folded, half-open and unfolded postures. Apps keep their supported
 orientations, and the Duo home screen stays portrait.
 When the Desktop viewer is open and the installed devicectl supports hinge
@@ -478,7 +478,7 @@ Tailscale refuses and Stim prints Tailscale's error message.
 A phone granted control can use the compact bottom toolbar for Keyboard,
 Home on iOS or Back on Android and web, and both rotation directions. **More** (the ellipsis button)
 opens a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device frame** appears in More when matching artwork is
+and simulator options. **Device Frame** appears in More when matching artwork is
 available and remains usable without a control lease. The bar stays below the screen in portrait and landscape
 and fits its common controls within the available width. The app in front still needs
 to support the requested orientation. Physical devices rotate only in hand.

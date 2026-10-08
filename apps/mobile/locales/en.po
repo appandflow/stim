@@ -953,8 +953,8 @@ msgstr "Archived"
 
 #: src/app/_layout.tsx
 #: src/screens/archived-replay.tsx
-msgid "Archived replay"
-msgstr "Archived replay"
+msgid "Archived Replay"
+msgstr "Archived Replay"
 
 #: src/app/_layout.tsx
 #: src/screens/workspace-detail.tsx
@@ -1004,8 +1004,8 @@ msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
 #: src/screens/welcome.tsx
-msgid "Both signed in to the same tailnet"
-msgstr "Both signed in to the same tailnet"
+msgid "Both Signed in to the Same Tailnet"
+msgstr "Both Signed in to the Same Tailnet"
 
 #: src/lib/workspace-view.ts
 #: src/screens/workspace-work.tsx
@@ -2921,8 +2921,8 @@ msgid "Open in Logs"
 msgstr "Open in Logs"
 
 #: src/screens/license.tsx
-msgid "Open repository"
-msgstr "Open repository"
+msgid "Open Repository"
+msgstr "Open Repository"
 
 #: src/hooks/notifications.tsx
 msgid "Open Settings"

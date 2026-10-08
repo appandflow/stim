@@ -157,7 +157,7 @@ function RootLayoutContent() {
                   <Stack.Screen name="mac/[id]/archived-build" options={sheet([0.75, 1])} />
                   <Stack.Screen
                     name="mac/[id]/archived-replay"
-                    options={{ title: t`Archived replay`, ...opaqueHeader }}
+                    options={{ title: t`Archived Replay`, ...opaqueHeader }}
                   />
                   <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />

@@ -61,7 +61,7 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
               <Text tone="brand">stim.appandflow.com/desktop</Text>
             </Touch>
           </WelcomeStep>
-          <WelcomeStep number={3} title={t`Both signed in to the same tailnet`} />
+          <WelcomeStep number={3} title={t`Both Signed in to the Same Tailnet`} />
         </View>
         <View style={styles.actions}>
           <Button title={t`Pair with Your Mac`} onPress={() => router.push('/pair')} />

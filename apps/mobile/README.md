@@ -178,7 +178,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 gc --json` dry run and `stim stats --json`, which the server refreshes at
   most once a minute; a server without it shows only what `stim status`
   reports, and says to update. Each section folds from its header, shows its
-  first 10 rows with **Show all N**, and the phone remembers both per section.
+  first 10 rows with **Show All N**, and the phone remembers both per section.
   The title shows the pairing's scope; a read-only pairing also says what it
   cannot do, with **Allow Control**.
   Needs attention groups status issues by workspace, active workspaces first,
@@ -371,7 +371,7 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   and **Share** shares the whole entry.
 
 Paths under the Mac's home folder show as `~/...`; the server reports the home
-folder in `hello`. Copy path copies the full path.
+folder in `hello`. Copy Path copies the full path.
 
 The design and protocol are in
 [docs/specs/2026-09-25-stim-server-design.md](../../docs/specs/2026-09-25-stim-server-design.md).
