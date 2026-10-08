@@ -1,15 +1,8 @@
 import { t } from '@lingui/core/macro';
 import * as Clipboard from 'expo-clipboard';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo } from 'react-native';
-import Animated, {
-  FadeIn,
-  FadeOut,
-  LinearTransition,
-  useReducedMotion,
-  ZoomIn,
-  ZoomOut,
-} from 'react-native-reanimated';
+import { AccessibilityInfo, View } from 'react-native';
+import Animated, { FadeIn, FadeOut, useReducedMotion, ZoomIn, ZoomOut } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/icon';
@@ -44,12 +37,9 @@ export function useCopy() {
   return { copied, copy };
 }
 
-let widthSpring: ReturnType<typeof LinearTransition.springify> | undefined;
-const getWidthSpring = () => (widthSpring ??= LinearTransition.springify().damping(18).stiffness(220));
-
 /**
- * The look of a copy button: the symbol and label swap as `copied` changes, the pill springs to its new width and takes
- * the success tint. With Reduce Motion it swaps at once. Press handling belongs to the parent.
+ * The look of a copy button: the symbol and label swap as `copied` changes, the pill takes the success tint and keeps
+ * the width of its widest label. With Reduce Motion it swaps at once. Press handling belongs to the parent.
  */
 export function CopyPill({
   copied,
@@ -67,12 +57,11 @@ export function CopyPill({
   const { theme } = useUnistyles();
   const reduceMotion = useReducedMotion();
   const tint = copied ? theme.colors.success : theme.colors.primary;
-  const label = copied ? (copiedTitle ?? t`Copied`) : (title ?? t`Copy`);
+  const idleLabel = title ?? t`Copy`;
+  const copiedLabel = copiedTitle ?? t`Copied`;
+  const label = copied ? copiedLabel : idleLabel;
   return (
-    <Animated.View
-      layout={reduceMotion ? undefined : getWidthSpring()}
-      style={[styles.pill, filled && { backgroundColor: withAlpha(tint, 0.12) }]}
-    >
+    <View style={[styles.pill, filled && { backgroundColor: withAlpha(tint, 0.12) }]}>
       {showsIcon ? (
         <Animated.View
           key={copied ? 'copied' : 'copy'}
@@ -82,16 +71,29 @@ export function CopyPill({
           <Icon name={copied ? 'checkmark' : 'doc.on.doc'} size={13} color={tint} />
         </Animated.View>
       ) : null}
-      <Animated.View
-        key={label}
-        entering={reduceMotion ? undefined : FadeIn.duration(180)}
-        exiting={reduceMotion ? undefined : FadeOut.duration(120)}
-      >
-        <Text variant="footnote" weight="semibold" style={{ color: tint }}>
-          {label}
-        </Text>
-      </Animated.View>
-    </Animated.View>
+      <View>
+        <View style={styles.sizer} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <Text variant="footnote" weight="semibold">
+            {idleLabel}
+          </Text>
+          <View style={styles.sizerRest}>
+            <Text variant="footnote" weight="semibold">
+              {copiedLabel}
+            </Text>
+          </View>
+        </View>
+        <Animated.View
+          key={label}
+          style={styles.label}
+          entering={reduceMotion ? undefined : FadeIn.duration(180)}
+          exiting={reduceMotion ? undefined : FadeOut.duration(120)}
+        >
+          <Text variant="footnote" weight="semibold" style={{ color: tint }}>
+            {label}
+          </Text>
+        </Animated.View>
+      </View>
+    </View>
   );
 }
 
@@ -138,4 +140,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.md,
     overflow: 'hidden',
   },
+  sizer: { opacity: 0 },
+  sizerRest: { height: 0, overflow: 'hidden' },
+  label: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
 }));
