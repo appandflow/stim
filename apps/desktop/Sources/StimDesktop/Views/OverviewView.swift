@@ -116,30 +116,30 @@ struct OverviewView: View {
       openIdleProject(item.project)
     } label: {
       Card {
-        VStack(alignment: .center, spacing: Space.md) {
-          Text(store.title(of: item.project)).font(.stim(.headline)).foregroundStyle(Palette.text).lineLimit(1)
-          Text(
-            [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
-              .compactMap { $0 }.joined(separator: " \u{00B7} ")
-          )
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
-          FlowLayout(spacing: Space.sm, lineSpacing: Space.sm) {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+          FlowLayout(spacing: Space.sm, lineSpacing: Space.xs) {
+            Text(
+              [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+                .compactMap { $0 }.joined(separator: " \u{00B7} ")
+            )
+            .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
             if let pullRequest = item.pullRequest {
-              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand) {
+              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand, size: .small) {
                 Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
               }
             }
             if let failed = item.failedBuild {
-              Pill(tone: .error) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
+              Pill(tone: .error, size: .small) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
             }
             if item.errors > 0 {
-              Pill(tone: .error) { Text(countLabel(item.errors, "error")) }
+              Pill(tone: .error, size: .small) { Text(countLabel(item.errors, "error")) }
             }
           }
         }
-        .padding(Space.lg)
-        .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
-        .multilineTextAlignment(.center)
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
       }
     }
