@@ -5,7 +5,7 @@ public enum StatusFilter: String, CaseIterable, Sendable {
 
   public var title: String {
     switch self {
-    case .live: "Live"
+    case .live: "Active"
     case .idle: "Idle"
     case .notSetUp: "Not set up"
     case .archived: "Archived"

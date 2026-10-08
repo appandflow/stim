@@ -1,6 +1,10 @@
 import Foundation
 
 extension OversightCategory {
+  /// Whether a foreground Alert opens a card in the window: a request that lapses, or a problem on the Mac. Every
+  /// other category reaches the bell only.
+  public var raisesToast: Bool { self == .buildRequest || self == .machine }
+
   /// The phone's settings label for the category.
   public var label: String {
     switch self {

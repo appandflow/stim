@@ -32,12 +32,14 @@ struct DeviceTile: View {
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
   var pausesWhenOffscreen = false
+  var highlightsHeaderOnHover = false
   var pixelScale: CGFloat? = nil
   var framePixelsPerUnit: CGFloat = 1
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
   var onInput: (() -> Void)?
   @State private var isOnscreen = false
+  @State private var hovering = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
   @State private var frameSizes: [UInt32: CGSize] = [:]
   @State private var frameRevision = 0
@@ -211,6 +213,7 @@ struct DeviceTile: View {
         header
           .padding(.horizontal, Space.lg)
           .padding(.vertical, Space.md)
+          .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
         if replaying, let replay {
@@ -236,6 +239,21 @@ struct DeviceTile: View {
         }
       }
     }
+    .overlay {
+      RoundedRectangle(cornerRadius: Radius.card)
+        .strokeBorder(
+          Palette.secondary.opacity(highlightsHeaderOnHover && hovering ? 0.5 : 0),
+          lineWidth: 1.5
+        )
+        .allowsHitTesting(false)
+    }
+    .shadow(
+      color: Palette.shadow.opacity(highlightsHeaderOnHover && hovering ? 0.12 : 0),
+      radius: 12,
+      y: 4
+    )
+    .animation(.easeOut(duration: 0.15), value: hovering)
+    .onHover { hovering = $0 }
     .overlay {
       if case .remote = device {
         RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.info, lineWidth: 2)

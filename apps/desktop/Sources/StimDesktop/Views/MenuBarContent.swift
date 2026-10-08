@@ -9,7 +9,7 @@ struct MenuBarContent: View {
 
   var body: some View {
     let live = store.payload?.environments.filter(\.live) ?? []
-    Text(live.count == 1 ? "1 live workspace" : "\(live.count) live workspaces")
+    Text(live.count == 1 ? "1 active workspace" : "\(live.count) active workspaces")
     if !live.isEmpty {
       Divider()
       ForEach(live) { env in

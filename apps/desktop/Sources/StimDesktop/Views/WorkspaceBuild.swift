@@ -240,7 +240,7 @@ struct WorktreeActions<Content: View>: View {
       Text(worktreeRemovalMessage(path: firstApp.path, branch: removal.branch))
     }
     .confirmationDialog("Stop all apps in this worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
-      Button("Run stim stop in each live app", role: .destructive) {
+      Button("Run stim stop in each active app", role: .destructive) {
         let apps = liveApps
         guard !apps.isEmpty else { return }
         actions.run(
@@ -251,7 +251,7 @@ struct WorktreeActions<Content: View>: View {
       if page.apps.contains(where: { $0.remoteDevices?.isEmpty == false }) {
         Text("This also ends the worktree's billable EAS Simulator sessions.")
       } else {
-        Text("Stops each live app in this worktree.")
+        Text("Stops each active app in this worktree.")
       }
     }
   }

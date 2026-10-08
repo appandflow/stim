@@ -59,26 +59,47 @@ in the workspace directory:
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
-CPU covers live workspace processes; memory covers the whole Mac.
+While details are open, hover another resource figure to switch the contents. Click outside to close.
+CPU covers active workspace processes; memory covers the whole Mac.
 
-**All devices**, **Notifications** and **Machines** stay pinned at the top of
-the sidebar; only the list below them scrolls. The sidebar lists projects as a
+The bell at the top right opens **Notifications** and shows the unread count.
+**Overview**, **Active worktrees** and **Machines** stay pinned at the top of
+the sidebar; only the list below them scrolls.
+
+**Overview** is the default launch page. Running projects come first, as cards
+with a live preview of one device each; **Show more (N)** counts the other
+running devices and worktrees, and clicking a card opens the project. Idle
+projects follow in a compact list, newest activity first, with the pull request
+that is open, a failed last build and the errors since the last marker; clicking
+a row opens the project. A **Recently archived** row lists the last five
+archives, and **Try this** suggests up to three features with a copyable agent
+prompt each (see below). A single running project gets one centered card.
+
+**Active worktrees** shows every worktree with something running, building or
+warming, grouped by worktree with a compact header: its name and project, the
+Metro port, who drives its devices, its memory and its errors. The device tiles
+sit under each header, so several worktrees fit on one screen: worktrees wrap
+across the page, and the tiles of a worktree scroll sideways when they do not fit. Clicking a header opens the project (on a project page it opens the
+workspace); clicking a tile opens its workspace with that device focused. A
+worktree with no running device shows a **No running devices** line instead.
+
+The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
-with a live, warming or ready workspace start expanded, and the app remembers each project you
+with an active, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
 worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: select any combination of Live, Idle, Not set up and Archived. The
-  default is Live + Idle. All selects all four states, Archived included, and
+- **Status**: select any combination of Active, Idle, Not set up and Archived. The
+  default is Active + Idle. All selects all four states, Archived included, and
   shows as checked only when all four are on. Each state shows its sidebar row count, counting a
   multi-app worktree once and excluding hidden projects. When mixed with current
   rows, archives follow those rows within each project, newest removal first.
   Archived uses the same repository and worktree grouping, with app labels, PR
   number or Merged, removal time, retained size and a media expiry indicator.
-  Live also shows a workspace with a running build, and one that
+  Active also shows a workspace with a running build, and one that
   `stim worktree warm` is preparing ("Warming...", with an activity indicator)
   or has prepared before its first run ("Ready").
 - **Hidden**: off by default and not part of All. It shows the workspaces you hid
@@ -103,7 +124,7 @@ submenu.
 
 When a workspace that is not warming has no device, a small purple device
 illustration and a launch hint appear. Its animation stops under Reduce Motion.
-When **All devices** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
+When **Overview**, **Active worktrees** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
 random from the phone app's list each time the page appears, with a **Copy**
 button that reads **Copied** once the prompt is on the clipboard.
 
@@ -129,7 +150,7 @@ paired phone gets the flag on at first launch with flags. The phone app is docum
 ## Hiding a workspace
 
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
-row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Live,
+row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Active,
 Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
 a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
 this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
@@ -137,18 +158,18 @@ archive). It is not shared with the phone app or another Mac, and Stim itself do
 
 A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
 or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
-workspace in use cannot be hidden. Entries for a workspace that is no longer live, idle, not set up or
+workspace in use cannot be hidden. Entries for a workspace that is no longer active, idle, not set up or
 archived are dropped.
 
 ## Archived workspaces
 
-The Archived sidebar filter opens the same workspace page as live workspaces in a read-only variant.
+The Archived sidebar filter opens the same workspace page as active workspaces in a read-only variant.
 The header line matches the live page's: an Archived state with the removal age (hover for the exact time), the git chip with branch, PR and Merged, and a menu with **Reveal folder** (while the folder exists) and **Delete archive**.
 The Status card holds the removal reason, last use, and Retained with a proportion bar and per-kind bytes and expiry dates; the Build card ends with build totals, known cache hits, builds on a remote Mac and errors at removal.
 Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
 with their duration and a link to retained actions. Only Merged is shown as a PR state:
 other states in the removal snapshot can be stale. Build cards and the build history sheet show retained runs and phase timings.
-Earlier runs on a live workspace link to archives for the same canonical project path,
+Earlier runs on an active workspace link to archives for the same canonical project path,
 including records whose `replacedBy` points to that workspace. The archive page links
 back to its replacement when there is one.
 
@@ -357,11 +378,10 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
-tile stops streaming and says "Open in the viewer". Tiles on the All devices
-wall are previews too; clicking one opens its workspace. The wall creates workspace
-rows and device tiles as you scroll, and pauses previews after they leave the
+tile stops streaming and says "Open in the viewer". Tiles on the Active worktrees
+wall are previews too; clicking one opens its workspace with that device focused. The wall pauses previews after they leave the
 scrolling area. Returning to a tile reconnects its preview. Active workspaces without
-running or building devices use compact cards with Metro status, warnings and
+running or building devices show a No running devices line under their header, with Metro status, warnings and
 positive-error log links; CPU and RAM stay on the workspace page.
 
 On macOS 26 and later, sidebar controls and device viewer buttons use native
@@ -501,7 +521,7 @@ runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3
 seconds while the window is visible, so the CPU line steps with the 15-second
-refresh. When workspaces are live but `machine` is missing, the band says live
+refresh. When workspaces are active but `machine` is missing, the band says live
 usage is unavailable instead of listing nothing.
 
 Under **Disk on this Mac**, the page shows what uses disk space, largest first,
@@ -630,7 +650,7 @@ status under **Autopilot activity**.
   merged or closed: clean, with no commit that exists only locally except
   those a merged pull request holds, no live Metro, build or device, and past
   `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
-  `stim status` shows live, building or on another branch; a `stim start` in the seconds
+  `stim status` shows active, building or on another branch; a `stim start` in the seconds
   between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
   keeps for another reason notifies in the **Needs you** category, as "PR #123 merged, 2 uncommitted or untracked files", with
   **Open pull request** and **Show in Finder**; the autopilot never forces a removal.
@@ -1286,19 +1306,21 @@ stim-server's leases. The phone app and stim-server do read them, and do not cou
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
 **Off**. Every category is Silent by default, except **A Mac asks to build
-here**, which is Alert because a request lapses after 15 minutes. An Alert
-appears as a card in the main window's top right corner while that window is in
-front, newest on top, with its call to action (**Open workspace**, **Show
-device**, **Show page**, **Show build**, **Show machine**) and a dismiss button; clicking the
-card opens its target. Work started and finished cards leave after 6 seconds,
-unless the pointer is over them; stuck, repeated failure, machine and needs-you cards stay
-until dismissed. Otherwise an Alert is a macOS notification with sound, and
-clicking it brings Stim Desktop up on the target. macOS asks for permission the
+here**, which is Alert because a request lapses after 15 minutes. While the main
+window is in front, an Alert shakes the top-right bell and turns it purple for a
+second, and bumps its unread count; Silent and Off entries only bump the count.
+Under Reduce Motion the bell keeps the colour and skips the shake. A build or
+device-hosting request, which lapses after 15 minutes, and a machine problem
+at Alert level also open a card in the window's top right corner, newest on top,
+with its call to action and a dismiss button; clicking the card opens its target,
+and it stays until dismissed or answered. Every other category reaches the bell
+only. When the main window is not in front, an Alert is a macOS notification
+with sound, and clicking it brings Stim Desktop up on the target. macOS asks for permission the
 first time one is posted. Silent and Off never interrupt.
 
-Every notification also lands in **Notifications**, pinned in the sidebar with
+Every notification also lands in **Notifications**, opened from the top-right bell with
 the unread count: newest first, grouped by day, each row with its category icon,
-title, body, time and the same call to action. Clicking a row, a card's action
+title, body, time and the same call to action. Clicking a row
 or a macOS notification opens the target and marks the row read. An Off category
 is listed as **Muted**, and an Alert held by quiet hours as **Quiet hours**, as
 in the phone app's inbox. The page filters by category and by workspace (or the
@@ -1341,7 +1363,7 @@ The **App** tab holds preferences kept in `UserDefaults`, never in Stim's
 config: appearance (Auto, Light, Dark), the sidebar's Status option, opening to all
 devices or the last project, device tile size, a live frame rate cap, pausing
 frames while the window is hidden, the editor and terminal the workspace
-inspector opens, notifications, a menu bar extra with the live workspace count
+inspector opens, notifications, a menu bar extra with the active workspace count
 and quick open, launch at login, the autopilot (see Autopilot), and a `stim` executable override that applies
 at the next launch. Notifications and launch at login need the bundled app.
 
@@ -1352,8 +1374,7 @@ running: the Dock icon stays, the status watch, notifications, autopilot and
 `stim-server` keep working, and clicking the Dock icon or choosing **Open Stim**
 in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
-and it stops `stim-server` and the log followers. Command-1, Command-2 and
-Command-3 in the View menu open All devices, Notifications and Machine.
+and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active worktrees, Notifications and Machines.
 
 ## Notice cards
 
