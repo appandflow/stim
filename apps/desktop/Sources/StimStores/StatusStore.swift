@@ -90,7 +90,7 @@ public final class StatusStore: ObservableObject {
           onLine: { [weak self] line in
             let decoded: Result<StatusPayload, Error>? =
               line.channel == .stdout
-              ? Result { try JSONDecoder().decode(StatusPayload.self, from: Data(line.text.utf8)) } : nil
+              ? Result { try decodeReporting(StatusPayload.self, from: Data(line.text.utf8), source: .cli) } : nil
             DispatchQueue.main.async {
               MainActor.assumeIsolated {
                 guard let self else { return }

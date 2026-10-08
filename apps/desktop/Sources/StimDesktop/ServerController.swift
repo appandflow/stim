@@ -11,6 +11,16 @@ final class ServerController: ObservableObject {
     case notReady(ServerStartup, owned: Bool)
     case failed(String)
 
+    var kind: String {
+      switch self {
+      case .off: "off"
+      case .starting: "starting"
+      case .running: "running"
+      case .notReady: "not-ready"
+      case .failed: "failed"
+      }
+    }
+
     init(probe: ServerHealthProbe, owned: Bool, resolvedHome: String, port: Int) {
       switch probe {
       case .notReady(let startup, let stimHome):
@@ -53,6 +63,13 @@ final class ServerController: ObservableObject {
   @Published private(set) var state = State.off {
     didSet {
       if case .failed = state { if case .failed = oldValue {} else { failedAt = Date() } } else { failedAt = nil }
+      let failure = failureKind
+      failureKind = nil
+      if state.kind != oldValue.kind {
+        Diagnostics.shared.breadcrumb("server", "state \(state.kind)")
+        Diagnostics.shared.tag("server_state", state.kind)
+        if case .failed = state { Diagnostics.shared.report(.server(failure ?? .adoptionHomeMismatch)) }
+      }
       if case .running = state {
         if case .running = oldValue {} else { reloadDevices() }
       } else {
@@ -77,6 +94,8 @@ final class ServerController: ObservableObject {
   private var missedProbes = 0
   private var startedLoopbackOnly = true
   private var failedAt: Date?
+  /// Why the next `.failed` state happens; nil is the adoption check in `State.init(probe:owned:resolvedHome:port:)`.
+  private var failureKind: ServerFailureKind?
   private var retriesFailure = true
   static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
@@ -205,6 +224,7 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
+        failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
       }
@@ -225,6 +245,7 @@ final class ServerController: ObservableObject {
       guard current == generation, process != nil, action == .fail else { return }
       generation += 1
       terminate()
+      failureKind = .noAnswer
       state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
     }
   }
@@ -456,10 +477,12 @@ final class ServerController: ObservableObject {
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
     retriesFailure = !detail.contains("Unknown option '--loopback-only'")
     if !retriesFailure {
+      failureKind = .tooOld
       state = .failed(
         "This stim-server is too old to run on loopback only. Update it with npm install --global @stim-cli/server.")
       return
     }
+    failureKind = .exited
     state = .failed("stim-server exited with status \(status).\(detail.isEmpty ? "" : "\n\(detail)")")
   }
 }

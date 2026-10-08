@@ -66,7 +66,7 @@ struct WorkspaceDiffView: View {
       guard let connection else { return }
       do {
         let result = try await connection.request("workspace.files", ["workspace": .string(workspace), "group": .string(group)])
-        let loaded = try JSONDecoder().decode(WorkspaceFiles.self, from: JSONEncoder().encode(result))
+        let loaded = try decodeReporting(WorkspaceFiles.self, from: result, source: .server)
         try Task.checkCancellation()
         files = loaded
         loadedKey = key
@@ -82,7 +82,7 @@ struct WorkspaceDiffView: View {
       do {
         try await Task.sleep(for: .milliseconds(150))
         let result = try await connection.request("workspace.diff", ["workspace": .string(workspace), "path": .string(selected)])
-        let loaded = try JSONDecoder().decode(WorkspaceDiff.self, from: JSONEncoder().encode(result))
+        let loaded = try decodeReporting(WorkspaceDiff.self, from: result, source: .server)
         try Task.checkCancellation()
         patch = loaded
         rows = loaded.rows
