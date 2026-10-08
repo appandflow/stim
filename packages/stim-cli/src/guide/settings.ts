@@ -627,9 +627,9 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Phones > Hosted here lists the
-simulators, emulators and apps approved Macs run there, below Device hosting
-approvals. Stop asks for confirmation, ends the session and deletes or parks
+On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
+simulators, emulators and apps approved Macs run there, below Macs using this
+Mac. Stop asks for confirmation, ends the session and deletes or parks
 its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.

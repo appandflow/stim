@@ -3,23 +3,6 @@ import Foundation
 /// What the phone app flag decides, one function per place that shows something about phones. A view asks here
 /// instead of testing the flag itself, so each entry point has one tested answer.
 public enum PhoneApp {
-  /// The settings page that holds stim-server's controls.
-  public struct ServerPage: Equatable, Sendable {
-    public var title: String
-    public var systemImage: String
-    /// The label of the switch that runs stim-server, which Desktop also uses for replay, the diff viewer and
-    /// Macs approved to build or host devices here.
-    public var serveToggleTitle: String
-  }
-
-  public static func serverPage(phoneApp: Bool) -> ServerPage {
-    phoneApp
-      ? ServerPage(
-        title: "Phones", systemImage: "iphone.gen3.radiowaves.left.and.right", serveToggleTitle: "Serve to phones")
-      : ServerPage(
-        title: "Server", systemImage: "server.rack", serveToggleTitle: "Run stim-server")
-  }
-
   /// The sidebar footer button that shows the phone server's state and opens the Phones page.
   public static func showsSidebarButton(phoneApp: Bool, servesPhones: Bool) -> Bool { phoneApp && servesPhones }
 
@@ -56,17 +39,6 @@ public enum PhoneApp {
       phoneApp ? "The same rules as the phone app. " : ""
     }
 
-    public static func serverPageName(phoneApp: Bool) -> String { phoneApp ? "Phones" : "Server" }
-
-    /// Who connects to stim-server over Tailscale.
-    public static func clients(phoneApp: Bool) -> String { phoneApp ? "Phones" : "Other Macs" }
-
-    public static func tailscaleDown(phoneApp: Bool) -> String {
-      phoneApp
-        ? "Phones cannot connect until Tailscale runs. Only a client on this Mac, such as an iOS Simulator, can pair now."
-        : "Other Macs cannot connect until Tailscale runs. Only a client on this Mac can connect now."
-    }
-
     public static func recordingFooter(phoneApp: Bool) -> String {
       let replayers = phoneApp ? "Stim Desktop and the phone app replay" : "Stim Desktop replays"
       return
@@ -85,7 +57,6 @@ public enum PhoneApp {
         : "stim-server serves device replay, the diff viewer and archived logs"
       return "\(subject), and Stim Desktop needs \(minimum) or later."
     }
-
   }
 }
 

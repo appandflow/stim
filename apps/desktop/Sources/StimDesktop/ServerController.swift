@@ -106,7 +106,7 @@ final class ServerController: ObservableObject {
     return false
   }
 
-  var isResponding: Bool {
+  private var isResponding: Bool {
     switch state {
     case .running, .notReady: return true
     case .off, .starting, .failed: return false
@@ -133,18 +133,6 @@ final class ServerController: ObservableObject {
 
   func retry() {
     if case .failed = state { start() } else { refresh() }
-  }
-
-  var isOwned: Bool {
-    switch state {
-    case .running(_, let owned), .notReady(_, let owned): return owned
-    case .off, .starting, .failed: return false
-    }
-  }
-
-  var canRestart: Bool {
-    if case .running(_, owned: true) = state { return true }
-    return false
   }
 
   private var wantsLoopbackOnly: Bool {
@@ -263,16 +251,6 @@ final class ServerController: ObservableObject {
     guard let process = exiting else { return }
     await Task.detached { Self.waitForExit(process) }.value
     if exiting === process { exiting = nil }
-  }
-
-  func restart() {
-    guard canRestart else { return }
-    stop()
-    start()
-  }
-
-  func setupConnection() {
-    Task { await setUpConnection() }
   }
 
   func setUpConnection() async -> String? {
