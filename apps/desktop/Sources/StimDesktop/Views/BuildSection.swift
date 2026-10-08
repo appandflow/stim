@@ -173,7 +173,7 @@ struct BuildSection: View {
     } label: {
       Label(failed ? "Rebuild" : "Run", systemImage: "play.fill")
     }
-    .buttonStyle(.stim(.primary, .regular))
+    .buttonStyle(.stim(.primary))
     .fixedSize()
     .disabled(running != nil || actions.active(for: env.path) != nil)
     .help(
