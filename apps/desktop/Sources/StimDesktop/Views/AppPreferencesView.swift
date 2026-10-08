@@ -56,6 +56,7 @@ struct AppPreferencesView: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
+        .tint(Palette.brand)
         .onChange(of: appearance) { _, value in Theme.apply(value) }
       }
       .id("top")
