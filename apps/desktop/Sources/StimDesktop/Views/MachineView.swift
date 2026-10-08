@@ -45,7 +45,7 @@ struct MachineView: View {
         HStack(spacing: Space.lg) {
           machineChoices
             .frame(maxWidth: .infinity, alignment: .leading)
-          Button("Link machine", systemImage: "plus") {
+          Button("Link Machine", systemImage: "plus") {
             settingsTab = "build-machines"
             openSettings()
           }
@@ -367,7 +367,7 @@ struct MachineView: View {
         }
         Spacer()
         let command = StimCommand(["gc", "--json"], cwd: NSHomeDirectory())
-        Button("Preview disk cleanup") { actions.run("Preview disk cleanup", command, key: ActionCenter.machineKey) }
+        Button("Preview Disk Cleanup") { actions.run("Preview Disk Cleanup", command, key: ActionCenter.machineKey) }
           .buttonStyle(.stim())
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
           .help(command.displayLine())
@@ -426,7 +426,7 @@ struct MachineView: View {
 
   private func free(_ commands: [StimCommand]) {
     if let preview = FreePlan.preview(commands) {
-      actions.run("Preview disk cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
+      actions.run("Preview Disk Cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
     } else {
       confirming = commands
     }

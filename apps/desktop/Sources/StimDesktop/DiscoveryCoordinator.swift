@@ -257,9 +257,9 @@ final class DiscoveryCoordinator: ObservableObject {
       icon: "lightbulb", title: prompt.title, detail: prompt.detail, actionTitle: prompt.actionTitle,
       perform: { perform(prompt.action) }, onDismiss: snooze, key: AppPreferences.Key.discovery(prompt.type),
       secondaryAction: prompt.secondaryAction.map { action in
-        Notice.Action(title: "Review caches", perform: { perform(action) })
-      } ?? Notice.Action(title: "Don't suggest again", perform: never),
-      alternateAction: prompt.secondaryAction == nil ? nil : Notice.Action(title: "Don't suggest again", perform: never))
+        Notice.Action(title: "Review Caches", perform: { perform(action) })
+      } ?? Notice.Action(title: "Don't Suggest Again", perform: never),
+      alternateAction: prompt.secondaryAction == nil ? nil : Notice.Action(title: "Don't Suggest Again", perform: never))
   }
 
   private func perform(_ action: DiscoveryAction) {

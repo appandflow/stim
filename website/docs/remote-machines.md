@@ -297,13 +297,13 @@ so there is no Check again button:
      `auto` (run there when this Mac is full) and **Always** names the Mac's
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
-   - **Run a test build with a sample app** builds a sample through the worker
+   - **Run a Test Build with a Sample App** builds a sample through the worker
      and then locally.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote Mac
 with the default mode, it temporarily sets `remote.buildMode` to `off` during
-setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New command**.
+setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New Command**.
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.
@@ -452,7 +452,7 @@ Desktop creates a pinned Expo blank SDK 58 sample under
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58`.
 Preparation downloads the template and installs its dependencies, so it needs
 network access. Desktop uses the sample for setup requests when no workspace
-is listed. It is optional: start it with **Run a test build with a sample app**
+is listed. It is optional: start it with **Run a Test Build with a Sample App**
 on the wizard's last step. It tests iOS builds.
 
 The first run uses `stim ios --remote-build <name> --no-build-cache --json`.

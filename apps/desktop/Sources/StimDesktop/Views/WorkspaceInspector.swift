@@ -43,10 +43,10 @@ struct Inspector: View {
         }
         VStack(alignment: .leading, spacing: Space.md) {
           HStack {
-            SectionLabel(title: archive == nil ? "App / Native Logs" : "Logs")
+            SectionLabel(title: archive == nil ? "App / native logs" : "Logs")
             Spacer(minLength: Space.sm)
             if archive?.logsExpired != true {
-              Button("Show logs") {
+              Button("Show Logs") {
                 var query = LogQuery()
                 if archive == nil { query.sources = [.client, .device] }
                 openLogs(query)
@@ -70,7 +70,7 @@ struct Inspector: View {
         let project = archive == nil ? stats.value?.project.flatMap { $0.ios != nil || $0.android != nil ? $0 : nil } : nil
         if project != nil || stats.error != nil {
           VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Build Cache \u{00B7} Project")
+            SectionLabel(title: "Build cache \u{00B7} project")
             if let error = stats.error {
               Label("Could not load stats: \(error)", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(Palette.warning)
@@ -283,7 +283,7 @@ struct MetroLogsSection: View {
         HStack {
           SectionLabel(title: "Metro")
           Spacer(minLength: Space.sm)
-          Button("Show logs", action: openLogs)
+          Button("Show Logs", action: openLogs)
             .buttonStyle(.stim())
             .fixedSize()
             .help("Open Metro logs in the workspace log viewer")
@@ -300,7 +300,7 @@ struct MetroLogsSection: View {
           Text(health.rawValue).foregroundStyle(Palette.tertiary)
           if !showsHeading {
             Spacer(minLength: Space.sm)
-            Button("Show logs", action: openLogs).buttonStyle(.stim()).fixedSize()
+            Button("Show Logs", action: openLogs).buttonStyle(.stim()).fixedSize()
           }
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
@@ -374,9 +374,9 @@ struct WorktreeInspector: View {
         }
         VStack(alignment: .leading, spacing: Space.md) {
           HStack {
-            SectionLabel(title: "App / Native Logs")
+            SectionLabel(title: "App / native logs")
             Spacer(minLength: Space.sm)
-            Button("Show logs") {
+            Button("Show Logs") {
               var query = LogQuery()
               query.sources = [.client, .device]
               openLogs(nil, query)
@@ -387,7 +387,7 @@ struct WorktreeInspector: View {
         WorkspaceWorkSection(env: page.apps[0], sessions: page.agents)
         if !cacheEntries.isEmpty || stats.values.contains(where: { $0.error != nil }) {
           VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Build Cache \u{00B7} Project")
+            SectionLabel(title: "Build cache \u{00B7} project")
             ForEach(page.apps) { app in
               if let error = stats[app.path]?.error {
                 Label("Could not load stats: \(error)", systemImage: "exclamationmark.triangle")
@@ -467,7 +467,7 @@ struct WorkspaceWorkSection: View {
           if actions.expired {
             InlineEmpty("Agent actions expired")
           } else {
-            Button("Show agent actions", action: openActions).buttonStyle(.stim())
+            Button("Show Agent Actions", action: openActions).buttonStyle(.stim())
           }
         }
       }

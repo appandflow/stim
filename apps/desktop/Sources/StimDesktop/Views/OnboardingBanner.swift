@@ -70,7 +70,7 @@ struct OnboardingBanner: View {
         runButton(
           missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       }
-      Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
+      Button("Choose stim Executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
     }
   }
 
@@ -117,7 +117,7 @@ struct OnboardingBanner: View {
         runButton(
           missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
           action: onboarding.installServer)
-        Button("Choose stim-server executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
+        Button("Choose stim-server Executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
       })
   }
 
@@ -138,7 +138,7 @@ struct OnboardingBanner: View {
       }
     } buttons: {
       runButton("Use Stim Desktop", variant: .primary, key: .viewer, action: onboarding.useDesktopViewer)
-      Button("Not now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
+      Button("Not Now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
     }
   }
 
@@ -167,7 +167,7 @@ struct OnboardingBanner: View {
 
   @ViewBuilder
   private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
-    DisclosureGroup("Show command", isExpanded: $showsCommand) {
+    DisclosureGroup("Show Command", isExpanded: $showsCommand) {
       content().font(.stim(.footnote)).foregroundStyle(Palette.tertiary).padding(.top, Space.xs)
     }
     .font(.stim(.footnote)).foregroundStyle(Palette.secondary)

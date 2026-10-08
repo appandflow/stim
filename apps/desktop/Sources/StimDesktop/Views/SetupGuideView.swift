@@ -422,7 +422,7 @@ struct SetupGuideView: View {
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
-      Button("Take the tutorial") {
+      Button("Take the Tutorial") {
         onboarding.finishGuide()
         OpenRequests.shared.showTutorial(.begin)
       }

@@ -17,12 +17,12 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var actionTitle: String {
     switch self {
-    case .buildMachine: "Add a remote Mac"
-    case .phone: "Pair a phone"
-    case .tutorial: "Open tutorial"
-    case .hideWorkspaces, .statusFilter: "View options"
-    case .replay: "Open workspace"
-    case .hostedSimulators: "Add a hosting Mac"
+    case .buildMachine: "Add a Remote Mac"
+    case .phone: "Pair a Phone"
+    case .tutorial: "Open Tutorial"
+    case .hideWorkspaces, .statusFilter: "View Options"
+    case .replay: "Open Workspace"
+    case .hostedSimulators: "Add a Hosting Mac"
     }
   }
 

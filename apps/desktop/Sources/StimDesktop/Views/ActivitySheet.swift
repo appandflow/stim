@@ -269,7 +269,7 @@ struct ActivitySheet: View {
   }
 
   private func idleMenu(_ report: GcPreview) -> some View {
-    Menu("Shut down idle\u{2026}") {
+    Menu("Shut Down Idle\u{2026}") {
       ForEach(GcPreview.idleDurations, id: \.self) { duration in
         let count = GcPreview.idleSeconds(duration).map { report.idleShutdownCount(atLeast: $0) } ?? 0
         Button("Idle \(duration) or more (\(count))") { idleDuration = duration }

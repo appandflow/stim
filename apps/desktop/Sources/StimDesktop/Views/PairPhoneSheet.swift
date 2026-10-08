@@ -76,13 +76,13 @@ struct PairPhoneSheet: View {
         appCard {
           Text("Stim Mobile").font(.stim(.headline))
           Text("Install Stim Mobile from your TestFlight invitation.").foregroundStyle(Palette.secondary)
-          Link("How to get Stim Mobile", destination: URL(string: "https://stim.appandflow.com/docs/phone-app#install")!)
+          Link("How to Get Stim Mobile", destination: URL(string: "https://stim.appandflow.com/docs/phone-app#install")!)
         }
         appCard {
           Text("Tailscale").font(.stim(.headline))
           QRCodeImage(text: "https://apps.apple.com/app/tailscale/id1470499037").frame(width: 112, height: 112)
           Text("Scan with your phone's camera to get Tailscale.").foregroundStyle(Palette.secondary)
-          Link("Open App Store page", destination: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!)
+          Link("Open App Store Page", destination: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!)
         }
       }
     }
@@ -181,7 +181,7 @@ struct PairPhoneSheet: View {
               let url = detector.matches(in: error, range: NSRange(error.startIndex..., in: error))
                 .compactMap(\.url).first(where: { $0.scheme == "https" && $0.host == "login.tailscale.com" })
             {
-              Link("Open Tailscale setup", destination: url)
+              Link("Open Tailscale Setup", destination: url)
             }
             Button("Try Again") { model.send(.retry) }.buttonStyle(.stim())
           }
@@ -248,7 +248,7 @@ struct PairPhoneSheet: View {
               .font(.stim(.callout, mono: true)).foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
           }
         }
-        DisclosureGroup("Can't scan? Enter the endpoint and token", isExpanded: $model.manualExpanded) {
+        DisclosureGroup("Can't Scan? Enter the Endpoint and Token", isExpanded: $model.manualExpanded) {
           VStack(spacing: Space.sm) {
             detail("Endpoint", code.qr.endpoint)
             detail("Token", code.qr.pairingToken, secret: true)

@@ -310,9 +310,9 @@ struct OverviewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
           HStack {
-            if hasNext { Button("Next tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
+            if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
             Spacer(minLength: 0)
-            CopyButton(prompt, title: "Copy prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+            CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
           }
         }
         .padding(Space.xl)

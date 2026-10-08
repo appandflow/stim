@@ -95,7 +95,7 @@ struct AddMachineSteps: View {
               }
             }.disabled(sample.running || !model.wizard.capabilities.contains(.build))
           }
-          Button("Skip test") { Task { await sample.skip() } }
+          Button("Skip Test") { Task { await sample.skip() } }
         }
       }
       if !model.wizard.capabilities.contains(.build) {
@@ -185,14 +185,14 @@ struct AddMachineSteps: View {
       HStack {
         Label("Try It", systemImage: "sparkles").font(.stim(.headline))
         Spacer()
-        CopyButton(prompt, title: "Copy prompt", help: "Copy the agent prompt")
+        CopyButton(prompt, title: "Copy Prompt", help: "Copy the agent prompt")
       }
       Text(prompt).font(.stim(.callout)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       Text("Or run it yourself in a project:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       CopyableCommand(command: "stim ios --remote-build \(machine)")
       if model.sample != nil {
-        Button("Run a test build with a sample app") { model.openTest() }
+        Button("Run a Test Build with a Sample App") { model.openTest() }
           .buttonStyle(.stim(.plain))
       }
     }

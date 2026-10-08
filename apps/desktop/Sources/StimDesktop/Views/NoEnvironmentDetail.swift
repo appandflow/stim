@@ -54,7 +54,7 @@ struct NoEnvironmentDetail: View {
                 .buttonStyle(.stim(index == 0 ? .primary : .secondary, .regular))
               }
               if app.platforms.contains("ios") || app.platforms.contains("android") {
-                Button("Start dev server") {
+                Button("Start Dev Server") {
                   actions.run(
                     "Start \(worktree.names.title)", steps: setUpSteps(["start"], app: app), key: app.path, present: false)
                 }
@@ -157,11 +157,11 @@ private struct NotSetUpRunStatus: View {
     if run.isRunning {
       ProgressView().controlSize(.small)
       Text(run.statusLine ?? run.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-      Button("Show output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
+      Button("Show Output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
     } else if run.needsAttention {
       Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.error)
       Text("\(run.title) failed").font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-      Button("Show output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
+      Button("Show Output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
     }
   }
 }

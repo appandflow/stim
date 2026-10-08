@@ -53,7 +53,7 @@ struct InboxView: View {
           }
         }
         if visibleCount < entries.count {
-          Button("Show older notifications") { visibleCount += 50 }
+          Button("Show Older Notifications") { visibleCount += 50 }
             .buttonStyle(.stim())
             .frame(maxWidth: .infinity)
         }
@@ -66,7 +66,7 @@ struct InboxView: View {
       "Run stim doctor --fix?", isPresented: Binding(get: { fixing != nil }, set: { if !$0 { fixing = nil } }),
       titleVisibility: .visible, presenting: fixing
     ) { fix in
-      Button("Run the fix") { actions.run("Fix \(fix.title)", fix.command) }
+      Button("Run the Fix") { actions.run("Fix \(fix.title)", fix.command) }
     } message: { fix in
       Text(
         "\(fix.command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
@@ -100,7 +100,7 @@ struct InboxView: View {
     MenuPill(
       label: "Category",
       selection: $filter.category,
-      options: [MenuPillOption(value: OversightCategory?.none, title: "All categories")]
+      options: [MenuPillOption(value: OversightCategory?.none, title: "All Categories")]
         + OversightCategory.desktop.map {
           MenuPillOption(value: Optional($0), title: $0.label, symbol: $0.symbol)
         },
@@ -111,13 +111,13 @@ struct InboxView: View {
       label: "Workspace",
       selection: $filter.workspace,
       options: [
-        MenuPillOption(value: String?.none, title: "All workspaces"),
+        MenuPillOption(value: String?.none, title: "All Workspaces"),
         MenuPillOption(value: Optional(""), title: "Machine"),
       ] + workspaceChoices.map { MenuPillOption(value: Optional($0.path), title: $0.title) },
       isActive: filter.workspace != nil
     )
     .help("Show one workspace")
-    Button("Mark all read") { inbox.markAllRead(filter) }
+    Button("Mark All Read") { inbox.markAllRead(filter) }
       .buttonStyle(.stim())
       .fixedSize()
       .disabled(!inbox.inbox.entries.contains { !$0.read && filter.matches($0) })
@@ -192,7 +192,7 @@ private struct InboxRow: View {
     let path = entry.target.path
     HStack(spacing: Space.sm) {
       if case .build = entry.target, let path {
-        Button("Open logs") { openLogs(path) }
+        Button("Open Logs") { openLogs(path) }
           .accessibilityLabel("Open logs, \(title)")
           .help("Show this workspace's errors")
       }
@@ -203,7 +203,7 @@ private struct InboxRow: View {
       }
       if let command {
         CopyButton(
-          command.shellLine, variant: .secondary, title: "Copy command", help: command.displayLine(),
+          command.shellLine, variant: .secondary, title: "Copy Command", help: command.displayLine(),
           accessibilityLabel: "Copy command, \(title)")
         if command.isRunnable && command.isFix {
           Button("Fix\u{2026}") { fix(title, command) }

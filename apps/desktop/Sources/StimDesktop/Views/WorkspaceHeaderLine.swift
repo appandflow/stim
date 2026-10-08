@@ -46,7 +46,7 @@ struct WorkspaceHeaderLine: View {
       if let active {
         ProgressView().controlSize(.small)
         Text(active.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-        Button("Show output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
+        Button("Show Output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
       }
       if let page {
         WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
@@ -90,7 +90,7 @@ struct ArchivedHeaderLine: View {
       Spacer(minLength: Space.md)
       Menu {
         if FileManager.default.fileExists(atPath: folder) {
-          Button("Reveal folder", systemImage: "folder") {
+          Button("Reveal Folder", systemImage: "folder") {
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder)])
           }
           Divider()
@@ -99,7 +99,7 @@ struct ArchivedHeaderLine: View {
           prefs.setHidden(!isHidden, archives: [page.record.id])
         }
         Divider()
-        Button("Delete archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
+        Button("Delete Archive\u{2026}", systemImage: "trash", role: .destructive, action: delete)
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
       } label: {
         Image(systemName: "ellipsis")
@@ -306,7 +306,7 @@ struct GitPopover: View {
         Text(git.summary == "Clean" ? "No uncommitted or unpushed changes" : git.summary).foregroundStyle(Palette.secondary)
       }
       if !readOnly {
-        Button("Review changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
+        Button("Review Changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
           .buttonStyle(.stim())
       }
       if let pull = worktree.pullRequest {

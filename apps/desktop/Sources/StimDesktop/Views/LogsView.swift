@@ -147,7 +147,7 @@ struct LogsView: View {
         MenuPill(
           label: "Slot",
           selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 }),
-          options: [MenuPillOption(value: String?.none, title: "All slots")]
+          options: [MenuPillOption(value: String?.none, title: "All Slots")]
             + slots.map { MenuPillOption(value: Optional($0), title: $0) },
           isActive: effectiveQuery.slot != nil
         )
@@ -197,7 +197,7 @@ struct LogsView: View {
       Button {
         model.jumpToLatest()
       } label: {
-        Label("Jump to latest", systemImage: "arrow.down.to.line")
+        Label("Jump to Latest", systemImage: "arrow.down.to.line")
       }
       .buttonStyle(.stim(.primary, .regular))
       .padding(Space.xl)
@@ -229,7 +229,7 @@ struct LogsView: View {
       Spacer()
       CopyButton(copyText(), help: selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
       if archive == nil {
-        Button("Reveal log folder") {
+        Button("Reveal Log Folder") {
           if let dir = env?.logs?.dir { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir) }
         }
         .disabled(env?.logs?.dir == nil)

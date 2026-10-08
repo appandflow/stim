@@ -30,13 +30,13 @@ struct NativeViewerPermissionsView: View {
           .foregroundStyle(Palette.secondary)
       }
       HStack {
-        Button("Not now") { permissions.showsSetup = false }.buttonStyle(.stim(.plain))
+        Button("Not Now") { permissions.showsSetup = false }.buttonStyle(.stim(.plain))
         Spacer()
-        Button("Check again") { permissions.refresh() }.buttonStyle(.stim())
+        Button("Check Again") { permissions.refresh() }.buttonStyle(.stim())
         if permissions.screenRecording && permissions.accessibility {
           Button("Done") { permissions.showsSetup = false }.buttonStyle(.stim(.primary))
         } else {
-          Button("Request permissions") { permissions.requestPermissions() }.buttonStyle(.stim(.primary))
+          Button("Request Permissions") { permissions.requestPermissions() }.buttonStyle(.stim(.primary))
         }
       }
     }

@@ -47,7 +47,7 @@ struct RecordingSection: View {
     }
     .task { await settings.refresh() }
     .confirmationDialog("Stop Recording Device Screens?", isPresented: $confirmingOff, titleVisibility: .visible) {
-      Button("Turn off and delete recordings", role: .destructive) { write(false) }
+      Button("Turn Off and Delete Recordings", role: .destructive) { write(false) }
     } message: {
       Text("stim settings set recording.enabled false --scope machine deletes the recordings of every workspace it turns off.")
     }

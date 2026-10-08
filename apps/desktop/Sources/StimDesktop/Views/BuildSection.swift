@@ -54,7 +54,7 @@ struct BuildSection: View {
             platform: "macos", slot: "default", startedAt: macos.build.startedAt,
             finishedAt: macos.build.finishedAt)
           {
-            Button("Build logs") { openLogs(query) }
+            Button("Build Logs") { openLogs(query) }
               .buttonStyle(.stim())
               .fixedSize()
           }

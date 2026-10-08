@@ -44,7 +44,7 @@ struct AgentActionsPanel: View {
           .font(.stim(.caption))
           .foregroundStyle(Palette.tertiary)
         Spacer()
-        Button("Open in logs") { openLogs(actions.first { $0.key == selected ?? shown.current }) }
+        Button("Open in Logs") { openLogs(actions.first { $0.key == selected ?? shown.current }) }
           .buttonStyle(.stim())
           .help("Close the viewer and show this device's agent actions in the logs")
       }

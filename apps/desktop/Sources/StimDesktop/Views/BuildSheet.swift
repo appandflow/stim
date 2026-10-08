@@ -145,7 +145,7 @@ struct BuildSheet: View {
           if let query = LogQuery.build(
             platform: "macos", slot: "default", startedAt: macos.build.startedAt, finishedAt: macos.build.finishedAt)
           {
-            Button("Build logs") {
+            Button("Build Logs") {
               dismiss()
               revealLogs(query)
             }.buttonStyle(.stim())
@@ -161,7 +161,7 @@ struct BuildSheet: View {
   private var nextBuild: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        SectionLabel(title: "Next Build")
+        SectionLabel(title: "Next build")
         Spacer()
         checkButton
       }
@@ -216,7 +216,7 @@ struct BuildSheet: View {
           )
           checkButton
         }
-        Button("Open in logs panel") {
+        Button("Open in Logs Panel") {
           if let query = run.flatMap({
             LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
           }) {
@@ -247,7 +247,7 @@ struct BuildSheet: View {
 
   private var recentBuilds: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      SectionLabel(title: "Recent Builds").padding(.horizontal, Space.lg)
+      SectionLabel(title: "Recent builds").padding(.horizontal, Space.lg)
       ScrollView {
         TimelineView(running.map { .buildSeconds($0) } ?? .periodic(from: .now, by: 30)) { context in
           VStack(spacing: Space.xxs) {

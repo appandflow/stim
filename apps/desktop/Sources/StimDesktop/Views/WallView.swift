@@ -26,9 +26,9 @@ struct WallView: View {
       }
     } else if let project, content == .noneActive {
       VStack(spacing: Space.lg) {
-        Text("No active workspaces in \(store.title(of: project))").font(.stim(.headline))
+        Text("No Active Workspaces in \(store.title(of: project))").font(.stim(.headline))
         Text("The project has workspaces, but none is running or being set up.").foregroundStyle(Palette.secondary)
-        Button("Show all") { setScope(.all) }
+        Button("Show All") { setScope(.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       }
       .padding(Space.huge)

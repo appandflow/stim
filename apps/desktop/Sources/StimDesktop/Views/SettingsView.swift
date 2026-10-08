@@ -184,7 +184,7 @@ struct ScopeSettingsView: View {
     let entries = model.payload?.unknown.filter { $0.scope == scope } ?? []
     if !entries.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        SectionLabel(title: "Not Read by Stim")
+        SectionLabel(title: "Not read by Stim")
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
             Text(entry.key).font(.stim(.callout, mono: true))

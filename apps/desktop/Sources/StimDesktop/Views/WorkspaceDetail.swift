@@ -151,7 +151,7 @@ struct WorkspaceDetail: View {
       "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
       isPresented: $confirmingArchiveDelete, titleVisibility: .visible
     ) {
-      Button("Delete permanently", role: .destructive) {
+      Button("Delete Permanently", role: .destructive) {
         if let archive {
           actions.run(
             "Delete \(archive.title)", steps: [archive.deleteCommand(cwd: NSHomeDirectory())], key: ActionCenter.machineKey)
