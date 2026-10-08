@@ -379,7 +379,7 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
 tile stops streaming and says "Open in the viewer". Tiles on the Active worktrees
-wall are previews too; clicking one opens its workspace. The wall creates workspace
+wall are previews too; clicking one opens its workspace with that device focused. The wall creates workspace
 rows and device tiles as you scroll, and pauses previews after they leave the
 scrolling area. Returning to a tile reconnects its preview. Active workspaces without
 running or building devices use compact cards with Metro status, warnings and
@@ -1307,11 +1307,16 @@ stim-server's leases. The phone app and stim-server do read them, and do not cou
 
 Each category has a level, with the phone's names: **Alert**, **Silent** or
 **Off**. Every category is Silent by default, except **A Mac asks to build
-here**, which is Alert because a request lapses after 15 minutes. New inbox entries
-briefly wiggle the top-right bell and update its unread count without opening a card.
-Reduce Motion disables the wiggle. When the main window is not in front,
-an Alert is a macOS notification with sound, and
-clicking it brings Stim Desktop up on the target. macOS asks for permission the
+here**, which is Alert because a request lapses after 15 minutes. While the main
+window is in front, an Alert shakes the top-right bell and turns it purple for a
+second, and bumps its unread count; Silent and Off entries only bump the count.
+Under Reduce Motion the bell keeps the colour and skips the shake. A build or
+device-hosting request, which lapses after 15 minutes, and a machine problem
+at Alert level also open a card in the window's top right corner, newest on top,
+with its call to action and a dismiss button; clicking the card opens its target,
+and it stays until dismissed or answered. Every other category reaches the bell
+only. When the main window is not in front, an Alert is a macOS notification
+with sound, and clicking it brings Stim Desktop up on the target. macOS asks for permission the
 first time one is posted. Silent and Off never interrupt.
 
 Every notification also lands in **Notifications**, opened from the top-right bell with

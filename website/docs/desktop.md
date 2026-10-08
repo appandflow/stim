@@ -276,9 +276,11 @@ a paired phone starts with it on. Turning the flag off does not stop a running
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default. New inbox entries briefly wiggle the
-  top-right bell and update its count without opening a large card. Reduce Motion
-  disables the wiggle. Background macOS alerts still follow notification settings.
+  **Notifications**. It is Silent by default. While Desktop is in front, an Alert
+  shakes the top-right bell and bumps its count, and Silent and Off entries only
+  bump the count; under Reduce Motion the bell keeps its colour change and skips
+  the shake. A build or hosting request and an Alert-level machine problem also
+  open a card in the window. Background macOS alerts follow notification settings.
   The inbox starts with 50 matching
   notifications; **Show older notifications** loads another 50. Changing a filter
   returns to the first batch. **Mark all read** and **Clear** apply to all matching
@@ -378,17 +380,28 @@ another source; click **Allow Paste** in the viewer. Unicode and line breaks are
 preserved. Physical devices, hosted and remote sessions and replay never sync, so
 no clipboard text crosses the network or reaches another Mac.
 
-Overview opens first and groups active worktrees into rounded project cards, with up to
-three cards per row and one device preview per card. Titles, metrics and small previews are
-centered. Click anywhere on a project card to open its full project page. **Show more (N)** counts additional running devices and active worktrees without a running device. **Active worktrees** shows only running
-workspaces, with bordered cards and full-size previews. Click a card's header or empty area to open its project; click a device to open its workspace's running view focused on that device.
+Overview opens first. Running projects come first, as cards with a live preview of
+one device; click a card to open the project. Idle projects follow in a compact list
+with their last activity, an open pull request, a failed last build and errors; click
+a row to open the project. A **Recently archived** row and a **Try this** section
+follow. **Try this** suggests up to three features you have not used yet, such as EAS
+development builds and simulators, another Mac for builds or simulators, `stim macos`,
+running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a
+copyable prompt for your coding agent. A tip appears only when it applies, so EAS tips
+need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
+with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's tip card.
+
+**Active worktrees** groups every worktree with something running, building or warming,
+each with a compact header (name, project, Metro port, who drives it, memory, errors)
+above a wrapping grid of device tiles, so several worktrees fit on one screen. Click a
+header to open the project, or a tile to open its workspace with that device focused.
 
 The Active worktrees and project wall creates rows and device tiles as you scroll.
 Offscreen previews pause and reconnect when you return to them.
 
 On the Active worktrees and project wall, active workspaces without running or building
-devices use compact cards labelled **No running devices**, with Metro status,
-warnings and error links. CPU and RAM stay on the workspace page.
+devices show a **No running devices** line under their header, with Metro status
+and error links. CPU stays on the workspace page.
 
 Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
