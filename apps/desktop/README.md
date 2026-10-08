@@ -1747,7 +1747,7 @@ Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa
 
 Without all three upload variables or `sentry-cli`, `bundle.sh --release` prints one line to stderr and skips the upload; a failed upload never fails the bundle. The dSYM is made with `dsymutil` from the bundled executable, so its UUIDs match the binary that `scripts/release.sh` later signs.
 
-An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off and tracing, session tracking, network breadcrumbs, failed-request capture, stack traces on handled events and MetricKit off; macOS has no screenshot or view hierarchy capture. Every event and breadcrumb passes through the scrubber before it leaves the app: it replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
+An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off and tracing, session tracking, network breadcrumbs, failed-request capture, stack traces on handled events and MetricKit off; macOS has no screenshot or view hierarchy capture. Every event's text, tags, extra data, stack frames and breadcrumbs pass through the scrubber before they leave the app (the grouping fingerprint repeats the tag values and is not scrubbed): it replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
 
 ### What is sent
 
@@ -1763,12 +1763,12 @@ Besides the standard Sentry fields (SDK and release, the OS version and kernel, 
 
 The three handled events are warnings with a fixed message. Each distinct failure is sent once per launch, and a launch sends at most 20. A command that streams output, such as `stim ios`, and a failed `stim-server` command send no event, because a failing build is not a Desktop fault.
 
-Every event carries two tags that name where the app was: `page` (the kind of the last page: `overview`, `wall`, `project`, `workspace`, `archived-workspace`, `worktree`, `notifications` or `machine`, never a name) and `last_cli_command` (the last `stim` command started), plus `server_state` (`off`, `starting`, `running`, `not-ready` or `failed`). Breadcrumbs hold the last 150 of:
+Once set, each event carries three tags that name where the app was: `page` (the kind of the last page: `overview`, `wall`, `project`, `workspace`, `archived-workspace`, `worktree`, `notifications`, `machine` or `none`, never a name) and `last_cli_command` (the last `stim` command started) and `server_state` (`off`, `starting`, `running`, `not-ready` or `failed`). Breadcrumbs hold the last 150 of:
 
 - `navigation`: the page kind.
 - `cli`: `start <command>` and `finish <command>` with `duration_ms` and `exit_code`.
 - `server`: `state <state>`.
-- Sentry's own `app.lifecycle` (active or inactive) and `device.connectivity` (the connection type).
+- Sentry's own `started` (`Breadcrumb Tracking`), `app.lifecycle` (active or inactive) and `device.connectivity` (the connection type).
 
 No event or breadcrumb carries a project, workspace, branch, machine or host name, a path, an argument, an output line, a payload value or a token. `Tests/StimKitTests/DiagnosticsTests.swift` and `CrashScrubberTests.swift` check this.
 

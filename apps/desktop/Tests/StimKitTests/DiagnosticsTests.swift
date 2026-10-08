@@ -120,7 +120,7 @@ struct DiagnosticsTests {
     let recorder = Recorder()
     let diagnostics = Diagnostics()
     diagnostics.install(recorder.sink)
-    let json = #"{"machines":{"janics-mac-mini.tail1234.ts.net":{"name":7}},"list":[]}"#
+    let json = #"{"machines":{"acmesecret":{"name":7}},"list":[]}"#
 
     #expect(throws: DecodingError.self) {
       try decodeReporting(Payload.self, from: Data(json.utf8), source: .server, diagnostics: diagnostics)
@@ -135,8 +135,21 @@ struct DiagnosticsTests {
         ["source": "server", "type": "Payload", "coding_path": "machines.<key>.name", "reason": "type-mismatch"],
         ["source": "cli", "type": "Payload", "coding_path": "list.[].name", "reason": "key-not-found"],
       ])
-    #expect(!recorder.everything.contains("janics"))
-    #expect(!recorder.everything.contains("tail1234"))
+    #expect(!recorder.everything.contains("acmesecret"))
+  }
+
+  @Test func masksADictionaryKeyEvenWhenTheDecoderConvertsKeys() {
+    let recorder = Recorder()
+    let diagnostics = Diagnostics()
+    diagnostics.install(recorder.sink)
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    #expect(throws: DecodingError.self) {
+      try decodeReporting(
+        Payload.self, from: Data(#"{"machines":{"acme_secret":{"name":7}},"list":[]}"#.utf8), source: .cli,
+        decoder: decoder, diagnostics: diagnostics)
+    }
+    #expect(recorder.reports.first?.tags["coding_path"] == "machines.<key>.name")
   }
 
   @Test func reportsNoDecodeFailureForAValidPayload() throws {
@@ -184,7 +197,9 @@ struct DiagnosticsTests {
   }
 
   @Test func readsOnlyABareStimCode() {
-    #expect(Diagnostics.stimCode(in: ["error STIM_BAD_ARG: nope"]) == "STIM_BAD_ARG")
+    #expect(Diagnostics.stimCode(in: ["error: STIM_BAD_ARG: nope"]) == "STIM_BAD_ARG")
+    #expect(Diagnostics.stimCode(in: ["Set STIM_HOME to a folder", "STIM_NOT_READY: x"]) == "STIM_NOT_READY")
+    #expect(Diagnostics.stimCode(in: ["Set STIM_HOME to a folder"]) == nil)
     #expect(Diagnostics.stimCode(in: ["", #"{"code":"STIM_NO_DEVICE"}"#]) == "STIM_NO_DEVICE")
     #expect(Diagnostics.stimCode(in: ["/Users/janic/STIM_ACME/app", "~/STIM_ACME", "ASTIM_ACME", "STIM_ACME-1"]) == nil)
   }

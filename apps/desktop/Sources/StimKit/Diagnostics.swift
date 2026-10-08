@@ -159,19 +159,24 @@ public final class Diagnostics: @unchecked Sendable {
     "settings", "status", "stats", "gc", "guide",
   ]
 
-  /// The first bare `STIM_*` error code in `texts`. A name inside a path or a longer word is not one.
+  /// The `STIM_*` error code the output names: a `code` field first, else a bare code opening a line. A name
+  /// inside a path or a sentence is not one.
   public static func stimCode(in texts: [String]) -> String? {
-    for text in texts {
-      let range = NSRange(text.startIndex..., in: text)
-      if let match = stimCodePattern.firstMatch(in: text, range: range), let found = Range(match.range, in: text) {
-        return String(text[found])
+    for pattern in [stimCodeField, stimCodeLine] {
+      for text in texts {
+        let range = NSRange(text.startIndex..., in: text)
+        if let match = pattern.firstMatch(in: text, range: range), let found = Range(match.range(at: 1), in: text) {
+          return String(text[found])
+        }
       }
     }
     return nil
   }
 
-  private static let stimCodePattern = try! NSRegularExpression(
-    pattern: #"(?<![\w/.\-~])STIM_[A-Z][A-Z0-9_]{1,39}(?![\w/.\-])"#)
+  private static let codeBody = #"(STIM_[A-Z][A-Z0-9_]{1,39})(?![\w/.\-])"#
+  private static let stimCodeField = try! NSRegularExpression(pattern: #"(?i)\bcode["']?\s*[:=]\s*["']?"# + codeBody)
+  private static let stimCodeLine = try! NSRegularExpression(
+    pattern: #"(?m)^\s*(?:error:?\s*)?"# + codeBody)
 
   /// Why decoding failed and where, as type names and keys the model declares. Dictionary keys, which can be
   /// workspace or machine names, and array indices are replaced.
@@ -192,7 +197,8 @@ public final class Diagnostics: @unchecked Sendable {
 
   private static func component(_ key: any CodingKey) -> String {
     if key.intValue != nil { return "[]" }
-    guard Mirror(reflecting: key).displayStyle == .enum, key.stringValue.count <= 40,
+    guard Mirror(reflecting: key).displayStyle == .enum, type(of: key).init(stringValue: "\u{0}probe") == nil,
+      key.stringValue.count <= 40,
       key.stringValue.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") })
     else { return "<key>" }
     return key.stringValue
