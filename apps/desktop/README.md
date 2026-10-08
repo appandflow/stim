@@ -670,7 +670,12 @@ finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
 running, because the CLI does not do them: the nightly run is also what deletes
 unused and parked devices and removes clean idle worktrees by age. With a `stim`
 older than 1.17.3, or `maintenance.mode` set to `report` or `off`, or while the
-status payload has not loaded, the app runs everything as before. The
+status payload has not loaded, the app runs everything as before. It also
+removes finished worktrees itself when the CLI's worktree check has not run in
+the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
+and when the CLI's last pass was blocked while disk is still under the budget it
+posts the pressure notification with **Do it** instead of running `stim gc
+--delete` on its own. The
 **Autopilot** section shows the last pass (actions and bytes freed) while the
 CLI cleans automatically.
 

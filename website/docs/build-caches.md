@@ -258,9 +258,10 @@ shared caches on a different volume. The same values can live in the machine con
 ## Automatic maintenance
 
 CLI commands and `status --watch` start a detached maintenance pass when a
-check is due. In the default `report` mode a pass only measures, plans and
-logs. In `on` mode it also removes what `stim gc --delete` would remove, under
-the caps and floors in [settings](./settings.md#automatic-maintenance).
+check is due. In the default `on` mode a pass removes what `stim gc --delete`
+would remove, under the caps and floors in
+[settings](./settings.md#automatic-maintenance). In `report` mode it only
+measures, plans and logs.
 Disk and memory pressure are checked every minute, Stim-owned directory sizes
 every hour, finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when

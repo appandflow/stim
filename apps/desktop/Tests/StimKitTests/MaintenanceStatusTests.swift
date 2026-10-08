@@ -31,6 +31,16 @@ import Testing
     #expect(try payload(#"{"mode":5}"#).maintenance == nil)
   }
 
+  @Test func theAppRemovesFinishedWorktreesWhenTheCliWorktreeCheckIsStale() throws {
+    let now = Date(timeIntervalSince1970: 1_791_256_709)
+    func status(_ lastChecks: String) throws -> MaintenanceStatus? {
+      try payload(#"{"mode":"on","lastChecks":\#(lastChecks)}"#).maintenance
+    }
+    #expect(try status(#"{"worktree":1791256000000}"#)?.removesFinishedWorktrees(now: now) == true)
+    #expect(try status(#"{"worktree":1791240000000}"#)?.removesFinishedWorktrees(now: now) == false)
+    #expect(try status(#"{"worktree":null}"#)?.removesFinishedWorktrees(now: now) == false)
+  }
+
   @Test func aReportPassHasNoSummaryLine() throws {
     let status = try payload(
       #"{"mode":"report","lastPass":{"startedAt":1,"mode":"report","freedBytes":0,"actions":2,"blocked":[]}}"#
