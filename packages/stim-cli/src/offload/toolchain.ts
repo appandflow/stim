@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
+import { podEnvForRuby, readRubyVersion } from '../engine/deps.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
@@ -57,15 +58,37 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(): IosToolchain {
+export function iosToolchain(root: string): IosToolchain {
+  return iosToolchainForRuby(readRubyVersion(root));
+}
+
+function iosToolchainForRuby(rubyVersion: string | null): IosToolchain {
   const xcode = quiet('xcodebuild', ['-version']);
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: quiet('pod', ['--version'])?.trim().split('\n').pop()?.trim() ?? null,
+    cocoapods: cocoapodsVersion(rubyVersion),
   };
+}
+
+function cocoapodsVersion(rubyVersion: string | null): string | null {
+  return (
+    getExecutor()
+      .runFileQuiet('pod', ['--version'], {
+        timeoutMs: 20_000,
+        env: Object.fromEntries(
+          Object.entries(podEnvForRuby(rubyVersion)).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        ),
+      })
+      ?.trim()
+      .split('\n')
+      .pop()
+      ?.trim() ?? null
+  );
 }
 
 export interface MacosToolchain {
@@ -165,13 +188,13 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null): WorkerToolchain {
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
   return {
-    ...iosToolchain(),
+    ...iosToolchainForRuby(rubyVersion),
     macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
     bundler: quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),

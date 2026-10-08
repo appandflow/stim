@@ -594,7 +594,7 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
-  if (mode === 'offer') return emit(workerToolchain());
+  if (mode === 'offer') return emit(workerToolchain(process.argv[3] ?? null));
   if (mode === 'build') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);

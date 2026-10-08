@@ -42,6 +42,7 @@ import { readAvailableMemory } from './machine.ts';
 import { listProcesses } from './processes.ts';
 import {
   BUILD_REPO_PATTERN,
+  BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
   type BuildAttachResult,
@@ -220,8 +221,7 @@ export class BuildHost {
   >();
   private closed = false;
   private draining: string | null = null;
-  private toolchainAt = 0;
-  private toolchainValue: Promise<BuildToolchain | null> | null = null;
+  private readonly toolchains = new Map<string | null, { at: number; value: Promise<BuildToolchain | null> }>();
   private readonly options: BuildHostOptions;
   private sweeping: Promise<void> = Promise.resolve();
   private queued: Promise<void> | null = null;
@@ -282,11 +282,15 @@ export class BuildHost {
     return join(this.root(), client);
   }
 
-  toolchain(): Promise<BuildToolchain | null> {
-    if (this.toolchainValue && Date.now() - this.toolchainAt < this.limits.toolchainTtlMs) return this.toolchainValue;
-    this.toolchainAt = Date.now();
-    this.toolchainValue = new Promise((resolve) => {
-      const child = spawn(process.execPath, [this.options.worker, 'offer'], {
+  toolchain(rubyVersion: string | null = null): Promise<BuildToolchain | null> {
+    const now = Date.now();
+    for (const [context, entry] of this.toolchains) {
+      if (now - entry.at >= this.limits.toolchainTtlMs) this.toolchains.delete(context);
+    }
+    const cached = this.toolchains.get(rubyVersion);
+    if (cached) return cached.value;
+    const value = new Promise<BuildToolchain | null>((resolve) => {
+      const child = spawn(process.execPath, [this.options.worker, 'offer', ...(rubyVersion ? [rubyVersion] : [])], {
         env: this.options.env,
         stdio: ['ignore', 'pipe', 'ignore'],
       });
@@ -298,25 +302,32 @@ export class BuildHost {
       child.on('close', () => {
         clearTimeout(timer);
         try {
-          const value = JSON.parse(out) as unknown;
-          resolve(isJsonObject(value) ? (value as unknown as BuildToolchain) : null);
+          const report = JSON.parse(out) as unknown;
+          resolve(isJsonObject(report) ? (report as unknown as BuildToolchain) : null);
         } catch {
           resolve(null);
         }
       });
     });
-    void this.toolchainValue.then((value) => {
-      if (!value) this.toolchainValue = null;
+    this.toolchains.set(rubyVersion, { at: now, value });
+    void value.then((result) => {
+      if (!result && this.toolchains.get(rubyVersion)?.value === value) this.toolchains.delete(rubyVersion);
       return undefined;
     });
-    return this.toolchainValue;
+    return value;
   }
 
   async offer(client: string, params: unknown): Promise<{ result: BuildOfferResult } | Refusal> {
     if (!isJsonObject(params) || !validRepo(params.repo)) {
       return refusal('bad-request', 'build.offer needs params.repo.');
     }
-    const toolchain = await this.toolchain();
+    if (
+      params.rubyVersion !== undefined &&
+      (typeof params.rubyVersion !== 'string' || !new RegExp(BUILD_RUBY_VERSION_PATTERN).test(params.rubyVersion))
+    ) {
+      return refusal('bad-request', 'build.offer needs a Ruby installation name without path separators.');
+    }
+    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null);
     if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });

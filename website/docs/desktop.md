@@ -540,7 +540,7 @@ button.
 
 Only a problem that stops the chosen capability blocks the Tools step. A Stim
 build mismatch, which **Install This Mac's Build** fixes, is one. Other tool
-differences, such as a different global CocoaPods or missing Android tools, are
+differences, such as a different project-selected CocoaPods or missing Android tools, are
 warnings that say what they cost and offer copyable fixes.
 
 The last step offers a **Try it** agent prompt and `stim ios --remote-build

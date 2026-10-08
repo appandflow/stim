@@ -228,12 +228,16 @@ downgrades a newer server.
 
 For iOS builds, Xcode and the simulator SDK must match, and the worker needs
 an iPhone simulator on the target runtime. CPU architecture and the Stim build
-must match the build target. CocoaPods versions must match unless the
+must match the build target. Project-selected CocoaPods versions must match unless the
 project's `Gemfile.lock` pins it; then both Macs use Bundler and the pinned
 version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
+
+The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
+is installed, using the same UTF-8 locale defaults as `pod install`. Without
+an installed project Ruby, it uses each machine's default Ruby.
 
 ## Use the Desktop wizard
 
@@ -277,11 +281,11 @@ so there is no Check again button:
    they cost:
    - A different Xcode or runtime version.
    - Missing Android tools: Android builds stay on this Mac.
-   - A different global CocoaPods. Projects whose `Gemfile.lock` pins
+   - A different project-selected CocoaPods. Projects whose `Gemfile.lock` pins
      CocoaPods run that version through Bundler on both Macs. Other projects
-     build on this Mac until the global versions match. Pin it with
+     build on this Mac until the selected versions match. Pin it with
      `bundle add cocoapods --version <version>` and `bundle install`, or run
-     `gem install cocoapods -v <version>` on the worker.
+     `gem install cocoapods -v <version>` using the project's Ruby on the worker.
 5. **Done.** Copy the **Try it** agent prompt, or run
    `stim ios --remote-build <machine>` yourself.
    - **Builds** sets `remote.buildMode`: **Auto**, **Always** or **Never**

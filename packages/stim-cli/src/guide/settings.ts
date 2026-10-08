@@ -764,10 +764,12 @@ preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
-iPhone simulator on the target runtime. Its CocoaPods must match too, unless
+iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
-installs the pinned gems itself on the first build. For Android its JDK major
+installs the pinned gems itself on the first build. The comparison selects
+the app's .ruby-version when installed, with pod install's UTF-8 locale defaults.
+For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When

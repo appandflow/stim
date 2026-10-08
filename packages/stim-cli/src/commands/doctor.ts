@@ -293,7 +293,7 @@ export default function doctorCommand(
           ? [
               {
                 platform: 'ios' as const,
-                local: iosToolchain(),
+                local: iosToolchain(root),
                 runtime: iosTargetRuntime(root),
                 cocoapodsPinned: bundlerPin(root) !== null,
               },

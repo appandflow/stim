@@ -467,10 +467,11 @@ the build, for example because it got busy meanwhile, Stim tries the next one
 in that order:
 
 - For iOS, its Xcode and simulator SDK must match, and it needs an iPhone
-  simulator on the target runtime. Its CocoaPods must match too, unless the
+  simulator on the target runtime. Its project-selected CocoaPods must match too, unless the
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
-  and installs the pinned gems itself on the first build.
+  and installs the pinned gems itself on the first build. The comparison uses
+  `.ruby-version` when installed and the same UTF-8 locale defaults as `pod install`.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS

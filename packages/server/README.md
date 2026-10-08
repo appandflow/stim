@@ -1162,7 +1162,11 @@ The server re-reads the build clients on every call, and revoking a client
 closes its connections and cancels its builds.
 
 - `build.offer` takes `repo` (the client's name for its repository: letters,
-  digits, `.`, `_` and `-`, at most 80) and an optional `lockfile` sha256. It
+  digits, `.`, `_` and `-`, at most 80), an optional `lockfile` sha256, and an
+  optional `rubyVersion` (the project's normalized `.ruby-version`, a nonempty
+  installation name without path separators, NUL or line breaks). The CocoaPods probe uses the
+  same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
+  `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
@@ -1182,7 +1186,7 @@ closes its connections and cancels its builds.
   build now, or null. It declines while it runs its limit of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
-  `maxLoadPerCore`. The toolchain is read at most once a minute; capacity on
+  `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
   every offer.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
