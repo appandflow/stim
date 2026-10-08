@@ -14,7 +14,7 @@ export interface PlatformState {
   kind: 'building' | 'failed' | 'running' | 'idle';
 }
 
-export const PLATFORM_ORDER: DevicePlatform[] = ['ios', 'android', 'macos', 'web'];
+const PLATFORM_ORDER: DevicePlatform[] = ['ios', 'android', 'macos', 'web'];
 
 const KIND_RANK: Record<PlatformState['kind'], number> = {
   failed: 0,
@@ -180,7 +180,7 @@ export function worktreeRowSummary(
   };
 }
 
-export const platformSpoken = (state: PlatformState): string => {
+const platformSpoken = (state: PlatformState): string => {
   const name = platformName(state.platform);
   switch (state.kind) {
     case 'building':
