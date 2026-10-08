@@ -26,18 +26,16 @@ struct WorkspaceCardGrid: View {
   @State private var width: CGFloat = 1000
 
   var body: some View {
-    LazyVGrid(
-      columns: Array(
-        repeating: GridItem(.flexible(), spacing: Space.xl, alignment: .top), count: WallCard.columns(forWidth: width)),
-      alignment: .leading, spacing: Space.xl
-    ) {
+    let columns = Array(
+      repeating: GridItem(.flexible(), spacing: Space.xl, alignment: .top), count: WallCard.columns(forWidth: width))
+    return LazyVGrid(columns: columns, alignment: .leading, spacing: Space.xl) {
       ForEach(cards) { card in
         WorkspaceCardView(
           card: card, store: store, usage: metrics.usage, open: { open(card) }, openDevice: openDevice,
           openLogs: openLogs)
       }
     }
-    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { width = $0 })
   }
 }
 
@@ -80,7 +78,7 @@ struct WorkspaceCardView: View {
           .frame(height: CGFloat(tileSize.screenHeight))
           .background(Media.screen)
           .clipped()
-          .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { mediaWidth = $0 }
+          .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { mediaWidth = $0 })
       }
     }
     .contentShape(Rectangle())
