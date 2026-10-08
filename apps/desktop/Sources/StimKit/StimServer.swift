@@ -224,12 +224,15 @@ public struct StimServerCLI: Sendable {
   }
 
   public func pair(port: Int = defaultPort, control: Bool) async throws -> PairingCode {
-    try Self.decoder.decode(
-      PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])))
+    try DebugLog.decode(
+      PairingCode.self, from: await run(["pair", "--json", "--port", String(port)] + (control ? ["--control"] : [])),
+      source: "stim-server pair", decoder: Self.decoder)
   }
 
   public func devices() async throws -> [PairedDevice] {
-    try Self.decoder.decode(PairedDeviceList.self, from: await run(["devices", "--json"])).devices
+    try DebugLog.decode(
+      PairedDeviceList.self, from: await run(["devices", "--json"]), source: "stim-server devices", decoder: Self.decoder
+    ).devices
   }
 
   public func grant(_ id: String, control: Bool) async throws {
@@ -257,10 +260,25 @@ public struct StimServerCLI: Sendable {
     onLine: @escaping @Sendable (OutputLine) -> Void,
     onExit: @escaping @Sendable (Int32) -> Void
   ) throws -> Process {
-    let command = try command(["--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : []))
+    let arguments = ["--port", String(port)] + (loopbackOnly ? ["--loopback-only"] : [])
+    let command = try command(arguments)
+    let run = DebugLog.CLIRun(tool: "stim-server", arguments: arguments, cwd: NSHomeDirectory())
+    var environment = environment
+    environment["STIM_RUN_ID"] = run.runID
+    let tail = LockedValue([String]())
     return try ProcessStream.start(
       executable: command.program, arguments: command.arguments, cwd: NSHomeDirectory(),
-      environment: environment, onLine: onLine, onExit: onExit)
+      environment: environment,
+      onLine: { line in
+        if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
+        onLine(line)
+      },
+      onExit: { status in
+        DebugLog.info(
+          .server,
+          "stim-server process exited status=\(status) run=\(run.runID) stderr: \(tail.withLock { $0.joined(separator: " | ") })")
+        onExit(status)
+      })
   }
 
   /// The server answering on `port` of this Mac, or nil when none does.
@@ -303,9 +321,19 @@ public struct StimServerCLI: Sendable {
 
   private func run(_ args: [String]) async throws -> Data {
     let command = try command(args)
+    let run = DebugLog.CLIRun(tool: "stim-server", arguments: args, cwd: nil)
+    var environment = environment
+    environment["STIM_RUN_ID"] = run.runID
     var request = ProcessRequest(command.program, command.arguments, environment: environment)
     request.captureStderr = true
-    let result = try await request.run()
+    let result: ProcessResult
+    do {
+      result = try await request.run()
+    } catch {
+      run.fail(error)
+      throw error
+    }
+    run.finish(status: result.status, timedOut: result.timedOut, stderr: stderrTail(result.stderrText))
     guard result.status == 0 else {
       throw Failure.exited(result.status, result.stderrText.trimmingCharacters(in: .whitespacesAndNewlines))
     }

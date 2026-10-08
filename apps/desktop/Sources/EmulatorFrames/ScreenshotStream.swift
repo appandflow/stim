@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import StimKit
 
 /// A single `streamScreenshot` call over cleartext HTTP/2 to the emulator's
 /// localhost gRPC port. URLSession speaks HTTP/2 only over TLS, and the
@@ -31,6 +32,7 @@ final class ScreenshotStream {
   }
 
   func start() {
+    DebugLog.info(.stream, "emulator screenshot stream start \(connection.endpoint)")
     connection.stateUpdateHandler = { [weak self] state in
       switch state {
       case .ready:
@@ -124,6 +126,7 @@ final class ScreenshotStream {
   private func finish() {
     guard !ended else { return }
     ended = true
+    DebugLog.info(.stream, "emulator screenshot stream ended \(connection.endpoint)")
     connection.cancel()
     onEnd()
   }

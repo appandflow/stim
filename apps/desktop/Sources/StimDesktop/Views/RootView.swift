@@ -12,6 +12,19 @@ enum SidebarItem: Hashable {
   case worktree(String)
   case notifications
   case machine
+
+  var logName: String {
+    switch self {
+    case .overview: "overview"
+    case .wall: "wall"
+    case .archived(let id): "archived \(id)"
+    case .project(let project): "project \(project.root)"
+    case .environment(let path): "workspace \(path)"
+    case .worktree(let path): "worktree \(path)"
+    case .notifications: "notifications"
+    case .machine: "machine"
+    }
+  }
 }
 
 struct RootView: View {
@@ -308,6 +321,7 @@ struct RootView: View {
       else { return }
       selection = previousSelection ?? .overview
     }
+    .onChange(of: selection, initial: true) { _, item in DebugLog.setDestination(item?.logName ?? "none") }
     .onChange(of: selection) { old, item in
       if case .archived = item {
         archivedLogQuery = LogQuery()

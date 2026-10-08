@@ -1,6 +1,7 @@
 import CoreVideo
 import CryptoKit
 import Foundation
+import StimKit
 
 /// Streams a physical Android device's screen and injects input through the scrcpy server, over adb only:
 /// the jar is pushed to `/data/local/tmp` under a per-session name, started with `app_process` as the shell
@@ -44,6 +45,7 @@ final class AndroidDeviceStream {
   }
 
   func start() {
+    DebugLog.info(.stream, "android scrcpy stream start serial=\(serial)")
     Thread.detachNewThread { [self] in
       let sockets: (video: Int32, control: Int32)
       do {
@@ -68,6 +70,7 @@ final class AndroidDeviceStream {
   /// Ends the stream and removes what it left on the device and in adb. Blocks until adb answered, also when
   /// another thread already started it, so it can run right before the process exits.
   func stop() {
+    DebugLog.info(.stream, "android scrcpy stream stop serial=\(serial)")
     let first = lock.withLock { () -> Bool in
       if stopped { return false }
       stopped = true
@@ -105,6 +108,7 @@ final class AndroidDeviceStream {
 
   private func end(_ message: String) {
     guard !isStopped else { return }
+    DebugLog.warning(.stream, "android scrcpy stream ended serial=\(serial): \(message)")
     stop()
     onEnd(message)
   }

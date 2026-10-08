@@ -76,23 +76,32 @@ public struct StimCLI: Sendable {
     _ = try await run(["guide", "tutorial"])
   }
 
+  /// The raw `stim doctor --json` output for a diagnostics report, or why it could not run.
+  public func doctorJSONText(cwd: String) async -> String {
+    do {
+      return String(decoding: try await run(["doctor", "--json"], cwd: cwd), as: UTF8.self)
+    } catch {
+      return "stim doctor failed: \(error.localizedDescription)"
+    }
+  }
+
   public func status() async throws -> StatusPayload {
-    try JSONDecoder().decode(StatusPayload.self, from: await run(["status", "--json"]))
+    try DebugLog.decode(StatusPayload.self, from: await run(["status", "--json"]), source: "stim status")
   }
 
   public func stats(workspace: String) async throws -> ProjectStats {
-    try JSONDecoder().decode(ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace))
+    try DebugLog.decode(ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace), source: "stim stats")
   }
 
   /// `stim stats --json` in the home directory, where it reports this Mac's machine-wide part only.
   public func machineStats() async throws -> MachineStats {
-    try JSONDecoder().decode(MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()))
+    try DebugLog.decode(MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()), source: "stim stats")
   }
 
   /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
   public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
     let (status, data, stderr) = try await execute([platform, "--plan", "--json"], cwd: workspace)
-    if status == 0 { return .plan(try JSONDecoder().decode(BuildPlan.self, from: data)) }
+    if status == 0 { return .plan(try DebugLog.decode(BuildPlan.self, from: data, source: "stim plan")) }
     guard let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) else {
       throw Failure.exited(status, stderr: stderr)
     }
@@ -101,12 +110,12 @@ public struct StimCLI: Sendable {
 
   /// `stim gc --json` without `--delete` only reports.
   public func gcReport() async throws -> GcReport {
-    try JSONDecoder().decode(GcReport.self, from: await run(["gc", "--json"]))
+    try DebugLog.decode(GcReport.self, from: await run(["gc", "--json"]), source: "stim gc")
   }
 
   /// `stim doctor --json` in `cwd`, which reports and never repairs without `--fix`.
   public func doctor(cwd: String) async throws -> DoctorReport {
-    try JSONDecoder().decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd))
+    try DebugLog.decode(DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: "stim doctor")
   }
 
   /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
@@ -121,14 +130,15 @@ public struct StimCLI: Sendable {
     cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
   ) async throws -> DoctorReport {
     let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
-    return try JSONDecoder().decode(
-      DoctorReport.self, from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30))
-    )
+    return try DebugLog.decode(
+      DoctorReport.self,
+      from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),
+      source: "stim doctor")
   }
 
   /// `stim settings --json` in `cwd`: every setting with its origin and layers.
   public func settings(cwd: String) async throws -> SettingsPayload {
-    try JSONDecoder().decode(SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd))
+    try DebugLog.decode(SettingsPayload.self, from: await run(["settings", "--json"], cwd: cwd), source: "stim settings")
   }
 
   /// `stim settings set` or, with a nil value, `stim settings unset`, in `cwd`.
@@ -139,7 +149,9 @@ public struct StimCLI: Sendable {
     let args =
       value.map { ["settings", "set", key, $0] } ?? ["settings", "unset", key]
     let (status, data, stderr) = try await execute(args + ["--scope", scope.rawValue, "--json"], cwd: cwd)
-    if status == 0 { return .written(try JSONDecoder().decode(SettingsWritePayload.self, from: data).setting) }
+    if status == 0 {
+      return .written(try DebugLog.decode(SettingsWritePayload.self, from: data, source: "stim settings set").setting)
+    }
     guard let refusal = try? JSONDecoder().decode(SettingsRefusal.self, from: data) else {
       throw Failure.exited(status, stderr: stderr)
     }
@@ -161,13 +173,25 @@ public struct StimCLI: Sendable {
     Int32, Data, String
   ) {
     let command = try command(args)
+    let run = DebugLog.CLIRun(tool: "stim", arguments: args, cwd: cwd)
+    var environment = environment.merging(extraEnvironment) { _, extra in extra }
+    environment["STIM_RUN_ID"] = run.runID
     var request = ProcessRequest(
-      command.program, command.arguments, cwd: cwd, environment: environment.merging(extraEnvironment) { _, extra in extra },
-      timeout: timeout)
+      command.program, command.arguments, cwd: cwd, environment: environment, timeout: timeout)
     request.captureStderr = true
-    let result = try await request.run()
+    let result: ProcessResult
+    do {
+      result = try await request.run()
+    } catch {
+      run.fail(error)
+      throw error
+    }
+    let stderr = stderrTail(result.stderrText)
+    run.finish(
+      status: result.status, timedOut: result.timedOut, stderr: stderr,
+      stdout: result.status == 0 ? "" : result.stdoutText)
     if result.timedOut, let timeout { throw Failure.timedOut(seconds: Int(timeout)) }
-    return (result.status, result.stdout, stderrTail(result.stderrText))
+    return (result.status, result.stdout, stderr)
   }
 
   /// Runs `stim <args>` in `cwd`, reporting output lines as they arrive and
@@ -203,9 +227,19 @@ public struct StimCLI: Sendable {
       }
       launch = (tool, command.arguments)
     }
+    let run = DebugLog.CLIRun(tool: command.program, arguments: command.arguments, cwd: command.cwd)
+    environment["STIM_RUN_ID"] = run.runID
+    let tail = LockedValue([String]())
     return try ProcessStream.start(
       executable: launch.program, arguments: launch.arguments, cwd: command.cwd, environment: environment,
-      onLine: onLine, onExit: onExit)
+      onLine: { line in
+        if line.channel == .stderr { tail.withLock { $0 = Array(($0 + [line.text]).suffix(3)) } }
+        onLine(line)
+      },
+      onExit: { status in
+        run.finish(status: status, stderr: tail.withLock { $0.joined(separator: "\n") })
+        onExit(status)
+      })
   }
 }
 
