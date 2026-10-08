@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 
 let home: string;
@@ -11,7 +12,7 @@ beforeEach(() => {
 afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 const debugRecords = (env: Record<string, string>) => {
-  const cli = new URL('../../bin/cli.ts', import.meta.url).pathname;
+  const cli = fileURLToPath(new URL('../../bin/cli.ts', import.meta.url));
   spawnSync(process.execPath, [cli, 'ports'], {
     env: { ...process.env, STIM_HOME: home, STIM_DEBUG: '1', STIM_RUN_ID: '', ...env },
     stdio: 'ignore',
