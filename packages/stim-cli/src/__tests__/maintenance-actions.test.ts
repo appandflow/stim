@@ -324,17 +324,17 @@ describe('executing single actions', () => {
     const quiet = join(metroCacheRoot(), 'quiet-app');
     const busy = join(metroCacheRoot(), 'live-app');
     for (const store of [quiet, busy]) {
-      mkdirSync(store, { recursive: true });
-      writeFileSync(join(store, 'entry'), 'x'.repeat(MB));
-      utimesSync(join(store, 'entry'), ago(9), ago(9));
+      mkdirSync(join(store, 'ab'), { recursive: true });
+      writeFileSync(join(store, 'ab', 'entry'), 'x'.repeat(MB));
+      utimesSync(join(store, 'ab', 'entry'), ago(9), ago(9));
     }
     const outcome = await executeAction(
       action({ kind: 'would-trim-cache', target: metroCacheRoot(), dir: metroCacheRoot(), bytes: 2 * MB }),
       context(),
     );
     expect(outcome.status).toBe('done');
-    expect(existsSync(join(quiet, 'entry'))).toBe(false);
-    expect(existsSync(join(busy, 'entry'))).toBe(true);
+    expect(existsSync(join(quiet, 'ab', 'entry'))).toBe(false);
+    expect(existsSync(join(busy, 'ab', 'entry'))).toBe(true);
   });
 });
 

@@ -212,9 +212,10 @@ export type PhoneBuildDiagnostic = State.BuildDiagnostic;
 export type PhoneDeviceLeaseState = State.DeviceLeaseState;
 export type PhoneMaintenanceStatus = Omit<
   State.MaintenanceStatus,
-  'mode' | 'lastPass' | 'plan' | 'pressure' | 'sizes' | 'recent'
+  'mode' | 'lastPass' | 'plan' | 'pressure' | 'sizes' | 'recent' | 'lastChecks'
 > & {
   mode: string;
+  lastChecks: { pressure: number | null; size: number | null; worktree?: number | null; sweep?: number | null };
   lastPass:
     | (Omit<State.MaintenancePass, 'mode' | 'freedBytes' | 'stopped'> & {
         mode: string;
@@ -222,7 +223,7 @@ export type PhoneMaintenanceStatus = Omit<
         stopped: number;
       })
     | null;
-  plan: (Omit<State.MaintenanceAction, 'kind'> & { kind: string })[];
+  plan: (Omit<State.MaintenanceAction, 'kind' | 'check'> & { kind: string; check?: string })[];
   pressure:
     | (Omit<State.MaintenancePressure, 'memory'> & {
         memory: Omit<State.MaintenancePressure['memory'], 'level'> & { level: string | null };

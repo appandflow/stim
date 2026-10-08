@@ -224,6 +224,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
         error: message,
       });
       result = { actions: [], blocked: [], skips: [] };
+      for (const check of ['sweep', 'worktree'] as const) if (ran.has(check)) delete state.lastAt[check];
     }
     async function executePlan(
       actions: readonly MaintenanceAction[],
@@ -309,6 +310,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
         ...nextSkips,
         ...outcomes.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
       ];
+      const previousBlocked = state.lastPass?.blocked;
       state.lastPass = {
         startedAt,
         durationMs: Date.now() - startedAt,
@@ -319,7 +321,11 @@ export async function runMaintenance(trigger: string): Promise<void> {
         stopped: 0,
         blocked: blockedNow,
       };
-      if (done.length || measuredSizes || state.lastPass.blocked.length)
+      const blockedChanged = !sameSet(
+        new Set((previousBlocked ?? []).map(stableText)),
+        new Set(state.lastPass.blocked.map(stableText)),
+      );
+      if (done.length || measuredSizes || blockedChanged)
         record(
           'maintenance_pass',
           state.lastPass.blocked.length ? 'warn' : 'info',

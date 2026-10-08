@@ -265,7 +265,9 @@ Disk and memory pressure are checked every minute, Stim-owned directory sizes
 every hour, finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; a pass never stops devices, dev servers or helpers.
+recorded; a pass never shuts down idle devices or dev servers or stops helpers.
+Removing a finished worktree or orphaned directory does tear down that
+workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
 Size, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
 compilation cache, and other registered Stim caches. Other tools' caches are

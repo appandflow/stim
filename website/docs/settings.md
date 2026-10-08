@@ -800,5 +800,5 @@ compilation cache can only be emptied whole, so a pass empties it only below
 passed to ccache, which evicts by itself. `maintenance.sweepHours` and
 `maintenance.olderThanDays` set the daily sweep of idle build outputs and old
 cache entries; `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; a pass never stops devices or dev servers. Debug check logs are off by default.
+check. Memory pressure is recorded; a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.

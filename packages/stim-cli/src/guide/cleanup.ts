@@ -53,8 +53,9 @@ maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
 workspace of the command that started the pass; cache entries used within
 protectRecentHours, named by a project's last builds, a parked device or a
 live build lock, or in a Metro store with a running or unverifiable dev
-server. Anything the pass cannot verify is kept. Idle devices, dev servers and
-watchman are never touched by a pass. ccache evicts by itself under
+server. Anything the pass cannot verify is kept. A pass never shuts down idle devices or dev servers or stops watchman; removing a
+finished worktree or orphaned directory does tear down that workspace's own
+dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.
 
   stim status                     last checks, plan and running pass

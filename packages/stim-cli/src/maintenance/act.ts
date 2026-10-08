@@ -76,7 +76,7 @@ function rootCache(dir: string): CacheDescriptor | null {
       : canonicalPath(dir) === canonicalPath(metroCacheRoot())
         ? 'Metro transform caches'
         : null;
-  return name ? { name, dir, prune: 'entries', entriesDepth: 2, note: '' } : null;
+  return name ? { name, dir, prune: 'entries', entriesDepth: name === 'Build cache' ? 2 : 3, note: '' } : null;
 }
 
 function cacheOf(action: MaintenanceAction): CacheDescriptor | null {
@@ -95,7 +95,7 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
   if (!planned || planned.machineGlobal) return kept(planned?.machineGlobal ?? 'it is no longer a cache Stim may trim');
   const aged = action.olderThanDays !== undefined;
   const result = pruneCache(cache, {
-    olderThanDays: aged ? action.olderThanDays : context.settings.protectRecentHours / 24,
+    olderThanDays: Math.max(action.olderThanDays ?? 0, context.settings.protectRecentHours / 24),
     protect: (context.protect ??= cacheEntryProtection()),
     ...(aged ? {} : { evictBytes: action.bytes }),
   });
