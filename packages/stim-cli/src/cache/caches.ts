@@ -278,10 +278,9 @@ export function pruneCache(
   let failed = 0;
   for (const { entry, isDirectory, size } of candidates) {
     if (evictBytes !== undefined && bytes >= evictBytes) break;
-    const entryBytes = isDirectory ? directorySize(entry) : size;
     try {
-      const again = statSync(entry);
-      if (Math.max(again.atimeMs, again.mtimeMs) >= cutoff) continue;
+      if (!existsSync(entry) || statSync(entry).mtimeMs >= cutoff) continue;
+      const entryBytes = isDirectory ? directorySize(entry) : size;
       rmSync(entry, { recursive: true, force: true });
       removed++;
       bytes += entryBytes;
