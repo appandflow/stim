@@ -172,6 +172,7 @@ struct WorkspaceDiffView: View {
           }
           if patch.patches.isEmpty { InlineEmpty("No diff available").padding(Space.lg) }
         }
+        .finiteAccessibilityFrame()
       }
     } else if selected != nil {
       ProgressView()

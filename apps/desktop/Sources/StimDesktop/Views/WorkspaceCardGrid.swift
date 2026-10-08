@@ -36,6 +36,7 @@ struct WorkspaceCardGrid: View {
           openLogs: openLogs)
       }
     }
+    .finiteAccessibilityFrame()
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { width = $0 })
   }
 }
