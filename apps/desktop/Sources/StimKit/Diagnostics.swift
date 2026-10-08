@@ -139,12 +139,13 @@ public final class Diagnostics: @unchecked Sendable {
 
   public func report(_ failure: DiagnosticFailure) {
     let report = failure.report
-    let sink: Sink? = lock.withLock {
-      guard let sink, reported.count < maxReports, reported.insert(report.fingerprint.joined(separator: "|")).inserted
+    let target: Sink? = lock.withLock {
+      guard let current = self.sink, reported.count < maxReports,
+        reported.insert(report.fingerprint.joined(separator: "|")).inserted
       else { return nil }
-      return sink
+      return current
     }
-    sink?.report(report)
+    target?.report(report)
   }
 
   /// The `stim` command a call ran, or `other` for anything outside the command surface.
