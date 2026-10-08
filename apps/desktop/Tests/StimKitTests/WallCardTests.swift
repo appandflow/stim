@@ -81,4 +81,11 @@ struct WallCardTests {
     #expect(card.options.isEmpty)
     #expect(card.selected(choice: nil) == nil)
   }
+
+  @Test func ordersCardsByWorktreeWhicheverOrderStimReports() throws {
+    let cards = WallCard.cards(environments: [
+      try workspace("/w/b", worktree: "/w/b"), try workspace("/w/a", worktree: "/w/a"),
+    ])
+    #expect(cards.map(\.id) == ["/w/a", "/w/b"])
+  }
 }

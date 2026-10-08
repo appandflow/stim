@@ -94,7 +94,7 @@ struct WorkspaceCardView: View {
         Button {
           choices.choose(option.id, for: choiceKey)
         } label: {
-          Pill(tone: isSelected ? .brand : .neutral, size: .small) { Text(option.label) }
+          Pill(tone: isSelected ? .brand : .neutral, size: .small, outlined: !isSelected) { Text(option.label) }
         }
         .buttonStyle(.hoverRow())
         .help("Stream \(option.label)")

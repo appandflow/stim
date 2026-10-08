@@ -63,8 +63,9 @@ public struct WallCard: Identifiable, Sendable {
     return options.first { $0.id == choice } ?? options.first(where: \.isStreamable) ?? options.first
   }
 
+  /// One card per worktree, ordered by worktree path so a card keeps its place as `stim status` reorders.
   public static func cards(environments: [Workspace]) -> [WallCard] {
-    WorktreePage.groups(environments: environments).map { page in
+    WorktreePage.groups(environments: environments).sorted { $0.identity < $1.identity }.map { page in
       WallCard(
         page: page,
         apps: page.apps.map { env in
