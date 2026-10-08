@@ -115,17 +115,28 @@ public enum DebugLog {
     public init(tool: String, arguments: [String], cwd: String?) {
       runID = DebugLog.newRunID()
       self.tool = tool
-      self.arguments = arguments
+      self.arguments = Self.loggable(arguments)
       self.cwd = cwd
-      let command = "\(tool) \(arguments.joined(separator: " "))"
+      let command = "\(tool) \(self.arguments.joined(separator: " "))"
       DebugLog.context.withLock { $0.lastCommand = command }
       DebugLog.debug(.cli, "start run=\(runID) \(command)\(cwd.map { " cwd=\($0)" } ?? "")")
+    }
+
+    /// `stim settings set <key> <value>` carries sensitive values such as a keystore password as a positional
+    /// argument, so the value never reaches the log.
+    static func loggable(_ arguments: [String]) -> [String] {
+      guard arguments.count > 3, arguments[0] == "settings", arguments[1] == "set" else { return arguments }
+      return Array(arguments[..<3]) + [DebugLogRedaction.placeholder] + arguments[4...]
     }
 
     /// Logs the exit. A failure logs at error level with the `STIM_*` code and the tail of stderr.
     public func finish(status: Int32, timedOut: Bool = false, stderr: String = "", stdout: String = "") {
       let ms = Int(Date().timeIntervalSince(started) * 1000)
       let command = "\(tool) \(arguments.joined(separator: " "))"
+      if !timedOut, status == SIGTERM || status == SIGKILL {
+        DebugLog.info(.cli, "stopped run=\(runID) signal=\(status) \(ms)ms \(command)")
+        return
+      }
       guard status == 0, !timedOut else {
         let code = DebugLog.stimCode(in: stderr) ?? DebugLog.stimCode(in: String(stdout.prefix(4096)))
         let tail = String(stderr.suffix(600))
@@ -139,6 +150,10 @@ public enum DebugLog {
     }
 
     public func fail(_ error: Error) {
+      if error is CancellationError {
+        DebugLog.debug(.cli, "cancelled run=\(runID) \(tool) \(arguments.joined(separator: " "))")
+        return
+      }
       DebugLog.error(.cli, "could not run run=\(runID) \(tool) \(arguments.joined(separator: " ")): \(error)")
     }
   }
@@ -189,7 +204,7 @@ public enum DebugLog {
   private static let gaps = LockedValue([String: String?]())
 }
 
-/// A value behind an unfair lock.
+/// A value behind a lock.
 final class LockedValue<Value>: @unchecked Sendable {
   private let lock = NSLock()
   private var value: Value
@@ -277,7 +292,8 @@ public enum DebugLogRedaction {
     let secretName =
       "[\\w-]*(?:token|ticket|secret|passw(?:or)?d|authorization|api[_-]?key|private[_-]?key|credential|dsn)[\\w-]*"
     let patterns: [(String, String)] = [
-      ("(?i)\\bbearer\\s+[\\w.~+/=-]+", "Bearer \(placeholder)"),
+      ("(?i)(authorization[\"']?\\s*[:=]\\s*)[^\\n,}]+", "$1\(placeholder)"),
+      ("(?i)\\b(?:bearer|basic)\\s+[\\w.~+/=-]+", "Bearer \(placeholder)"),
       ("(?i)(--\(secretName))(?:=|\\s+)(?:\"[^\"]*\"|'[^']*'|\\S+)", "$1=\(placeholder)"),
       ("(?i)(\"?\(secretName)\"?\\s*[:=]\\s*)(?!\\[redacted\\])(?:\"[^\"]*\"|'[^']*'|[^\\s,&}\\]]+)", "$1\(placeholder)"),
       ("(?i)([a-z][a-z0-9+.-]*://)[^\\s/@]+@", "$1\(placeholder)@"),
@@ -285,7 +301,8 @@ public enum DebugLogRedaction {
       ("\\beyJ[\\w-]+\\.[\\w-]+\\.[\\w-]+\\b", placeholder),
       ("(?<![\\w/.-])[0-9a-fA-F]{32,}(?![\\w/.-])", placeholder),
       (
-        "(?<![\\w/.-])(?=[A-Za-z0-9_-]*\\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}(?![\\w/.-])", placeholder
+        "(?<![\\w/.-])(?![0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\\b)(?=[A-Za-z0-9_-]*\\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{32,}(?![\\w/.-])",
+        placeholder
       ),
     ]
     return patterns.compactMap { pattern, template in

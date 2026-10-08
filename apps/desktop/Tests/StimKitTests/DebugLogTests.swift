@@ -16,13 +16,14 @@ import Testing
     "setup ticket abcdEFGH0123ijklMNOP4567qrstUVWX8901yzAB",
     "jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
     "open https://host.example/pair?token=abc123def456&x=1",
+    "Authorization: Basic dXNlcjpwYXNz",
     "error STIM_BAD_ARG: unknown flag --token abc123def456 (run: desktop-1)",
   ])
   func redactsSecretShapes(_ line: String) {
     let redacted = DebugLogRedaction.redact(line)
     #expect(redacted.contains(DebugLogRedaction.placeholder))
     #expect(DebugLogRedaction.redact(redacted) == redacted)
-    for secret in ["abc123def456", "0123456789abcdef", "abcdEFGH0123", "abc.def-123", "eyJzdWIi", "key@o1"] {
+    for secret in ["abc123def456", "0123456789abcdef", "abcdEFGH0123", "abc.def-123", "eyJzdWIi", "key@o1", "dXNlcjpwYXNz"] {
       #expect(!redacted.contains(secret), "\(secret) survived in \(redacted)")
     }
   }
@@ -31,6 +32,17 @@ import Testing
     let line =
       "failed run=desktop-1a2b3c4d5e6f exit=2 STIM_BAD_ARG stim ios --scheme App cwd=/Users/me/Developer/stim/.worktrees/feature-with-a-long-branch-name-1234"
     #expect(DebugLogRedaction.redact(line) == line)
+  }
+
+  @Test func keepsSimulatorUDIDs() {
+    let line = "stim ios --device 3F2504E0-4F89-11D3-9A0C-0305E82C3301"
+    #expect(DebugLogRedaction.redact(line) == line)
+  }
+
+  @Test func hidesSettingValues() {
+    #expect(
+      DebugLog.CLIRun.loggable(["settings", "set", "android.keystorePassword", "hunter2", "--scope", "machine"])
+        == ["settings", "set", "android.keystorePassword", "[redacted]", "--scope", "machine"])
   }
 
   @Test func singleLineCapsLength() {

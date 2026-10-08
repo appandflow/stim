@@ -12,7 +12,8 @@ enum DebugLogActions {
 
   /// Copies the log path, versions and `stim doctor --json` to the pasteboard, redacted like the log.
   static func copyDiagnostics(cli: Task<StimCLI, Never>) {
-    let workspace = OpenRequests.shared.selectedWorkspace ?? NSHomeDirectory()
+    let last = UserDefaults.standard.string(forKey: AppPreferences.Key.lastProjectPath)
+    let workspace = OpenRequests.shared.selectedWorkspace ?? (last?.isEmpty == false ? last! : NSHomeDirectory())
     Task {
       let cli = await cli.value
       let stimVersion = await cli.versionOutput()

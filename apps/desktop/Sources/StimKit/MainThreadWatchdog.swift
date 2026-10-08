@@ -8,7 +8,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
   public static let shared = MainThreadWatchdog()
 
   private struct State {
-    var sentAt: Date?
+    var sentAt: TimeInterval?
     var reportedOngoing = false
   }
 
@@ -37,13 +37,13 @@ public final class MainThreadWatchdog: @unchecked Sendable {
   }
 
   private func tick() {
-    let now = Date()
+    let now = ProcessInfo.processInfo.systemUptime
     let outstanding = state.withLock { state -> (age: TimeInterval, report: Bool)? in
       guard let sentAt = state.sentAt else {
         state.sentAt = now
         return nil
       }
-      let age = now.timeIntervalSince(sentAt)
+      let age = now - sentAt
       let report = age >= ongoingAfter && !state.reportedOngoing
       if report { state.reportedOngoing = true }
       return (age, report)
@@ -62,7 +62,7 @@ public final class MainThreadWatchdog: @unchecked Sendable {
     let finished = state.withLock { state -> (age: TimeInterval, ongoing: Bool)? in
       guard let sentAt = state.sentAt else { return nil }
       defer { state = State() }
-      return (Date().timeIntervalSince(sentAt), state.reportedOngoing)
+      return (ProcessInfo.processInfo.systemUptime - sentAt, state.reportedOngoing)
     }
     guard let finished, finished.age >= threshold else { return }
     DebugLog.warning(.stall, "main thread stalled \(Int(finished.age * 1000)) ms; \(Self.context())")
