@@ -44,7 +44,7 @@ final class BuildRequestNotifier {
     let quiet = NotificationSettings.isQuiet(.standard, minuteOfDay: (clock.hour ?? 0) * 60 + (clock.minute ?? 0))
     let delivery = Inbox.delivery(NotificationSettings.level(.buildRequest, .standard), quiet: quiet)
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
-    NotificationInbox.shared.add(entry, interrupts: delivery.interrupts)
+    NotificationInbox.shared.add(entry)
     guard delivery.interrupts else { return entry.id }
     if MainWindow.isInFront {
       ToastCenter.shared.show(OversightNotifier.toast(notification, entry: entry.id))

@@ -258,7 +258,7 @@ struct StimDesktopApp: App {
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
         #if DEBUG
           Button("Replay notification animation") {
-            NotificationInbox.shared.arrivals.send()
+            NotificationInbox.shared.arrivals.send(nil)
           }
         #endif
       }

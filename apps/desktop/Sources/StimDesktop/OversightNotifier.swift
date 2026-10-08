@@ -106,7 +106,7 @@ final class OversightNotifier: ObservableObject {
   private func deliver(_ notification: OversightNotification, _ level: NotificationLevel, quiet: Bool) {
     let delivery = Inbox.delivery(level, quiet: quiet)
     let entry = InboxEntry(notification: notification, date: Date(), suppressed: delivery.suppressed)
-    NotificationInbox.shared.add(entry, interrupts: delivery.interrupts)
+    NotificationInbox.shared.add(entry)
     guard delivery.interrupts else { return }
     if !MainWindow.isInFront {
       Notifier.postOversight(notification, entry: entry.id)

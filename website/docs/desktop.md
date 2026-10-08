@@ -286,10 +286,11 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default. While Desktop is in front, an Alert
-  shakes the top-right bell and bumps its count, and Silent and Off entries only
-  bump the count; under Reduce Motion the bell keeps its colour change and skips
-  the shake. A build or hosting request and an Alert-level machine problem also
+  **Notifications**. It is Silent by default. While Desktop is in front, every new
+  Alert or Silent entry gives the top-right bell one small wiggle and bumps its
+  count (a burst within two seconds wiggles once, and not while Notifications is
+  open), and Off entries only bump the count; under Reduce Motion the bell keeps
+  its colour change and skips the wiggle. A build or hosting request and an Alert-level machine problem also
   open a card in the window. Background macOS alerts follow notification settings.
   The inbox starts with 50 matching
   notifications; **Show older notifications** loads another 50. Changing a filter

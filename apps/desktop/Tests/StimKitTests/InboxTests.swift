@@ -77,6 +77,19 @@ struct InboxTests {
     #expect(days.map { $0.entries.map(\.id) } == [["today2", "today1"], ["yesterday"]])
   }
 
+  @Test func wigglesTheBellForEveryUnmutedArrivalOnceEveryTwoSeconds() {
+    func wiggles(_ suppressed: NoticeSuppression? = nil, open: Bool = false, since: TimeInterval? = nil) -> Bool {
+      Inbox.wigglesBell(
+        suppressed: suppressed, notificationsOpen: open, now: now, lastWiggle: since.map { now.addingTimeInterval(-$0) })
+    }
+    #expect(wiggles())
+    #expect(wiggles(.quietHours))
+    #expect(!wiggles(.muted))
+    #expect(!wiggles(open: true))
+    #expect(!wiggles(since: 1.9))
+    #expect(wiggles(since: 2))
+  }
+
   @Test func interruptsOnlyForAnAlertOutsideQuietHoursAndLabelsWhatItHolds() {
     #expect(Inbox.delivery(.alert, quiet: false) == (true, nil))
     #expect(Inbox.delivery(.alert, quiet: true) == (false, .quietHours))
