@@ -195,7 +195,7 @@ native app on the phone itself.
 ### Archived workspaces
 
 Choose **Archived** in Filters to see removed workspaces in the same repository
-and worktree groups as live ones. Rows keep their branch or folder title and app
+and worktree groups as active ones. Rows keep their branch or folder title and app
 label, with removal time, size and an expiry indicator. A PR snapshot shows its
 number and title; only a merged outcome shows a state label.
 

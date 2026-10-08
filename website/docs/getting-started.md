@@ -70,7 +70,7 @@ stim doctor           # inspect the source checkout and warm-state gaps
 stim start            # optional: start this workspace's dev server early
 stim ios              # build or restore, install, launch, and verify
 stim logs --errors    # check for errors in the captured logs
-stim stop             # release the live environment
+stim stop             # release the active environment
 stim worktree remove  # after the work is preserved`}
 />
 

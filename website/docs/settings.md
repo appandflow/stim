@@ -607,7 +607,7 @@ a finished worktree at once. `STIM_GC_WORKTREE_GRACE_MINUTES` overrides it. See
 `budget` keeps parallel agents from filling the disk or memory. It is on by
 default. Before `stim start`, `stim ios`, or `stim android` builds or boots
 anything, Stim checks free disk on the volumes that hold the app and
-`$STIM_HOME`, and the estimated memory of live environments:
+`$STIM_HOME`, and the estimated memory of active environments:
 
 | Key                           | Default                | Effect                                                                                   |
 | ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
@@ -697,8 +697,8 @@ recordings are otherwise cleaned up.
 | `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                |
 | `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb` |
 | `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`          |
-| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of live environments, in GB, before idle ones are reclaimed                                |
-| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Live workspaces before idle ones are reclaimed                                                              |
+| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                              |
+| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                            |
 | `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
 | `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
 | `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |

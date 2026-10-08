@@ -183,7 +183,8 @@ environment's `phase`:
 - `warming` while warm runs, with `warmStep` `refresh` or `copy`.
 - `ready` after it succeeds, until the first `start`, `ios`, `android`, `web`
   or `reload` there, or for 2 hours.
-- `live` when Metro, a device, Chrome or a remote session runs.
+- `live` when Metro, a device, Chrome or a remote session runs; the workspace
+  is active.
 - `idle` otherwise.
 
 `phaseSince` is when the warm started or finished. A warm that fails or is

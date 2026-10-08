@@ -877,7 +877,7 @@ fields.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
 `stim worktree warm` runs in it, `[ready]` after a warm until its first run,
-or `[idle]`. A live workspace has no marker. In `--json`, each environment
+or `[idle]`. An active workspace (phase `live`) has no marker. In `--json`, each environment
 carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
@@ -885,8 +885,8 @@ warming, `warmStep`; see
 Each environment also carries `stage`, the conclusion Stim Desktop and the
 phone app show beside the git chip: `{ kind, since, platform, closedApps }`.
 `kind` is the first of these that applies: `building` while a build runs,
-`warming` or `ready` from `phase` when nothing is live, `build-failed` when the
-newest run of either platform failed, `running` when the workspace is live or
+`warming` or `ready` from `phase` when nothing is active, `build-failed` when the
+newest run of either platform failed, `running` when the workspace is active or
 holds a remote session, else `stopped`. `since` is when that began, `platform`
 names the build for `building` and `build-failed`, and `closedApps` lists, for
 `running`, the `{ platform, slot }` of each device whose app is closed. A
@@ -964,7 +964,7 @@ Once `stim status --watch` has measured them, each environment carries
 owned simulator and emulator carries `disk: { bytes, measuredAt }` for its data
 folder. `buildBytes` is Stim's own folder for the workspace, with Xcode derived
 data, Gradle outputs and logs. The watcher runs `du` off its refresh path, at
-most every 5 minutes per folder while the environment is live and every hour
+most every 5 minutes per folder while the environment is active and every hour
 otherwise, and one-shot `stim status` reads its cached sizes.
 
 An environment carries `agents` when a coding-agent session works in it:

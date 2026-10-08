@@ -492,7 +492,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
     scopedHomeValue: 0,
     description:
-      'Estimated memory, in GB, of live environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
+      'Estimated memory, in GB, of active environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
   },
   {
     key: 'budget.maxLiveWorkspaces',
@@ -500,7 +500,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
     scopedHomeValue: 0,
-    description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
+    description: 'Active workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
     key: 'maintenance.mode',
