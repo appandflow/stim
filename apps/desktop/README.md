@@ -666,7 +666,7 @@ status under **Autopilot Activity**.
   the nightly cleanup still removes worktrees git shows as merged.
 
 **Stim's automatic maintenance.** When `stim status --json` reports
-`maintenance.mode` `on` (the default from stim 1.17.3) with valid settings and
+`maintenance.mode` `on` (the default from stim 1.18.0) with valid settings and
 no unresolved claim, the CLI clears build outputs, trims caches and removes
 finished worktrees on its own. The app then skips two of the options above: the
 disk-pressure `stim gc --delete` run, and `stim worktree remove` for finished
@@ -674,7 +674,7 @@ pull requests (it still polls `gh` and notifies in **Needs you** about the
 finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
 running, because the CLI does not do them: the nightly run is also what deletes
 unused and parked devices and removes clean idle worktrees by age. With a `stim`
-older than 1.17.3, or `maintenance.mode` set to `report` or `off`, or while the
+older than 1.18.0, or `maintenance.mode` set to `report` or `off`, or while the
 status payload has not loaded, the app runs everything as before. It also
 removes finished worktrees itself when the CLI's worktree check has not run in
 the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
