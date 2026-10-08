@@ -169,7 +169,6 @@ struct RootView: View {
       }
     }
     .tutorialHighlights()
-
     .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
@@ -454,9 +453,9 @@ struct RootView: View {
     .help("Open notifications")
   }
 
-  /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private static let bellWidth: CGFloat = 56
 
+  /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
@@ -792,7 +791,6 @@ struct MachineSummary: View {
     store.error != nil || showsCPU || showsMemory || metrics.hasVolumes || (!store.watching && store.updatedAt != nil)
   }
 
-  /// Which parts `row` draws, so the toolbar item is reinserted and measured again when one appears or goes.
   var contentKey: String {
     "\(store.error != nil)\(showsCPU)\(showsMemory)\(metrics.hasVolumes)\(!store.watching && store.updatedAt != nil)"
   }
@@ -806,7 +804,7 @@ struct MachineSummary: View {
         row(showsMemory: true, showsBar: true, showsReclaimable: true)
         row(showsMemory: true, showsBar: true, showsReclaimable: false)
         row(showsMemory: true, showsBar: false, showsReclaimable: false)
-        row(showsMemory: false, showsBar: false, showsReclaimable: false)
+        row(showsMemory: !showsCPU && !metrics.hasVolumes, showsBar: false, showsReclaimable: false)
       }
     }
     .font(.stim(.callout))

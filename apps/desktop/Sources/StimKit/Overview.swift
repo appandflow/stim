@@ -126,18 +126,22 @@ public enum TryThis {
     case .easProfile: return false
     case .easSimulator: return workspaces.contains { $0.remoteDevices?.isEmpty == false }
     case .remoteBuild:
-      return workspaces.contains { env in
-        let runs =
-          [env.lastBuilds?.ios, env.lastBuilds?.android].compactMap { $0 }
-          + ((env.builds?.ios ?? []) + (env.builds?.android ?? [])).map(\.build)
-        return runs.contains { $0.offloadedTo != nil }
-      }
+      return workspaces.contains(where: ranOnAnotherMac)
     case .hostedSimulator: return workspaces.contains { $0.ios?.host != nil }
     case .macos: return workspaces.contains { $0.macos != nil }
     case .physicalDevice: return workspaces.contains { $0.physicalDevices?.isEmpty == false }
     case .web: return workspaces.contains { $0.web != nil }
     case .logs: return false
     }
+  }
+
+  private static func ranOnAnotherMac(_ env: Workspace) -> Bool {
+    var runs: [LastBuild] = []
+    for last in [env.lastBuilds?.ios, env.lastBuilds?.android] {
+      if let last { runs.append(last) }
+    }
+    for entry in (env.builds?.ios ?? []) + (env.builds?.android ?? []) { runs.append(entry.build) }
+    return runs.contains { $0.offloadedTo != nil }
   }
 
   /// At most `limit` tips: the ones that apply and are neither dismissed nor the sidebar's current tip, with features
@@ -149,9 +153,9 @@ public enum TryThis {
       applicable($0, inputs: inputs) && !dismissed.contains($0)
         && ($0.sidebarTopic == nil || $0.sidebarTopic != sidebarTopic)
     }
-    let unused = candidates.filter { !used($0, workspaces: inputs.workspaces) }
-    let used = candidates.filter { used($0, workspaces: inputs.workspaces) }
-    return Array((unused + used).prefix(limit))
+    let inUse = candidates.filter { used($0, workspaces: inputs.workspaces) }
+    let notInUse = candidates.filter { !inUse.contains($0) }
+    return Array((notInUse + inUse).prefix(limit))
   }
 }
 

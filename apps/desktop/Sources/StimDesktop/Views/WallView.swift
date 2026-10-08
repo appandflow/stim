@@ -10,6 +10,7 @@ struct WallView: View {
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
+  @State private var containerWidth: CGFloat = 0
 
   var body: some View {
     let groups = WorktreePage.groups(environments: store.environments(in: project).filter(\.isActive))
@@ -37,11 +38,18 @@ struct WallView: View {
               WorktreeSection(
                 page: page, store: store, metrics: metrics, tileHeight: tileSize.screenHeight,
                 openHeader: { selection = project == nil ? .project(store.project(of: page.apps[0])) : .environment(page.id) },
-                openLogs: openLogs, openDevice: openDevice)
+                openLogs: openLogs, openDevice: openDevice
+              )
+              .frame(maxWidth: containerWidth > 0 ? containerWidth - Space.xxxl * 2 : .infinity, alignment: .leading)
             }
           }
         }
         .padding(Space.xxxl)
+      }
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.width
+      } action: {
+        containerWidth = $0
       }
     }
   }
@@ -89,17 +97,19 @@ private struct WorktreeSection: View {
             .labelStyle(.titleAndIcon)
         }
       } else {
-        HStack(alignment: .top, spacing: Space.lg) {
-          ForEach(tiles) { tile in
-            Button {
-              openDevice(tile.env.path, tile.device.id)
-            } label: {
-              DeviceTile(
-                device: tile.device, screenHeight: tileHeight, workspace: tile.env.path,
-                build: tile.env.runningBuild(for: tile.device), pausesWhenOffscreen: true, highlightsHeaderOnHover: true
-              )
+        ScrollView(.horizontal, showsIndicators: false) {
+          HStack(alignment: .top, spacing: Space.lg) {
+            ForEach(tiles) { tile in
+              Button {
+                openDevice(tile.env.path, tile.device.id)
+              } label: {
+                DeviceTile(
+                  device: tile.device, screenHeight: tileHeight, workspace: tile.env.path,
+                  build: tile.env.runningBuild(for: tile.device), pausesWhenOffscreen: true, highlightsHeaderOnHover: true
+                )
+              }
+              .buttonStyle(CardPressStyle(highlightsDevice: true))
             }
-            .buttonStyle(CardPressStyle(highlightsDevice: true))
           }
         }
       }
@@ -107,26 +117,26 @@ private struct WorktreeSection: View {
   }
 }
 
-/// Stacks a header over its content, giving the header the content's width so a worktree's chips wrap above its tiles.
 private struct HeaderAboveContent: Layout {
   var spacing: CGFloat
   var minimumWidth: CGFloat
 
-  private func widths(_ subviews: Subviews) -> CGFloat {
-    max(minimumWidth, subviews.dropFirst().map { $0.sizeThatFits(.unspecified).width }.max() ?? 0)
+  private func width(_ proposal: ProposedViewSize, _ subviews: Subviews) -> CGFloat {
+    let content = subviews.dropFirst().map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+    return min(max(minimumWidth, content), proposal.width ?? .infinity)
   }
 
   func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
     guard let header = subviews.first else { return .zero }
-    let width = widths(subviews)
+    let width = width(proposal, subviews)
     let headerHeight = header.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
-    let rest = subviews.dropFirst().map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
+    let rest = subviews.dropFirst().map { $0.sizeThatFits(ProposedViewSize(width: width, height: nil)).height }.max() ?? 0
     return CGSize(width: width, height: headerHeight + (rest > 0 ? spacing + rest : 0))
   }
 
   func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
     guard let header = subviews.first else { return }
-    let width = widths(subviews)
+    let width = bounds.width
     let headerHeight = header.sizeThatFits(ProposedViewSize(width: width, height: nil)).height
     header.place(at: bounds.origin, proposal: ProposedViewSize(width: width, height: headerHeight))
     for view in subviews.dropFirst() {

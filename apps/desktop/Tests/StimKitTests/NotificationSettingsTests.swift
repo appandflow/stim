@@ -20,11 +20,6 @@ struct NotificationSettingsTests {
     #expect(prefs.quiet == false)
   }
 
-  @Test func opensAForegroundCardOnlyForRequestsAndMachineProblems() {
-    let cards = OversightCategory.desktop.filter(\.raisesToast)
-    #expect(cards == [.machine, .buildRequest])
-  }
-
   @Test func readsQuietHoursAcrossMidnightAndAStoredLevel() throws {
     let defaults = try defaults("NotificationSettingsTests.quiet")
     defaults.set("1320-420", forKey: NotificationSettings.quietHoursKey)

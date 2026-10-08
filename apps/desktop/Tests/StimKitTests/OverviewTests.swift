@@ -104,6 +104,15 @@ struct TryThisTests {
     #expect(onlyWeb == [.web])
   }
 
+  @Test func readsWhichFeaturesTheWorkspacesAlreadyUse() throws {
+    let offloaded = try workspace(
+      ",\"lastBuilds\":{\"ios\":{\"platform\":\"ios\",\"status\":\"ok\",\"cacheHit\":\"none\",\"startedAt\":\"2026-10-06T10:00:00Z\",\"offloadedTo\":\"mini\"}}"
+    )
+    #expect(TryThis.used(.remoteBuild, workspaces: [offloaded]))
+    #expect(!TryThis.used(.remoteBuild, workspaces: [try workspace("")]))
+    #expect(!TryThis.used(.macos, workspaces: [offloaded]))
+  }
+
   @Test func remembersDismissedTips() {
     let name = "TryThisTests.\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: name)!
