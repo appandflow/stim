@@ -790,20 +790,16 @@ struct MachineSummary: View {
   var gc: GcReportStore
   var width: CGFloat
   var openMachine: () -> Void
-  private enum Resource: Hashable {
-    case cpu, memory, disk
-  }
+  @State private var expandedResource: ResourceKind?
 
-  @State private var expandedResource: Resource?
-
-  private func shows(_ resource: Resource) -> Binding<Bool> {
+  private func shows(_ resource: ResourceKind) -> Binding<Bool> {
     Binding(
       get: { expandedResource == resource },
       set: { if !$0, expandedResource == resource { expandedResource = nil } }
     )
   }
 
-  @ViewBuilder private func popover(_ resource: Resource) -> some View {
+  @ViewBuilder private func popover(_ resource: ResourceKind) -> some View {
     switch resource {
     case .cpu: cpuPopover
     case .memory: memoryPopover
@@ -843,91 +839,23 @@ struct MachineSummary: View {
           .frame(maxWidth: 220)
           .help(abbreviatingHome(error))
       }
-      if let cap = store.payload?.capacity {
-        if let cpu = metrics.totalCpuFraction {
-          Button {
-            expandedResource = .cpu
-          } label: {
-            statItem(icon: "speedometer", label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
-              .padding(Space.sm)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.round))
-          .accessibilityLabel("CPU details")
-          .accessibilityValue(formatPercent(cpu * 100))
-          .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
-          .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
-          .onHover { hovering in
-            if hovering, expandedResource != nil {
-              var transaction = Transaction()
-              transaction.disablesAnimations = true
-              withTransaction(transaction) {
-                expandedResource = .cpu
-              }
-            }
-          }
-        }
-        if showsMemory, let memory = metrics.memory {
-          Button {
-            expandedResource = .memory
-          } label: {
-            HStack(spacing: Space.sm) {
-              statItem(
-                icon: "memorychip", label: "RAM",
-                value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
-                tone: UsageThresholds.memory(memory.pressure))
-              if showsBar {
-                ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-                  .tint(Color(UsageThresholds.memory(memory.pressure)))
-                  .frame(width: 50)
-              }
-            }
-            .padding(Space.sm)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.round))
-          .accessibilityLabel("Memory details")
-          .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
-          .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
-          .onHover { hovering in
-            if hovering, expandedResource != nil {
-              var transaction = Transaction()
-              transaction.disablesAnimations = true
-              withTransaction(transaction) {
-                expandedResource = .memory
-              }
-            }
-          }
-          .help(
-            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
-          )
-        }
-      }
-      if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
-        Button {
-          expandedResource = .disk
-        } label: {
-          HStack(spacing: Space.sm) {
-            statItem(
-              icon: "internaldrive", label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
-              tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
-            if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
-              Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
-            }
-          }
-          .padding(Space.sm)
-        }
-        .buttonStyle(.hoverRow(radius: Radius.round))
-        .accessibilityLabel("Disk details")
-        .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
-        .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
-        .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
-        .onHover { hovering in
-          if hovering, expandedResource != nil {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-              expandedResource = .disk
-            }
-          }
+      let cap = store.payload?.capacity
+      let cpu = cap == nil ? nil : metrics.totalCpuFraction
+      let memory = cap == nil || !showsMemory ? nil : metrics.memory
+      let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes })
+      ForEach(
+        Array(ResourceSummary.entries(cpu: cpu != nil, memory: memory != nil, disk: lowest != nil).enumerated()),
+        id: \.offset
+      ) { _, entry in
+        switch entry {
+        case .divider:
+          Rectangle().fill(Palette.secondary.opacity(0.3)).frame(width: 1, height: 16)
+        case .item(.cpu):
+          if let cpu { cpuItem(cpu) }
+        case .item(.memory):
+          if let memory, let cap { memoryItem(memory, cap: cap, showsBar: showsBar) }
+        case .item(.disk):
+          if let lowest { diskItem(lowest, showsReclaimable: showsReclaimable) }
         }
       }
       if !store.watching, let at = store.updatedAt {
@@ -942,6 +870,94 @@ struct MachineSummary: View {
     .padding(.horizontal, Space.lg)
     .padding(.vertical, Space.xs)
     .background(Palette.surface, in: Capsule())
+  }
+
+  private func cpuItem(_ cpu: Double) -> some View {
+    Button {
+      expandedResource = .cpu
+    } label: {
+      statItem(icon: "speedometer", label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
+        .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("CPU details")
+    .accessibilityValue(formatPercent(cpu * 100))
+    .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+    .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .cpu
+        }
+      }
+    }
+  }
+
+  private func memoryItem(_ memory: MachineMemory, cap: Capacity, showsBar: Bool) -> some View {
+    Button {
+      expandedResource = .memory
+    } label: {
+      HStack(spacing: Space.sm) {
+        statItem(
+          icon: "memorychip", label: "RAM",
+          value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
+          tone: UsageThresholds.memory(memory.pressure))
+        if showsBar {
+          ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
+            .tint(Color(UsageThresholds.memory(memory.pressure)))
+            .frame(width: 50)
+        }
+      }
+      .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("Memory details")
+    .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
+    .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .memory
+        }
+      }
+    }
+    .help(
+      "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
+    )
+  }
+
+  private func diskItem(_ lowest: DiskVolume, showsReclaimable: Bool) -> some View {
+    Button {
+      expandedResource = .disk
+    } label: {
+      HStack(spacing: Space.sm) {
+        statItem(
+          icon: "internaldrive", label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
+          tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
+        if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
+          Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
+        }
+      }
+      .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("Disk details")
+    .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
+    .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
+    .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .disk
+        }
+      }
+    }
   }
 
   private var cpuPopover: some View {
@@ -977,10 +993,6 @@ struct MachineSummary: View {
 
   private func statItem(icon: String, label: String, value: String, tone: Tone) -> some View {
     HStack(spacing: Space.sm) {
-      Rectangle()
-        .fill(Palette.secondary.opacity(0.3))
-        .frame(width: 1, height: 16)
-
       Image(systemName: icon)
         .foregroundStyle(Palette.secondary)
 
