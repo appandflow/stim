@@ -8,7 +8,7 @@ import {
   replaceReceivedField,
 } from '../../../apps/mobile/mock-server/receive-fixtures.ts';
 import type { StatusPayload } from '../phone-protocol.ts';
-import { isRpcError, isRpcEvent, isRpcResult } from '../receive-protocol.ts';
+import { isRpcError, isRpcEvent, isRpcResult, rpcEventIssue, rpcResultIssue } from '../receive-protocol.ts';
 
 const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1' }, capabilities: ['read'] };
 
@@ -348,4 +348,18 @@ test('slot waits are additive for older phone status and accept future kinds whi
   expect(isRpcEvent(replaceReceivedField(statusFixture, path, waitingFor))).toBe(true);
   expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, kind: 'future-slot' }))).toBe(true);
   expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, inUse: '2' }))).toBe(false);
+});
+
+test('names the schema location of a rejected value and nothing from the value', () => {
+  expect(rpcResultIssue('hello', hello)).toBeNull();
+  const missing = rpcResultIssue('hello', { ...hello, protocol: undefined, extra: 'tail1a2b3.ts.net' });
+  expect(missing).toEqual({ keyword: 'required', schemaPath: '#/required', missingProperty: 'protocol' });
+  const wrongType = rpcResultIssue('hello', { ...hello, protocol: 'secret-value' });
+  expect(wrongType).toEqual({
+    keyword: 'type',
+    schemaPath: '#/properties/protocol/type',
+    expectedType: 'number',
+  });
+  expect(JSON.stringify([missing, wrongType])).not.toMatch(/secret-value|tail1a2b3/);
+  expect(rpcEventIssue({ event: 'status', subscription: 's', payload: { environments: 'x' } })?.keyword).toBeTruthy();
 });

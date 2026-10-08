@@ -1,5 +1,13 @@
 import { t } from '@lingui/core/macro';
-import { isRpcError, isRpcEvent, isRpcEventName, isRpcResult } from '@stim-cli/core/receive-protocol';
+import {
+  isRpcError,
+  isRpcEvent,
+  isRpcEventName,
+  isRpcResult,
+  rpcErrorIssue,
+  rpcEventIssue,
+  rpcResultIssue,
+} from '@stim-cli/core/receive-protocol';
 
 import {
   ACTIONS,
@@ -13,6 +21,7 @@ import {
   type ProtocolError,
   type ServerEvent,
 } from '@/protocol/types';
+import { reportFailure, safeName, type Failure } from '@/lib/diagnostics';
 import { parseVideoPacket, type VideoPacket } from '@/lib/video';
 
 export type ConnectionState =
@@ -76,6 +85,16 @@ export interface ConnectionOptions {
   createSocket?: SocketFactory;
   setTimer?: (fn: () => void, ms: number) => unknown;
   clearTimer?: (handle: unknown) => void;
+}
+
+function responseFailure(method: Method, message: { result?: unknown; error?: unknown }): Failure {
+  if ('result' in message && !('error' in message)) {
+    return { kind: 'rpc', stage: 'result', name: method, issue: rpcResultIssue(method, message.result) };
+  }
+  if ('error' in message && !('result' in message)) {
+    return { kind: 'rpc', stage: 'error', name: method, issue: rpcErrorIssue(message.error) };
+  }
+  return { kind: 'rpc', stage: 'envelope', name: method, issue: null };
 }
 
 function isMessageObject(value: unknown): value is {
@@ -235,9 +254,16 @@ export class StimConnection {
         },
         (error: Error) => {
           if (socket !== this.socket) return;
-          if (error instanceof RequestError && REFUSAL_CODES.has(error.error.code)) {
-            this.stopped = true;
-            this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
+          if (error instanceof RequestError) {
+            const refused = REFUSAL_CODES.has(error.error.code);
+            reportFailure({
+              kind: 'connection',
+              errorClass: `${refused ? 'refused' : 'request-error'}:${safeName(error.error.code)}`,
+            });
+            if (refused) {
+              this.stopped = true;
+              this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
+            }
           }
           socket.close();
         },
@@ -305,10 +331,12 @@ export class StimConnection {
     try {
       message = JSON.parse(text);
     } catch {
+      reportFailure({ kind: 'rpc', stage: 'parse', name: 'message', issue: null });
       this.invalidMessage();
       return;
     }
     if (!isMessageObject(message)) {
+      reportFailure({ kind: 'rpc', stage: 'envelope', name: 'message', issue: null });
       this.invalidMessage();
       return;
     }
@@ -321,6 +349,7 @@ export class StimConnection {
       } else if ('result' in message && !('error' in message) && isRpcResult(pending.method, message.result)) {
         pending.resolve(message.result);
       } else {
+        reportFailure(responseFailure(pending.method, message));
         pending.reject(new Error(t`The Mac sent an invalid RPC response.`));
         this.invalidMessage();
       }
@@ -331,6 +360,7 @@ export class StimConnection {
     if (typeof subscription === 'string' && ![...this.subscriptions].some((sub) => sub.serverId === subscription))
       return;
     if (!isRpcEvent(message)) {
+      reportFailure({ kind: 'rpc', stage: 'event', name: message.event, issue: rpcEventIssue(message) });
       this.invalidMessage();
       return;
     }
@@ -405,7 +435,11 @@ export function pair(
     const socket = createSocket(endpoint);
     let done = false;
     const unreachable = () => new Error(t`Cannot reach ${endpoint}. Check that Tailscale is connected on this phone.`);
-    const timeout = setTimeout(() => finish(() => reject(unreachable())), PAIRING_TIMEOUT_MS);
+    const fail = (errorClass: string, error: Error) => {
+      reportFailure({ kind: 'pairing', errorClass });
+      reject(error);
+    };
+    const timeout = setTimeout(() => finish(() => fail('timeout', unreachable())), PAIRING_TIMEOUT_MS);
     const finish = (settle: () => void) => {
       if (done) return;
       done = true;
@@ -424,22 +458,23 @@ export function pair(
       try {
         parsed = JSON.parse(String(message.data));
       } catch {
-        finish(() => reject(new Error(t`The Mac sent an invalid pairing response.`)));
+        finish(() => fail('invalid-response', new Error(t`The Mac sent an invalid pairing response.`)));
         return;
       }
       if (!isMessageObject(parsed) || parsed.id !== 1) return;
       finish(() => {
         if ('error' in parsed && !('result' in parsed) && isRpcError(parsed.error)) {
-          return reject(new RequestError(parsed.error));
+          return fail(`request-error:${safeName(parsed.error.code)}`, new RequestError(parsed.error));
         }
         if ('error' in parsed || !isRpcResult('hello', parsed.result)) {
-          return reject(new Error(t`The Mac sent an invalid pairing response.`));
+          reportFailure(responseFailure('hello', parsed));
+          return fail('invalid-response', new Error(t`The Mac sent an invalid pairing response.`));
         }
         const result = parsed.result;
-        if (!result.deviceToken) return reject(new Error(t`The server did not issue a device token.`));
+        if (!result.deviceToken) return fail('no-device-token', new Error(t`The server did not issue a device token.`));
         resolve({ deviceToken: result.deviceToken, serverName: result.server.name });
       });
     };
-    socket.onclose = () => finish(() => reject(unreachable()));
+    socket.onclose = () => finish(() => fail('closed', unreachable()));
   });
 }
