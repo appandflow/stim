@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { usePathname, useRouter, type Href } from 'expo-router';
 import { useState } from 'react';
 import { Modal, Platform, Pressable, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -216,9 +217,9 @@ export function Menu({ onClose }: { onClose: () => void }) {
             accessibilityRole="button"
             accessibilityLabel={t`Close About`}
           />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom }]}>
+          <GestureHandlerRootView style={[styles.sheet, { paddingBottom: insets.bottom }]}>
             <About onClose={() => setAboutOpen(false)} />
-          </View>
+          </GestureHandlerRootView>
         </Modal>
       ) : null}
     </View>
