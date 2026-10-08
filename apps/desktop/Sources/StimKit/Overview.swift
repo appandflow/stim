@@ -99,8 +99,6 @@ public struct TryThisInputs: Sendable {
   public var remoteMachines: [String]?
   public var hasEASProject = false
   public var hasMacosTarget = false
-  /// The Phone app feature flag; without it no tip about a phone applies.
-  public var phoneApp = false
   public var workspaces: [Workspace] = []
 
   public init() {}
@@ -115,8 +113,7 @@ public enum TryThis {
     case .easProfile, .easSimulator: return inputs.hasEASProject
     case .remoteBuild, .hostedSimulator: return inputs.remoteMachines != nil && !remoteMacsSet
     case .macos: return inputs.hasMacosTarget
-    case .physicalDevice: return inputs.phoneApp
-    case .web, .logs: return true
+    case .physicalDevice, .web, .logs: return true
     }
   }
 
