@@ -23,7 +23,7 @@ import { getConcurrencyLimits } from '../workspace/config.ts';
 import { logLines } from './run.ts';
 import { macosDir } from './state.ts';
 import { repoRoot } from '../workspace/worktree.ts';
-import { resolveBundleExtras, stageBundle, validateInfoPlist } from './stage.ts';
+import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from './stage.ts';
 
 async function tool(
   root: string,
@@ -60,6 +60,7 @@ export async function buildMacosBundle({
   infoPlist,
   bundle,
   bundleId,
+  displayName,
   scratch,
   writer,
   note,
@@ -74,6 +75,7 @@ export async function buildMacosBundle({
   infoPlist: string;
   bundle: string;
   bundleId: string;
+  displayName?: string;
   scratch: string;
   writer: NdjsonWriter;
   note: (line: string) => void;
@@ -187,6 +189,10 @@ export async function buildMacosBundle({
           if (!existsSync(join(outcome.artifactPath, 'Contents', 'Resources', destination)))
             throw new Error(`The fetched macOS bundle lacks declared resource ${destination}.`);
         }
+        if (displayName !== undefined) {
+          setBundleName(join(outcome.artifactPath, 'Contents', 'Info.plist'), displayName);
+          getExecutor().runFile('codesign', ['--force', '--sign', '-', outcome.artifactPath]);
+        }
         getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
         promote(outcome.artifactPath);
         if (record) {
@@ -227,7 +233,7 @@ export async function buildMacosBundle({
       );
       progress.step('install');
       const staged = join(staging, `${product}.app`);
-      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras);
+      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras, displayName);
       promote(staged);
       return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
     } finally {
