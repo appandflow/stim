@@ -22,7 +22,7 @@ struct DeviceTile: View {
   var presence: AppPresence? = nil
   var showsCovers = false
   var focused = false
-  var viewerAction: String? = nil
+  var status: DeviceTileStatus? = nil
   /// The device viewer's canvas: only the screen, with the device's buttons below it, and Run on a stopped device.
   /// A tile without it is a preview card with no controls.
   var viewer = false
@@ -292,8 +292,8 @@ struct DeviceTile: View {
         .lineLimit(1)
         .layoutPriority(1)
         Spacer(minLength: 8)
-        if let viewerAction {
-          Label(viewerAction, systemImage: viewerAction == "Control" ? "cursorarrow.rays" : "arrow.up.right")
+        if !viewer, let action = status?.headerAction {
+          Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
             .accessibilityHidden(true)
@@ -469,10 +469,26 @@ struct DeviceTile: View {
     if !showsCovers || interactive {
       EmptyView()
     } else if let build {
-      BuildCover(build: build, opaque: !device.isRunning)
+      BuildCover(
+        build: build, opaque: !device.isRunning,
+        heading: status?.phase == .hostedStarting && build.phase != "wait" ? status?.message : nil)
+    } else if let status, status.phase != .shutDown, let message = status.message {
+      statusCover(message, progress: status.showsProgress)
     } else if presence == AppPresence.none {
       coverMessage("No app installed", "Fix the build and run it again")
     }
+  }
+
+  private func statusCover(_ message: String, progress: Bool) -> some View {
+    VStack(spacing: Space.sm) {
+      if progress { StimProgressBar(value: nil).controlSize(.small).frame(maxWidth: 160) }
+      Text(message).font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    }
+    .multilineTextAlignment(.center)
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen)
+    .allowsHitTesting(false)
   }
 
   private func coverMessage(_ title: String, _ subtitle: String) -> some View {
@@ -499,9 +515,14 @@ struct DeviceTile: View {
         viewer
           ? (device.platform == "web"
             ? "Closed. Run stim web to open the page again."
-            : run.map { _ in "Not running. Run to boot the device and install the app." }
-              ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
-          : (device.platform == "web" ? "Closed." : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
+            : status?.phase == .missing
+              ? (status?.message ?? "")
+              : run.map { _ in "Not running. Run to boot the device and install the app." }
+                ?? (isPhysical ? "Not connected." : "Shut down. Stim does not boot a device it does not own."))
+          : (device.platform == "web"
+            ? "Closed."
+            : status?.phase == .missing
+              ? (status?.message ?? "") : run == nil ? "Shut down. Not owned by Stim." : "Shut down.")
       )
       .font(.stim(.callout))
       .foregroundStyle(Palette.secondary)
@@ -1167,18 +1188,20 @@ private struct WebScreen: View {
 private struct BuildCover: View {
   var build: Build
   var opaque: Bool
+  var heading: String? = nil
   @Environment(\.workspaceTitle) private var title
 
   var body: some View {
     TimelineView(.buildSeconds(build)) { context in
       let progress = build.progress(at: context.date)
       let (phase, counts) = build.currentPhaseLabel
-      let estimate = build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? ""
+      let estimate = Format.estimateSuffix(elapsedMs: progress.elapsedMs, expectedMs: build.expectedMs)
       VStack(spacing: Space.sm) {
         Text(
-          build.phase == "wait" && build.waitingOn != nil
-            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-            : "Waiting for the \(platformName(build.platform)) build"
+          heading
+            ?? (build.phase == "wait" && build.waitingOn != nil
+              ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
+              : "Waiting for the \(platformName(build.platform)) build")
         )
         .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
         if let text = build.waitingFor?.text(at: context.date) {

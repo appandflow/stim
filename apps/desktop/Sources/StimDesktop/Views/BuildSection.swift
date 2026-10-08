@@ -237,14 +237,15 @@ struct RunningBuildDetail: View {
     TimelineView(.buildSeconds(build)) { context in
       let steps = build.phaseSteps(history: env.builds?.builds(for: build.platform) ?? [], now: context.date)
       let (phase, counts) = build.currentPhaseLabel
-      let elapsed = Format.clock(ms: build.progress(at: context.date).elapsedMs)
-      let estimate = build.expectedMs.map { "~\(Format.clock(ms: $0))" }
+      let elapsedMs = build.progress(at: context.date).elapsedMs
+      let elapsed = Format.clock(ms: elapsedMs)
+      let estimate = Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
           if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
           Spacer(minLength: Space.sm)
-          (Text(elapsed) + Text(estimate.map { " / \($0)" } ?? "").foregroundStyle(Palette.tertiary))
+          (Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary))
             .font(.stim(.footnote))
             .monospacedDigit()
         }

@@ -446,8 +446,9 @@ private struct BuildRunDetail: View {
       }
       if let build = run.running {
         TimelineView(.buildSeconds(build)) { context in
-          (Text(Format.clock(ms: build.progress(at: context.date).elapsedMs))
-            + Text(build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? "").foregroundStyle(Palette.tertiary))
+          let elapsedMs = build.progress(at: context.date).elapsedMs
+          (Text(Format.clock(ms: elapsedMs))
+            + Text(Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)).foregroundStyle(Palette.tertiary))
             .font(.stim(.title)).monospacedDigit()
         }
       }
