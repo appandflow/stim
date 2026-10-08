@@ -127,7 +127,7 @@ private struct TailscaleSwitchArt: View {
         HStack(spacing: Space.md) {
           VStack(alignment: .leading, spacing: 0) {
             Text("Tailscale").font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text)
-            Text(on ? "Connected" : "Disconnected").font(.stim(.caption)).foregroundStyle(
+            Text(on ? "Connected" : "Not Connected").font(.stim(.caption)).foregroundStyle(
               on ? Palette.success : Palette.secondary
             )
             .contentTransition(.opacity)
