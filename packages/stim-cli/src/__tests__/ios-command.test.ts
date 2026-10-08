@@ -73,6 +73,7 @@ import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import type { IosSimSnapshot } from '../devices/ios.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import {
@@ -3305,6 +3306,35 @@ describe('concurrency limits', () => {
     expect(errs.join('\n')).not.toContain('stats unavailable');
     expect(errs.join('\n')).toMatch(/stim stop/);
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
+  });
+
+  test('the budget gate, capacity check and device setup share one simulator snapshot', async () => {
+    reserve();
+    let budgetSnapshot: IosSimSnapshot | undefined;
+    let capacityArgs: CheckDeviceCapacityArgs | undefined;
+    const { calls } = await run(
+      { json: true, wait: false },
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
+        budgetGate: async (args) => {
+          budgetSnapshot = args.simSnapshot;
+          return { reclaimed: [], refusal: null };
+        },
+        checkDeviceCapacity: (args) => {
+          capacityArgs = args;
+          return null;
+        },
+      },
+    );
+    const ensured = calls.args.ensureOwnedDevice as { simSnapshot?: IosSimSnapshot } | undefined;
+    assert(budgetSnapshot && capacityArgs?.sims && ensured?.simSnapshot);
+    expect(ensured.simSnapshot).toBe(budgetSnapshot);
+    const sim = { udid: 'U1', name: 'stim-x', state: 'Booted', runtime: 'r', deviceTypeIdentifier: 't' };
+    vi.spyOn(budgetSnapshot, 'read').mockReturnValue([
+      { ...sim, available: true },
+      { ...sim, udid: 'U2', available: false },
+    ]);
+    expect((capacityArgs.sims as () => { udid: string }[])().map((entry) => entry.udid)).toEqual(['U1']);
   });
 
   test('a non-capacity device refusal is not recorded', async () => {

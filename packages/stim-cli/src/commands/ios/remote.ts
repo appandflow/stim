@@ -1,3 +1,4 @@
+import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
@@ -226,9 +227,10 @@ export async function iosPlacementBudget(
   note: (line: string) => void,
   hosted: boolean,
   automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
+  simSnapshot?: IosSimSnapshot,
 ): ReturnType<IosDeps['budgetGate']> {
   if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
-  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note });
+  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot });
 }
 
 export function hostedIosMetroNote(
