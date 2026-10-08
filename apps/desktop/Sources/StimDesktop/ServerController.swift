@@ -135,11 +135,6 @@ final class ServerController: ObservableObject {
     if case .failed = state { start() } else { refresh() }
   }
 
-  var canRestart: Bool {
-    if case .running(_, owned: true) = state { return true }
-    return false
-  }
-
   private var wantsLoopbackOnly: Bool {
     !PhoneApp.listensOnTailnet(
       phoneApp: FeatureFlags.isEnabled(.phoneApp),
@@ -249,16 +244,6 @@ final class ServerController: ObservableObject {
     guard process != nil, startedLoopbackOnly != wantsLoopbackOnly else { return }
     stop()
     start()
-  }
-
-  func restart() {
-    guard canRestart else { return }
-    stop()
-    start()
-  }
-
-  func setupConnection() {
-    Task { await setUpConnection() }
   }
 
   func setUpConnection() async -> String? {

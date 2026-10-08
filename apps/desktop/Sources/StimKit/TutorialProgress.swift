@@ -437,7 +437,7 @@ public struct TutorialProgress: Sendable {
         } ?? false
       let off = input.replayOff || environment?.recording?.enabled == false
       return Checkpoint(
-        completed: first?.date, detail: off ? "Replay is off: Settings > Recording" : "Watch the agent actions",
+        completed: first?.date, detail: off ? "Replay is off: Settings > Advanced" : "Watch the agent actions",
         ticks: [tick("action", first != nil), tick("agent-replay", replay, optional: true)])
     case "refresh":
       if record?.step == "refresh" {

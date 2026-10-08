@@ -901,7 +901,7 @@ paused at the frame shown.
 The bar shows **Recording** while the server records the device, and **Replay
 off** when `stim status --json` reports `recording.enabled` false for the
 workspace. Physical and remote devices have no replay. **Record device screens
-for replay** in **Stim > Settings > Phones** runs `stim settings set
+for replay** in **Stim > Settings > Advanced** runs `stim settings set
 recording.enabled true|false --scope machine`; turning it off asks first,
 because it deletes the recordings.
 
@@ -977,7 +977,7 @@ server Desktop started in loopback-only mode, which disconnects paired phones un
 they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
 choose in **Settings > Advanced**. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
-the Mac's own server. While a server runs, the tab re-checks it every 5
+the Mac's own server. While a server runs, the Phones tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
 seconds. When a server the app did not start misses two checks in a row, the app starts its
 own. With the Phone app on and **Serve to phones** on, Desktop starts its server without
@@ -990,7 +990,7 @@ has adopted a server started with another home. Those phones stop working once S
 serves `~/.stim` again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Phones page; the footer icon shows only Degraded. Desktop keeps
+**Degraded** with its reason in the Phones page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
