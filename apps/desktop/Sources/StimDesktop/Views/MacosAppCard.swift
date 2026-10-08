@@ -81,7 +81,7 @@ struct MacosAppCard: View {
         if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
         if app.host != nil {
           if app.state == "running" || app.state == "unverified" {
-            HostedMacosWindow(app: app, workspace: workspace, maxHeight: maxHeight)
+            HostedMacosWindow(app: app, workspace: workspace, maxHeight: maxHeight, windowHeight: $windowHeight)
           }
         } else if let error = capture.error {
           Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
@@ -94,7 +94,8 @@ struct MacosAppCard: View {
         }
         if app.host == nil, let image = capture.image {
           NativeFitted(
-            pointSize: capture.current?.frame.size ?? image.pointSize(scale: displayScale), maxHeight: maxHeight
+            pointSize: capture.current?.frame.size ?? image.pointSize(scale: displayScale), maxHeight: maxHeight,
+            height: $windowHeight
           ) {
             MacosWindowCanvas(image: image)
           }
@@ -108,7 +109,6 @@ struct MacosAppCard: View {
     } action: {
       cardHeight = $0
     }
-    .onPreferenceChange(NativeFittedHeightKey.self) { windowHeight = $0 }
     .task(id: "\(app.launchId)|\(app.state)|\(previewRequest)") {
       refreshing = true
       await capture.start(app)
@@ -139,16 +139,18 @@ private struct HostedMacosWindow: View {
   var app: MacosApp
   var workspace: String
   var maxHeight: CGFloat?
+  @Binding var windowHeight: CGFloat
   @Environment(\.displayScale) private var displayScale
   @ObservedObject private var session = ServerSession.shared
   @StateObject private var stream: PhysicalStream
   @State private var controlling = false
   @State private var pixelSize: CGSize?
 
-  init(app: MacosApp, workspace: String, maxHeight: CGFloat?) {
+  init(app: MacosApp, workspace: String, maxHeight: CGFloat?, windowHeight: Binding<CGFloat>) {
     self.app = app
     self.workspace = workspace
     self.maxHeight = maxHeight
+    _windowHeight = windowHeight
     _stream = StateObject(
       wrappedValue: PhysicalStream(
         target: ReplayTarget(workspace: workspace, platform: "macos", slot: "default"), physical: false))
@@ -206,7 +208,7 @@ private struct HostedMacosWindow: View {
         }
         NativeFitted(
           pointSize: pixelSize.map { CGSize(width: $0.width / displayScale, height: $0.height / displayScale) },
-          maxHeight: maxHeight
+          maxHeight: maxHeight, height: $windowHeight
         ) {
           PhysicalDisplay(
             stream: stream, activityKey: nil, interactive: controlling && isControlling,
@@ -556,20 +558,19 @@ extension EnvironmentValues {
   }
 }
 
-private struct NativeFittedHeightKey: PreferenceKey {
-  static let defaultValue: CGFloat = 0
-  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-
 private struct NativeFitted<Content: View>: View {
   var pointSize: CGSize?
   var maxHeight: CGFloat?
+  @Binding var height: CGFloat
   @ViewBuilder var content: Content
 
   var body: some View {
     NativeFitLayout(pointSize: pointSize ?? CGSize(width: 480, height: 300), maxHeight: maxHeight) { content }
-      .background(
-        GeometryReader { Color.clear.preference(key: NativeFittedHeightKey.self, value: $0.size.height) })
+      .onGeometryChange(for: CGFloat.self) {
+        $0.size.height
+      } action: {
+        height = $0
+      }
   }
 }
 
