@@ -44,12 +44,10 @@ struct BuildSection: View {
         HStack {
           Text("macOS \(macos.product)").font(.stim(.callout, weight: .semibold))
           Spacer()
-          if onlyPlatform == "macos" {
-            Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: "macos")) }
-              .buttonStyle(.stim())
-              .fixedSize()
-              .help("Open build details")
-          }
+          Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: "macos")) }
+            .buttonStyle(.stim())
+            .fixedSize()
+            .help("Open build details")
           if let query = LogQuery.build(
             platform: "macos", slot: "default", startedAt: macos.build.startedAt,
             finishedAt: macos.build.finishedAt)

@@ -386,4 +386,48 @@ import Testing
     }
     #expect(planner.mostActive == 1)
   }
+
+  private func macosRuns(_ entries: String) throws -> [BuildRun] {
+    let json = #"{"path":"/w","live":true,"warnings":[],"builds":{"macos":[\#(entries)]}}"#
+    let workspace = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    return BuildRun.runs(platform: "macos", running: nil, history: workspace.builds?.builds(for: "macos") ?? [], last: nil)
+  }
+
+  @Test func mapsASucceededMacosBuildToAPlainSuccessWithItsPhasesAndStepCount() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":38000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:38Z","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":29000,"install":8000,"launch":1000},"compileSteps":428}"#
+      ).first)
+    #expect(run.pillLabel == "Succeeded")
+    #expect(run.tone == .success)
+    #expect(run.outcome == "Succeeded")
+    #expect(run.summary == "Built in 0m 38s")
+    #expect(run.configurationLabel == "Swift Package Debug")
+    let steps = try #require(run.history?.finishedSteps)
+    #expect(steps.map(\.phase) == ["prepare", "compile", "install", "launch"])
+    #expect(steps.map(\.note) == [nil, "428 steps", nil, nil])
+    #expect(run.history?.failedPhase == nil)
+  }
+
+  @Test func mapsAFailedMacosBuildToTheLastPhaseItEntered() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":12000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:12Z","errorCode":"STIM_BUILD_FAILED","result":"failed","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":12000}}"#
+      ).first)
+    #expect(run.pillLabel == "Failed")
+    #expect(run.tone == .error)
+    #expect(run.summary == "Failed (STIM_BUILD_FAILED) in 0m 12s")
+    #expect(run.history?.failedPhase == "compile")
+  }
+
+  @Test func mapsAnOffloadedMacosBuildToItsWorker() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":50000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:50Z","offloadedTo":"janics-mac-mini","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":45000,"install":5000}}"#
+      ).first)
+    #expect(run.offloadedTo == "janics-mac-mini")
+    #expect(run.summary.hasPrefix("Built on "))
+    #expect(run.outcome.hasPrefix("Built on "))
+    #expect(run.history?.compileSteps == nil)
+  }
 }

@@ -13,6 +13,12 @@ public struct MacosApp: Decodable, Hashable, Sendable {
   /// Set when `stim macos --remote` runs the app on another Mac; it then has no local process.
   public var host: Host?
 
+  /// The `stim` arguments that build and launch the app again, on the same host.
+  public var runArguments: [String] {
+    guard let host else { return ["macos"] }
+    return ["macos", "--remote", host.machine]
+  }
+
   public struct Host: Decodable, Hashable, Sendable {
     public var machine: String
     public var session: String

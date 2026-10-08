@@ -44,7 +44,7 @@ struct MacosAppCard: View {
             .disabled(actions.active(for: workspace) != nil)
           }
           Button("Build and Run", systemImage: "play.fill") {
-            actions.run("Build \(app.product)", steps: [StimCommand(runArguments, cwd: workspace)], present: false)
+            actions.run("Build \(app.product)", steps: [StimCommand(app.runArguments, cwd: workspace)], present: false)
           }
           .nativeControlStyle(.primary)
           .help(
@@ -122,11 +122,6 @@ struct MacosAppCard: View {
 }
 
 extension MacosAppCard {
-  fileprivate var runArguments: [String] {
-    guard let host = app.host else { return ["macos"] }
-    return ["macos", "--remote", host.machine]
-  }
-
   fileprivate var permissionsMissing: Bool {
     _ = permissions.revision
     return !CGPreflightScreenCaptureAccess() || !AXIsProcessTrusted()
