@@ -48,6 +48,14 @@ destination entry, including dangling symlinks. An existing ignored directory
 such as `node_modules` is skipped whole; warm does not fill missing children.
 Untracked files that Git does not ignore are not copied.
 
+A copied `ios/Pods` names the source checkout's path in its generated files and
+in the checksum of any podspec that embeds that path, such as the precompiled
+ExpoModulesCore. When `ios/Podfile.lock` and the copied `Pods/Manifest.lock`
+differ only by those checksums, warm rewrites the source path to the
+worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
+`stim ios` skips `pod install`. Any other difference leaves Pods as copied and
+`pod install` runs. Warm does not edit `Podfile.lock`.
+
 Wait for warm to exit successfully before editing, installing dependencies,
 starting Metro/builds, or running another warm in that worktree. **Concurrent
 writes to the destination are unsafe:** existing entries are checked before

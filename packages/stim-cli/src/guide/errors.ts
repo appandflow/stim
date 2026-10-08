@@ -1417,7 +1417,10 @@ not on any remote"  (worktree remove)
   Warm copied ignored Pods from the source checkout, but their Manifest.lock
   differs from the tracked Podfile.lock in this worktree. Warm does not change
   tracked files. Run the printed pod-install command before building directly.
-  \`stim ios\` detects a mismatch and runs \`pod install\` for you.
+  \`stim ios\` detects a mismatch and runs \`pod install\` for you. A mismatch
+  limited to checksums of podspecs that embed the source checkout's path is
+  resolved by warm itself ("carry moved <dir>/Pods to this checkout's path")
+  and does not print this line.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed
