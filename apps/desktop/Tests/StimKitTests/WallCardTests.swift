@@ -88,4 +88,10 @@ struct WallCardTests {
     ])
     #expect(cards.map(\.id) == ["/w/a", "/w/b"])
   }
+
+  @Test func usesOneColumnWhenNarrowTwoAtTypicalWidthsAndThreeWhenVeryWide() {
+    #expect([500, 699].map { WallCard.columns(forWidth: $0) } == [1, 1])
+    #expect([700, 1000, 1499].map { WallCard.columns(forWidth: $0) } == [2, 2, 2])
+    #expect([1500, 2200].map { WallCard.columns(forWidth: $0) } == [3, 3])
+  }
 }

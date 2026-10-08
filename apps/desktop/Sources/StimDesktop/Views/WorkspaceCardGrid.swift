@@ -23,10 +23,12 @@ struct WorkspaceCardGrid: View {
   var open: (WallCard) -> Void
   var openDevice: (String, String) -> Void
   var openLogs: (String) -> Void
+  @State private var width: CGFloat = 1000
 
   var body: some View {
     LazyVGrid(
-      columns: [GridItem(.adaptive(minimum: 420), spacing: Space.xl, alignment: .top)],
+      columns: Array(
+        repeating: GridItem(.flexible(), spacing: Space.xl, alignment: .top), count: WallCard.columns(forWidth: width)),
       alignment: .leading, spacing: Space.xl
     ) {
       ForEach(cards) { card in
@@ -35,6 +37,7 @@ struct WorkspaceCardGrid: View {
           openLogs: openLogs)
       }
     }
+    .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
   }
 }
 

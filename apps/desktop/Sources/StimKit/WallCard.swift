@@ -13,6 +13,12 @@ public struct WallCard: Identifiable, Sendable {
   public var id: String { page.id }
   public var isMultiApp: Bool { apps.count > 1 }
 
+  /// The grid's column count for a content width in points: one when narrow, two at typical widths, three when
+  /// very wide.
+  public static func columns(forWidth width: Double) -> Int {
+    width < 700 ? 1 : width < 1500 ? 2 : 3
+  }
+
   /// One thing a card can stream: a device of one of the worktree's apps, or an app's Mac development app.
   public struct Option: Identifiable, Sendable {
     public enum Kind: Sendable {
