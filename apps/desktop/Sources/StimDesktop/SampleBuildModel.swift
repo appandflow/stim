@@ -20,6 +20,7 @@ final class SampleBuildModel {
     var mark: (URL) throws -> Void = { try Data().write(to: $0, options: .atomic) }
     var now: () -> Date = Date.init
   }
+  private static var pendingRemoval: Task<Void, Never>?
   private(set) var test = BuildTest()
   private(set) var lines: [TerminalLine] = []
   private(set) var sampleReady = false
@@ -53,6 +54,7 @@ final class SampleBuildModel {
         preparing = false
         preparation = nil
       }
+      await Self.pendingRemoval?.value
       do {
         let sample = dependencies.sample
         guard sample.permitsRemoval(sample.folder) else { throw CocoaError(.fileWriteNoPermission) }
@@ -193,7 +195,10 @@ final class SampleBuildModel {
     guard !discarding, sampleReady || dependencies.exists(dependencies.sample.folder) else { return }
     discarding = true
     defer { discarding = false }
-    try? await removeSample()
+    let removal = Task { _ = try? await removeSample() }
+    Self.pendingRemoval = removal
+    await removal.value
+    if !dependencies.exists(dependencies.sample.folder) { sampleReady = false }
   }
 
   private func stopSample() async throws {

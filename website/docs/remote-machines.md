@@ -464,8 +464,8 @@ not deliberately disconnect the worker to trigger automatic fallback.
 The sample stops when the test ends. **Run again** reuses the folder. When the
 sheet closes, Desktop removes the sample's Stim workspace and folder and releases
 its owned simulator (parked for reuse within the parked-simulator limit, deleted
-otherwise). This cleanup is best effort and silent; if it fails, the next wizard
-removes the leftover sample before creating a new one.
+otherwise). This cleanup is best effort and silent; if it fails, the leftover sample stays
+until the next wizard reuses it or its removal succeeds.
 
 ## Undo
 
