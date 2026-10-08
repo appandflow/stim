@@ -38,11 +38,12 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   workspace moves only when it turns active or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
   counts as active. When status identifies a linked Git checkout, its app projects
-  share one workspace heading, with the branch and git state shown once. App
-  children show paths such as `apps/mobile` and `apps/desktop`, each with its own
-  status. The checkout heading opens the unified workspace page at the first app;
-  child rows open the same page scrolled to that app's first device. Children stay visible without
-  an extra expansion step; filters still apply per app. Repo active/idle counts count
+  share one row, with the branch and git state shown once. The row shows the
+  status of the app that needs attention most (failed, building, running, idle),
+  error and warning counts summed across the apps, the agent sessions of all of
+  them, and one state dot per platform any app has run (iOS, Android, macOS,
+  Web), as in Stim Desktop's sidebar. Tapping the row opens the unified workspace
+  page at that app. Filters still apply per app. Repo active/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
