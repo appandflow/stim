@@ -67,7 +67,7 @@ struct SidebarWorktreeRow: View {
             if prefs.hiddenWorkspaces.contains(archives.isEmpty ? .worktreeGroup(page) : .archivedGroup(archives)) {
               HiddenIndicator()
             }
-            if summary.status.text != "Running" {
+            if summary.status.kind != .running {
               Text(summary.status.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(summary.status.tone))
                 .lineLimit(1).fixedSize()
             }
