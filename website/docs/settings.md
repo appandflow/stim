@@ -815,7 +815,9 @@ See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports
 override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
 writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
 end, every child process with its program name, duration and exit status, and
-every request to another Mac with its duration and result code. Records never carry arguments,
+every request to another Mac with its duration and result code. stim-server
+writes `server.ndjson` there and logs every request with its timings to its
+service log. Records never carry arguments,
 environment values, tokens or tickets, nothing is sent anywhere, and the file
 rotates at about 8 MiB with one previous generation kept.
 
