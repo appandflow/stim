@@ -17,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'server'];
+const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'ci', 'server'];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
@@ -141,6 +141,15 @@ const serverVersion = execFileSync(process.execPath, ['packages/server/dist/stim
 }).trim();
 const serverPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'server', 'package.json'), 'utf8'));
 assert.equal(serverVersion, serverPackage.version);
+
+const ciRequire = createRequire(join(repositoryRoot, 'packages', 'ci', 'package.json'));
+assert.equal(typeof ciRequire('@stim-cli/ci').runCI, 'function');
+assert.equal(typeof (await import(pathToFileURL(ciRequire.resolve('@stim-cli/ci')).href)).runCI, 'function');
+const ciVersion = execFileSync(process.execPath, ['packages/ci/dist/stim-ci.mjs', '--version'], {
+  cwd: repositoryRoot,
+  encoding: 'utf8',
+}).trim();
+assert.equal(ciVersion, cliPackage.version);
 
 execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
   cwd: repositoryRoot,
