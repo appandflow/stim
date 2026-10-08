@@ -67,7 +67,7 @@ struct DeviceViewer: View {
           }
           .padding(.horizontal, Space.xl)
           .padding(.vertical, Space.md)
-          EmptyState(title: "Device gone", message: "stim status no longer reports this device.")
+          EmptyState(title: "Device Gone", message: "stim status no longer reports this device.")
             .frame(maxHeight: .infinity)
         }
       }

@@ -20,15 +20,15 @@ struct WallView: View {
     let cards = WallCard.cards(environments: shown)
     if store.payload == nil {
       if let error = store.error {
-        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     } else if let project, content == .noneActive {
       VStack(spacing: Space.lg) {
-        Text("No active workspaces in \(store.title(of: project))").font(.stim(.headline))
+        Text("No Active Workspaces in \(store.title(of: project))").font(.stim(.headline))
         Text("The project has workspaces, but none is running or being set up.").foregroundStyle(Palette.secondary)
-        Button("Show all") { setScope(.all) }
+        Button("Show All") { setScope(.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       }
       .padding(Space.huge)
@@ -36,7 +36,7 @@ struct WallView: View {
       .id(project.id)
     } else if shown.isEmpty {
       EmptyState(
-        title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
+        title: project.map { "Nothing Running in \(store.title(of: $0))" } ?? "Nothing Running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true
       )
@@ -162,7 +162,7 @@ struct WallView: View {
       MacosAppCard(app: macos, workspace: env.path)
     }
     if app.devices.isEmpty && env.macos == nil {
-      Label("No running devices", systemImage: "iphone.gen3")
+      Label("No Running Devices", systemImage: "iphone.gen3")
         .font(.stim(.callout))
         .foregroundStyle(Palette.secondary)
         .labelStyle(.titleAndIcon)

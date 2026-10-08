@@ -135,7 +135,7 @@ While a macOS build runs, `stim status --json` reports it as `environments[].bui
 finished runs and the time each phase took are in `environments[].builds.macos`. Stim Desktop shows them in the
 workspace's build card.
 
-Stim Desktop offers **Build and run**, **Open app** (for an app on this Mac) and **Stop** on the
+Stim Desktop offers **Build and Run**, **Open app** (for an app on this Mac) and **Stop** on the
 workspace's app card, with a live preview that updates itself while the app runs. The preview follows the app's front standard window, its
 main window with any attached sheet, as the app opens, switches, closes or resizes
 windows. It never captures another process's windows, menus or the desktop. Without
@@ -148,7 +148,7 @@ background mouse/keyboard relay is not included.
 
 Capture requires existing **Screen & System Audio Recording** permission (**Screen Recording** on macOS 14);
 Open app also requires **Device Control and Data Access** permission (**Accessibility** on macOS 26 and earlier).
-The first native viewer opening shows one Desktop setup screen for both permissions, named for your macOS version, with status, **Request permissions**, **Settings** and **Check again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
+The first native viewer opening shows one Desktop setup screen for both permissions, named for your macOS version, with status, **Request Permissions**, **Settings** and **Check Again**. Approve the normal macOS requests; Stim never resets or automatically grants access. **Permissions** on the app card reopens setup. Builds never prompt. If unavailable, use the normal app window and workspace logs.
 An
 unverifiable owner refuses cleanup rather than signalling another app. `stop`
 affects only this workspace's recorded app and supervisor.

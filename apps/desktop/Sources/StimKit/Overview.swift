@@ -67,14 +67,14 @@ public enum TryThisTip: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .easProfile: "Run on an EAS development build"
-    case .easSimulator: "Use a simulator hosted by EAS"
-    case .remoteBuild: "Build on another Mac"
-    case .hostedSimulator: "Run the simulator on another Mac"
-    case .macos: "Run your Mac app with Stim"
-    case .physicalDevice: "Run on your phone"
-    case .web: "Open the web build with stim web"
-    case .logs: "Ask for just the errors"
+    case .easProfile: "Run on an EAS Development Build"
+    case .easSimulator: "Use a Simulator Hosted by EAS"
+    case .remoteBuild: "Build on Another Mac"
+    case .hostedSimulator: "Run the Simulator on Another Mac"
+    case .macos: "Run Your Mac App with Stim"
+    case .physicalDevice: "Run on Your Phone"
+    case .web: "Open the Web Build with stim web"
+    case .logs: "Ask for Just the Errors"
     }
   }
 

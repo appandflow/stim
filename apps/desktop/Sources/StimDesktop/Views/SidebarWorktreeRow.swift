@@ -97,7 +97,7 @@ struct SidebarWorktreeRow: View {
       .accessibilityLabel(summary.label)
       .accessibilityActions {
         if archives.isEmpty, let app = page.apps.first(where: { ($0.logs?.errorsSinceMarker ?? 0) > 0 }) {
-          Button("Show errors") { openLogs(app.path) }
+          Button("Show Errors") { openLogs(app.path) }
         }
       }
     }

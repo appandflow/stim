@@ -268,12 +268,12 @@ so there is no Check again button:
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker Mac. It needs Node 22.12 or later there. Answer y/N
-   for each new capability grant there; No is the default. Desktop mirrors
+   signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
+   for each new capability grant there; Yes is the default, so Enter lets the
+   client Mac build here, or run its app code in hosted simulators here. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
-   shows the approved capabilities, any skipped permission with its fix, and
-   the setup log behind **Show setup log**. There is no SSH option.
+   shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
 4. **Tools.** Compare the worker's tools with this Mac, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
    capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
@@ -297,13 +297,13 @@ so there is no Check again button:
      `auto` (run there when this Mac is full) and **Always** names the Mac's
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
-   - **Run a test build with a sample app** builds a sample through the worker
+   - **Run a Test Build with a Sample App** builds a sample through the worker
      and then locally.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote Mac
 with the default mode, it temporarily sets `remote.buildMode` to `off` during
-setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New command**.
+setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New Command**.
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.
@@ -342,7 +342,7 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
 
 Run the actual copied command on the worker. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
-to npx. It does not skip setup's per-grant y/N questions. Setup's own `--yes`
+to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
 without a terminal. A person on the worker makes that decision.
 
@@ -452,7 +452,7 @@ Desktop creates a pinned Expo blank SDK 58 sample under
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58`.
 Preparation downloads the template and installs its dependencies, so it needs
 network access. Desktop uses the sample for setup requests when no workspace
-is listed. It is optional: start it with **Run a test build with a sample app**
+is listed. It is optional: start it with **Run a Test Build with a Sample App**
 on the wizard's last step. It tests iOS builds.
 
 The first run uses `stim ios --remote-build <name> --no-build-cache --json`.

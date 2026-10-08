@@ -257,7 +257,7 @@ struct StimDesktopApp: App {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
         #if DEBUG
-          Button("Replay notification animation") {
+          Button("Replay Notification Animation") {
             NotificationInbox.shared.arrivals.send(nil)
           }
         #endif
@@ -265,6 +265,7 @@ struct StimDesktopApp: App {
       SidebarCommands()
       InspectorCommands()
       NavigationCommands()
+      GoCommands()
     }
 
     #if DEBUG
@@ -335,7 +336,7 @@ struct NavigationCommands: Commands {
       Button("Overview") { navigation?.go(.overview) }
         .keyboardShortcut("1", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Active workspaces") { navigation?.go(.wall) }
+      Button("Active Workspaces") { navigation?.go(.wall) }
         .keyboardShortcut("2", modifiers: .command)
         .disabled(navigation == nil)
       Button("Notifications") { navigation?.go(.notifications) }

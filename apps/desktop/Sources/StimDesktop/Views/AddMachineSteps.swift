@@ -56,7 +56,7 @@ struct AddMachineSteps: View {
 
   @ViewBuilder private var test: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Test build").font(.stim(.title))
+      Text("Test Build").font(.stim(.title))
       Text("Expo blank (SDK 58), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
       if let sample = model.sample {
         Text(abbreviatingHome(sample.folder)).font(.stim(.caption, mono: true)).textSelection(.enabled)
@@ -95,7 +95,7 @@ struct AddMachineSteps: View {
               }
             }.disabled(sample.running || !model.wizard.capabilities.contains(.build))
           }
-          Button("Skip test") { Task { await sample.skip() } }
+          Button("Skip Test") { Task { await sample.skip() } }
         }
       }
       if !model.wizard.capabilities.contains(.build) {
@@ -181,16 +181,16 @@ struct AddMachineSteps: View {
       "Build and run this project on iOS with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
     return VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        Label("Try it", systemImage: "sparkles").font(.stim(.headline))
+        Label("Try It", systemImage: "sparkles").font(.stim(.headline))
         Spacer()
-        CopyButton(prompt, title: "Copy prompt", help: "Copy the agent prompt")
+        CopyButton(prompt, title: "Copy Prompt", help: "Copy the agent prompt")
       }
       Text(prompt).font(.stim(.callout)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       Text("Or run it yourself in a project:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       CopyableCommand(command: "stim ios --remote-build \(machine)")
       if model.sample != nil {
-        Button("Run a test build with a sample app") { model.openTest() }
+        Button("Run a Test Build with a Sample App") { model.openTest() }
           .buttonStyle(.stim(.plain))
       }
     }

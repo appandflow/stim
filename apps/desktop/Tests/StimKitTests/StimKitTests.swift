@@ -590,7 +590,7 @@ import Testing
     #expect(StatusFilter.summary(StatusFilter.all) == "All")
     #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
     #expect(StatusFilter.summary([]) == "None")
-    #expect(StatusFilter.summary([.notSetUp]) == "Not set up")
+    #expect(StatusFilter.summary([.notSetUp]) == "Not Set Up")
     #expect(StatusFilter.summary([.idle, .live]) == "Active, Idle")
     #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
   }
@@ -970,6 +970,16 @@ import Testing
   @Test func findsSimulatorAndEmulatorByIdentityNotPrefix() throws {
     let roots = workspaceRoots(try workspace(), in: ProcessTable.parse(ps))
     #expect(roots == [500, 501, 600, 700])
+  }
+
+  @Test func countsAnOwnedMacosAppAsARoot() throws {
+    let json = """
+      {"path":"/w","live":true,"warnings":[],
+       "macos":{"launchId":"l","product":"App","bundle":"/b","bundleId":"id","executable":"/e","state":"running",
+                "app":{"pid":502,"startedAtMicros":1},"build":{"state":"ok","startedAt":"2026-10-08T00:00:00Z"}}}
+      """
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(workspaceRoots(env, in: ProcessTable.parse(ps)) == [502])
   }
 
   @Test func ignoresASupervisorPidOfAWorkspaceThatIsNotLive() throws {

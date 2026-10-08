@@ -181,7 +181,7 @@ struct ActivitySheet: View {
   }
 
   private var commandOutput: some View {
-    DisclosureGroup("Command output", isExpanded: $showsCommandOutput) {
+    DisclosureGroup("Command Output", isExpanded: $showsCommandOutput) {
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .top, spacing: Space.md) {
           CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
@@ -251,7 +251,7 @@ struct ActivitySheet: View {
         Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
           .disabled(!report.actionable)
           .confirmationDialog(
-            "Delete what stim gc reported?", isPresented: $confirmingDelete, titleVisibility: .visible
+            "Delete What stim gc Reported?", isPresented: $confirmingDelete, titleVisibility: .visible
           ) {
             Button("Run stim \(deleteArguments.filter { $0 != "--json" }.joined(separator: " "))", role: .destructive) {
               actions.run("Clean up", StimCommand(deleteArguments, cwd: run.command.cwd), key: ActionCenter.machineKey)
@@ -269,7 +269,7 @@ struct ActivitySheet: View {
   }
 
   private func idleMenu(_ report: GcPreview) -> some View {
-    Menu("Shut down idle\u{2026}") {
+    Menu("Shut Down Idle\u{2026}") {
       ForEach(GcPreview.idleDurations, id: \.self) { duration in
         let count = GcPreview.idleSeconds(duration).map { report.idleShutdownCount(atLeast: $0) } ?? 0
         Button("Idle \(duration) or more (\(count))") { idleDuration = duration }
@@ -279,7 +279,7 @@ struct ActivitySheet: View {
     .fixedSize()
     .help("stim gc --idle <duration> shuts down owned devices with no driver or activity for that long. It never deletes them.")
     .confirmationDialog(
-      "Shut down devices idle \(idleDuration ?? "") or more?",
+      "Shut Down Devices Idle \(idleDuration ?? "") or More?",
       isPresented: Binding(get: { idleDuration != nil }, set: { if !$0 { idleDuration = nil } }),
       titleVisibility: .visible
     ) {
@@ -337,7 +337,7 @@ struct GcPreviewView: View {
 
   var body: some View {
     if report.sections.isEmpty {
-      EmptyState(title: "Nothing to clean up", message: "stim gc found nothing left behind.")
+      EmptyState(title: "Nothing to Clean Up", message: "stim gc found nothing left behind.")
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.lg) {

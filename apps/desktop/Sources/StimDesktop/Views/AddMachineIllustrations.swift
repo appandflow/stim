@@ -8,9 +8,11 @@ struct AddMachineIllustration: View {
     case tailnet(connected: Bool)
     case noMac
     case tailscaleSwitch
+    case tailscaleOff
     case tailscaleUp
     case capabilities(Set<SetupCapability>)
     case command
+    case waiting
     case tools
     case ready
   }
@@ -23,6 +25,7 @@ struct AddMachineIllustration: View {
       case .tailnet(let connected): TailnetArt(connected: connected)
       case .noMac: TailnetArt(connected: false, badge: "questionmark.circle.fill")
       case .tailscaleSwitch: TailscaleSwitchArt()
+      case .tailscaleOff: TailscaleSwitchArt(staysOff: true)
       case .tailscaleUp:
         ZStack {
           BrandHalo(size: 130)
@@ -33,6 +36,7 @@ struct AddMachineIllustration: View {
             ], mode: .scripted(loop: true), height: 88)
         }
       case .capabilities(let chosen): CapabilitiesArt(chosen: chosen)
+      case .waiting: TailnetArt(connected: true)
       case .command: MachinesArt(badge: "terminal.fill")
       case .tools: ToolsArt()
       case .ready: MachinesArt(badge: "checkmark")
@@ -104,6 +108,7 @@ private struct TailnetArt: View {
 
 /// The Tailscale menu bar item's menu, with its switch turning on.
 private struct TailscaleSwitchArt: View {
+  var staysOff = false
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var on = false
 
@@ -127,7 +132,7 @@ private struct TailscaleSwitchArt: View {
         HStack(spacing: Space.md) {
           VStack(alignment: .leading, spacing: 0) {
             Text("Tailscale").font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text)
-            Text(on ? "Connected" : "Disconnected").font(.stim(.caption)).foregroundStyle(
+            Text(on ? "Connected" : "Not Connected").font(.stim(.caption)).foregroundStyle(
               on ? Palette.success : Palette.secondary
             )
             .contentTransition(.opacity)
@@ -149,6 +154,7 @@ private struct TailscaleSwitchArt: View {
       .shadow(color: Palette.shadow.opacity(0.12), radius: 8, y: 4)
     }
     .task {
+      guard !staysOff else { return }
       guard !reduceMotion else {
         on = true
         return
@@ -174,28 +180,32 @@ private struct CapabilitiesArt: View {
       BrandHalo(size: 130)
       BrandBadge(systemImage: "macmini.fill", size: 64)
         .opacity(chosen.isEmpty ? Opacity.disabled : 1)
+        .animation(fade, value: chosen.isEmpty)
       chip("hammer.fill", "Builds", on: chosen.contains(.build))
         .offset(x: -104, y: floating ? -26 : -20)
       chip("iphone", "Hosted simulators", on: chosen.contains(.deviceHost))
         .offset(x: 112, y: floating ? 30 : 24)
     }
-    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: chosen)
     .onAppear {
       guard !reduceMotion else { return }
       withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { floating = true }
     }
   }
 
+  private var fade: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.2) }
+
   private func chip(_ symbol: String, _ title: String, on: Bool) -> some View {
     Label(title, systemImage: symbol)
       .font(.stim(.caption, weight: .semibold))
-      .foregroundStyle(on ? Palette.primary : Palette.tertiary)
+      .foregroundStyle(Palette.primary)
+      .fixedSize()
       .padding(.horizontal, Space.md)
       .padding(.vertical, Space.xs)
       .background(Capsule().fill(Palette.surface))
-      .overlay(Capsule().strokeBorder(on ? Palette.accent.opacity(0.5) : Palette.border))
-      .shadow(color: Palette.shadow.opacity(on ? 0.08 : 0), radius: 4, y: 2)
-      .opacity(on ? 1 : 0.6)
+      .overlay(Capsule().strokeBorder(Palette.accent.opacity(0.5)))
+      .shadow(color: Palette.shadow.opacity(0.08), radius: 4, y: 2)
+      .opacity(on ? 1 : 0.45)
+      .animation(fade, value: on)
   }
 }
 

@@ -254,7 +254,7 @@ struct SetupGuideView: View {
 
   private var skill: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Add the Stim skill to your coding agent")
+      heading("Add the Stim Skill to Your Coding Agent")
       Text(
         "The skill tells Claude Code, Codex, Cursor and other agents to use Stim when they build, run or debug your app. It only points the agent at stim guide agent, so the guidance always matches the installed stim and upgrades need no reinstall."
       )
@@ -272,7 +272,7 @@ struct SetupGuideView: View {
 
   private var notifications: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Hear about it when something needs you")
+      heading("Hear About It When Something Needs You")
       Text(
         "Stim Desktop can alert you when an agent or this Mac needs you. Alert sends a macOS notification when the window is in the background; a request or machine problem also shows a card in the window. Silent has no sound, macOS notification or card: it lists the notification under the bell, which gives one small wiggle."
       )
@@ -305,7 +305,7 @@ struct SetupGuideView: View {
 
   private var check: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading("Check your setup")
+      heading("Check Your Setup")
       Text(
         "Optional. Stim builds iOS apps with Xcode and Android apps with the Android SDK and a JDK. These read-only checks show what this Mac has."
       )
@@ -365,7 +365,7 @@ struct SetupGuideView: View {
 
   private var projectCheck: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      Text("Check a project").font(.stim(.callout, weight: .semibold))
+      Text("Check a Project").font(.stim(.callout, weight: .semibold))
       Text(
         "stim doctor reports what a React Native or Expo project needs for fast worktrees and builds, with the fix for each finding. It repairs nothing unless you choose Fix, and adds the folder to the projects Stim lists."
       )
@@ -401,7 +401,7 @@ struct SetupGuideView: View {
 
   private var done: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      heading(setup.isComplete ? "You're set" : "Almost there")
+      heading(setup.isComplete ? "You're Set" : "Almost There")
       Text(
         setup.isComplete
           ? "Ask your coding agent to run your app, and its workspace shows up here."
@@ -422,7 +422,7 @@ struct SetupGuideView: View {
           .accessibilityLabel([item.title, stateDescription(item)].filter { !$0.isEmpty }.joined(separator: ", "))
         }
       }
-      Button("Take the tutorial") {
+      Button("Take the Tutorial") {
         onboarding.finishGuide()
         OpenRequests.shared.showTutorial(.begin)
       }

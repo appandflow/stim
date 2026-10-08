@@ -181,7 +181,7 @@ struct DeviceTile: View {
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
       }
     }
-    .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
+    .alert("Clipboard Transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
       Button("OK", role: .cancel) { clipboardError = nil }
     } message: {
       Text(clipboardError ?? "")
@@ -379,7 +379,7 @@ struct DeviceTile: View {
   }
 
   private var optionsButton: some View {
-    Button("Simulator options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
+    Button("Simulator Options", systemImage: "slider.horizontal.3") { showsSimulatorOptions = true }
       .labelStyle(.iconOnly)
       .buttonStyle(DeviceControlButtonStyle())
       .help("Display, appearance, accessibility and clipboard settings")
@@ -399,7 +399,7 @@ struct DeviceTile: View {
 
   private var optionsTitle: String {
     if case .android = device { return "Emulator options" }
-    return "Simulator options"
+    return "Simulator Options"
   }
 
   private var buttonBar: some View {
@@ -601,7 +601,7 @@ struct DeviceTile: View {
   }
 
   private func hingeAngleControl(udid: String) -> some View {
-    Button("Hinge angle", systemImage: "angle") {
+    Button("Hinge Angle", systemImage: "angle") {
       hingeEditing = false
       hingeAngle = currentHingeAngle
       showsHingeAngle = true
@@ -628,7 +628,7 @@ struct DeviceTile: View {
           }
         }
         .disabled(folding)
-        .accessibilityLabel("Hinge angle")
+        .accessibilityLabel("Hinge Angle")
         .accessibilityValue("\(Int(hingeAngle)) degrees")
         if let foldError { Text(foldError).foregroundStyle(Palette.warning) }
       }

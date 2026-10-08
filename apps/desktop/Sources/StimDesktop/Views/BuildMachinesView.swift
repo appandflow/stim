@@ -31,7 +31,7 @@ struct BuildMachinesView: View {
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
       canAsk: checkout != nil,
-      addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone },
+      addDisabled: model.working != nil || model.updates.values.contains { !$0.isDone },
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
@@ -87,8 +87,9 @@ struct BuildMachinesView: View {
     .task(id: PollKey(waiting: waiting, checkout: checkout)) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(waiting ? 15 : 60))
-        guard !model.isBusy, !Task.isCancelled, !(model.entries ?? []).isEmpty else { continue }
+        guard !model.isBusy, !Task.isCancelled, model.entries != nil else { continue }
         await model.checkTailscale()
+        guard !(model.entries ?? []).isEmpty else { continue }
         await model.refreshStatuses(checkout: checkout, ask: false)
       }
     }
@@ -196,7 +197,9 @@ struct BuildMachinesContent<ThisMac: View>: View {
         Form {
           Section {
             notices
-            BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
+            BuildMachinesEmptyState(
+              add: add, addDisabled: addDisabled, tailscaleOff: tailscaleRunning == false,
+              checking: tailscaleRunning == nil)
           }
           thisMac
         }
@@ -205,7 +208,9 @@ struct BuildMachinesContent<ThisMac: View>: View {
       } else if entries.isEmpty {
         VStack(spacing: 0) {
           notices.padding([.horizontal, .top], Space.xl)
-          BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
+          BuildMachinesEmptyState(
+            add: add, addDisabled: addDisabled, tailscaleOff: tailscaleRunning == false,
+            checking: tailscaleRunning == nil)
         }
       } else {
         list(entries)
@@ -227,17 +232,13 @@ struct BuildMachinesContent<ThisMac: View>: View {
       if let failure {
         Text(failure).foregroundStyle(Palette.error).textSelection(.enabled)
       }
-      if tailscaleRunning == false {
-        Label("Tailscale is not running, so Stim cannot reach other Macs.", systemImage: "exclamationmark.triangle.fill")
-          .foregroundStyle(Palette.warning)
-      }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func list(_ entries: [String]) -> some View {
     Form {
-      if failure != nil || tailscaleRunning == false { Section { notices } }
+      if failure != nil { Section { notices } }
       Section {
         ForEach(entries, id: \.self) { entry in
           let status = statuses?.first { $0.machine == entry }
