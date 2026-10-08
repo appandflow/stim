@@ -4002,7 +4002,12 @@ if (env.FAKE_XCRUN_DELAYS && basename(process.argv[1]) === 'xcrun') {
   const seen = existsSync(counterFile) ? Number(readFileSync(counterFile, 'utf8')) : 0;
   writeFileSync(counterFile, String(seen + 1));
   const ms = delays[Math.min(seen, delays.length - 1)];
-  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  if (env.FAKE_XCRUN_GATE) {
+    writeFileSync(env.FAKE_XCRUN_GATE + '.' + seen + '.ready', '');
+    while (!existsSync(env.FAKE_XCRUN_GATE + '.' + seen + '.release')) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  } else if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 if (basename(process.argv[1]) === 'sips' && args.includes('bmp')) {
   const bmp = Buffer.alloc(58);
@@ -4429,32 +4434,59 @@ describe('frames.subscribe', () => {
     async () => {
       const a = jpeg(10, 20, 'A');
       const b = jpeg(10, 20, 'B');
+      const gate = join(root, 'capture-gate');
+      const realSetTimeout = setTimeout;
+      const ready = async (capture: number) => {
+        const file = `${gate}.${capture}.ready`;
+        for (let i = 0; i < 200 && !existsSync(file); i++) await new Promise((resolve) => realSetTimeout(resolve, 10));
+        expect(existsSync(file)).toBe(true);
+      };
       const port = await startWithTools(
         {
           FAKE_STIM_PAYLOADS: statusWith({ ios: OWNED_SIM }),
           FAKE_FRAMES: JSON.stringify([a, b].map((bytes) => bytes.toString('base64'))),
           FAKE_XCRUN_DELAYS: JSON.stringify([200, 600, 20]),
           FAKE_XCRUN_DELAY_COUNTER: join(root, 'xcrun-delay-counter'),
+          FAKE_XCRUN_GATE: gate,
         },
         { toolTimeoutMs: 400, slowCaptureMs: 150, failureBackoffMs: 100, maxConsecutiveFailures: 3 },
       );
       const client = await authed(port);
-      await client.request('frames.subscribe', { workspace, platform: 'ios' });
-      expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
-      expect(await client.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
-      let recovered = false;
-      let changed = false;
-      while (!recovered || !changed) {
-        const message = await client.next();
-        if ('event' in message && message.event === 'frame-delayed') {
-          expect(message).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
-          recovered = true;
-        } else {
-          expect(message).toMatchObject({ event: 'frame', data: b.toString('base64') });
-          changed = true;
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      try {
+        await client.request('frames.subscribe', { workspace, platform: 'ios' });
+        await ready(0);
+        await vi.advanceTimersByTimeAsync(200);
+        writeFileSync(`${gate}.0.release`, '');
+        expect(await client.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
+        expect(await client.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+        await vi.advanceTimersByTimeAsync(200);
+        await ready(1);
+        await vi.advanceTimersByTimeAsync(400);
+        const retained = await authed(port);
+        await retained.request('frames.subscribe', { workspace, platform: 'ios' });
+        expect(await retained.next()).toMatchObject({ event: 'frame', data: a.toString('base64') });
+        expect(await retained.next()).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: true });
+        await vi.advanceTimersByTimeAsync(100);
+        await ready(2);
+        await vi.advanceTimersByTimeAsync(20);
+        writeFileSync(`${gate}.2.release`, '');
+        let recovered = false;
+        let changed = false;
+        while (!recovered || !changed) {
+          const message = await client.next();
+          if ('event' in message && message.event === 'frame-delayed') {
+            expect(message).toEqual({ event: 'frame-delayed', subscription: 's1', delayed: false });
+            recovered = true;
+          } else {
+            expect(message).toMatchObject({ event: 'frame', data: b.toString('base64') });
+            changed = true;
+          }
         }
+        expect(toolRuns().filter((run) => run.tool === 'xcrun').length).toBeGreaterThanOrEqual(3);
+      } finally {
+        vi.useRealTimers();
       }
-      expect(toolRuns().filter((run) => run.tool === 'xcrun').length).toBeGreaterThanOrEqual(3);
     },
     10_000,
   );
