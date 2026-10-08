@@ -1946,6 +1946,18 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
 
+  A carried ios/Pods still names the source checkout's path in its generated
+  files and in the checksum of a podspec that embeds that path (the
+  precompiled ExpoModulesCore). When ios/Podfile.lock and the carried
+  ios/Pods/Manifest.lock differ only by those checksums, warm rewrites the
+  source path to the worktree's path in Pods/Target Support Files,
+  Pods.xcodeproj, Local Podspecs and absolute symlinks, then makes
+  Manifest.lock equal Podfile.lock, so the first \`stim ios\` skips
+  \`pod install\`. Any other difference, a missing podspec, or a podspec
+  that does not embed the source path, any other file in Pods that names
+  the source path, or carried node_modules that do not match the worktree's
+  lockfile leaves Pods as copied, and \`pod install\` runs. Warm does not edit Podfile.lock.
+
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about
   regeneration. Native intermediates can record the source checkout's paths;
