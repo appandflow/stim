@@ -7269,21 +7269,24 @@ describe('request log', () => {
     expect(lines.join('\n')).not.toContain(token);
   });
 
-  it('with debug on, times every request and splits the hello into its slow steps', async () => {
-    const lines: string[] = [];
-    const port = await start({
-      whoisDelayMs: 20,
-      requestLog: createRequestLog({
-        service: (line) => lines.push(line),
-        debug: { enabled: () => true, log: () => {} },
-      }),
-    });
-    const { token } = await pair(port, '100.64.0.2');
-    lines.length = 0;
-    const client = await connect(port, '100.64.0.2');
-    await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
-    expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*whois=\d+/);
-  });
+  test.skipIf(!fakeTailscale)(
+    'with debug on, times every request and splits the hello into its slow steps',
+    async () => {
+      const lines: string[] = [];
+      const port = await start({
+        whoisDelayMs: 20,
+        requestLog: createRequestLog({
+          service: (line) => lines.push(line),
+          debug: { enabled: () => true, log: () => {} },
+        }),
+      });
+      const { token } = await pair(port, '100.64.0.2');
+      lines.length = 0;
+      const client = await connect(port, '100.64.0.2');
+      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*whois=\d+/);
+    },
+  );
 });
 
 const off = { enabled: () => false, log: () => {} };
