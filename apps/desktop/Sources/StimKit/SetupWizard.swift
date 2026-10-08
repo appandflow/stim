@@ -271,6 +271,7 @@ public struct SetupWizard: Sendable {
     case newCommand(SetupTicket)
     case manualPort(Int)
     case tick
+    case back
   }
   public enum Effect: Equatable, Sendable {
     case writeEntries(port: Int)
@@ -368,6 +369,22 @@ public struct SetupWizard: Sendable {
       if (1...65535).contains(port), !entriesWritten { self.port = port }
     case .journalUnavailable: break
     case .tick: break
+    case .back:
+      guard canGoBack else { return [] }
+      if phase == .choose {
+        phase = .pick
+        mac = nil
+        build = nil
+        host = nil
+        preStateKnown = false
+      } else {
+        phase = .choose
+        ticket = nil
+        commandIssuedAt = nil
+        port = nil
+        lastAsk = nil
+        existingIds = [:]
+      }
     }
     if ticket != nil, phase != .cancelled, allApproved {
       phase = .approved
@@ -406,6 +423,17 @@ public struct SetupWizard: Sendable {
         let state = status(for: capability)?.state
         return state == .notAsked || state == .revoked || state == .lapsed
       }
+  }
+
+  /// Going back writes nothing and asks nothing of the remote Mac only while no setup journal has arrived and no
+  /// setting was written: choosing capabilities, or a command that may not have been run yet. A command run just
+  /// before going back can still install on the remote Mac; the wizard then forgets its ticket.
+  public var canGoBack: Bool {
+    switch phase {
+    case .choose: return true
+    case .command, .expiredCommand: return journal == nil && !entriesWritten && !writeRequested
+    case .pick, .running, .approved, .cancelled: return false
+    }
   }
 
   public func failure(now: Date) -> Failure? {
