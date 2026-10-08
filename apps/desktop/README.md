@@ -1136,6 +1136,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    preview of what setup will do. Both can be off. Then Next is disabled and
    the preview holds only `$ stim-server setup` and a cursor.
 3. **Set it up.**
+   - While nothing has reached the journal yet, the art shows this Mac and the
+     build Mac linked by a travelling dot (still under Reduce Motion).
    - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
      Terminal while signed in there; answering each y/N request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
@@ -1146,8 +1148,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      approved, a success view replaces the mirror; a failed step keeps the
      mirror and its fix. It lists the approvals and the current
      Screen recording and Device control permissions (with the fix for a
-     skipped one), and keeps the log behind **Show setup log**. The expiry
-     line hides after completion.
+     skipped one); it has no log. The expiry line shows only until the
+     command starts.
 4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
    the setup journal. When Builds is chosen, Android tools are always compared
    and never block Next. Only a problem that stops the chosen capability blocks

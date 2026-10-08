@@ -272,8 +272,7 @@ so there is no Check again button:
    for each new capability grant there; No is the default. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
-   shows the approved capabilities, any skipped permission with its fix, and
-   the setup log behind **Show setup log**. There is no SSH option.
+   shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
 4. **Tools.** Compare the worker's tools with this Mac, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
    capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
