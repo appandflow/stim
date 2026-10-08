@@ -463,15 +463,18 @@ budget is off. A value of the wrong shape refuses start, ios and android with
 STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
 
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
-Report-only in this release: it measures and plans, and deletes or stops nothing.
+maintenance.mode report (the default) measures and plans and deletes nothing; on
+removes what gc would under the caps and floors below; off disables it.
 STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
+maintenance.keep is a project setting: pin a workspace so a pass never clears
+its build outputs or removes its worktree.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
   .map(
     (
       setting,
-    ) => `  ${setting.key}  ${setting.env}  ${setting.default === undefined ? 'unset' : `default ${setting.default}`}
+    ) => `  ${setting.key}  ${setting.env ?? 'project setting'}  ${setting.default === undefined ? 'unset' : `default ${setting.default}`}
     ${setting.description}`,
   )
   .join('\n')}

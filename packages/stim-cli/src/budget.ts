@@ -6,7 +6,7 @@ import { phaseLine } from './command-output.ts';
 import { formatBytes, measuredDirectorySize, volumeRootFor } from './fs-util.ts';
 import { capacity, environmentState, formatSpace, type AndroidRuntimeFacts } from './status.ts';
 import { discoverCaches } from './cache/caches.ts';
-import { planCacheEmptying, trimCaches } from './commands/gc/caches.ts';
+import { planCacheEmptying, trimCaches, type GcCache } from './commands/gc/caches.ts';
 import { deviceSweepIsScoped } from './commands/gc/devices.ts';
 import {
   collectIdleDevices,
@@ -35,7 +35,7 @@ import { readWorkspaceState } from './workspace/workspace-state.ts';
 const MB = 1024 * 1024;
 const GB_IN_MB = 1024;
 const COMMITTED_MEMORY_SHARE = 0.6;
-const STALE_CACHE_DAYS = 14;
+export const STALE_CACHE_DAYS = 14;
 const DEVICE_LIST_TIMEOUT_MS = 10_000;
 const USAGE_TIMEOUT_MS = 10_000;
 
@@ -401,14 +401,18 @@ async function reclaimWorkspaceOutputs({ root, dryRun, now, diskRecovered }: Ste
   return { targets, failures };
 }
 
-function cacheLabel(cache: { name: string; dir: string }): string {
+export function cacheLabel(cache: { name: string; dir: string }): string {
   return `${cache.name} ${cache.dir}`;
 }
 
-function reclaimStaleCacheEntries({ dryRun }: StepContext): StepResult {
-  const caches = planCacheEmptying(discoverCaches(), false).filter(
+export function trimmableCaches(): GcCache[] {
+  return planCacheEmptying(discoverCaches(), false).filter(
     (cache) => cache.prune !== 'report-only' && cache.prune !== 'atomic' && !cache.machineGlobal,
   );
+}
+
+function reclaimStaleCacheEntries({ dryRun }: StepContext): StepResult {
+  const caches = trimmableCaches();
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
   return { targets: trimCaches(caches, STALE_CACHE_DAYS).map(cacheLabel), failures: 0 };
 }

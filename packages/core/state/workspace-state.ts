@@ -389,11 +389,14 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
   return candidates.length ? Math.max(...candidates) : NaN;
 }
 
+export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
+
 export function workspaceLastUsed(root: string): number {
   const logs = workspaceLogsDir(root);
   let mtimes: number[] = [];
   try {
     mtimes = readdirSync(logs).flatMap((name) => {
+      if (name.startsWith(MAINTENANCE_LOG_NAME)) return [];
       try {
         return [statSync(join(logs, name)).mtimeMs];
       } catch {

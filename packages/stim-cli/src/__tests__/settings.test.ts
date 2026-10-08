@@ -437,6 +437,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
     invalid: 'bogus',
     expected: 'one of: auto, off, expo, cloudflared, ngrok, tailscale',
   },
+  'maintenance.keep': { valid: true, invalid: 'yes', expected: 'true or false' },
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },

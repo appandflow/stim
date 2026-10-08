@@ -53,7 +53,8 @@ afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
-  for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB']) delete process.env[key];
+  for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
+    delete process.env[key];
   process.exitCode = 0;
 });
 
@@ -303,6 +304,7 @@ test('a child that fails before writing anything is not respawned for one minute
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
+  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
     disk: [],
     memory: { level: 'normal', availableBytes: null, pressured: false },
@@ -321,11 +323,16 @@ test('cached Swift CAS observations refresh build protection before each plan', 
     },
   ];
   const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
-  expect((await preview.plannedMaintenance(null, sizes, settings)).actions).toContainEqual(
+  const emergency = {
+    disk: [{ volume: '/', freeMb: 1024 }],
+    memory: { level: 'normal' as const, availableBytes: null, pressured: false },
+    warningSince: null,
+  };
+  expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
   locks.mockReturnValue([{ alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number]]);
-  const busy = await preview.plannedMaintenance(null, sizes, settings);
+  const busy = await preview.plannedMaintenance(emergency, sizes, settings);
   expect(busy.actions).toEqual([]);
   expect(busy.skips).toContainEqual(
     expect.objectContaining({ target: sharedCompilationCache(), reason: 'a build lock or slot is live or unresolved' }),

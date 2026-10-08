@@ -20,12 +20,15 @@ import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
+export function measureDisk(): MaintenancePressure['disk'] {
+  return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
+}
+
 export function measurePressure(
   settings: MaintenanceSettings,
   previous: MaintenancePressure | null,
   now: number,
 ): MaintenancePressure {
-  const config = loadConfig();
   const level = readHostMemoryPressure();
   const availableBytes = process.platform === 'darwin' ? null : freemem();
   const warningSince = level === 'warning' ? (previous?.warningSince ?? now) : null;
@@ -41,7 +44,7 @@ export function measurePressure(
             ? totalmem() * 0.1
             : settings.minAvailableMemoryGb * 1024 ** 3)));
   return {
-    disk: readVolumeSpace([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)]),
+    disk: measureDisk(),
     memory: { level, availableBytes, pressured },
     warningSince,
   };

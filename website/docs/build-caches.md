@@ -258,14 +258,44 @@ shared caches on a different volume. The same values can live in the machine con
 ## Automatic maintenance
 
 CLI commands and `status --watch` start a detached maintenance pass when a
-check is due. This release reports only: it never stops or deletes resources.
-Disk and memory pressure are checked every minute, and Stim-owned directory
-sizes every hour. On macOS the memory signal is the sysctl pressure level,
-with no signal when sysctl fails. Only other platforms use `os.freemem()`.
-Size scans defer under high host load. The scan covers
+check is due. In the default `report` mode a pass only measures, plans and
+logs. In `on` mode it also removes what `stim gc --delete` would remove, under
+the caps and floors in [settings](./settings.md#automatic-maintenance).
+Disk and memory pressure are checked every minute, Stim-owned directory sizes
+every hour, finished worktrees every 15 minutes and the age sweep once a day.
+On macOS the memory signal is the sysctl pressure level, with no signal when
+sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
+recorded; a pass never shuts down idle devices or dev servers or stops helpers.
+Removing a finished worktree or orphaned directory does tear down that
+workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
+Size, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
 compilation cache, and other registered Stim caches. Other tools' caches are
 not managed by this feature.
+
+In `on` mode a pass works through these steps, cheapest to rebuild first, and
+stops the disk-driven ones once free space is back above the floor:
+
+1. Orphaned workspace directories whose project is gone, and registered caches
+   whose directory no longer exists.
+2. Build outputs of idle workspaces: over `maintenance.workspaceOutputsMaxGb`,
+   below the free-disk floor, or unused for `maintenance.olderThanDays`.
+3. Native build and Metro cache entries, least recently used first, down to
+   `maintenance.capTargetPercent` of their caps, plus entries unused for
+   `maintenance.olderThanDays`.
+4. The Swift compilation cache, emptied whole, only below
+   `budget.hardFloorDiskGb` and with no build running.
+5. Linked worktrees whose branch or pull request finished, by the same rules as
+   `stim gc --delete` and `gc.worktreeGraceMinutes`.
+
+A pass keeps a workspace that is in use, holds a lock, was used within
+`maintenance.protectRecentHours`, or is the workspace of the command that
+started the pass. It keeps cache entries used within that window, entries named
+by a project's last builds, a parked device or a running build, and Metro
+entries of a project with a running dev server. Anything it cannot verify is
+kept. Pin a workspace against all of this with `maintenance.keep`. ccache
+limits itself through `caches.ccacheMaxGb`. The first build after a clear
+rebuilds what was removed.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for
@@ -276,8 +306,10 @@ add `--errors` for failures after the latest launch marker.
 The machine log is `$STIM_HOME/maintenance/maintenance.ndjson`; `stim doctor`
 prints its path. It rotates at 1 MiB by default, retains the rotated generation
 for 30 days, and logs debug checks only with `maintenance.logChecks` enabled.
-Actions and explaining skips are logged only when newly planned. Pass records
-are logged after size checks or changes to actions, skips or blocked reasons.
+In report mode actions and explaining skips are logged only when newly planned.
+In on mode every action taken, failure and explaining skip is logged with its
+size, and pass records carry the bytes freed. Removed worktrees and orphaned
+directories appear in the machine log only.
 The hook skips `gc --delete` and live or unresolved claims. Failed attempts
 back off for at least one minute; child crash logs are truncated above 64 KiB.
 `status` and `doctor` report unresolved claims with a removal command to run
@@ -288,9 +320,13 @@ A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
 with the holder and recovery guidance.
 
 The default mode is `report`, or `off` under `STIM_HOME` or `CI` unless
-`STIM_MAINTENANCE` is explicit. Turn it off with:
+`STIM_MAINTENANCE` is explicit. Let passes act, or turn them off, with:
+
+<StimTabs code="stim settings set maintenance.mode on" />
 
 <StimTabs code="stim settings set maintenance.mode off" />
+
+Pin one workspace with `stim settings set maintenance.keep true` in its project.
 
 Copy this agent prompt:
 
