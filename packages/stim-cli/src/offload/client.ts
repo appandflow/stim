@@ -26,6 +26,7 @@ import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-f
 import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
+import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -567,7 +568,7 @@ type MachineProbe =
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
 async function probeMachine(
   credential: BuildMachineCredential,
-  identity: Pick<RepoIdentity, 'repo' | 'lockfile'>,
+  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
   const target = pinnedEndpoint(credential);
@@ -576,7 +577,11 @@ async function probeMachine(
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   const reply = await connection.request(
     'build.offer',
-    { repo: identity.repo, ...(identity.lockfile ? { lockfile: identity.lockfile } : {}) },
+    {
+      repo: identity.repo,
+      ...(identity.lockfile ? { lockfile: identity.lockfile } : {}),
+      ...(identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
+    },
     offerMs,
   );
   const failure = replyError(reply);
@@ -616,7 +621,8 @@ export async function chooseBuildMachine({
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
-  const asked = await Promise.all(machines.map((credential) => probeMachine(credential, identity)));
+  const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
+  const asked = await Promise.all(machines.map((credential) => probeMachine(credential, { ...identity, rubyVersion })));
   const { order, reasons } = pickOffer({
     selected,
     mode,
@@ -1088,7 +1094,11 @@ export function offloadCheck(
         problems: [{ code: 'checkout', reason: `this app is not in a git checkout (${identity})` }],
       };
     }
-    const probe = await probeMachine(credential, identity, { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS });
+    const probe = await probeMachine(
+      credential,
+      { ...identity, rubyVersion: readRubyVersion(projectRoot) ?? undefined },
+      { connectMs: DOCTOR_CONNECT_MS, offerMs: DOCTOR_OFFER_MS },
+    );
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();

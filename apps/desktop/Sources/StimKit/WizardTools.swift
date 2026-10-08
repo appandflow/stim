@@ -151,8 +151,6 @@ private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool) -> (
   }
 }
 
-/// A different global CocoaPods only matters to projects that do not pin CocoaPods with Bundler: `stim doctor`
-/// compares the global `pod --version` only for those, and checks for Bundler on the build Mac for the others.
 private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: String) -> (
   detail: String, consequence: String, fix: String
 )? {
@@ -169,15 +167,15 @@ private func cocoapodsAdvice(problems: [BuildMachineStatus.Problem], machine: St
   let here = String(match.2)
   guard there != "null", there != "undefined", here != "null", here != "undefined" else {
     return (
-      "Global CocoaPods: \(there == "null" || there == "undefined" ? "none" : there) on \(machine), \(here == "null" || here == "undefined" ? "none" : here) here.",
+      "CocoaPods used by this project: \(there == "null" || there == "undefined" ? "none" : there) on \(machine), \(here == "null" || here == "undefined" ? "none" : here) here.",
       "Projects that pin CocoaPods in their Gemfile are not affected. Other projects build on this Mac.",
       "Pin it in the project:\nbundle add cocoapods\nbundle install"
     )
   }
   return (
-    "Global CocoaPods differs: \(there) on \(machine), \(here) here.",
-    "Projects that pin CocoaPods in their Gemfile use that version on both Macs. Other projects build on this Mac until the global versions match.",
-    "Pin it in the project:\nbundle add cocoapods --version \(here)\nbundle install\nOr match the global version on \(machine), on the PATH stim-server uses:\ngem install cocoapods -v \(here)"
+    "CocoaPods used by this project: \(there) on \(machine), \(here) here.",
+    "Projects that pin CocoaPods in their Gemfile use that version on both Macs. Other projects build on this Mac until the selected versions match.",
+    "Pin it in the project:\nbundle add cocoapods --version \(here)\nbundle install\nOr match this project's CocoaPods on \(machine), in the project's Ruby environment:\ngem install cocoapods -v \(here)"
   )
 }
 

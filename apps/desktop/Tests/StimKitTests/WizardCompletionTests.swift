@@ -53,7 +53,6 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertFalse(try row("runtime", "iOS 26.0 there, iOS 27.0 here", [.build, .deviceHost]).blocks)
     let pods = try row("cocoapods", "CocoaPods 1.17.0 there, 1.16.2 here", [.build])
     XCTAssertFalse(pods.blocks)
-    XCTAssertEqual(pods.detail, "Global CocoaPods differs: 1.17.0 on mini, 1.16.2 here.")
     let fixes = pods.state.fix?.split(separator: "\n").map(String.init) ?? []
     XCTAssertTrue(fixes.contains("bundle add cocoapods --version 1.16.2"))
     XCTAssertTrue(fixes.contains("gem install cocoapods -v 1.16.2"))

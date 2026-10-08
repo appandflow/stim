@@ -761,7 +761,7 @@ export async function acquireIosArtifact(
       target: {
         platform: 'ios',
         local: {
-          ...iosToolchain(),
+          ...iosToolchain(root),
           ...(hostedDestination ? { arch: hostedDestination.architecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
         },
         runtime: candidate.runtime,

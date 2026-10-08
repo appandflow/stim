@@ -766,11 +766,16 @@ export type BuildPlanResult = BuildPlanPayload;
 /** A client's repository on a remote Mac: letters, digits, `.`, `_` and `-`, at most 80. */
 export const BUILD_REPO_PATTERN = '^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$';
 
+/** A version-manager Ruby installation name, without path separators. */
+export const BUILD_RUBY_VERSION_PATTERN = '^(?!\\.{1,2}$)[^/\\\\\\u0000\\r\\n]+$';
+
 /** Asks a remote Mac what it can build, how busy it is, and how warm its copy of `repo` is. */
 export interface BuildOfferParams {
   repo: string;
   /** sha256 of the repository's lockfile, compared with the one the machine last installed from. */
   lockfile?: string;
+  /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
+  rubyVersion?: string;
 }
 
 /** The toolchain a build must match exactly on both Macs. */

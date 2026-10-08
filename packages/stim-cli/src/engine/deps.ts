@@ -143,8 +143,12 @@ function readOrNull(file: string) {
   }
 }
 
-export function podEnv(
-  root: string,
+export function podEnv(root: string, options: Parameters<typeof podEnvForRuby>[1] = {}): NodeJS.ProcessEnv {
+  return podEnvForRuby(readRubyVersion(root), options);
+}
+
+export function podEnvForRuby(
+  version: string | null,
   {
     env = process.env,
     home = homedir(),
@@ -158,7 +162,6 @@ export function podEnv(
     LANG: env.LANG ?? 'en_US.UTF-8',
     LC_ALL: env.LC_ALL ?? env.LANG ?? 'en_US.UTF-8',
   };
-  const version = readRubyVersion(root);
   if (!version) return out;
   const candidates: Array<{ bin: string; gems?: string }> = [
     { bin: join(home, '.rbenv', 'versions', version, 'bin') },

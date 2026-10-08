@@ -26,6 +26,7 @@ import {
   ROTATE_DIRECTIONS,
   DEVICE_POSTURES,
   BUILD_REPO_PATTERN,
+  BUILD_RUBY_VERSION_PATTERN,
   PUSH_EVENTS,
   LEGACY_PUSH_EVENTS,
   NOTIFICATION_LEVELS,
@@ -1439,7 +1440,11 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['repo'],
             additionalProperties: false,
-            properties: { repo: buildRepo, lockfile: sha256 },
+            properties: {
+              repo: buildRepo,
+              lockfile: sha256,
+              rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
+            },
           }),
           request('build.sync', {
             type: 'object',
