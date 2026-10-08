@@ -518,7 +518,7 @@ export function readStatsReport(key: string | null, now: number): { report: Stat
   };
 }
 
-export function findProjectRoot(startDir: string): string | null {
+export function* projectRootDirectories(startDir: string): Generator<string> {
   let dir: string;
   try {
     dir = realpathSync(resolve(startDir));
@@ -526,9 +526,16 @@ export function findProjectRoot(startDir: string): string | null {
     dir = resolve(startDir);
   }
   while (true) {
-    if (existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'Package.swift'))) return dir;
+    yield dir;
     const parent = dirname(dir);
-    if (parent === dir) return null;
+    if (parent === dir) return;
     dir = parent;
   }
+}
+
+export function findProjectRoot(startDir: string): string | null {
+  for (const dir of projectRootDirectories(startDir)) {
+    if (existsSync(join(dir, 'package.json')) || existsSync(join(dir, 'Package.swift'))) return dir;
+  }
+  return null;
 }

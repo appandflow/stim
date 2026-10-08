@@ -17,7 +17,7 @@ import { planPrebuild } from '../../engine/prebuild.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/remote-cache.ts';
 import { statsProjectKey } from '../../engine/stats.ts';
 import { getProject } from '../../workspace/config.ts';
-import { appProjectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
+import { projectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import { resolveSettings } from '../../workspace/settings.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
@@ -133,8 +133,8 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   if (flag) return refuse(planFlagRefusal(flag));
   const root = deps.findRoot(process.cwd());
   if (!root) return refuse(NO_PROJECT_REFUSAL);
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) return refuse({ code: 'STIM_NO_PROJECT', ...projectProblem });
+  const problem = projectProblem(root, 'android');
+  if (problem) return refuse({ code: 'STIM_NO_PROJECT', ...problem });
 
   const slot = validateDeviceSlot(opts.slot);
   const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };

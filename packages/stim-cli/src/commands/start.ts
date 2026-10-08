@@ -21,7 +21,7 @@ import {
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
-import { appProjectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
@@ -358,12 +358,12 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       if (!root) {
         return fail(NO_PROJECT_REFUSAL);
       }
-      const projectProblem = appProjectProblem(root);
-      if (projectProblem) {
+      const problem = projectProblem(root, 'dev-server');
+      if (problem) {
         return fail({
           code: 'STIM_NO_PROJECT',
-          message: projectProblem.message,
-          remedy: projectProblem.remedy,
+          message: problem.message,
+          remedy: problem.remedy,
         });
       }
 
