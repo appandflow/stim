@@ -268,8 +268,9 @@ so there is no Check again button:
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker Mac. It needs Node 22.12 or later there. Answer y/N
-   for each new capability grant there; No is the default. Desktop mirrors
+   signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
+   for each new capability grant there; Yes is the default, so Enter approves
+   running that Mac's project code on this one. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
    shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
@@ -341,7 +342,7 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
 
 Run the actual copied command on the worker. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
-to npx. It does not skip setup's per-grant y/N questions. Setup's own `--yes`
+to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
 without a terminal. A person on the worker makes that decision.
 

@@ -1795,7 +1795,7 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 A person on the worker Mac runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
-one ticket, until one expiry. Each grant asks y/N in a terminal; `--yes` is
+one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve new requests without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.

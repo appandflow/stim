@@ -1139,7 +1139,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    - While nothing has reached the journal yet, the art shows this Mac and the
      build Mac linked by a travelling dot (still under Reduce Motion).
    - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
-     Terminal while signed in there; answering each y/N request approves
+     Terminal while signed in there; answering each Y/n request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
      option.
    - A live mirror in the preview's wording: no node or request ids, and no
