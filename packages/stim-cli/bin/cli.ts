@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
+import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
 type CommandModule = { default: (program: Command, version: string) => void };
@@ -41,6 +42,20 @@ try {
     for (const module of modules) module.default(program, pkg.version);
   }
   program.hook('preAction', async (_command, action) => {
+    if (debugLog.enabled()) {
+      const path: string[] = [];
+      for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
+      const started = Date.now();
+      debugLog.log('run_start', {
+        version: pkg.version,
+        command: path,
+        flags: process.argv
+          .slice(2)
+          .filter((arg) => arg.startsWith('-'))
+          .map((arg) => arg.split('=')[0]),
+      });
+      process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
+    }
     try {
       const { triggerMaintenance } = await import('../src/maintenance/trigger.ts');
       triggerMaintenance(action.name());

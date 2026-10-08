@@ -707,6 +707,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'debug.logs',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_DEBUG',
+    description:
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+  },
+  {
     key: 'hosting.agentDriver',
     type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,

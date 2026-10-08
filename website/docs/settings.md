@@ -802,3 +802,23 @@ passed to ccache, which evicts by itself. `maintenance.sweepHours` and
 cache entries; `maintenance.removeFinishedWorktrees` controls the worktree
 check. Memory pressure is recorded; a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
+
+## Debug logs
+
+`debug.logs` is a machine setting, off by default, with the environment
+override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
+writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
+end, every child process with its program name, duration and exit status, and
+every request to another Mac with its duration and result code. Records never carry arguments,
+environment values, tokens or tickets, nothing is sent anywhere, and the file
+rotates at about 8 MiB with one previous generation kept.
+
+<StimTabs code="stim settings set debug.logs true --scope machine" />
+
+Try this with your agent:
+
+```text
+Turn on debug.logs, rerun the command that stalled, then read
+~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
+took the time.
+```

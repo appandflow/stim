@@ -222,6 +222,15 @@ Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
+DEBUG LOGS
+With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
+debug records to STIM_HOME/logs/debug/cli.ndjson, outside any workspace, so
+stim logs does not show them. Read them with jq:
+  jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
+Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
+remote_connect and remote_request { ms, ok, code? } for requests to another
+Mac. They carry no arguments, tokens or tickets.
+
 Placement records use src: placement and sit in the run's build log
 (build-*.ndjson), so a new run replaces the previous run's. A run writes one
 record per decision it makes (a build that compiles and has a remote Mac to
