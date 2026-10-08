@@ -965,8 +965,10 @@ struct MachineSummary: View {
     Button {
       expandedResource = .cpu
     } label: {
-      statItem(icon: "speedometer", label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
-        .padding(Space.sm)
+      statItem(
+        icon: ResourceKind.cpu.icon, label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu)
+      )
+      .padding(Space.sm)
     }
     .buttonStyle(.hoverRow(radius: Radius.round))
     .accessibilityLabel("CPU details")
@@ -990,7 +992,7 @@ struct MachineSummary: View {
     } label: {
       HStack(spacing: Space.sm) {
         statItem(
-          icon: "memorychip", label: "RAM",
+          icon: ResourceKind.memory.icon, label: "RAM",
           value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
           tone: UsageThresholds.memory(memory.pressure))
         if showsBar {
@@ -1025,7 +1027,7 @@ struct MachineSummary: View {
     } label: {
       HStack(spacing: Space.sm) {
         statItem(
-          icon: "internaldrive", label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
+          icon: ResourceKind.disk.icon, label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
           tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
         if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
           Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
