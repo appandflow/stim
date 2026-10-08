@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -198,5 +207,82 @@ describe('relocatePods', () => {
     ).toEqual({ ok: false });
     expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(`${SOURCE}/x\n`);
     expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock({ core: SEED_CHECKSUM }));
+  });
+
+  describe('identical locks', () => {
+    const pods = 'ios/Pods';
+    const run = (extra: { canRelocate?: boolean; sourceRoot?: string; targetRoot?: string } = {}) =>
+      relocatePods({
+        podsDir: join(base, pods),
+        podfileLockPath: join(base, 'ios/Podfile.lock'),
+        sourceRoot: SOURCE,
+        targetRoot: '/wt/trailhead',
+        ...extra,
+      });
+    function seed() {
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Target Support Files/A/A.xcconfig`, `CODE_SIGN_ENTITLEMENTS = ${SOURCE}/ios/A.entitlements\n`);
+      mkdirSync(join(base, pods, 'ExpoImage'), { recursive: true });
+      symlinkSync(`${SOURCE}/node_modules/expo-image/X.xcframework`, join(base, pods, 'ExpoImage/X.xcframework'));
+    }
+
+    test('moves the source path to the worktree and keeps Manifest.lock', () => {
+      seed();
+      expect(run()).toEqual({ ok: true, pods: [] });
+      expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(
+        'CODE_SIGN_ENTITLEMENTS = /wt/trailhead/ios/A.entitlements\n',
+      );
+      expect(readlinkSync(join(base, pods, 'ExpoImage/X.xcframework'))).toBe(
+        '/wt/trailhead/node_modules/expo-image/X.xcframework',
+      );
+      expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock());
+    });
+
+    test('removes Manifest.lock when another Pods file still names the source path', () => {
+      seed();
+      write(`${pods}/Other/script.sh`, `${SOURCE}/x\n`);
+      expect(() => run()).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+    });
+
+    test('removes Manifest.lock and rewrites nothing when relocation is not allowed', () => {
+      seed();
+      expect(run({ canRelocate: false })).toEqual({ ok: false, withheld: true });
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+      expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toContain(SOURCE);
+    });
+
+    test('leaves Pods and Manifest.lock alone when nothing names the source path', () => {
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Target Support Files/A/A.xcconfig`, `X = ${SOURCE}2/y\n`);
+      expect(run()).toEqual({ ok: false });
+      expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock());
+    });
+
+    test('a worktree nested under the source checkout is not a leftover', () => {
+      seed();
+      expect(run({ targetRoot: `${SOURCE}/.worktrees/wt` })).toEqual({ ok: true, pods: [] });
+      expect(readlinkSync(join(base, pods, 'ExpoImage/X.xcframework'))).toBe(
+        `${SOURCE}/.worktrees/wt/node_modules/expo-image/X.xcframework`,
+      );
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(true);
+    });
+
+    test('a worktree path that is a string prefix of the source path still finds a leftover', () => {
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Other/script.sh`, '/code/app-main/scripts/x.sh\n');
+      expect(() => run({ sourceRoot: '/code/app-main', targetRoot: '/code/app' })).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+    });
+
+    test('a sibling of the nested worktree path is a leftover', () => {
+      seed();
+      write(`${pods}/Other/script.sh`, `${SOURCE}/.worktrees/wt2/x\n`);
+      expect(() => run({ targetRoot: `${SOURCE}/.worktrees/wt` })).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+    });
   });
 });

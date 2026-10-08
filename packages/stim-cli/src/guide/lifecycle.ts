@@ -1958,6 +1958,12 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   the source path, or carried node_modules that do not match the worktree's
   lockfile leaves Pods as copied, and \`pod install\` runs. Warm does not edit Podfile.lock.
 
+  When the two locks already match but the copied Pods still name the source
+  path, warm applies the same rewrite and scan so builds do not read the
+  source checkout's files (entitlements, Podfile.properties.json). If it
+  cannot (stale node_modules, a leftover path, an error), warm deletes
+  ios/Pods/Manifest.lock so \`stim ios\` runs \`pod install\`.
+
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about
   regeneration. Native intermediates can record the source checkout's paths;

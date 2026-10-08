@@ -57,6 +57,11 @@ worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
 carried `node_modules` that do not match the worktree's lockfile leaves Pods as
 copied and `pod install` runs. Warm does not edit `Podfile.lock`.
 
+When the two locks already match but the copied Pods still name the source
+path, warm applies the same rewrite and scan, so builds do not read the source
+checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm
+deletes `ios/Pods/Manifest.lock` so `stim ios` runs `pod install`.
+
 Wait for warm to exit successfully before editing, installing dependencies,
 starting Metro/builds, or running another warm in that worktree. **Concurrent
 writes to the destination are unsafe:** existing entries are checked before

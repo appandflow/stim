@@ -1420,7 +1420,9 @@ not on any remote"  (worktree remove)
   \`stim ios\` detects a mismatch and runs \`pod install\` for you. A mismatch
   limited to checksums of podspecs that embed the source checkout's path is
   resolved by warm itself ("carry moved <dir>/Pods to this checkout's path")
-  and does not print this line.
+  and does not print this line. When the locks match but Pods still name the
+  source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
+  so pod install runs" and \`stim ios\` runs \`pod install\`.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

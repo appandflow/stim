@@ -68,7 +68,7 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
 }
 
 function relocateCarriedPods(root: string, target: string, copied: string[]): void {
-  if (depsOutOfSync(root, target, copied).length > 0) return;
+  const canRelocate = depsOutOfSync(root, target, copied).length === 0;
   for (const rel of copied) {
     if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
     const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
@@ -78,20 +78,37 @@ function relocateCarriedPods(root: string, target: string, copied: string[]): vo
         podfileLockPath: join(target, iosDir, 'Podfile.lock'),
         sourceRoot: root,
         targetRoot: target,
+        canRelocate,
       });
       if (result.ok) {
         console.error(
           chalk.dim(
             phaseLine(
               'carry',
-              `moved ${rel} to this checkout's path; ${result.pods.join(', ')} checksum depends on the checkout path, so pod install is not needed`,
+              result.pods.length > 0
+                ? `moved ${rel} to this checkout's path; ${result.pods.join(', ')} checksum depends on the checkout path, so pod install is not needed`
+                : `moved ${rel} to this checkout's path; the locks match, so pod install is not needed`,
+            ),
+          ),
+        );
+      } else if (result.withheld) {
+        console.error(
+          chalk.yellow(
+            phaseLine(
+              'carry',
+              `${rel} names the source checkout's path; removed ${rel}/Manifest.lock so pod install runs`,
             ),
           ),
         );
       }
     } catch (error) {
       console.error(
-        chalk.yellow(phaseLine('carry', `could not move ${rel} to this checkout's path: ${(error as Error).message}`)),
+        chalk.yellow(
+          phaseLine(
+            'carry',
+            `could not move ${rel} to this checkout's path: ${(error as Error).message}. pod install will run`,
+          ),
+        ),
       );
     }
   }
