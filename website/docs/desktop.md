@@ -549,7 +549,7 @@ first remote Mac). With Hosted simulators chosen, it also sets **Simulators**
 (`ios.remote` and `android.remote` for this Mac). **Run a
 test build with a sample app** runs the optional sample test in Desktop's own
 pinned Expo SDK 58 sample. Desktop also uses that sample for setup requests if
-you have no listed workspace. **Delete sample app** in Remote Macs removes it.
+you have no listed workspace. The wizard removes it when it closes.
 Cancel removes only settings the wizard added and shows revoke commands for the
 build Mac. **Remove** in Remote Macs shows the optional cleanup to run on that
 Mac.

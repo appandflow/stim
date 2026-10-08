@@ -10,7 +10,6 @@ struct BuildMachinesView: View {
   @ObservedObject var store: StatusStore
   var workspace: String?
 
-  @State private var confirmsDeleteSample = false
   @State private var removing: String?
   @State private var detailed: String?
   @State private var adding: AddMachineModel?
@@ -32,13 +31,12 @@ struct BuildMachinesView: View {
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
       canAsk: checkout != nil,
-      addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone }, sampleExists: model.sampleExists,
+      addDisabled: model.isBusy || model.updates.values.contains { !$0.isDone },
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
       showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
-      deleteSample: { confirmsDeleteSample = true },
       showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
       thisMac: ThisMacAccessSections(
         clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
@@ -123,13 +121,6 @@ struct BuildMachinesView: View {
       adding?.stop()
       adding = nil
     }
-    .confirmationDialog("Delete the wizard's sample app?", isPresented: $confirmsDeleteSample) {
-      Button("Delete sample app", role: .destructive) { Task { await model.deleteSample() } }
-    } message: {
-      Text(
-        "Stops the sample workspace and removes its Stim workspace and Stim Desktop's SDK 58 sample folder, and releases its owned simulator: Stim parks it for reuse within the parked-simulator limit and deletes it otherwise. The next wizard creates the sample again."
-      )
-    }
     .sheet(isPresented: .init(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
       if let entry = removing {
         RemoveMachineSheet(
@@ -190,14 +181,12 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var tailscaleRunning: Bool?
   var canAsk: Bool
   var addDisabled: Bool
-  var sampleExists: Bool
   @Binding var updatesAutomatically: Bool
   var add: () -> Void
   var ask: (String) -> Void
   var update: (String) -> Void
   var showDetails: (String) -> Void
   var remove: (String) -> Void
-  var deleteSample: () -> Void
   var showsThisMac = false
   var thisMac: ThisMac
 
@@ -208,7 +197,6 @@ struct BuildMachinesContent<ThisMac: View>: View {
           Section {
             notices
             BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
-            if sampleExists { deleteSampleButton }
           }
           thisMac
         }
@@ -218,7 +206,6 @@ struct BuildMachinesContent<ThisMac: View>: View {
         VStack(spacing: 0) {
           notices.padding([.horizontal, .top], Space.xl)
           BuildMachinesEmptyState(add: add, addDisabled: addDisabled)
-          if sampleExists { deleteSampleButton.padding(.bottom, Space.xl) }
         }
       } else {
         list(entries)
@@ -281,15 +268,10 @@ struct BuildMachinesContent<ThisMac: View>: View {
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       }
-      if sampleExists { Section { deleteSampleButton } }
       thisMac
     }
     .formStyle(.grouped)
     .scrollContentBackground(.hidden)
-  }
-
-  private var deleteSampleButton: some View {
-    Button("Delete sample app", role: .destructive, action: deleteSample)
   }
 }
 

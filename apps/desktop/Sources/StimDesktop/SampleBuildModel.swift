@@ -31,6 +31,7 @@ final class SampleBuildModel {
   @ObservationIgnored private var preparation: Task<Void, Never>?
   @ObservationIgnored private var build: Task<Void, Never>?
   @ObservationIgnored private var cleanup: Task<Void, Never>?
+  @ObservationIgnored private var discarding = false
 
   init(dependencies: Dependencies) { self.dependencies = dependencies }
   convenience init(cli: Task<StimCLI, Never>) {
@@ -186,6 +187,13 @@ final class SampleBuildModel {
     }
     guard sample.permitsRemoval(sample.folder) else { throw CocoaError(.fileWriteNoPermission) }
     try dependencies.remove(sample.folder)
+  }
+
+  func discard() async {
+    guard !discarding, sampleReady || dependencies.exists(dependencies.sample.folder) else { return }
+    discarding = true
+    defer { discarding = false }
+    try? await removeSample()
   }
 
   private func stopSample() async throws {

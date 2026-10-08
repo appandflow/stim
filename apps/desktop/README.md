@@ -1159,10 +1159,10 @@ is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry sample** without
 a setup command. The test requires a build on the selected Mac and a verified
 launch, then forces a local build to prove the fallback path. Both runs bypass
-the build cache. **Delete sample app** in Remote Macs stops it and removes its
-Stim workspace and sample folder after confirmation, and releases its owned
-simulator (parked for reuse within the parked-simulator limit, deleted
-otherwise).
+the build cache. When the wizard closes, it stops the sample, removes its Stim
+workspace and sample folder, and releases its owned simulator (parked for reuse
+within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
+basis.
 
 Cancel removes entries added by the wizard, restores `remote.buildMode` only if the
 wizard changed it, and runs doctor to forget the pairing. A failed undo shows

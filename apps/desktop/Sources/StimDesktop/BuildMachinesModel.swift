@@ -137,22 +137,6 @@ final class BuildMachinesModel {
     }
   }
 
-  private(set) var sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
-
-  func deleteSample() async {
-    let sample = SampleBuildModel(cli: cli)
-    let location = sample.dependencies.sample
-    guard location.permitsRemoval(location.folder) else {
-      writeFailure = "Refused to remove a path outside the sample folder."
-      return
-    }
-    do {
-      try await sample.removeSample()
-      sampleExists = false
-      writeFailure = nil
-    } catch { writeFailure = error.localizedDescription }
-  }
-
   var entries: [String]? {
     settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
   }
@@ -189,7 +173,6 @@ final class BuildMachinesModel {
   }
 
   func refresh(checkout: String?) async {
-    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     await settings.refresh()
     async let placements: Void = (entries ?? []).isEmpty ? () : refreshPlacements()
     await refreshStatuses(checkout: checkout, ask: false)
@@ -211,7 +194,6 @@ final class BuildMachinesModel {
   }
 
   func load(checkout: String?) async {
-    sampleExists = FileManager.default.fileExists(atPath: WizardSample.desktop.folder.path)
     async let settingsRead: Void = settings.refresh()
     await checkTailscale()
     await settingsRead
