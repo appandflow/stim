@@ -76,6 +76,63 @@ locking, or cleanup checks. Capacity admission is already skipped when its
 limits are unset; there is no measured reason yet to bypass the remaining
 coordination.
 
+## GitHub Actions
+
+The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
+It maps workflow inputs to `stim-ci`, forwards cancellation, and writes the
+job summary. Native tools and app dependencies must be installed first.
+The action supports macOS and Linux runners with Bash and Node.js 22.12 or later.
+
+For dogfood against a built Stim checkout:
+
+```yaml
+- uses: ./.github/actions/stim-ci
+  with:
+    cli-path: packages/ci/dist/stim-ci.mjs
+    platform: ios
+    project: apps/mobile
+    command: node ../../scripts/ci/app-smoke.mjs
+    home: ${{ runner.temp }}/stim-home
+    artifacts: stim-ci-results
+    timeout: '1800'
+- uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: stim-ci-results
+    path: stim-ci-results
+```
+
+Once released, consumers can pin the action to a commit and supply `version`
+with an exact published `@stim-cli/ci` version instead of `cli-path`. The
+command input is Bash source, like a workflow `run:` step. Pass untrusted
+event values through environment variables, not interpolation into `command`.
+
+Use a new, empty artifacts directory for each invocation. Leave at least 70
+seconds for cleanup after the action timeout and upload artifacts even on
+failure. Hard provider termination can prevent cleanup from completing.
+
+## EAS Workflows
+
+The checked-in [Mobile workflow](https://github.com/appandflow/stim/blob/main/apps/mobile/.eas/workflows/stim-ci.yml)
+runs the same package in an EAS custom Android job, using a runner with nested
+virtualization and `eas/upload_artifact` for diagnostics. It is manually
+triggered. EAS Workflows usage counts toward the Expo plan's compute allowance.
+
+Provider configuration contains only environment preparation, invocation and
+artifact upload; lifecycle and test execution remain in `@stim-cli/ci`.
+
+## Stim app coverage
+
+The GitHub dogfood workflow builds, launches, probes and stops Mobile on iOS
+and Android and Desktop on macOS. It then repeats with the job's warm build
+state. It runs for relevant changes on `main`, manual dispatches, and relevant
+pull requests carrying the `e2e-smoke` label.
+
+These checks prove that the exact installed native app process stays alive
+for five seconds. They do not assert screen rendering, navigation, or a
+successful server connection. App unit tests and the broader native fixture
+tests remain separate.
+
 To try it with an agent:
 
 > Use @stim-cli/ci to run this app's existing test command on a dedicated
