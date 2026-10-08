@@ -94,6 +94,9 @@ jobs:
       - name: Build (tsdown, all packages)
         run: pnpm run build
 
+      - name: Committed Action bundle matches source
+        run: git diff --exit-code -- .github/actions/stim-ci/dist
+
       - name: Typecheck (production)
         run: pnpm run typecheck
 

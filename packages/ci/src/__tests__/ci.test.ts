@@ -122,6 +122,7 @@ it('preserves a test failure when the results directory becomes unwritable', asy
 it('stops partial setup without running the test command', async () => {
   lifecycle.run.mockImplementation(async () => {
     writeFileSync(active, 'partially started');
+    writeFileSync(join(root, 'native.log'), 'compiler failed before launch');
     throw Object.assign(new Error('build failed'), { code: 'STIM_BUILD_FAILED', remedy: 'Fix the build.' });
   });
   const marker = join(root, 'test-started');
@@ -132,6 +133,7 @@ it('stops partial setup without running the test command', async () => {
   expect(existsSync(marker)).toBe(false);
   expect(existsSync(active)).toBe(false);
   expect(result.test).toBe(null);
+  expect(readFileSync(result.diagnostics.files![0]!, 'utf8')).toBe('compiler failed before launch');
 });
 
 it('turns an incomplete cleanup into a failure after a passing test', async () => {
@@ -277,4 +279,21 @@ it('the CLI reports SIGTERM during cleanup as exit 130 and saves the same result
     output.mockRestore();
     process.exitCode = exitCode;
   }
+});
+
+it('records refused diagnostic copies without replacing the primary test failure', async () => {
+  const outside = join(root, 'outside');
+  options.command = [
+    process.execPath,
+    '-e',
+    `const fs = require('node:fs'); const path = require('node:path'); fs.mkdirSync(${JSON.stringify(outside)}); fs.writeFileSync(path.join(${JSON.stringify(outside)}, 'native.log'), 'outside evidence'); fs.symlinkSync(${JSON.stringify(outside)}, path.join(process.env.STIM_CI_ARTIFACTS_DIR, 'logs'), 'junction'); process.exitCode = 23;`,
+  ];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(23);
+  expect(result.failure?.code).toBe('STIM_CI_TEST_FAILED');
+  expect(result.diagnostics.path).not.toBeNull();
+  expect(result.diagnostics.files).toBeUndefined();
+  expect(result.diagnostics.error?.message).toContain('regular directory');
+  expect(readFileSync(join(outside, 'native.log'), 'utf8')).toBe('outside evidence');
+  expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).diagnostics.error.message).toContain('regular directory');
 });

@@ -11,12 +11,7 @@
   ],
   "workspaces": {
     ".": {
-      "entry": [
-        ".github/actions/stim-ci/run.mjs",
-        "apps/desktop/scripts/*.mjs",
-        "packaging/store/assemble.mjs",
-        "scripts/ci/app-smoke.mjs"
-      ]
+      "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs", "scripts/ci/app-smoke.mjs"]
     },
     "packages/server": {
       "ignoreBinaries": ["plutil", "ditto", "mkfifo"]
