@@ -8,9 +8,12 @@ import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../workspace/project.ts';
+import { nativeProjectIntegration } from '../integrations/projects.ts';
+import type { ServerHandle, ServerStarter } from './types.ts';
+export type { ServerExitInfo } from './types.ts';
 import { describeError } from './errors.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
-import { MODE_BARE, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
+import { MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
 import {
   clearWorkspaceStateKeys,
   writeWorkspaceState,
@@ -123,29 +126,6 @@ export function parseArgs(argv: string[]): ParsedSupervisorArgs {
   };
 }
 
-export interface ServerExitInfo {
-  code?: number | null;
-  signal?: NodeJS.Signals | null;
-  reason?: string;
-  error?: Error;
-}
-
-export interface ServerHandle {
-  close(): Promise<void> | void;
-  onExit?(cb: (info?: ServerExitInfo | null) => void): void;
-  serverPid?: number | null;
-}
-
-type ServerStarter = (opts: {
-  root: string;
-  port: number;
-  logsDir: string;
-  writer?: NdjsonWriter | null;
-  tunnel?: boolean;
-  resetCache?: boolean;
-  onTunnelUrl?: ((url: string) => void) | null;
-}) => Promise<ServerHandle>;
-
 export interface DeviceIdleOps {
   due: typeof dueIdleDevices;
   shutDown: typeof shutDownWorkspaceIdleDevices;
@@ -198,7 +178,8 @@ export async function runSupervisor({
   root = realpathSync(root);
   const logsDir = workspaceLogsDir(root);
   const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
-  const mode = isExpo(root) ? MODE_EXPO : MODE_BARE;
+  const integration = nativeProjectIntegration(root, isExpo);
+  const mode = integration.mode;
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);
   if (!processToken) {
@@ -324,10 +305,7 @@ export async function runSupervisor({
   });
 
   try {
-    const start: ServerStarter =
-      mode === MODE_EXPO
-        ? startExpo || (await import('./server-expo.ts')).startExpoServer
-        : startBare || (await import('./server-bare.ts')).startBareServer;
+    const start = (mode === MODE_EXPO ? startExpo : startBare) ?? (await integration.loadDevServer());
     server = await start({
       root,
       port,

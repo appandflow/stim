@@ -371,12 +371,13 @@ describe('runSupervisor', () => {
   });
 
   test('detects the ecosystem and hosts Expo as a child', async () => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '58' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { slug: 'app' } }));
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31337 });
     let bareCalled = false;
     const running = await runSupervisor({
       root,
       port: 8092,
-      isExpo: () => true,
       attachSignals: false,
       onExit: () => {},
       startBare: async () => {
