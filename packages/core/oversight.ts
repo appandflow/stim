@@ -144,8 +144,14 @@ interface WorkspaceEntry {
   errorsAt: number | null;
   stuckAt: number | null;
   finished: boolean;
+  /** Whether this run already notified that the agent stopped; the workspace going idle ends the run. */
+  finishedInRun: boolean;
+  /** Whether the workspace was not idle at the last look, so the look that starts a new run is seen. */
+  running: boolean;
   /** Ids of the `attention` items already notified, so each notifies once per episode. */
   attention: string[];
+  /** Whether this run already raised an `attention` notification; it starts over when the workspace stops being idle or has no item left. */
+  attentionRaised: boolean;
   loops: { ios?: Loop; android?: Loop };
   pr: { number: number; ready: boolean; merged: boolean } | null | undefined;
   mergedInto: string | null;
@@ -493,10 +499,15 @@ function overseeStart(run: Run, { env, entry, notify, driven }: WorkspaceLook): 
   event(run, notify('started', body, deviceTarget(env, first)));
 }
 
+/** Whether the workspace has no live session and is not warming: the end of a run, and the start of the next when it stops being idle. */
+function isIdle(env: OversightEnvironment): boolean {
+  return !env.live && (env.phase === undefined || env.phase === 'idle');
+}
+
 /** Work finishes when the agent stops after a green build; it looks stuck when nothing happens for too long. */
 function overseeProgress(run: Run, { env, entry, notify, devices, driven }: WorkspaceLook): void {
   const { now } = run;
-  const idle = !env.live && (env.phase === undefined || env.phase === 'idle');
+  const idle = isIdle(env);
   const building = env.build?.state === 'running';
   const newest = newestBuild(env);
   const green = newest?.status === 'ok';
@@ -509,8 +520,11 @@ function overseeProgress(run: Run, { env, entry, notify, devices, driven }: Work
     if (!idle && now < due) wake(run, due);
     else {
       entry.finished = true;
-      const body = `Agent stopped after a green ${platformName(newest.platform)} build`;
-      event(run, notify('finished', body, { kind: 'workspace', path: env.path }));
+      if (!entry.finishedInRun) {
+        entry.finishedInRun = true;
+        const body = `Agent stopped after a green ${platformName(newest.platform)} build`;
+        event(run, notify('finished', body, { kind: 'workspace', path: env.path }));
+      }
     }
   }
   if (idle || entry.finished) {
@@ -520,6 +534,7 @@ function overseeProgress(run: Run, { env, entry, notify, devices, driven }: Work
   if (idle) {
     entry.warmed = false;
     entry.finished = false;
+    entry.finishedInRun = false;
   }
 
   const device = driven[0] ?? devices.find((d) => d.running);
@@ -579,7 +594,10 @@ function overseeMerge(run: Run, { env, entry, notify }: WorkspaceLook, prev: Wor
   }
 }
 
-/** What only a person can fix, notified once per episode; what an agent handles is left out. */
+/**
+ * What only a person can fix, notified once per episode and at most once per workspace per run; what an agent
+ * handles is left out. The allowance returns when the workspace stops being idle or has no item left.
+ */
 function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev: WorkspaceEntry | undefined): void {
   const items = workspaceItems(env, {
     now: run.now,
@@ -587,6 +605,7 @@ function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev:
     easSessionMinutes: EAS_SESSION_MINUTES,
     ownLeases: run.input.ownLeases,
   });
+  const pending: { item: NeedsAttentionItem; target: OversightTarget }[] = [];
   for (const item of items) {
     if (item.category !== 'attention') continue;
     let target: OversightTarget = { kind: 'workspace', path: env.path };
@@ -595,9 +614,23 @@ function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev:
       if ((failureStreak(platform, env.builds?.[platform])?.count ?? 0) >= LOOP_COUNT) continue;
       target = { kind: 'build', path: env.path, platform };
     }
-    const notification = { ...notify('attention', item.body, target), id: item.id };
-    if (prev?.attention?.includes(item.id) || lasting(run, notification)) entry.attention.push(item.id);
+    pending.push({ item, target });
   }
+  let raised = entry.attentionRaised;
+  if (pending.length === 0 || (!isIdle(env) && !prev?.running)) raised = false;
+  for (const { item, target } of pending) {
+    if (prev?.attention?.includes(item.id) || raised) {
+      entry.attention.push(item.id);
+      continue;
+    }
+    const notification = { ...notify('attention', item.body, target), id: item.id };
+    const sent = run.notifications.length;
+    if (lasting(run, notification)) {
+      entry.attention.push(item.id);
+      if (run.notifications.length > sent) raised = true;
+    }
+  }
+  entry.attentionRaised = raised;
 }
 
 function overseeWorkspace(
@@ -618,7 +651,10 @@ function overseeWorkspace(
     errorsAt: prev && prev.errors !== errors ? run.now : (prev?.errorsAt ?? null),
     stuckAt: prev?.stuckAt ?? null,
     finished: prev?.finished ?? false,
+    finishedInRun: prev?.finishedInRun ?? false,
+    running: !isIdle(env),
     attention: [],
+    attentionRaised: prev?.attentionRaised ?? false,
     loops: {},
     pr: prev?.pr,
     mergedInto: git ? git.mergedInto : (prev?.mergedInto ?? null),

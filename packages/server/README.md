@@ -1894,8 +1894,10 @@ after. With a `stim` whose status has no `activity.recent`, every app log
 record counts as activity, so an app that keeps logging never looks stuck or
 finished.
 
-Each workspace notifies once per episode: a stuck agent notifies again only
-after new activity and a new quiet stretch, a loop only after a success or a
+Each workspace notifies once per episode: an agent stop pushes `finished` once
+per run, which ends when the workspace goes idle, and a workspace pushes
+`attention` once per run, which starts over when the workspace stops being idle
+or has no item left; a stuck agent notifies again only after new activity and a new quiet stretch, a loop only after a success or a
 different failure. A push carries a collapse id for its workspace and
 category, so a later one replaces the earlier notification on the phone
 instead of stacking. What is already true when the server starts or a device
