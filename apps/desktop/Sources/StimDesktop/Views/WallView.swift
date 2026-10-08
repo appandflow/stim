@@ -26,8 +26,8 @@ struct WallView: View {
       }
     } else if let project, content == .noneActive {
       VStack(spacing: Space.lg) {
-        Text("No active worktrees in \(store.title(of: project))").font(.stim(.headline))
-        Text("The project has worktrees, but none is running or being set up.").foregroundStyle(Palette.secondary)
+        Text("No active workspaces in \(store.title(of: project))").font(.stim(.headline))
+        Text("The project has workspaces, but none is running or being set up.").foregroundStyle(Palette.secondary)
         Button("Show all") { setScope(.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       }
@@ -52,13 +52,13 @@ struct WallView: View {
                   setScope(.active)
                 } label: {
                   Pill {
-                    Text("Showing all worktrees")
+                    Text("Showing all workspaces")
                     Image(systemName: "xmark").font(.stim(.caption))
                   }
                 }
                 .buttonStyle(.hoverRow())
-                .help("Show only active worktrees")
-                .accessibilityLabel("Showing all worktrees. Show only active worktrees")
+                .help("Show only active workspaces")
+                .accessibilityLabel("Showing all workspaces. Show only active workspaces")
               }
             }
           }

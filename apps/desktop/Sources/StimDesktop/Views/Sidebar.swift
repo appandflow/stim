@@ -137,7 +137,7 @@ struct Sidebar: View {
         SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
       PinnedRow(item: .wall, selection: $selection) {
-        SidebarLabel(title: "Active worktrees", icon: "rectangle.stack", selected: selection == .wall)
+        SidebarLabel(title: "Active workspaces", icon: "rectangle.stack", selected: selection == .wall)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
@@ -703,7 +703,7 @@ struct SidebarFooter: View {
   private var agentsTooltip: String {
     let count = drivenDevices.count
     return
-      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show Active worktrees"]
+      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show Active workspaces"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 

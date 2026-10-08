@@ -218,7 +218,7 @@ public enum ProjectPage {
   }
 
   /// A project page shows all worktrees only for the project the user opened from an idle row; any other
-  /// navigation starts at the active worktrees.
+  /// navigation starts at the active workspaces.
   public static func scope(of project: Project, showingAll: Project?) -> ProjectScope {
     showingAll == project ? .all : .active
   }

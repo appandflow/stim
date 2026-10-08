@@ -62,7 +62,7 @@ While details are open, hover another resource figure to switch the contents. Cl
 CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
-**Overview**, **Active worktrees** and **Machines** stay pinned at the top of
+**Overview**, **Active workspaces** and **Machines** stay pinned at the top of
 the sidebar; only the list below them scrolls.
 
 **Overview** is the default launch page. The **Active** section comes first, as
@@ -72,13 +72,13 @@ running it says where active projects will appear. **Idle projects** follow as
 compact cards in an adaptive grid, newest activity first, with the pull request
 that is open, a failed last build and the errors since the last marker. The grid
 shows six, and **Show more (N)** expands the rest in place. Clicking a card opens
-the project with all its worktrees, under a **Showing all worktrees** chip that
+the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show all**. A **Recently archived** row lists the last five
 archives, and **Try this** suggests up to three features with a copyable agent
 prompt each (see below). A single running project gets one centered card.
 
-**Active worktrees** shows every worktree with something running, building or
+**Active workspaces** shows every worktree with something running, building or
 warming as one full-width card. A worktree with several apps (for example
 `apps/mobile` and `apps/desktop`) gets one card with the worktree's name and
 project in the header; each app is a labelled group inside it with its Metro port,
@@ -133,7 +133,7 @@ submenu.
 
 When a workspace that is not warming has no device, a small purple device
 illustration and a launch hint appear. Its animation stops under Reduce Motion.
-When **Overview**, **Active worktrees** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
+When **Overview**, **Active workspaces** or a project has nothing running, the page shows three example prompts for a coding agent, picked at
 random from the phone app's list each time the page appears, with a **Copy**
 button that reads **Copied** once the prompt is on the clipboard.
 
@@ -385,7 +385,7 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
-tile stops streaming and says "Open in the viewer". Tiles on the Active worktrees
+tile stops streaming and says "Open in the viewer". Tiles on the Active workspaces
 wall are previews too; clicking one opens its workspace with that device focused. The wall pauses previews after they leave the
 scrolling area. Returning to a tile reconnects its preview. Active workspaces without
 running or building devices show a No running devices line under their header, with Metro status, warnings and
@@ -1446,7 +1446,7 @@ running: the Dock icon stays, the status watch, notifications, autopilot and
 `stim-server` keep working, and clicking the Dock icon or choosing **Open Stim**
 in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
-and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active worktrees, Notifications and Machines.
+and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active workspaces, Notifications and Machines.
 
 ## Notice cards
 

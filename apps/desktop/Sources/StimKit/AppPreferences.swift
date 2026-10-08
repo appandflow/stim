@@ -163,7 +163,7 @@ public enum DefaultView: String, CaseIterable, Sendable {
   public var title: String {
     switch self {
     case .overview: return "Overview"
-    case .allDevices: return "Active worktrees"
+    case .allDevices: return "Active workspaces"
     case .lastProject: return "Last project"
     }
   }

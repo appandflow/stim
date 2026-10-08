@@ -335,7 +335,7 @@ struct NavigationCommands: Commands {
       Button("Overview") { navigation?.go(.overview) }
         .keyboardShortcut("1", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Active worktrees") { navigation?.go(.wall) }
+      Button("Active workspaces") { navigation?.go(.wall) }
         .keyboardShortcut("2", modifiers: .command)
         .disabled(navigation == nil)
       Button("Notifications") { navigation?.go(.notifications) }
