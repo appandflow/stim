@@ -45,6 +45,9 @@ extension DoctorReport.Finding {
   }
 }
 
+/// The `stim doctor` finding code for a folder that is not a React Native or Expo app.
+public let notAnAppFindingCode = "not-an-app"
+
 /// Needs-attention items for the doctor findings that need project judgment, one per `cost` finding.
 public func setupItems(_ reports: [DoctorReport]) -> [NeedsAttentionItem] {
   reports.flatMap { report in

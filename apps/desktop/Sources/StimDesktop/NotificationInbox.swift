@@ -28,7 +28,9 @@ final class NotificationInbox: ObservableObject {
       file.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(Inbox.self, from: $0) }
       ?? Inbox()
     stored.prune(now: Date())
+    let migrated = NotificationSettings.markBacklogReadOnce(&stored, .standard)
     inbox = stored
+    if migrated { persist(stored) }
     Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { _ in
       MainActor.assumeIsolated { NotificationInbox.shared.update { $0.prune(now: Date()) } }
     }
@@ -55,7 +57,11 @@ final class NotificationInbox: ObservableObject {
     change(&next)
     guard next != inbox else { return }
     inbox = next
-    guard let file, let data = try? JSONEncoder().encode(next) else { return }
+    persist(next)
+  }
+
+  private func persist(_ inbox: Inbox) {
+    guard let file, let data = try? JSONEncoder().encode(inbox) else { return }
     try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
     try? data.write(to: file, options: .atomic)
   }

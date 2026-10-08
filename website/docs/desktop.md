@@ -286,10 +286,13 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default. While Desktop is in front, every new
+  **Notifications**. It is Silent by default, and **Work started** is Off. An agent stop
+  notifies **Work finished** once per workspace per run, **Needs you** comes once
+  per workspace per run, and a folder that is not a React Native or Expo app
+  raises none. While Desktop is in front, every new
   Alert or Silent entry gives the top-right bell one small wiggle and bumps its
   count (a burst within two seconds wiggles once, and not while Notifications is
-  open), and Off entries only bump the count; under Reduce Motion the bell keeps
+  open); Off entries are kept as Muted, already read, with no wiggle or count; under Reduce Motion the bell keeps
   its colour change and skips the wiggle. A build or hosting request and an Alert-level machine problem also
   open a card in the window. Background macOS alerts follow notification settings.
   The inbox starts with 50 matching

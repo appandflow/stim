@@ -73,9 +73,15 @@ public enum NotificationLevel: String, CaseIterable, Sendable {
 }
 
 extension OversightCategory {
-  /// Every category starts Silent, except a build request: it waits on an answer from this Mac and lapses after
-  /// 15 minutes.
-  public var defaultLevel: NotificationLevel { self == .buildRequest ? .alert : .silent }
+  /// Work started starts Off, because it reports what the person asked for. A build request starts at Alert: it
+  /// waits on an answer from this Mac and lapses after 15 minutes. Every other category starts Silent.
+  public var defaultLevel: NotificationLevel {
+    switch self {
+    case .started: return .off
+    case .buildRequest: return .alert
+    default: return .silent
+    }
+  }
 }
 
 /// Stim Desktop's notification settings, in its own `UserDefaults`.
@@ -84,11 +90,23 @@ public enum NotificationSettings {
   public static let quietHoursKey = "notify.quietHours"
   /// The ids of the `attention` notifications still in their episode, kept so a restart does not repeat them.
   public static let attentionKey = "notify.attention"
+  /// Set once the backlog the inbox held before the quiet defaults has been marked read.
+  public static let backlogReadKey = "notify.backlogRead"
   public static let stuckMinuteChoices = [5, 10, 15, 30, 60]
   /// The phone's quiet hours choices, stored as `start-end` minutes after midnight.
   public static let quietHoursChoices: [(label: String, value: String)] = [
     ("Off", "off"), ("10 PM to 7 AM", "1320-420"), ("11 PM to 8 AM", "1380-480"), ("Midnight to 8 AM", "0-480"),
   ]
+
+  /// Marks the inbox read on the first call with this `defaults`, and never again, so the first launch with the
+  /// quiet defaults does not leave the old backlog counting as unread. Returns whether it ran.
+  @discardableResult
+  public static func markBacklogReadOnce(_ inbox: inout Inbox, _ defaults: UserDefaults) -> Bool {
+    guard !defaults.bool(forKey: backlogReadKey) else { return false }
+    defaults.set(true, forKey: backlogReadKey)
+    inbox.markAllRead()
+    return true
+  }
 
   public static func key(_ category: OversightCategory) -> String { "notify.level.\(category.rawValue)" }
 
