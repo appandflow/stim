@@ -391,10 +391,14 @@ another source; click **Allow Paste** in the viewer. Unicode and line breaks are
 preserved. Physical devices, hosted and remote sessions and replay never sync, so
 no clipboard text crosses the network or reaches another Mac.
 
-Overview opens first. Running projects come first, as cards with a live preview of
-one device; click a card to open the project. Idle projects follow in a compact list
-with their last activity, an open pull request, a failed last build and errors; click
-a row to open the project. A **Recently archived** row and a **Try this** section
+Overview opens first. The **Active** section comes first, with a card and a live preview
+of one device for each running project; click a card to open the project. With nothing
+running, it says where active projects will appear. **Idle projects** follow as compact
+cards in an adaptive grid, with their last activity, an open pull request, a failed last
+build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
+place. Click a card to open the project with all of its worktrees listed, under a
+**Showing all worktrees** chip you can clear to return to the active ones. A project page
+whose worktrees are all inactive says so and has a **Show all** button. A **Recently archived** row and a **Try this** section
 follow. **Try this** suggests up to three features you have not used yet, such as EAS
 development builds and simulators, another Mac for builds or simulators, `stim macos`,
 running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a

@@ -6,6 +6,8 @@ struct WallView: View {
   @ObservedObject var store: StatusStore
   var metrics: MetricsStore
   var project: Project?
+  var scope = ProjectScope.active
+  var setScope: (ProjectScope) -> Void = { _ in }
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
@@ -13,14 +15,25 @@ struct WallView: View {
   @State private var pressedCard: String?
 
   var body: some View {
-    let active = store.environments(in: project).filter(\.isActive)
+    let content = ProjectPage.content(environments: store.environments(in: project), scope: project == nil ? .active : scope)
+    let shown: [Workspace] = if case .worktrees(let environments) = content { environments } else { [] }
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
-    } else if active.isEmpty {
+    } else if let project, content == .noneActive {
+      VStack(spacing: Space.lg) {
+        Text("No active worktrees in \(store.title(of: project))").font(.stim(.headline))
+        Text("The project has worktrees, but none is running or being set up.").foregroundStyle(Palette.secondary)
+        Button("Show all") { setScope(.all) }
+          .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
+      }
+      .padding(Space.huge)
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
+      .id(project.id)
+    } else if shown.isEmpty {
       EmptyState(
         title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
@@ -31,9 +44,23 @@ struct WallView: View {
       ScrollView {
         LazyVStack(alignment: .leading, spacing: Space.xl) {
           if let project {
-            Text(store.title(of: project)).font(.stim(.title))
+            HStack(spacing: Space.lg) {
+              Text(store.title(of: project)).font(.stim(.title))
+              if scope == .all {
+                Button {
+                  setScope(.active)
+                } label: {
+                  Pill {
+                    Text("Showing all worktrees")
+                    Image(systemName: "xmark").font(.stim(.caption))
+                  }
+                }
+                .buttonStyle(.hoverRow())
+                .help("Show only active worktrees")
+              }
+            }
           }
-          ForEach(active) { env in
+          ForEach(shown) { env in
             let devices = env.orderedDevices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
             let open = {
               pressedCard = nil

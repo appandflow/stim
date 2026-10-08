@@ -48,6 +48,55 @@ struct OverviewTests {
       project: projectOf)
     #expect(idle.map(\.project.root) == ["/b"])
   }
+
+  func idleItems(_ count: Int) -> [IdleProject] {
+    (0..<count).map {
+      IdleProject(
+        project: Project(root: "/p\($0)"), workspaces: 1, lastActivity: nil, pullRequest: nil, failedBuild: nil, errors: 0)
+    }
+  }
+
+  @Test func showsTheFirstIdleProjectsUntilExpanded() {
+    let limit = Overview.idleShown
+    let few = idleItems(limit)
+    #expect(Overview.visibleIdle(few, expanded: false) == (few, 0))
+    let many = idleItems(limit + 14)
+    let collapsed = Overview.visibleIdle(many, expanded: false)
+    #expect(collapsed.shown == Array(many.prefix(limit)))
+    #expect(collapsed.hidden == 14)
+    let expanded = Overview.visibleIdle(many, expanded: true)
+    #expect(expanded.shown == many)
+    #expect(expanded.hidden == 0)
+  }
+}
+
+struct ProjectPageTests {
+  func workspace(_ path: String, live: Bool) throws -> Workspace {
+    try JSONDecoder().decode(
+      Workspace.self, from: Data("{\"path\":\"\(path)\",\"live\":\(live),\"warnings\":[]}".utf8))
+  }
+
+  @Test func showsAllWorktreesOnlyForTheProjectOpenedFromAnIdleRow() {
+    let opened = Project(root: "/a")
+    #expect(ProjectPage.scope(of: opened, showingAll: opened) == .all)
+    #expect(ProjectPage.scope(of: opened, showingAll: Project(root: "/b")) == .active)
+    #expect(ProjectPage.scope(of: opened, showingAll: nil) == .active)
+  }
+
+  @Test func listsActiveWorktreesFirstAndOnlyThemUnlessShowingAll() throws {
+    let idle = try workspace("/a#1", live: false)
+    let running = try workspace("/a#2", live: true)
+    #expect(ProjectPage.content(environments: [idle, running], scope: .active) == .worktrees([running]))
+    #expect(ProjectPage.content(environments: [idle, running], scope: .all) == .worktrees([running, idle]))
+  }
+
+  @Test func namesTheFilterWhenEveryWorktreeIsFilteredOut() throws {
+    let idle = try workspace("/a#1", live: false)
+    #expect(ProjectPage.content(environments: [idle], scope: .active) == .noneActive)
+    #expect(ProjectPage.content(environments: [idle], scope: .all) == .worktrees([idle]))
+    #expect(ProjectPage.content(environments: [], scope: .active) == .empty)
+    #expect(ProjectPage.content(environments: [], scope: .all) == .empty)
+  }
 }
 
 struct TryThisTests {
