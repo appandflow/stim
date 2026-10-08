@@ -38,9 +38,9 @@ import type { MetroResolution } from '../metro.ts';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
 import { workspaceLogErrorIndex, workspaceLogsDir } from '../workspace/paths.ts';
 import { readSupervisorState } from './stop.ts';
+import { detectPlatforms } from '../integrations/projects.ts';
 import {
   detectIsExpo,
-  detectPlatforms,
   detectTutorial,
   findServerWorkspace,
   projectShortcut,

@@ -1,12 +1,12 @@
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { resolve, join } from 'path';
+import { detectPlatforms } from '../integrations/projects.ts';
 import {
   appProjectProblem,
   declaresAppDependency,
   findProjectRoot,
   detectIsExpo,
-  detectPlatforms,
   detectTutorial,
   resolveRegisteredProject,
   projectShortcut,
