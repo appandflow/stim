@@ -9,7 +9,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { dirname } from 'node:path';
 import { supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
 import type { ManagedProvider } from '../engine/metro-reach.ts';
-import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
+import { sameProcessRecord } from '../process-identity.ts';
+import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';

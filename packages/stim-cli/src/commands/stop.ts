@@ -236,6 +236,12 @@ interface StopOutcomes {
   releasedLeases: ReleasedLease[];
 }
 
+export interface StopResult {
+  ok: boolean;
+  outcomes: StopOutcomes;
+  summary: string;
+}
+
 interface TunnelOutcome {
   status: string;
   provider?: string;
@@ -277,7 +283,7 @@ function remoteEnded(entry: DeviceOutcomeEntry): boolean {
 
 type StopArgs = Parameters<typeof stopWorkspace>[0];
 
-export async function runStop(options: StopArgs & { slot?: string }): ReturnType<typeof stopWorkspace> {
+export async function runStop(options: StopArgs & { slot?: string }): Promise<StopResult> {
   if (options.slot === undefined) return stopWorkspace(options);
   if (options.slot === WEB_SLOT) return stopBrowserOnly(options);
   const slot = validateDeviceSlot(options.slot);
@@ -332,7 +338,7 @@ async function stopBrowserOnly({
   project = undefined,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   report = (line: string) => console.error(line),
-}: Pick<StopArgs, 'root' | 'project' | 'teardownBrowser' | 'report'>): ReturnType<typeof stopWorkspace> {
+}: Pick<StopArgs, 'root' | 'project' | 'teardownBrowser' | 'report'>): Promise<StopResult> {
   const kept = 'Only the owned Chrome stops; the workspace server and devices keep running.';
   const port = (project === undefined ? getProject(root) : project)?.metroPort ?? null;
   const outcomes: StopOutcomes = {
@@ -455,7 +461,7 @@ async function stopWorkspace({
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
   report?: (line: string) => void;
-}): Promise<{ ok: boolean; outcomes: StopOutcomes; summary: string }> {
+}): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
   const collectorRecords = collectors === undefined ? readCollectorState(root) : collectors;

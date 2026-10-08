@@ -1,5 +1,5 @@
 import type { MacosBuild, NdjsonRecord } from '@stim-cli/core/state';
-import type { runStop } from '../commands/stop.ts';
+import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
 
@@ -72,7 +72,7 @@ export interface StimStopOptions {
   signal?: AbortSignal;
 }
 
-export type StimStopResult = Pick<Awaited<ReturnType<typeof runStop>>, 'ok' | 'outcomes' | 'summary'>;
+export type StimStopResult = StopResult;
 
 export interface StimDiagnosticsOptions {
   /** Maximum number of records, default 200. Zero returns paths without records. */
