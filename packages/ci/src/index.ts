@@ -124,7 +124,8 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       signal,
       onOutput: options.onProgress,
     });
-    result.exitCode = result.test.error ? 1 : (result.test.exitCode ?? 1);
+    result.exitCode = result.test.exitCode ?? 1;
+    if (result.exitCode < 0 || (result.exitCode === 0 && result.test.error)) result.exitCode = 1;
     if (result.exitCode !== 0) {
       result.failure = {
         code: 'STIM_CI_TEST_FAILED',

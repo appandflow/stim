@@ -86,3 +86,56 @@ test.skipIf(process.platform === 'win32')('reaps a background child when the tes
   expect(result.exitCode).toBe(0);
   expect(result.durationMs).toBeLessThan(2500);
 });
+
+test.skipIf(process.platform === 'win32')(
+  'waits for a resistant background child with closed output streams before reporting completion',
+  async () => {
+    const pidFile = join(root, 'descendant.pid');
+    const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+    const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'ignore'}); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 10);`;
+    try {
+      const result = await runCommand({
+        command: [process.execPath, '-e', script],
+        cwd: root,
+        env: process.env,
+        artifactsDir: root,
+        signal: AbortSignal.timeout(3000),
+      });
+      const pid = Number(readFileSync(pidFile, 'utf8'));
+      expect(result.exitCode).toBe(0);
+      expect(result.error).toBeUndefined();
+      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+    } finally {
+      if (existsSync(pidFile)) {
+        try {
+          process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+        } catch (caught) {
+          expect(caught).toMatchObject({ code: 'ESRCH' });
+        }
+      }
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'reports failure when process group disappearance cannot be verified',
+  async () => {
+    const originalKill = process.kill;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid < 0 && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      return originalKill(pid, signal);
+    });
+    try {
+      const result = await runCommand({
+        command: [process.execPath, '-e', 'process.exit(0)'],
+        cwd: root,
+        env: process.env,
+        artifactsDir: root,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.error).toContain('EPERM');
+    } finally {
+      kill.mockRestore();
+    }
+  },
+);

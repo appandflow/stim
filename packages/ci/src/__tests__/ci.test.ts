@@ -79,6 +79,31 @@ it('preserves a test failure when diagnostics and cleanup also fail', async () =
   expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).exitCode).toBe(23);
 });
 
+it('reports a missing test executable as exit code 1 in the result and saved JSON', async () => {
+  options.command = [join(root, 'missing-executable')];
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(1);
+  expect(result.failure?.code).toBe('STIM_CI_TEST_FAILED');
+  expect(result.test?.error).toContain('ENOENT');
+  expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).exitCode).toBe(1);
+  expect(existsSync(active)).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')('preserves a command failure when output reporting also fails', async () => {
+  options.command = [
+    process.execPath,
+    '-e',
+    "process.on('SIGTERM', () => {}); console.log('test output'); setTimeout(() => process.exit(23), 100);",
+  ];
+  options.onProgress = () => {
+    throw new Error('cannot relay output');
+  };
+  const result = await runCI(options);
+  expect(result.test?.error).toContain('cannot relay output');
+  expect(result.exitCode).toBe(23);
+  expect(existsSync(active)).toBe(false);
+});
+
 it('preserves a test failure when the results directory becomes unwritable', async () => {
   options.command = [
     process.execPath,

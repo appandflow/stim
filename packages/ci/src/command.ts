@@ -1,5 +1,6 @@
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import spawn from 'cross-spawn';
 
 export interface CommandResult {
@@ -42,6 +43,7 @@ export async function runCommand({
       windowsHide: true,
     });
     let error: string | undefined;
+    let groupError: string | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const kill = (force: boolean) => {
       if (!child.pid) return;
@@ -55,7 +57,7 @@ export async function runCommand({
         try {
           process.kill(-child.pid, force ? 'SIGKILL' : 'SIGTERM');
         } catch (caught) {
-          if ((caught as NodeJS.ErrnoException).code !== 'ESRCH') error ??= String(caught);
+          if ((caught as NodeJS.ErrnoException).code !== 'ESRCH') groupError ??= String(caught);
         }
       }
     };
@@ -82,18 +84,41 @@ export async function runCommand({
     signal?.addEventListener('abort', terminate, { once: true });
     if (signal?.aborted) terminate();
     try {
-      return await new Promise<CommandResult>((resolve) => {
+      const status = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
         child.once('close', (exitCode, exitSignal) => {
-          resolve({
-            exitCode,
-            signal: exitSignal,
-            durationMs: Date.now() - started,
-            stdout,
-            stderr,
-            ...(error ? { error } : {}),
-          });
+          resolve({ exitCode, signal: exitSignal });
         });
       });
+      if (process.platform !== 'win32' && child.pid) {
+        const deadline = Date.now() + 2000;
+        while (true) {
+          try {
+            process.kill(-child.pid, 0);
+          } catch (caught) {
+            const code = (caught as NodeJS.ErrnoException).code;
+            if (code === 'ESRCH') break;
+            if (code !== 'EPERM') {
+              error ??= String(caught);
+              break;
+            }
+            // XNU killpg1 returns EPERM for a zombie-only group; require ESRCH before completion.
+            // https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/kern_sig.c#L1612-L1621
+            groupError ??= String(caught);
+          }
+          if (Date.now() >= deadline) {
+            error ??= groupError ?? `Test process group ${child.pid} did not exit after termination`;
+            break;
+          }
+          await delay(20);
+        }
+      }
+      return {
+        ...status,
+        durationMs: Date.now() - started,
+        stdout,
+        stderr,
+        ...(error ? { error } : {}),
+      };
     } finally {
       signal?.removeEventListener('abort', terminate);
       clearTimeout(killTimer);
