@@ -1136,6 +1136,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    preview of what setup will do. Both can be off. Then Next is disabled and
    the preview holds only `$ stim-server setup` and a cursor.
 3. **Set it up.**
+   - While nothing has reached the journal yet, the art shows this Mac and the
+     build Mac linked by a travelling dot (still under Reduce Motion).
    - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
      Terminal while signed in there; answering each y/N request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
@@ -1146,8 +1148,8 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      approved, a success view replaces the mirror; a failed step keeps the
      mirror and its fix. It lists the approvals and the current
      Screen recording and Device control permissions (with the fix for a
-     skipped one), and keeps the log behind **Show setup log**. The expiry
-     line hides after completion.
+     skipped one); it has no log. The expiry line shows only until the
+     command starts.
 4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
    the setup journal. When Builds is chosen, Android tools are always compared
    and never block Next. Only a problem that stops the chosen capability blocks
@@ -1447,6 +1449,17 @@ running: the Dock icon stays, the status watch, notifications, autopilot and
 in the menu bar extra reopens the window. There is one main window; Command-N
 does not open another. **Quit Stim** (Command-Q) is the only way to stop the app,
 and it stops `stim-server` and the log followers. Command-1 through Command-4 in the View menu open Overview, Active Workspaces, Notifications and Machines.
+
+The main window keeps a back and forward history, like Finder. Chevron buttons at the
+leading edge of the toolbar, **Go > Back** (Command-[) and **Go > Forward** (Command-]),
+the mouse back and forward buttons and the trackpad's swipe between pages (when that macOS setting is on) move through it.
+A destination is the sidebar selection plus the project page's **Showing all worktrees**
+scope and the device a tile click focused. A sidebar click, a card click, a notification
+action, a deep link or an oversight target adds one; the history keeps the last 50.
+Navigating after going back drops the forward entries. Back and forward skip a workspace,
+worktree, archive or project that Stim no longer lists, and a button is disabled when
+nothing before or after resolves. The launch page choice restores a destination in place,
+so Back does not return to Overview from it.
 
 ## Notice cards
 
