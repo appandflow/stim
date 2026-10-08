@@ -1,10 +1,8 @@
 import Foundation
 
-/// One card of the Active worktrees page: a worktree and its apps, grouped by the sidebar's `WorktreePage` identity.
 public struct WallCard: Identifiable, Sendable {
   public struct App: Identifiable, Sendable {
     public var workspace: Workspace
-    /// The app's folder inside the worktree, or the folder name for an app at the worktree root.
     public var label: String
     public var devices: [DeviceRef]
     public var id: String { workspace.path }

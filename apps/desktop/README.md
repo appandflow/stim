@@ -83,7 +83,9 @@ warming as one full-width card. A worktree with several apps (for example
 `apps/mobile` and `apps/desktop`) gets one card with the worktree's name and
 project in the header; each app is a labelled group inside it with its Metro port,
 errors, CPU and memory, followed by its device tiles, and clicking the app's label
-opens that app's workspace. For a worktree with one app, the header shows its name and project, the
+opens that app's workspace.
+
+For a worktree with one app, the header shows its name and project, the
 Metro port, who drives its devices, CPU, memory and its errors (a card with no running device shows only Metro and errors); the device tiles
 sit under it at the device tile size and wrap onto more rows when they do not
 fit. Clicking a card or its header opens the project (on a project page it opens the
