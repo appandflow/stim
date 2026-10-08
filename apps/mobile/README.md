@@ -43,7 +43,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   error and warning counts summed across the apps, the agent sessions of all of
   them, and one state dot per platform any app has run (iOS, Android, macOS,
   Web), as in Stim Desktop's sidebar. Tapping the row opens the unified workspace
-  page at that app. Filters still apply per app. Repo active/idle counts count
+  page at the app that leads the row. Filters still apply per app. Repo active/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
