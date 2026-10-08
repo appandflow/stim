@@ -14,7 +14,7 @@
     "dev:pair": "node scripts/dev-pair.mjs",
     "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error && node scripts/check-ascii.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
+    "test": "node --test mock-server/*.test.mjs && jest",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "intl:extract": "lingui extract --clean",
