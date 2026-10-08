@@ -162,7 +162,7 @@ struct WorkspaceActionsButton: View {
     .fixedSize()
     .help("Workspace actions")
     .accessibilityLabel("Workspace actions")
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) { stop() }
     } message: {
       Text("This also ends the workspace's billable EAS Simulator session.")
@@ -222,7 +222,7 @@ struct WorktreeActions<Content: View>: View {
         removal: $removal)
     )
     .confirmationDialog(
-      "Stop this workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
+      "Stop This Workspace?", isPresented: Binding(get: { stopping != nil }, set: { if !$0 { stopping = nil } }),
       titleVisibility: .visible, presenting: stopping
     ) { app in
       Button("Run stim stop", role: .destructive) { stop(app) }
@@ -239,7 +239,7 @@ struct WorktreeActions<Content: View>: View {
     } message: { removal in
       Text(worktreeRemovalMessage(path: firstApp.path, branch: removal.branch))
     }
-    .confirmationDialog("Stop all apps in this worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop All Apps in This Worktree?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop in each active app", role: .destructive) {
         let apps = liveApps
         guard !apps.isEmpty else { return }

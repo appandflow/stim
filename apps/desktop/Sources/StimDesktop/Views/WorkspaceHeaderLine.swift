@@ -263,7 +263,7 @@ struct GitChipButton: View {
         .presentationBackground(Palette.surface)
     }
     .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
-    .alert("Could not open changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+    .alert("Could Not Open Changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
       Button("OK") { openError = nil }
     } message: {
       Text(openError ?? "")

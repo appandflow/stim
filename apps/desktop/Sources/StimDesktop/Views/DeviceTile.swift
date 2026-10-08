@@ -181,7 +181,7 @@ struct DeviceTile: View {
         if !pasted { clipboardError = "Could not paste into the device. Check that it is connected and a text field is focused." }
       }
     }
-    .alert("Clipboard transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
+    .alert("Clipboard Transfer", isPresented: Binding(get: { clipboardError != nil }, set: { if !$0 { clipboardError = nil } })) {
       Button("OK", role: .cancel) { clipboardError = nil }
     } message: {
       Text(clipboardError ?? "")

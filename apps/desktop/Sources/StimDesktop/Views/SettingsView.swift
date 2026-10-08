@@ -159,12 +159,12 @@ struct ScopeSettingsView: View {
 
   @ViewBuilder private var content: some View {
     if let error = model.schemaError ?? model.loadError {
-      EmptyState(title: "Settings unavailable", message: error)
+      EmptyState(title: "Settings Unavailable", message: error)
     } else if model.payload == nil || model.fields.isEmpty {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if scope != .machine && model.payload?.file(for: scope) == nil {
       EmptyState(
-        title: "No workspace selected",
+        title: "No Workspace Selected",
         message: "Pick a workspace above, or choose a project directory, to edit its \(scope.rawValue) settings.")
     } else {
       ScrollView {
@@ -184,7 +184,7 @@ struct ScopeSettingsView: View {
     let entries = model.payload?.unknown.filter { $0.scope == scope } ?? []
     if !entries.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        SectionLabel(title: "Not read by Stim")
+        SectionLabel(title: "Not Read by Stim")
         ForEach(entries, id: \.self) { entry in
           HStack(alignment: .firstTextBaseline) {
             Text(entry.key).font(.stim(.callout, mono: true))

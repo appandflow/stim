@@ -129,7 +129,7 @@ export const TUTORIAL_STEPS: {
 }[] = [
   {
     id: 'begin',
-    title: 'Create the tutorial',
+    title: 'Create the Tutorial',
     who: 'agent',
     optional: false,
     prompt: TUTORIAL_PROMPTS.begin,
@@ -163,7 +163,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'sidebar',
-    title: 'Workspace in sidebar',
+    title: 'Workspace in Sidebar',
     who: 'you',
     optional: false,
     prompt: null,
@@ -190,7 +190,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'rebuild',
-    title: 'Rebuild from cache',
+    title: 'Rebuild from Cache',
     who: 'agent',
     optional: false,
     prompt: TUTORIAL_PROMPTS.rebuild,
@@ -199,7 +199,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'device',
-    title: 'Live view and control',
+    title: 'Live View and Control',
     who: 'you',
     optional: false,
     prompt: null,
@@ -208,7 +208,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'logs',
-    title: 'App logs',
+    title: 'App Logs',
     who: 'you',
     optional: false,
     prompt: null,
@@ -217,7 +217,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'agent',
-    title: 'Agent actions and replay',
+    title: 'Agent Actions and Replay',
     who: 'agent',
     optional: false,
     prompt: TUTORIAL_PROMPTS.agent,
@@ -256,7 +256,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'phone',
-    title: 'Watch on your phone',
+    title: 'Watch on Your Phone',
     who: 'you',
     optional: true,
     prompt: null,
@@ -265,7 +265,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'machine',
-    title: 'Build on another Mac',
+    title: 'Build on Another Mac',
     who: 'both',
     optional: true,
     prompt: TUTORIAL_PROMPTS.machine,
@@ -274,7 +274,7 @@ export const TUTORIAL_STEPS: {
   },
   {
     id: 'finish',
-    title: 'Finish and archive',
+    title: 'Finish and Archive',
     who: 'agent',
     optional: false,
     prompt: TUTORIAL_PROMPTS.finish,

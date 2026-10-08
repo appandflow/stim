@@ -42,7 +42,7 @@ struct BuildMachinesEmptyState: View {
   var body: some View {
     VStack(spacing: Space.lg) {
       BuildMachineArt()
-      Text("No remote Macs").font(.stim(.headline))
+      Text("No Remote Macs").font(.stim(.headline))
       Text(
         needsTailscale
           ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."

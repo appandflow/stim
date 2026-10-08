@@ -29,7 +29,7 @@ struct AddMachineSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Add a remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Add a Remote Mac").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(Array(["Pick a Mac", "What it does", "Set it up", "Tools", "Done"].enumerated()), id: \.offset) {
           index, title in
           HStack(spacing: Space.md) {
@@ -63,7 +63,7 @@ struct AddMachineSheet: View {
       model.stop()
       dismiss()
     }
-    .confirmationDialog("Cancel setup for \(name)?", isPresented: $confirmsCancel) {
+    .confirmationDialog("Cancel Setup for \(name)?", isPresented: $confirmsCancel) {
       Button("Cancel setup", role: .destructive) { Task { await model.send(.cancel) } }.disabled(model.cancelling)
       Button("Keep setting up", role: .cancel) {}
     } message: {
@@ -115,7 +115,7 @@ struct AddMachineSheet: View {
 
   private var pickContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Choose a Mac on your tailnet").font(.stim(.title))
+      Text("Choose a Mac on Your Tailnet").font(.stim(.title))
       if model.checkingTailscale {
         HStack(spacing: Space.sm) {
           ProgressView().controlSize(.small)
@@ -165,7 +165,7 @@ struct AddMachineSheet: View {
 
   @ViewBuilder private var machineList: some View {
     if model.peers.isEmpty {
-      Text("No other Mac on your tailnet yet").font(.stim(.headline))
+      Text("No Other Mac on Your Tailnet Yet").font(.stim(.headline))
       Text("Install Tailscale on the Mac you want to use and sign in with the same account.")
         .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       Button("Download Tailscale", systemImage: "arrow.down.circle") {

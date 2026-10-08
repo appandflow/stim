@@ -660,7 +660,7 @@ struct RootView: View {
           host
         }
       } else {
-        EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
+        EmptyState(title: "Workspace Gone", message: "stim status no longer reports this workspace.")
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
@@ -678,7 +678,7 @@ struct RootView: View {
           apps: notSetUpApps(for: worktree, environments: store.payload?.environments ?? [], project: store.project(ofPath:)),
           projectName: store.title(of: store.project(ofPath: worktree.path)))
       } else {
-        EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
+        EmptyState(title: "Worktree Gone", message: "stim status no longer reports this worktree.")
       }
     case .notifications:
       InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)

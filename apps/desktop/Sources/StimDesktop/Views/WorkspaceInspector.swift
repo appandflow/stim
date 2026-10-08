@@ -43,7 +43,7 @@ struct Inspector: View {
         }
         VStack(alignment: .leading, spacing: Space.md) {
           HStack {
-            SectionLabel(title: archive == nil ? "App / native logs" : "Logs")
+            SectionLabel(title: archive == nil ? "App / Native Logs" : "Logs")
             Spacer(minLength: Space.sm)
             if archive?.logsExpired != true {
               Button("Show logs") {
@@ -70,7 +70,7 @@ struct Inspector: View {
         let project = archive == nil ? stats.value?.project.flatMap { $0.ios != nil || $0.android != nil ? $0 : nil } : nil
         if project != nil || stats.error != nil {
           VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Build cache \u{00B7} project")
+            SectionLabel(title: "Build Cache \u{00B7} Project")
             if let error = stats.error {
               Label("Could not load stats: \(error)", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(Palette.warning)
@@ -374,7 +374,7 @@ struct WorktreeInspector: View {
         }
         VStack(alignment: .leading, spacing: Space.md) {
           HStack {
-            SectionLabel(title: "App / native logs")
+            SectionLabel(title: "App / Native Logs")
             Spacer(minLength: Space.sm)
             Button("Show logs") {
               var query = LogQuery()
@@ -387,7 +387,7 @@ struct WorktreeInspector: View {
         WorkspaceWorkSection(env: page.apps[0], sessions: page.agents)
         if !cacheEntries.isEmpty || stats.values.contains(where: { $0.error != nil }) {
           VStack(alignment: .leading, spacing: Space.md) {
-            SectionLabel(title: "Build cache \u{00B7} project")
+            SectionLabel(title: "Build Cache \u{00B7} Project")
             ForEach(page.apps) { app in
               if let error = stats[app.path]?.error {
                 Label("Could not load stats: \(error)", systemImage: "exclamationmark.triangle")

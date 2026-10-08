@@ -20,7 +20,7 @@ struct WallView: View {
     let cards = WallCard.cards(environments: shown)
     if store.payload == nil {
       if let error = store.error {
-        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -36,7 +36,7 @@ struct WallView: View {
       .id(project.id)
     } else if shown.isEmpty {
       EmptyState(
-        title: project.map { "Nothing running in \(store.title(of: $0))" } ?? "Nothing running",
+        title: project.map { "Nothing Running in \(store.title(of: $0))" } ?? "Nothing Running",
         message: "Workspaces appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true
       )
@@ -162,7 +162,7 @@ struct WallView: View {
       MacosAppCard(app: macos, workspace: env.path)
     }
     if app.devices.isEmpty && env.macos == nil {
-      Label("No running devices", systemImage: "iphone.gen3")
+      Label("No Running Devices", systemImage: "iphone.gen3")
         .font(.stim(.callout))
         .foregroundStyle(Palette.secondary)
         .labelStyle(.titleAndIcon)

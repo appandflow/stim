@@ -181,7 +181,7 @@ struct ActivitySheet: View {
   }
 
   private var commandOutput: some View {
-    DisclosureGroup("Command output", isExpanded: $showsCommandOutput) {
+    DisclosureGroup("Command Output", isExpanded: $showsCommandOutput) {
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .top, spacing: Space.md) {
           CommandText(command: run.steps.map { $0.displayLine() }.joined(separator: "\n"))
@@ -337,7 +337,7 @@ struct GcPreviewView: View {
 
   var body: some View {
     if report.sections.isEmpty {
-      EmptyState(title: "Nothing to clean up", message: "stim gc found nothing left behind.")
+      EmptyState(title: "Nothing to Clean Up", message: "stim gc found nothing left behind.")
     } else {
       ScrollView {
         VStack(alignment: .leading, spacing: Space.lg) {

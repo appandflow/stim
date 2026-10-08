@@ -265,7 +265,7 @@ minutes on a cold cache). Compare cacheHit and missReason on rebuild. At Live
 view and control, open the device viewer and tap Log an error; without Desktop
 use the simulator. At App logs, try Crash me or Slow request if wanted. A JS
 crash shows a red box; the slow request is a local timer, not network capture.
-At Watch on your phone, optionally open an already paired Stim phone to see
+At Watch on Your Phone, optionally open an already paired Stim phone to see
 the tour workspace; phone setup and machine approval stay with you.
 Use stim status, stim logs --errors, and stim stats without Desktop.
 

@@ -28,7 +28,7 @@ struct InboxView: View {
         header(empty: days.isEmpty)
         if days.isEmpty {
           EmptyState(
-            title: filter == InboxFilter() ? "No notifications" : "Nothing matches",
+            title: filter == InboxFilter() ? "No Notifications" : "Nothing Matches",
             message: filter == InboxFilter()
               ? "What Stim notifies about in the last 7 days appears here, including Silent and Off categories."
               : "No notification matches these filters."
@@ -71,7 +71,7 @@ struct InboxView: View {
       Text(
         "\(fix.command.displayLine())\n\nStop native builds in this checkout first. Doctor repairs only what its report names.")
     }
-    .confirmationDialog("Clear these notifications?", isPresented: $confirmsClear) {
+    .confirmationDialog("Clear These Notifications?", isPresented: $confirmsClear) {
       Button("Clear", role: .destructive) { inbox.clear(filter) }
     } message: {
       Text("They are removed from this Mac's notification history.")

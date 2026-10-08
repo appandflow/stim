@@ -33,7 +33,7 @@ struct TutorialPanel: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack {
-        SectionLabel(title: "Stim tutorial")
+        SectionLabel(title: "Stim Tutorial")
         Spacer()
         Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
@@ -48,7 +48,7 @@ struct TutorialPanel: View {
     .foregroundStyle(Palette.text)
     .background(Palette.sidebar)
     .tint(Palette.brand)
-    .accessibilityLabel("Stim tutorial")
+    .accessibilityLabel("Stim Tutorial")
   }
 
   private var rendersStatic: Bool {
@@ -79,7 +79,7 @@ struct TutorialPanel: View {
         Text("Waiting for a restarted tutorial workspace...").foregroundStyle(Palette.secondary)
       }
       if snapshot.isComplete {
-        Label("Tutorial complete", systemImage: "checkmark.circle.fill")
+        Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
           .font(.stim(.headline)).foregroundStyle(Palette.success)
         Text(
           snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off"

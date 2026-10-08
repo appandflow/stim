@@ -7,7 +7,7 @@ struct NativeViewerPermissionsView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xl) {
-      Label("Native app viewer", systemImage: "macwindow")
+      Label("Native App Viewer", systemImage: "macwindow")
         .font(.stim(.title))
       Text(
         "Allow Stim to show your native Mac app and send clicks, scrolling and typing to its owned window. You choose the permissions in macOS; builds, status and logs work without them."

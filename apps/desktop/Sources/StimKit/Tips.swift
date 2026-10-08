@@ -5,13 +5,13 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .buildMachine: "Build on another Mac"
-    case .phone: "See your workspaces on your phone"
-    case .tutorial: "Take the Stim tutorial"
-    case .hideWorkspaces: "Hide workspaces you don't need"
-    case .statusFilter: "Filter by status"
-    case .replay: "Replay what an agent did"
-    case .hostedSimulators: "Run simulators on another Mac"
+    case .buildMachine: "Build on Another Mac"
+    case .phone: "See Your Workspaces on Your Phone"
+    case .tutorial: "Take the Stim Tutorial"
+    case .hideWorkspaces: "Hide Workspaces You Don't Need"
+    case .statusFilter: "Filter by Status"
+    case .replay: "Replay What an Agent Did"
+    case .hostedSimulators: "Run Simulators on Another Mac"
     }
   }
 

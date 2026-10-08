@@ -213,7 +213,7 @@ struct DeviceViewerToolbar: View {
       .fixedSize()
       .disabled(busy)
       .help("stim stop: ends the remote session with the rest of the workspace")
-      .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
         Button("Run stim stop", role: .destructive) {
           actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
         }

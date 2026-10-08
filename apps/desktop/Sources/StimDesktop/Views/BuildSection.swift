@@ -116,14 +116,14 @@ struct BuildSection: View {
           RunningBuildDetail(env: env, build: building)
         } else {
           VStack(alignment: .leading, spacing: Space.sm) {
-            Text("Last build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+            Text("Last Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
             lastBuild(platform)
           }
           if !readOnly {
             Divider().overlay(Palette.border)
             VStack(alignment: .leading, spacing: Space.sm) {
               HStack {
-                Text("Next build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
+                Text("Next Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
                 Spacer(minLength: Space.sm)
                 checkButton(platform, entry: entry)
               }

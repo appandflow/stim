@@ -77,7 +77,7 @@ struct OnboardingBanner: View {
   private func nodePopup(_ report: Onboarding.Report) -> some View {
     let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
-      Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
+      Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
       Text(
         "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
       )
@@ -92,7 +92,7 @@ struct OnboardingBanner: View {
 
   private func relaunchPopup(_ report: Onboarding.Report) -> some View {
     popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
-      Text("Restart Stim Desktop to use the new stim").font(.stim(.headline))
+      Text("Restart Stim Desktop to Use the New stim").font(.stim(.headline))
       Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Palette.secondary)
       disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
@@ -123,7 +123,7 @@ struct OnboardingBanner: View {
 
   private func viewerPopup(_ keys: [String]) -> some View {
     popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
-      Text("Show Stim's devices in Stim Desktop").font(.stim(.headline))
+      Text("Show Stim's Devices in Stim Desktop").font(.stim(.headline))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Palette.secondary)
       disclosure {

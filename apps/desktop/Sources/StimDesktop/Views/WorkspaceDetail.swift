@@ -515,7 +515,7 @@ struct WorkspaceDetail: View {
     } else {
       VStack(spacing: Space.lg) {
         NoDeviceArt()
-        Text("No devices").font(.stim(.headline))
+        Text("No Devices").font(.stim(.headline))
         Text("Run stim ios or stim android to launch your app.")
           .foregroundStyle(Palette.secondary)
           .multilineTextAlignment(.center)

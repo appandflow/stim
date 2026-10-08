@@ -61,7 +61,7 @@ struct AppPreferencesView: View {
       }
       .id("top")
 
-      Section("Workspace list") {
+      Section("Workspace List") {
         LabeledContent("Status") {
           Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
             Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
@@ -84,7 +84,7 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Device wall") {
+      Section("Device Wall") {
         Picker("Tile size", selection: $tileSize) {
           ForEach(TileSize.allCases, id: \.self) { Text($0.title).tag($0) }
         }
@@ -156,7 +156,7 @@ struct AppPreferencesView: View {
         }
       } header: {
         HStack {
-          Text("Autopilot activity")
+          Text("Autopilot Activity")
           Spacer()
           if !autopilot.log.isEmpty {
             Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
@@ -175,7 +175,7 @@ struct AppPreferencesView: View {
           ForEach(NotificationSettings.quietHoursChoices, id: \.value) { Text($0.label).tag($0.value) }
         }
       } header: {
-        Text("Notify when")
+        Text("Notify When")
       } footer: {
         Text(
           PhoneApp.Copy.notificationRulesPrefix(phoneApp: FeatureFlags.isEnabled(.phoneApp))
@@ -274,7 +274,7 @@ struct AppPreferencesView: View {
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {
     let installed = apps.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
     return Picker(title, selection: selection) {
-      Text("First installed").tag("")
+      Text("First Installed").tag("")
       ForEach(installed) { Text($0.name).tag($0.bundleID) }
     }
   }

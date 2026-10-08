@@ -22,7 +22,7 @@ struct OverviewView: View {
   var body: some View {
     if store.payload == nil {
       if let error = store.error {
-        EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
+        EmptyState(title: "Cannot Read stim status", message: error, showsHero: true)
       } else {
         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
       }
@@ -50,7 +50,7 @@ struct OverviewView: View {
     let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
-        title: "Nothing here yet",
+        title: "Nothing Here Yet",
         message: "Projects appear here when an agent warms a worktree or runs stim ios or stim android.",
         showsHero: true, showsPrompts: true)
     } else {

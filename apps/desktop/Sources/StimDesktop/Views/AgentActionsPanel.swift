@@ -88,7 +88,7 @@ struct AgentActionsPanel: View {
   private var header: some View {
     VStack(alignment: .leading, spacing: Space.sm) {
       HStack(alignment: .firstTextBaseline) {
-        Text("Agent actions").font(.stim(.headline)).accessibilityAddTraits(.isHeader)
+        Text("Agent Actions").font(.stim(.headline)).accessibilityAddTraits(.isHeader)
         Spacer()
         Text(countLabel(actions.count, "action")).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       }
@@ -166,7 +166,7 @@ struct AgentActionsPanel: View {
         return .handled
       }
       .accessibilityElement(children: .contain)
-      .accessibilityLabel("Agent actions")
+      .accessibilityLabel("Agent Actions")
     }
   }
 

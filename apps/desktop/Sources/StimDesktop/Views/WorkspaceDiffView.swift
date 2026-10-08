@@ -33,7 +33,7 @@ struct WorkspaceDiffView: View {
   var body: some View {
     VStack(spacing: 0) {
       HStack(spacing: Space.md) {
-        Text("Workspace changes").font(.stim(.headline))
+        Text("Workspace Changes").font(.stim(.headline))
         Spacer()
         Button("Refresh", systemImage: "arrow.clockwise") { refresh += 1 }.disabled(connection == nil)
         Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)

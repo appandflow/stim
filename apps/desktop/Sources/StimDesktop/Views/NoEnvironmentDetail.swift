@@ -31,7 +31,7 @@ struct NoEnvironmentDetail: View {
         ScrollView {
           VStack(spacing: Space.xl) {
             NoDeviceArt()
-            Text("Stim hasn't run here yet").font(.stim(.headline))
+            Text("Stim Hasn't Run Here Yet").font(.stim(.headline))
             Text(
               "Set up copies dependencies from \(projectName.map { $0 + "'s " } ?? "")main checkout, then runs the app with its own dev server and simulator."
             )

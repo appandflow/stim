@@ -56,7 +56,7 @@ struct AddMachineSteps: View {
 
   @ViewBuilder private var test: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Test build").font(.stim(.title))
+      Text("Test Build").font(.stim(.title))
       Text("Expo blank (SDK 58), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
       if let sample = model.sample {
         Text(abbreviatingHome(sample.folder)).font(.stim(.caption, mono: true)).textSelection(.enabled)
@@ -183,7 +183,7 @@ struct AddMachineSteps: View {
       "Build and run this project on iOS with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
     return VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        Label("Try it", systemImage: "sparkles").font(.stim(.headline))
+        Label("Try It", systemImage: "sparkles").font(.stim(.headline))
         Spacer()
         CopyButton(prompt, title: "Copy prompt", help: "Copy the agent prompt")
       }

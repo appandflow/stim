@@ -13,7 +13,7 @@ public enum TutorialSteps {
   public static let restartPrompt = "Restart the Stim tutorial."
   public static let all: [TutorialStep] = [
     TutorialStep(
-      id: "begin", title: "Create the tutorial", who: "agent", optional: false,
+      id: "begin", title: "Create the Tutorial", who: "agent", optional: false,
       prompt: "Run the Stim tutorial.", section: "run",
       manual: [
         "base=\"{base}\"",
@@ -141,7 +141,7 @@ public enum TutorialSteps {
         "fi",
       ]),
     TutorialStep(
-      id: "sidebar", title: "Workspace in sidebar", who: "you", optional: false,
+      id: "sidebar", title: "Workspace in Sidebar", who: "you", optional: false,
       prompt: nil, section: nil,
       manual: [
 
@@ -160,7 +160,7 @@ public enum TutorialSteps {
         "stim ios",
       ]),
     TutorialStep(
-      id: "rebuild", title: "Rebuild from cache", who: "agent", optional: false,
+      id: "rebuild", title: "Rebuild from Cache", who: "agent", optional: false,
       prompt: "Continue the Stim tutorial: rebuild", section: "rebuild",
       manual: [
         "cd \"{tour}\"",
@@ -168,20 +168,20 @@ public enum TutorialSteps {
         "stim status --json",
       ]),
     TutorialStep(
-      id: "device", title: "Live view and control", who: "you", optional: false,
+      id: "device", title: "Live View and Control", who: "you", optional: false,
       prompt: nil, section: nil,
       manual: [
         "stim status"
       ]),
     TutorialStep(
-      id: "logs", title: "App logs", who: "you", optional: false,
+      id: "logs", title: "App Logs", who: "you", optional: false,
       prompt: nil, section: nil,
       manual: [
         "stim logs --errors",
         "stim logs --grep '\\[stim:tutorial\\]'",
       ]),
     TutorialStep(
-      id: "agent", title: "Agent actions and replay", who: "agent", optional: false,
+      id: "agent", title: "Agent Actions and Replay", who: "agent", optional: false,
       prompt: "Continue the Stim tutorial: agent", section: "agent",
       manual: [
         "cd \"{tour}\"",
@@ -210,20 +210,20 @@ public enum TutorialSteps {
         "stim logs --grep 'title color'",
       ]),
     TutorialStep(
-      id: "phone", title: "Watch on your phone", who: "you", optional: true,
+      id: "phone", title: "Watch on Your Phone", who: "you", optional: true,
       prompt: nil, section: nil,
       manual: [
 
       ]),
     TutorialStep(
-      id: "machine", title: "Build on another Mac", who: "both", optional: true,
+      id: "machine", title: "Build on Another Mac", who: "both", optional: true,
       prompt: "Continue the Stim tutorial: machine", section: "machine",
       manual: [
         "cd \"{tour}\"",
         "stim ios --remote-build \"{machine}\" --no-build-cache",
       ]),
     TutorialStep(
-      id: "finish", title: "Finish and archive", who: "agent", optional: false,
+      id: "finish", title: "Finish and Archive", who: "agent", optional: false,
       prompt: "Continue the Stim tutorial: finish", section: "finish",
       manual: [
         "git -C \"{tour}\" checkout -- theme.js",

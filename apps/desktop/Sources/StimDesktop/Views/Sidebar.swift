@@ -383,7 +383,7 @@ struct WorkspaceRow: View {
         canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
         onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     }
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {
         actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
       }

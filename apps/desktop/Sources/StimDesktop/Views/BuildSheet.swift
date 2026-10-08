@@ -91,7 +91,7 @@ struct BuildSheet: View {
               if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
             } else {
               EmptyState(
-                title: "No \(platformName(platform)) build recorded",
+                title: "No \(platformName(platform)) Build Recorded",
                 message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
               )
               .padding(Space.xxl)
@@ -161,7 +161,7 @@ struct BuildSheet: View {
   private var nextBuild: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        SectionLabel(title: "Next build")
+        SectionLabel(title: "Next Build")
         Spacer()
         checkButton
       }
@@ -247,7 +247,7 @@ struct BuildSheet: View {
 
   private var recentBuilds: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      SectionLabel(title: "Recent builds").padding(.horizontal, Space.lg)
+      SectionLabel(title: "Recent Builds").padding(.horizontal, Space.lg)
       ScrollView {
         TimelineView(running.map { .buildSeconds($0) } ?? .periodic(from: .now, by: 30)) { context in
           VStack(spacing: Space.xxs) {

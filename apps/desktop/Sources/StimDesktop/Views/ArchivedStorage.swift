@@ -40,7 +40,7 @@ struct ArchivedStorageSection: View {
   var body: some View {
     if !usage.storageRows.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        SectionLabel(title: "Archived workspaces")
+        SectionLabel(title: "Archived Workspaces")
         Text("\(countLabel(usage.count, "archive")) \u{00B7} \(Format.fileSize(usage.bytes))")
         Text("Bounded by archive.maxTotalGb").foregroundStyle(Palette.secondary)
         ForEach(usage.storageRows, id: \.title) { row in
