@@ -11,6 +11,7 @@ struct AddMachineIllustration: View {
     case tailscaleUp
     case capabilities(Set<SetupCapability>)
     case command
+    case waiting
     case tools
     case ready
   }
@@ -33,6 +34,7 @@ struct AddMachineIllustration: View {
             ], mode: .scripted(loop: true), height: 88)
         }
       case .capabilities(let chosen): CapabilitiesArt(chosen: chosen)
+      case .waiting: TailnetArt(connected: true)
       case .command: MachinesArt(badge: "terminal.fill")
       case .tools: ToolsArt()
       case .ready: MachinesArt(badge: "checkmark")
@@ -174,28 +176,32 @@ private struct CapabilitiesArt: View {
       BrandHalo(size: 130)
       BrandBadge(systemImage: "macmini.fill", size: 64)
         .opacity(chosen.isEmpty ? Opacity.disabled : 1)
+        .animation(fade, value: chosen.isEmpty)
       chip("hammer.fill", "Builds", on: chosen.contains(.build))
         .offset(x: -104, y: floating ? -26 : -20)
       chip("iphone", "Hosted simulators", on: chosen.contains(.deviceHost))
         .offset(x: 112, y: floating ? 30 : 24)
     }
-    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: chosen)
     .onAppear {
       guard !reduceMotion else { return }
       withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) { floating = true }
     }
   }
 
+  private var fade: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.2) }
+
   private func chip(_ symbol: String, _ title: String, on: Bool) -> some View {
     Label(title, systemImage: symbol)
       .font(.stim(.caption, weight: .semibold))
-      .foregroundStyle(on ? Palette.primary : Palette.tertiary)
+      .foregroundStyle(Palette.primary)
+      .fixedSize()
       .padding(.horizontal, Space.md)
       .padding(.vertical, Space.xs)
       .background(Capsule().fill(Palette.surface))
-      .overlay(Capsule().strokeBorder(on ? Palette.accent.opacity(0.5) : Palette.border))
-      .shadow(color: Palette.shadow.opacity(on ? 0.08 : 0), radius: 4, y: 2)
-      .opacity(on ? 1 : 0.6)
+      .overlay(Capsule().strokeBorder(Palette.accent.opacity(0.5)))
+      .shadow(color: Palette.shadow.opacity(0.08), radius: 4, y: 2)
+      .opacity(on ? 1 : 0.45)
+      .animation(fade, value: on)
   }
 }
 
