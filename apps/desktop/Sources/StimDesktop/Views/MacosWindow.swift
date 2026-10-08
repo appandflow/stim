@@ -33,11 +33,11 @@ struct MacosLocalScreen: View {
     ZStack {
       if let image = capture.image {
         MacosWindowCanvas(image: image)
-          .accessibilityLabel("\(app.product) owned window")
+          .accessibilityLabel("\(app.name) owned window")
       } else if let error = capture.error {
         ScreenMessage(text: error)
       } else {
-        ScreenMessage(text: "Connecting to \(app.product)")
+        ScreenMessage(text: "Connecting to \(app.name)")
       }
       if capture.image != nil, permissionsMissing {
         VStack {

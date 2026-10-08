@@ -232,8 +232,11 @@ struct StimDesktopApp: App {
     }
   }
 
+  private static let windowTitle =
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Stim"
+
   var body: some Scene {
-    Window("Stim", id: "main") {
+    Window(Self.windowTitle, id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
         buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,

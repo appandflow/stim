@@ -223,7 +223,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.deviceProfile.map(DeviceRef.readableDeviceProfile) ?? "Android emulator"
     case .remote(let d): return "\(d.backend.uppercased()) \(model)"
     case .web: return "Web"
-    case .macos(let d): return d.product
+    case .macos(let d): return d.name
     }
   }
 
