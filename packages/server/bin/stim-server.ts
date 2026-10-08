@@ -45,7 +45,7 @@ import {
   serveCommand,
   serveRoute,
   tailnetEndpoint,
-  tailscaleStatus,
+  readTailscaleStatus,
   type ServeRoute,
   type TailscaleState,
 } from '../src/tailscale.ts';
@@ -128,7 +128,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
 
   const launchdLabel = process.env.XPC_SERVICE_NAME;
   const tailscaleBinary = findTailscale(env);
-  const tailscale = tailscaleStatus(tailscaleBinary, env);
+  const tailscale = await readTailscaleStatus(tailscaleBinary, env);
   const stim = bundledStim();
   const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
@@ -214,7 +214,7 @@ const SCOPE_TEXT: Record<Scope, string> = {
 
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
   const binary = findTailscale(process.env);
-  const tailscale = tailscaleStatus(binary, process.env);
+  const tailscale = await readTailscaleStatus(binary, process.env);
   let endpoint = `ws://127.0.0.1:${port}`;
   let note = tailscaleNote(tailscale);
   if (note) note = `${note} The endpoint above only works on this Mac.`;

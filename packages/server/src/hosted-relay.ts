@@ -8,6 +8,7 @@ import { FRAME_FPS, VIDEO_KEYFRAME, type ProtocolError, type RequestId, type Ser
 import { DEFAULT_VIDEO_LIMITS, rewriteVideoSubscription, videoSubscription, VideoGate } from './video.ts';
 
 const TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 20_000;
 const KEYFRAME_RETRY_MS = 1000;
 const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
@@ -159,7 +160,13 @@ export class Upstream {
     if (this.ended) return Promise.reject(this.ended);
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
-      const timer = setTimeout(() => this.fail(`the host did not answer ${method} in time`), TIMEOUT_MS);
+      const timer = setTimeout(
+        () =>
+          this.fail(
+            `the host was busy or slow: it did not answer ${method} within ${REQUEST_TIMEOUT_MS / 1000} seconds`,
+          ),
+        REQUEST_TIMEOUT_MS,
+      );
       this.pending.set(id, {
         resolve: (reply) => {
           clearTimeout(timer);

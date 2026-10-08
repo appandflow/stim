@@ -2259,6 +2259,42 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
     },
   );
 
+  const slowProbe = (delayMs: number) => {
+    const executable = join(root, 'slow-host-probe');
+    writeFileSync(
+      executable,
+      `#!${process.execPath}
+setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibility: true })), ${delayMs});
+`,
+      { mode: 0o755 },
+    );
+    return executable;
+  };
+  const pairingHello = (client: Client) =>
+    client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { pairingToken: createPairingToken().token, deviceName: 'phone' },
+    });
+
+  test.skipIf(!fakeTailscale)('runs the host permission probe beside whois instead of after it', async () => {
+    const port = await start({ whoisDelayMs: 1500, host: { executable: slowProbe(1500), name: 'Stim Host Dev' } });
+    const client = await connect(port, '100.64.0.2');
+    const startedAt = Date.now();
+    const reply = await pairingHello(client);
+    expect(reply).toMatchObject({ result: { host: { screenRecording: true, accessibility: true } } });
+    expect(Date.now() - startedAt).toBeLessThan(2900);
+  });
+
+  test.skipIf(!fakeTailscale)('refuses a peer whois cannot identify without sending host details', async () => {
+    const port = await start({ host: { executable: slowProbe(50), name: 'Stim Host Dev' } });
+    const client = await connect(port, '100.64.0.9');
+    const reply = await pairingHello(client);
+    expect(reply).toMatchObject({ error: { code: 'identity-unavailable' } });
+    expect(JSON.stringify(reply)).not.toContain('screenRecording');
+    expect(readDevices()).toEqual([]);
+  });
+
   it('reports unavailable grants when the host probe fails', async () => {
     const port = await start({ host: { executable: join(root, 'missing'), name: 'Stim Host Dev' } });
     expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toHaveProperty('host', null);

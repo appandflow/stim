@@ -980,6 +980,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       clearTimeout(timer);
+      const probing = hostHealth();
       const identity = await identify();
       if (socket.readyState !== socket.OPEN) return;
       if (!identity) {
@@ -1039,7 +1040,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
-        ...(options.host ? { host: await hostHealth() } : {}),
+        ...(options.host ? { host: await probing } : {}),
         capabilities: device.capabilities,
         features: [...FEATURES],
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
