@@ -102,7 +102,7 @@ struct AddMachineSheet: View {
     }
     switch wizard.phase {
     case .pick:
-      if model.checkingTailscale { return .tailnet(connected: false) }
+      if model.checkingTailscale { return .noMac }
       switch model.reachability {
       case .tailscaleMissing: return .tailnet(connected: false)
       case .tailscaleStopped: return model.tailscaleInstall == .cli ? .tailscaleUp : .tailscaleSwitch
