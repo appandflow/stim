@@ -31,17 +31,6 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 const program = new Command();
 program.name('stim').description('Isolated React Native dev environments per project/worktree').version(pkg.version);
 
-if (debugLog.enabled()) {
-  const argv = process.argv.slice(2);
-  const started = Date.now();
-  debugLog.log('run_start', {
-    version: pkg.version,
-    command: argv.filter((each) => !each.startsWith('-')).slice(0, 2),
-    flags: argv.filter((each) => each.startsWith('-')).map((each) => each.split('=')[0]),
-  });
-  process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
-}
-
 try {
   refuseRelativeStimPaths();
   const first = process.argv[2];
@@ -53,6 +42,20 @@ try {
     for (const module of modules) module.default(program, pkg.version);
   }
   program.hook('preAction', async (_command, action) => {
+    if (debugLog.enabled()) {
+      const path: string[] = [];
+      for (let each: Command | null = action; each?.parent; each = each.parent) path.unshift(each.name());
+      const started = Date.now();
+      debugLog.log('run_start', {
+        version: pkg.version,
+        command: path,
+        flags: process.argv
+          .slice(2)
+          .filter((arg) => arg.startsWith('-'))
+          .map((arg) => arg.split('=')[0]),
+      });
+      process.on('exit', (code) => debugLog.log('run_end', { exit: code, ms: Date.now() - started }));
+    }
     try {
       const { triggerMaintenance } = await import('../src/maintenance/trigger.ts');
       triggerMaintenance(action.name());

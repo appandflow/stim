@@ -713,7 +713,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     env: 'STIM_DEBUG',
     description:
-      'Debug-level logging for the CLI and stim-server. While on, the CLI records its commands, child processes and requests to other Macs, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
   },
   {
     key: 'hosting.agentDriver',

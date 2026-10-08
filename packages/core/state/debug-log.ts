@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, configDir, rotateLog } from '../index.ts';
 import { loadConfig } from './config.ts';
+import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 
 export const DEBUG_ENV = 'STIM_DEBUG';
 
@@ -14,10 +15,14 @@ export function debugLogDir(): string {
   return join(configDir(), 'logs', 'debug');
 }
 
-/** The `STIM_DEBUG` override (1 or true turns it on, anything else off), else the machine setting `debug.logs`. Never throws. */
+/** The `STIM_DEBUG` override (1/true on, 0/false off, anything else off), else the machine setting `debug.logs`. Never throws. */
 export function debugLoggingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = env[DEBUG_ENV]?.trim().toLowerCase();
-  if (raw) return raw === '1' || raw === 'true';
+  const definition = settingDefinition('debug.logs')!;
+  const raw = env[DEBUG_ENV];
+  if (raw !== undefined && raw !== '') {
+    const value = coerceSettingText(definition, raw);
+    return settingValueError(definition, value) === null && value === true;
+  }
   try {
     return loadConfig()?.debug?.logs === true;
   } catch {

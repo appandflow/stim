@@ -36,6 +36,8 @@ test('STIM_DEBUG overrides the machine setting in both directions', () => {
   writeFileSync(join(home, 'config.json'), JSON.stringify({ debug: { logs: false } }));
   expect(debugLoggingEnabled({})).toBe(false);
   expect(debugLoggingEnabled({ STIM_DEBUG: 'true' })).toBe(true);
+  expect(debugLoggingEnabled({ STIM_DEBUG: 'yes' })).toBe(false);
+  expect(debugLoggingEnabled({ STIM_DEBUG: 'TRUE' })).toBe(false);
 });
 
 test('a long-running process follows a setting changed after it started', () => {

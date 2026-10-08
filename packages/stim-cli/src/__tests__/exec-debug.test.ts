@@ -21,7 +21,9 @@ afterEach(() => {
 test('with STIM_DEBUG a child process is recorded by program and duration, never by arguments', () => {
   const executor = getExecutor();
   executor.runFile(process.execPath, ['-e', '0', 'secret-argument-value']);
-  expect(() => executor.runFile(process.execPath, ['-e', 'process.exit(3)', 'another-secret'])).toThrow('Command failed');
+  expect(() => executor.runFile(process.execPath, ['-e', 'process.exit(3)', 'another-secret'])).toThrow(
+    'Command failed',
+  );
   const text = readFileSync(join(debugLogDir(), 'cli.ndjson'), 'utf8');
   expect(text).not.toMatch(/secret-argument-value|another-secret/);
   const lines = text
