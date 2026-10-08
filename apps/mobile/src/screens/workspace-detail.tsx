@@ -126,7 +126,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
   if (!archive)
     return (
       <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
-        <Stack.Screen options={{ title: t`Archived workspace` }} />
+        <Stack.Screen options={{ title: t`Archived Workspace` }} />
         <ConnectionBanner state={state} />
         <Text tone="secondary">{t`This archive is no longer available.`}</Text>
       </ScrollView>
@@ -182,7 +182,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
               icon="doc.on.doc"
               subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
               onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
-            >{t`Copy path`}</Stack.Toolbar.MenuAction>
+            >{t`Copy Path`}</Stack.Toolbar.MenuAction>
             {pr ? (
               <Stack.Toolbar.MenuAction
                 icon="arrow.up.right"
@@ -206,7 +206,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
         {archive.replacedBy ? (
           <ListSection>
             <ListRow
-              title={t`Replaced by`}
+              title={t`Replaced By`}
               subtitle={archive.replacedBy}
               accessory="chevron"
               onPress={() =>
@@ -413,7 +413,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
       if (live.length === 1) return void perform('reload', live[0].platform, live[0].path);
       const subtitles = worktreePage({ path, environments: apps, entries: live, now }).subtitles;
       choose(
-        t`Reload which app?`,
+        t`Reload Which App?`,
         live.map((entry, i) => ({
           text: platformName(entry.platform) + (subtitles[i] ? ` (${subtitles[i]})` : ''),
           onPress: () => void perform('reload', entry.platform, entry.path),
@@ -427,7 +427,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     const rest = names.slice(0, -1).join(', ');
     const last = names.at(-1)!;
     Alert.alert(
-      t`Reload which app?`,
+      t`Reload Which App?`,
       t`${rest} and ${last} are running.`,
       [
         ...platforms.map((platform) => ({
@@ -444,7 +444,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const stop = () =>
     multi
       ? choose(
-          t`Stop which app?`,
+          t`Stop Which App?`,
           apps.map((app, i) => ({
             text: page.appLabels[i],
             style: 'destructive',
@@ -475,7 +475,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     const errored = apps.filter((app) => (app.logs?.errorsSinceMarker ?? 0) > 0);
     if (errored.length === 1) return logsFor(errored[0], errors);
     choose(
-      t`Logs for which app?`,
+      t`Logs for Which App?`,
       apps.map((app, i) => ({
         text: page.appLabels[i],
         onPress: () => logsFor(app, errors && (app.logs?.errorsSinceMarker ?? 0) > 0),
@@ -529,10 +529,10 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                   destructive
                   disabled={actions.pending !== null}
                   onPress={() =>
-                    Alert.alert(t`Stop all apps?`, t`Stim stops every app in this worktree.`, [
+                    Alert.alert(t`Stop All Apps?`, t`Stim stops every app in this worktree.`, [
                       { text: t`Cancel`, style: 'cancel' },
                       {
-                        text: t`Stop all`,
+                        text: t`Stop All`,
                         style: 'destructive',
                         onPress: () =>
                           void perform(
@@ -543,7 +543,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                       },
                     ])
                   }
-                >{t`Stop all`}</Stack.Toolbar.MenuAction>
+                >{t`Stop All`}</Stack.Toolbar.MenuAction>
               ) : null}
             </Stack.Toolbar.Menu>
           ) : env && actions.available ? (
@@ -555,7 +555,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
                 {t`Stop`}
               </Stack.Toolbar.MenuAction>
               <Stack.Toolbar.MenuAction icon="lock.open" onPress={() => explainReadOnly(mac?.name, state, connection)}>
-                {t`Allow control...`}
+                {t`Allow Control...`}
               </Stack.Toolbar.MenuAction>
             </Stack.Toolbar.Menu>
           ) : null}
@@ -567,16 +567,16 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
             subtitle={tildeHome(copyPath, home)}
             onPress={() => void Clipboard.setStringAsync(copyPath)}
           >
-            {t`Copy path`}
+            {t`Copy Path`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction icon="exclamationmark.triangle" onPress={() => openLogs(true)}>
-            {t`Show errors`}
+            {t`Show Errors`}
           </Stack.Toolbar.MenuAction>
           <Stack.Toolbar.MenuAction
             icon="laptopcomputer"
             onPress={() => router.push({ pathname: '/mac/[id]', params: { id: macId } })}
           >
-            {t`Machine status`}
+            {t`Machine Status`}
           </Stack.Toolbar.MenuAction>
         </Stack.Toolbar.Menu>
       </Stack.Toolbar>
@@ -612,7 +612,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
       <>
         <ScrollView style={{ backgroundColor: theme.colors.background }} contentInsetAdjustmentBehavior="automatic">
           {header}
-          <EmptyState title={t`Workspace not found`} message={t`stim status no longer lists ${displayPath}.`} />
+          <EmptyState title={t`Workspace Not Found`} message={t`stim status no longer lists ${displayPath}.`} />
         </ScrollView>
         <ActionToast toast={toast} onDismiss={dismissToast} />
       </>

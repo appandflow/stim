@@ -94,7 +94,7 @@ export function About({ onClose }: { onClose?: () => void }) {
         </Text>
       </View>
       <ListSection
-        title={t`This phone`}
+        title={t`This Phone`}
         action={
           <CopyButton
             text={() => diagnosticText(app, connections.map(machineInfo), deviceInfo())}
@@ -131,13 +131,13 @@ export function About({ onClose }: { onClose?: () => void }) {
       ) : null}
       <ListSection>
         <ListRow
-          title={t`Report a bug`}
+          title={t`Report a Bug`}
           accessory="chevron"
           onPress={() => open(bugReportUrl(app, connections.map(machineInfo), deviceInfo()))}
         />
         <ListRow title={t`Website`} accessory="chevron" onPress={() => open(WEBSITE)} />
         <ListRow title={t`GitHub`} accessory="chevron" onPress={() => open(REPOSITORY)} />
-        <ListRow title={t`Privacy policy`} accessory="chevron" onPress={() => open(PRIVACY_POLICY)} />
+        <ListRow title={t`Privacy Policy`} accessory="chevron" onPress={() => open(PRIVACY_POLICY)} />
         <ListRow
           title={t`License`}
           value={LICENSES[STIM_LICENSE].license}
@@ -148,7 +148,7 @@ export function About({ onClose }: { onClose?: () => void }) {
           }}
         />
         <ListRow
-          title={t`Open source licenses`}
+          title={t`Open Source Licenses`}
           accessory="chevron"
           onPress={() => {
             onClose?.();
@@ -157,7 +157,7 @@ export function About({ onClose }: { onClose?: () => void }) {
         />
         <ListRow title={t`Made by App&Flow`} accessory="chevron" onPress={() => open(APP_AND_FLOW)} />
       </ListSection>
-      <ListSection title={t`Open source by App&Flow`}>
+      <ListSection title={t`Open Source by App&Flow`}>
         {LIBRARIES.map((library) => (
           <ListRow key={library.name} title={library.name} accessory="chevron" onPress={() => open(library.url)} />
         ))}

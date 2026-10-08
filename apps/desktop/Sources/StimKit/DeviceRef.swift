@@ -165,6 +165,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d):
       if let device = d.host?.device { return "\(device.name) \(device.runtime)" }
+      if d.host != nil, d.name == IosDevice.unnamed { return "iOS Simulator" }
       return d.owned ? (DeviceRef.parenthesizedModel(in: d.name) ?? d.name) : d.name
     case .android(_, let d):
       return d.host?.device?.name ?? d.name

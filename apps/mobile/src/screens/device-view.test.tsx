@@ -258,8 +258,8 @@ it('lets a Duo control session rotate in both directions while advertising postu
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
-  await fireEvent.press(screen.getByLabelText('Rotate left'));
-  await fireEvent.press(screen.getByLabelText('Rotate right'));
+  await fireEvent.press(screen.getByLabelText('Rotate Left'));
+  await fireEvent.press(screen.getByLabelText('Rotate Right'));
   expect(mockRotate.mock.calls).toEqual([['left'], ['right']]);
   expect(screen.queryByLabelText('Fold')).toBeNull();
   await fireEvent.press(screen.getByLabelText('More'));
@@ -298,7 +298,7 @@ it('takes over directly from the conflict banner and hides Control once the devi
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
-  await fireEvent.press(screen.getByText('Take over'));
+  await fireEvent.press(screen.getByText('Take Over'));
   expect(mockBegin).toHaveBeenCalledWith(true);
   expect(alert).not.toHaveBeenCalled();
   alert.mockRestore();
@@ -319,8 +319,8 @@ it('keeps physical iPhones view-only without rotation buttons', async () => {
       <DeviceView workspace="/fixture" platform="ios" slot="default" physical />
     </I18nProvider>,
   );
-  expect(screen.queryByLabelText('Rotate left')).toBeNull();
-  expect(screen.queryByLabelText('Rotate right')).toBeNull();
+  expect(screen.queryByLabelText('Rotate Left')).toBeNull();
+  expect(screen.queryByLabelText('Rotate Right')).toBeNull();
 });
 
 it('lets a Duo viewer enable its device frame with Control off', async () => {
@@ -332,10 +332,10 @@ it('lets a Duo viewer enable its device frame with Control off', async () => {
     </I18nProvider>,
   );
   await fireEvent.press(screen.getByLabelText('More'));
-  const toggle = screen.getByLabelText('Device frame');
+  const toggle = screen.getByLabelText('Device Frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
   await fireEvent.press(toggle);
-  expect(screen.getByLabelText('Device frame').props.accessibilityState.selected).toBe(true);
+  expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
   expect(mockBegin).not.toHaveBeenCalled();
 });
 
@@ -346,12 +346,12 @@ it('starts frameless and maps framed touches using the aperture layout rather th
       <DeviceView workspace="/fixture" platform="ios" slot="default" />
     </I18nProvider>,
   );
-  expect(screen.queryByLabelText('Device frame')).toBeNull();
+  expect(screen.queryByLabelText('Device Frame')).toBeNull();
   await fireEvent.press(screen.getByLabelText('More'));
-  const toggle = screen.getByLabelText('Device frame');
+  const toggle = screen.getByLabelText('Device Frame');
   expect(toggle.props.accessibilityState.selected).toBe(false);
   await fireEvent.press(toggle);
-  expect(screen.getByLabelText('Device frame').props.accessibilityState.selected).toBe(true);
+  expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
   const views = screen.root!.queryAll(
     (view) => view.props.onResponderGrant !== undefined && view.props.pointerEvents === 'auto',
   );
@@ -380,11 +380,11 @@ it('keeps the frame presentation toggle available without a control lease or con
       </I18nProvider>,
     );
     await fireEvent.press(screen.getByLabelText('More'));
-    const toggle = screen.getByLabelText('Device frame');
+    const toggle = screen.getByLabelText('Device Frame');
     expect(toggle.props.accessibilityState.disabled).not.toBe(true);
     expect(toggle.props.accessibilityState.selected).toBe(false);
     await fireEvent.press(toggle);
-    expect(screen.getByLabelText('Device frame').props.accessibilityState.selected).toBe(true);
+    expect(screen.getByLabelText('Device Frame').props.accessibilityState.selected).toBe(true);
     expect(mockBegin).not.toHaveBeenCalled();
     expect(mockTouch).not.toHaveBeenCalled();
     await screen.unmount();
@@ -400,18 +400,18 @@ it.each([false, true])('keeps native mouse and window selection in the main bar 
     </I18nProvider>,
   );
   expect(screen.getByLabelText('Scroll')).toBeTruthy();
-  expect(screen.queryByLabelText('Rotate left')).toBeNull();
+  expect(screen.queryByLabelText('Rotate Left')).toBeNull();
   expect(screen.queryByLabelText('Home')).toBeNull();
   expect(screen.queryByLabelText('Lock')).toBeNull();
   expect(screen.queryByLabelText('Back')).toBeNull();
   expect(screen.getByLabelText('Keyboard')).toBeTruthy();
-  expect(screen.queryByLabelText('Select all')).toBeNull();
+  expect(screen.queryByLabelText('Select All')).toBeNull();
   await fireEvent.press(screen.getByLabelText('Window'));
-  expect(screen.getByLabelText('Follow front window').props.accessibilityState.selected).toBe(!pinned);
+  expect(screen.getByLabelText('Follow Front Window').props.accessibilityState.selected).toBe(!pinned);
   expect(screen.getByLabelText('App').props.accessibilityState.selected).toBe(pinned);
-  expect(screen.getByLabelText('Untitled window').props.accessibilityState.selected).toBe(false);
-  await fireEvent.press(screen.getByLabelText('Untitled window'));
-  await fireEvent.press(screen.getByLabelText('Follow front window'));
+  expect(screen.getByLabelText('Untitled Window').props.accessibilityState.selected).toBe(false);
+  await fireEvent.press(screen.getByLabelText('Untitled Window'));
+  await fireEvent.press(screen.getByLabelText('Follow Front Window'));
   expect(mockSelectWindow.mock.calls).toEqual([[13], [null]]);
 });
 
@@ -461,7 +461,7 @@ it.each(['ios', 'android'] as const)(
       physical: false,
     });
     expect(mockStream.mock.calls.at(-1)?.[1]).toMatchObject({ enabled: true, startAt: null, duoFrame: false });
-    expect(screen.queryByLabelText('Rotate left') !== null).toBe(platform === 'ios');
+    expect(screen.queryByLabelText('Rotate Left') !== null).toBe(platform === 'ios');
     expect(mockStream.mock.calls.at(-1)?.[1].deviceFrame).toBe(platform === 'ios');
     await screen.unmount();
   },

@@ -239,6 +239,8 @@ export interface BuildPlanPayload {
   /** On a predicted miss with cache reads on, why the cache has no app; `baseline` omits `cacheKey`. */
   missReason?: BuildMissReason;
   refusal?: { code: string; message: string; remedy: string };
+  /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this Mac; auto may use janics-mac-mini`. */
+  placement?: string;
 }
 
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';

@@ -53,7 +53,7 @@ devices can be on different networks as long as they can reach each other
 through Tailscale.
 
 On the first launch without a saved Mac, the welcome screen lists these
-requirements. **Get Tailscale** opens the phone's store; **Pair with your Mac**
+requirements. **Get Tailscale** opens the phone's store; **Pair with Your Mac**
 opens the scanner. **Not Now** dismisses the welcome screen for later launches.
 After pairing, the app opens its workspace list. Forgetting a Mac does not
 bring back a welcome screen you have already dismissed or completed.
@@ -84,8 +84,8 @@ viewing and server-delivered notifications.
 
 1. Follow the Desktop wizard to **Scan with Stim Mobile**. Choose **View Only**
    or **View and Control** for this phone.
-2. In the phone app, choose **Pair with your Mac** from the welcome screen,
-   or **Pair a machine** from Machines. Allow the camera and scan the QR code.
+2. In the phone app, choose **Pair with Your Mac** from the welcome screen,
+   or **Pair a Machine** from Machines. Allow the camera and scan the QR code.
 3. Name the machine and choose **Save** to open the workspace list. Desktop
    waits for the phone, then shows its name and access on the success screen.
 
@@ -96,8 +96,7 @@ new code; the previous code stays valid until it expires.
 
 If scanning fails or camera access is denied, expand **Can't scan? Enter the
 endpoint and token** on Desktop. **Endpoint** and **Token** each have a copy
-button; the token is hidden until you choose the eye button. Choose **Enter the
-endpoint and token instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
+button; the token is hidden until you choose the eye button. Choose **Enter the Endpoint and Token Instead** on the phone and paste them into its fields. Manual entry uses the same single-use code. Choose **Retry** on
 the phone when a failed scan needs another attempt.
 
 A standalone server can print the same pairing payload:
@@ -132,7 +131,7 @@ text files in registered workspaces, including non-ignored `.env` files.
 To allow input, choose **Allow Control** from the phone's menu in Desktop's
 **Settings > Phones**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
-The server's npx prefix is shown above. The phone's **Allow control** action
+The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
 picks up a new grant. Revoked control ends active control sessions and the
 phone reconnects with its current scope.

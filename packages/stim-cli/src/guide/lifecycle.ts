@@ -1188,8 +1188,16 @@ PREDICTING THE NEXT BUILD (--plan)
   An Android plan reads the ABI from the emulator the slot records, or from
   the system image a new one would use. A plan refuses --device, --remote,
   --wait, --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
-  Without --eas-profile it also refuses the ios.remote and android.remote
-  settings with STIM_BAD_ARG. Without --eas-profile an Android plan also
+  With ios.remote or android.remote set to a Mac name, a plan reads the
+  architecture or ABI from that Mac's device offer, the question a run asks
+  before it reserves anything. With auto it repeats the placement decision a
+  run would make now and reports where in the payload's placement field, for
+  example "this Mac; auto may use janics-mac-mini". When the plan stays on
+  this Mac and a listed Mac would build for another architecture, placement
+  says so, since that Mac's key differs. The plan only predicts the key: a
+  run reads the architecture of the device it actually gets. A Mac that does
+  not answer, or ios.remote or android.remote set to eas or proxy, refuses
+  with STIM_BAD_ARG. Without --eas-profile an Android plan also
   refuses the experimental compiler CAS with STIM_BAD_ARG, and refuses with
   STIM_NO_DEVICE when no system image is installed.
 

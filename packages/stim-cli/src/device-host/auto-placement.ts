@@ -20,7 +20,7 @@ import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts
 import { readHostedNative, writeHostedNative } from './ios-state.ts';
 import { decideDevicePlacement, type PlacementHere, type PlacementProbe, type PlacementSkip } from './placement.ts';
 
-async function probeHost(
+export async function probeHost(
   machine: string,
   platform: 'ios' | 'android',
   selectors: HostedDeviceSelectors,

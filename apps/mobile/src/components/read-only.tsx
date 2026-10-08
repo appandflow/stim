@@ -7,7 +7,7 @@ import { Pill } from '@/components/pill';
 import { pairingScope, type ConnectionState, type StimConnection } from '@/lib/connection';
 
 export function readOnlyReason(): string {
-  return t`This phone is read-only`;
+  return t`This Phone Is Read-Only`;
 }
 
 export function grantCommand(deviceId: string | null): string {
@@ -30,7 +30,7 @@ export function explainReadOnly(
   const deviceId = state.kind === 'open' ? state.deviceId : null;
   Alert.alert(readOnlyReason(), allowControlSteps(macName, deviceId), [
     ...(deviceId
-      ? [{ text: t`Copy command`, onPress: () => void Clipboard.setStringAsync(grantCommand(deviceId)) }]
+      ? [{ text: t`Copy Command`, onPress: () => void Clipboard.setStringAsync(grantCommand(deviceId)) }]
       : []),
     { text: t`Reconnect`, onPress: () => connection?.reconnect() },
     { text: t`OK`, style: 'cancel' as const },

@@ -200,7 +200,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
               })
       }
       accessibilityHint={apps ? t`Opens every app in this checkout` : t`Opens the workspace`}
-      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show Errors` }] : undefined}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'errors') onOpen(errorApp, true);
       }}

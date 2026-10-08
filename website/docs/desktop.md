@@ -399,9 +399,8 @@ another source; click **Allow Paste** in the viewer. Unicode and line breaks are
 preserved. Physical devices, hosted and remote sessions and replay never sync, so
 no clipboard text crosses the network or reaches another Mac.
 
-Overview opens first. The **Active** section comes first, with a card and a live preview
-of one device for each running project; click a card to open the project. With nothing
-running, it says where active projects will appear. **Idle projects** follow as compact
+Overview opens first. The **Active** section comes first, with the same grid of live workspace
+cards as the Active workspaces page (see below). With nothing running, it says where active projects will appear. **Idle projects** follow as compact
 cards in an adaptive grid, with their last activity, an open pull request, a failed last
 build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
 place. Click a card to open the project with all of its worktrees listed, under a
@@ -417,22 +416,18 @@ for today. The tip stays the same all day, and the next day shows the least rece
 sidebar's tip card, and the section is hidden when no tip applies.
 
 **Active Workspaces** shows every worktree with something running, building or warming
-as one full-width card. A worktree with several apps, such as `apps/mobile` and
-`apps/desktop`, gets one card; each app is a labelled group inside it with its own
-Metro port, errors, CPU and memory, followed by its device tiles. Click an app's label
-to open that app's workspace.
+as a card in a grid: two columns at typical widths, one when the window is narrow and
+three when it is very wide. The Overview's **Active** section uses the same cards. A
+card's header has the name, project and app path, with chips for Metro, who drives the
+devices, CPU, memory and errors. Its body streams the worktree's first device live, at the
+device tile size and the live frame rate from Preferences. When a worktree has several
+devices, a Mac app or several apps, a row of buttons switches which one streams (labelled
+by app when there are several); Desktop remembers the choice until it quits. A workspace
+with no running device shows its build progress, setup state or Metro status in that area.
 
-For a worktree with one app, the header shows the name, project, Metro port, who drives it,
-CPU, memory and errors (a card with no running device shows only Metro and errors), with the device tiles under it at the device tile size. The tiles
-wrap onto more rows when they do not fit. Click a card or its header to open the
-project (on a project page, the worktree), or a tile to open its
-workspace with that device focused.
-
-On the Active Workspaces and project wall, offscreen previews pause and reconnect when you return to them.
-
-On the Active Workspaces and project wall, active workspaces without running or building
-devices show a **No Running Devices** line under their header, with Metro status
-and error links. CPU stays on the workspace page.
+Click a card or its header to open the workspace (on the Active Workspaces page, the
+project), or the stream to open the workspace with that device focused. Cards that scroll out of view
+stop streaming and reconnect when you return to them.
 
 Run, Reload App, Start Dev Server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and Run and Stop
@@ -590,7 +585,7 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests remote Macs, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--plan` and `--device` runs in that workspace refuse; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests remote Macs, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct

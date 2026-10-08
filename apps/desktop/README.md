@@ -66,8 +66,7 @@ The bell at the top right opens **Notifications** and shows the unread count.
 the sidebar; only the list below them scrolls.
 
 **Overview** is the default launch page. The **Active** section comes first, as
-cards with a live preview of one device each; **Show more (N)** counts the other
-running devices and worktrees, and clicking a card opens the project. With nothing
+the same grid of workspace cards the Active workspaces page uses (see below). With nothing
 running it says where active projects will appear. **Idle projects** follow as
 compact cards in an adaptive grid, newest activity first, with the pull request
 that is open, a failed last build and the errors since the last marker. The grid
@@ -76,21 +75,22 @@ the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show All**. A **Recently archived** row lists the last five
 archives, and **Try this** suggests one feature a day with a copyable agent
-prompt. **Next Tip** shows another one, and the x dismisses a tip for good. A single running project gets one centered card.
+prompt. **Next Tip** shows another one, and the x dismisses a tip for good.
 
 **Active Workspaces** shows every worktree with something running, building or
-warming as one full-width card. A worktree with several apps (for example
-`apps/mobile` and `apps/desktop`) gets one card with the worktree's name and
-project in the header; each app is a labelled group inside it with its Metro port,
-errors, CPU and memory, followed by its device tiles, and clicking the app's label
-opens that app's workspace.
-
-For a worktree with one app, the header shows its name and project, the
-Metro port, who drives its devices, CPU, memory and its errors (a card with no running device shows only Metro and errors); the device tiles
-sit under it at the device tile size and wrap onto more rows when they do not
-fit. Clicking a card or its header opens the project (on a project page it opens the
-workspace); clicking a tile opens its workspace with that device focused. An
-app with no running device shows a **No Running Devices** line instead.
+warming as a card in a grid: two columns at typical widths, one when the window is
+narrow and three when it is very wide. The Overview's **Active** section uses the same
+cards. A card's header has the worktree's name and project, the app path, and chips
+for Metro, who drives the devices, CPU, memory and errors. Its body streams the
+worktree's first device live through the same frame pipeline as the device tiles,
+at the device tile size and the live frame rate from Preferences; a workspace with a
+Mac app, a browser or devices from several apps shows a row of buttons that switches
+which one streams, labelled by app when the worktree has several. The choice is
+remembered until Desktop quits. A workspace with no running device shows its build
+progress, setup state or Metro status in the same area. Clicking the card or its header
+opens the workspace (on the Active Workspaces page, the project); clicking the stream
+opens the workspace with that device focused. Cards that scroll out of view stop
+streaming and reconnect when they return.
 
 The sidebar lists projects as a
 tree. Each project expands to its workspaces,
@@ -385,11 +385,10 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
-tile stops streaming and says "Open in the viewer". Tiles on the Active Workspaces
-wall are previews too; clicking one opens its workspace with that device focused. The wall pauses previews after they leave the
-scrolling area. Returning to a tile reconnects its preview. Active workspaces without
-running or building devices show a No running devices line under their header, with Metro status, warnings and
-positive-error log links; CPU and RAM stay on the workspace page.
+tile stops streaming and says "Open in the viewer". The stream on a workspace card of the Active Workspaces wall or the
+Overview is a preview too; clicking it opens its workspace with that device focused. The grid pauses previews after
+they leave the scrolling area. Returning to a card reconnects its preview. Active workspaces without
+running or building devices show their Metro, build or setup state in the card's media area.
 
 On macOS 26 and later, sidebar controls and device viewer buttons use native
 Liquid Glass when built with Xcode 26 or later, and Settings uses grouped native

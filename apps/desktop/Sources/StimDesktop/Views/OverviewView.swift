@@ -9,9 +9,9 @@ struct OverviewView: View {
   var sidebarTopic: TipTopic?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  var openDevice: (String, String) -> Void
   var openIdleProject: (Project) -> Void
   @State private var showsAllIdle = false
-  @State private var pressedCard: SidebarItem?
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
@@ -33,13 +33,8 @@ struct OverviewView: View {
 
   private var projects: [ProjectSummary] { store.projectList }
 
-  private var running: [(summary: ProjectSummary, worktrees: [WorktreePage])] {
-    projects.compactMap { summary in
-      let worktrees = WorktreePage.groups(
-        environments: store.environments(in: summary.project).filter(\.isActive)
-      ).sorted { $0.identity < $1.identity }
-      return worktrees.isEmpty ? nil : (summary, worktrees)
-    }
+  private var running: [WallCard] {
+    WallCard.cards(environments: (store.payload?.environments ?? []).filter(\.isActive))
   }
 
   @ViewBuilder private var content: some View {
@@ -81,9 +76,9 @@ struct OverviewView: View {
     }
   }
 
-  private func runningSection(_ items: [(summary: ProjectSummary, worktrees: [WorktreePage])]) -> some View {
+  private func runningSection(_ cards: [WallCard]) -> some View {
     section("Active") {
-      if items.isEmpty {
+      if cards.isEmpty {
         Card {
           InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
             .font(.stim(.callout))
@@ -91,84 +86,10 @@ struct OverviewView: View {
             .padding(.horizontal, Space.xl)
             .padding(.vertical, Space.lg)
         }
-      }
-      LazyVGrid(
-        columns: [
-          GridItem(.adaptive(minimum: Self.cardWidth, maximum: Self.cardWidth * 1.4), spacing: Space.xl, alignment: .top)
-        ],
-        alignment: .center, spacing: Space.xl
-      ) {
-        ForEach(items, id: \.summary.project.id) { item in
-          projectCard(item.summary, item.worktrees)
-        }
-      }
-      .frame(maxWidth: Self.cardWidth * 1.4 * CGFloat(min(3, items.count)) + Space.xl * CGFloat(min(3, items.count) - 1))
-      .frame(maxWidth: .infinity, alignment: items.count < 3 ? .center : .leading)
-    }
-  }
-
-  private func projectCard(_ summary: ProjectSummary, _ worktrees: [WorktreePage]) -> some View {
-    let itemCount = worktrees.reduce(0) { $0 + max(1, $1.orderedDevices.filter { $0.device.isRunning }.count) }
-    let moreCount = itemCount - 1
-    return Button {
-      pressedCard = nil
-      selection = .project(summary.project)
-    } label: {
-      Card {
-        VStack(alignment: .center, spacing: Space.xl) {
-          Text(store.title(of: summary.project))
-            .font(.stim(.headline))
-            .foregroundStyle(Palette.text)
-            .lineLimit(2)
-          preview(worktrees)
-            .allowsHitTesting(false)
-          if moreCount > 0 {
-            Text("Show more (\(moreCount))")
-              .foregroundStyle(Palette.tertiary)
-          }
-        }
-        .padding(Space.xl)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .multilineTextAlignment(.center)
-        .contentShape(Rectangle())
-      }
-    }
-    .buttonStyle(CardPressStyle())
-    .hoverHighlight(radius: Radius.card)
-    .modifier(CardPressAppearance(pressed: pressedCard == .project(summary.project)))
-    .onPreferenceChange(CardPressedKey.self) { pressed in
-      if pressed {
-        pressedCard = .project(summary.project)
-      } else if pressedCard == .project(summary.project) {
-        pressedCard = nil
-      }
-    }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(store.title(of: summary.project))
-    .accessibilityValue(moreCount > 0 ? "Show more (\(moreCount))" : "")
-    .accessibilityHint("Open project")
-  }
-
-  private func preview(_ worktrees: [WorktreePage]) -> some View {
-    let preview = worktrees.flatMap(\.orderedDevices).first { $0.device.isRunning }
-    return VStack(alignment: .center, spacing: Space.lg) {
-      if let env = preview?.workspace ?? worktrees.first?.apps.first {
-        WorkspaceHeader(
-          env: env, project: store.project(of: env), usage: metrics.usage[env.path], stacked: true,
-          openLogs: { openLogs(env.path) }
-        )
-        if let preview {
-          DeviceTile(
-            device: preview.device, screenHeight: 220, workspace: env.path,
-            build: env.runningBuild(for: preview.device), maxWidth: 240, pausesWhenOffscreen: true
-          )
-          .frame(maxWidth: .infinity, alignment: .center)
-        }
-        if let macos = env.macos {
-          Label("\(macos.product) \u{00B7} \(macos.state)", systemImage: "macwindow")
-            .font(.stim(.callout))
-            .foregroundStyle(Palette.secondary)
-        }
+      } else {
+        WorkspaceCardGrid(
+          cards: cards, store: store, metrics: metrics,
+          open: { selection = .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
       }
     }
   }
@@ -197,30 +118,30 @@ struct OverviewView: View {
       openIdleProject(item.project)
     } label: {
       Card {
-        VStack(alignment: .center, spacing: Space.md) {
-          Text(store.title(of: item.project)).font(.stim(.headline)).foregroundStyle(Palette.text).lineLimit(1)
-          Text(
-            [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
-              .compactMap { $0 }.joined(separator: " \u{00B7} ")
-          )
-          .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
-          FlowLayout(spacing: Space.sm, lineSpacing: Space.sm) {
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+          FlowLayout(spacing: Space.sm, lineSpacing: Space.xs) {
+            Text(
+              [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+                .compactMap { $0 }.joined(separator: " \u{00B7} ")
+            )
+            .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
             if let pullRequest = item.pullRequest {
-              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand) {
+              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand, size: .small) {
                 Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
               }
             }
             if let failed = item.failedBuild {
-              Pill(tone: .error) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
+              Pill(tone: .error, size: .small) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
             }
             if item.errors > 0 {
-              Pill(tone: .error) { Text(countLabel(item.errors, "error")) }
+              Pill(tone: .error, size: .small) { Text(countLabel(item.errors, "error")) }
             }
           }
         }
-        .padding(Space.lg)
-        .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
-        .multilineTextAlignment(.center)
+        .padding(.horizontal, Space.lg)
+        .padding(.vertical, Space.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
       }
     }
@@ -295,7 +216,7 @@ struct OverviewView: View {
             Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
             Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            IconButton(systemImage: "xmark", help: "Dismiss this tip") {
+            IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
               TryThisStore(defaults: .standard).dismiss(tip)
               dismissedTips.insert(tip)
             }

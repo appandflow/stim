@@ -19,11 +19,11 @@ extension View {
     #endif
   }
 
-  @ViewBuilder func nativeIconStyle(tint: Color = Palette.secondary, active: Bool = false) -> some View {
+  @ViewBuilder func nativeIconStyle(tint: Color = Palette.secondary, active: Bool = false, circular: Bool = false) -> some View {
     #if compiler(>=6.2)
       if #available(macOS 26, *) {
         buttonStyle(.glass)
-          .buttonBorderShape(.capsule)
+          .buttonBorderShape(circular ? .circle : .capsule)
           .foregroundStyle(tint)
           .tint(active ? tint : nil)
           .controlSize(.small)

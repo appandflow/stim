@@ -75,7 +75,7 @@ export function Filters() {
     { value: 'archived', label: t`Archived` },
   ];
   const sorts: { value: HomeFilters['sort']; label: string }[] = [
-    { value: 'recent', label: t`Last used` },
+    { value: 'recent', label: t`Last Used` },
     { value: 'name', label: t`Name` },
   ];
   const selectedMacs = filters.macs.filter((id) => connections.some((c) => c.mac.id === id));
@@ -310,7 +310,7 @@ function ProjectExpansionChip({
       accessibilityRole="button"
       accessibilityLabel={
         expanded
-          ? t`Show fewer projects`
+          ? t`Show Fewer Projects`
           : plural(hidden, { one: 'Show # more project', other: 'Show # more projects' })
       }
       onPress={onPress}
@@ -318,7 +318,7 @@ function ProjectExpansionChip({
       style={styles.projectExpansionChip}
     >
       <Text variant="footnote" weight="medium" tone="secondary">
-        {expanded ? t`Show less` : t`${hidden} more`}
+        {expanded ? t`Show Less` : t`${hidden} more`}
       </Text>
     </Touch>
   );

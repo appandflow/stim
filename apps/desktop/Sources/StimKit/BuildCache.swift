@@ -203,6 +203,8 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var basis: Int
   public var missReason: BuildMissReason?
   public var refusal: CommandRefusal?
+  /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
+  public var placement: String?
 
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
