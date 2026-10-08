@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { PassThrough } from 'node:stream';
 import { readSetupJournal, type SetupJournal } from '@stim-cli/core/state';
@@ -324,7 +324,11 @@ test.each([
   ['no binary is present', [], 'none'],
   ['a tailscale outside PATH is ignored', ['/other/tailscale'], 'none'],
 ])('Tailscale install when %s', (_name, present, expected) => {
-  expect(tailscaleInstall({ PATH: '/usr/bin::/opt/bin' }, (path) => present.includes(path))).toBe(expected);
+  expect(
+    tailscaleInstall({ PATH: ['/usr/bin', '', '/opt/bin'].join(delimiter) }, (path) =>
+      present.includes(path.replaceAll('\\', '/')),
+    ),
+  ).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {
