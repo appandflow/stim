@@ -1,3 +1,4 @@
+import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
@@ -73,6 +74,7 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
