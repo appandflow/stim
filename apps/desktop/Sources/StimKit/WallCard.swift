@@ -46,20 +46,18 @@ public struct WallCard: Identifiable, Sendable {
     }
   }
 
-  /// The card's devices and Mac apps, app by app in the card's order: each app's devices in `orderedDevices` order
-  /// (iOS before Android, then by slot), then its Mac app. A card with several apps prefixes each label with its app.
+  /// The card's devices, then its Mac apps. Devices come app by app in `orderedDevices` order (iOS before Android, then
+  /// by slot). A card with several apps prefixes each label with its app.
   public var options: [Option] {
     let all = apps.flatMap(\.devices)
-    return apps.flatMap { app -> [Option] in
-      let prefix = isMultiApp ? app.label + " \u{00B7} " : ""
-      var result = app.devices.map {
-        Option(app: app, kind: .device($0), label: prefix + $0.label(among: all))
-      }
-      if let macos = app.workspace.macos {
-        result.append(Option(app: app, kind: .macos(macos), label: prefix + "Mac app"))
-      }
-      return result
+    func prefix(_ app: App) -> String { isMultiApp ? app.label + " \u{00B7} " : "" }
+    let devices = apps.flatMap { app in
+      app.devices.map { Option(app: app, kind: .device($0), label: prefix(app) + $0.label(among: all)) }
     }
+    let macApps = apps.compactMap { app in
+      app.workspace.macos.map { Option(app: app, kind: .macos($0), label: prefix(app) + "Mac app") }
+    }
+    return devices + macApps
   }
 
   /// The option to stream: the remembered `choice` while it is still offered, otherwise the first streamable option,

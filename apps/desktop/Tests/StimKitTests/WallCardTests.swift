@@ -54,7 +54,7 @@ struct WallCardTests {
   let ios = #""ios":{"udid":"i","name":"iPhone 17","owned":false,"state":"Booted"}"#
   let android = #""android":{"name":"Pixel","owned":true,"physical":false,"state":"detected","deviceProfile":"pixel_9"}"#
 
-  @Test func offersEachAppsDevicesThenItsMacAppAndLabelsThemByAppOnlyWhenThereAreSeveral() throws {
+  @Test func offersDevicesThenMacAppsAndLabelsThemByAppOnlyWhenThereAreSeveral() throws {
     let single = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(android),\(ios),\(macosApp)")])[0]
     #expect(single.options.map(\.label) == ["iPhone 17", "Pixel 9", "Mac app"])
     #expect(single.options.map(\.id) == ["/w/a|ios:i", "/w/a|android:default:Pixel", "/w/a|macos"])
@@ -65,7 +65,7 @@ struct WallCardTests {
     ])[0]
     #expect(
       several.options.map(\.label) == [
-        "apps/desktop \u{00B7} Mac app", "apps/mobile \u{00B7} iPhone 17", "apps/mobile \u{00B7} Pixel 9",
+        "apps/mobile \u{00B7} iPhone 17", "apps/mobile \u{00B7} Pixel 9", "apps/desktop \u{00B7} Mac app",
       ])
   }
 
