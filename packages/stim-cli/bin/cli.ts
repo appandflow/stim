@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { Command } from 'commander';
+import { runId } from '@stim-cli/core/state';
 import { debugLog } from '../src/debug-log.ts';
 import { refuseRelativeStimPaths } from '../src/workspace/config.ts';
 
@@ -33,6 +34,7 @@ program.name('stim').description('Isolated React Native dev environments per pro
 
 try {
   refuseRelativeStimPaths();
+  process.env.STIM_RUN_ID = runId();
   const first = process.argv[2];
   const loadCommand = commands.get((first === 'help' ? process.argv[3] : first) ?? '');
   if (loadCommand) {

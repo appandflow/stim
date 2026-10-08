@@ -205,6 +205,12 @@ THE RECORD
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
     marker   true on the records that close an error window
+    runId    the id of the stim invocation that wrote the record: STIM_RUN_ID
+             when set to a valid id (letters, digits, . _ -, at most 64),
+             else generated per run. Processes a command starts, such as the
+             Metro supervisor and the collectors, keep the id of the command
+             that started them. Debug records and the hello to stim-server
+             carry it too.
     deviceTs Android logcat's original epoch milliseconds; ts is aligned to
              host time using a bounded clock query at each collector attachment
     clockOffsetMs the offset added to deviceTs; absent if the query failed.

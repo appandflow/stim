@@ -691,26 +691,32 @@ recordings are otherwise cleaned up.
 
 ## Environment variables
 
-| Variable                              | Purpose                                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                      |
-| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                  |
-| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                  |
-| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                       |
-| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                            |
-| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                |
-| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb` |
-| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`          |
-| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                              |
-| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                            |
-| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
-| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
-| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |
-| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
-| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                     |
-| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
-| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
-| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |
+| Variable                              | Purpose                                                                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                                                                                           |
+| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                                                                                       |
+| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                                                                                       |
+| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                                                                                            |
+| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                                                                                                 |
+| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                                                                                     |
+| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb`                                                                      |
+| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`                                                                               |
+| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                                                                                                   |
+| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                                                                                                 |
+| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                                                                                                |
+| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                                                                                        |
+| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`                                                                       |
+| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                                                                                                  |
+| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                                                                                          |
+| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)                                                                         |
+| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
+| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                                                                                       |
+| `STIM_RUN_ID`                         | Id for this run, stamped as `runId` on its log records and sent to stim-server                                                                                                   |
+| `STIM_RUN_ID`                         | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
+
+Processes a run starts, such as the Metro supervisor, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
+
+Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so

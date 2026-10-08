@@ -269,7 +269,8 @@ export interface DeviceHostRequestAuth {
 
 export interface HelloParams {
   protocol: number;
-  client: { name: string; version: string };
+  /** `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. */
+  client: { name: string; version: string; runId?: string };
   auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
 }
 

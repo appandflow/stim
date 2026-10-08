@@ -16,6 +16,7 @@ import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
   isJsonObject,
+  runId,
   OFFLOAD_MODES,
   saturation,
   type BuildMachineCredential,
@@ -371,7 +372,11 @@ export class BuildConnection {
           JSON.stringify({
             id: 1,
             method: 'hello',
-            params: { protocol: 1, client: { name: 'stim', version: '1' }, auth: { deviceToken: token } },
+            params: {
+              protocol: 1,
+              client: { name: 'stim', version: '1', runId: runId() },
+              auth: { deviceToken: token },
+            },
           }),
         );
       });

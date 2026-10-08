@@ -1,3 +1,3 @@
-import { createDebugLog, type DebugLog } from '@stim-cli/core/state';
+import { createDebugLog, runId, type DebugLog } from '@stim-cli/core/state';
 
-export const debugLog: DebugLog = createDebugLog('cli');
+export const debugLog: DebugLog = createDebugLog('cli', { base: () => ({ runId: runId() }) });
