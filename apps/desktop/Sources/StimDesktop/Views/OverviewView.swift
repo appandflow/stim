@@ -231,7 +231,6 @@ struct OverviewView: View {
       ? machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] } : nil
     inputs.hasEASProject = capabilities.values.contains { $0.eas }
     inputs.hasMacosTarget = capabilities.values.contains { $0.macos }
-    inputs.phoneApp = FeatureFlags.isEnabled(.phoneApp)
     inputs.workspaces = store.payload?.environments ?? []
     return TryThis.select(inputs: inputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic)
   }
