@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 export function canonicalPath(p: string): string {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return resolve(p);
   }
