@@ -56,6 +56,8 @@ final class AddMachineModel {
   var selectedId: String?
   var manualPort = ""
   var isFixture = false
+  private var tailscaleRead = false
+  var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
   @ObservationIgnored private let dependencies: Dependencies
   @ObservationIgnored private var polling: Task<Void, Never>?
@@ -249,6 +251,7 @@ final class AddMachineModel {
     statusJSON = await dependencies.status()
     tailscaleInstall = await dependencies.tailscaleInstall()
     peers = statusJSON.map(Tailnet.peers) ?? []
+    tailscaleRead = true
     applyPreselection()
     selfNode = statusJSON.flatMap(Tailnet.selfNode)
     await withTaskGroup(of: (String, Tailnet.Health?).self) { group in

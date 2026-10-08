@@ -102,6 +102,15 @@ final class AddMachineModelTests: XCTestCase {
     private enum Failure: Error { case refused }
   }
 
+  @MainActor func testTailscaleIsCheckingUntilTheFirstReadReturns() async {
+    let harness = Harness()
+    let model = harness.make()
+    XCTAssertTrue(model.checkingTailscale)
+    await model.refreshPeers()
+    XCTAssertFalse(model.checkingTailscale)
+    XCTAssertEqual(model.reachability, .peerOffline)
+  }
+
   @MainActor func testMacListSeparatesNoMacOfflineOnlyAndAvailable() async {
     let harness = Harness()
     let model = harness.make()
