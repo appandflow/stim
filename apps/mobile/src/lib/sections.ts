@@ -30,7 +30,7 @@ export function sectionRows<T>(
   limit = SECTION_LIMIT,
 ): { shown: T[]; toggle: string | null } {
   if (rows.length <= limit) return { shown: [...rows], toggle: null };
-  if (showAll) return { shown: [...rows], toggle: t`Show fewer` };
+  if (showAll) return { shown: [...rows], toggle: t`Show Fewer` };
   const count = rows.length;
-  return { shown: rows.slice(0, limit), toggle: t`Show all ${count}` };
+  return { shown: rows.slice(0, limit), toggle: t`Show All ${count}` };
 }

@@ -666,7 +666,7 @@ describe('usageParts and usageLabel', () => {
       disk: { worktreeBytes: 1.72e9, nodeModulesBytes: 1.53e9, buildBytes: 19.2e6, measuredAt: iso(0) },
     });
     const parts = diskParts(e)!;
-    expect(diskPartsLabel(parts)).toBe('node_modules 1.5 GB, Rest of worktree 190 MB, Build output 19 MB');
+    expect(diskPartsLabel(parts)).toBe('node_modules 1.5 GB, Rest of Worktree 190 MB, Build Output 19 MB');
     expect(parts.reduce((sum, part) => sum + part.bytes, 0)).toBeCloseTo(workspaceUsage(e, null).diskBytes!);
   });
 

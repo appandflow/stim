@@ -35,14 +35,14 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
             accessibilityLabel={t`Stim`}
           />
           <Text variant="title" accessibilityRole="header">
-            <Trans>Watch your agents&apos; apps from your phone</Trans>
+            <Trans>Watch Your Agents&apos; Apps from Your Phone</Trans>
           </Text>
         </View>
         <View style={styles.requirements}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>You need</Trans>
+            <Trans>You Need</Trans>
           </Text>
-          <WelcomeStep number={1} title={t`Tailscale on this phone`}>
+          <WelcomeStep number={1} title={t`Tailscale on This Phone`}>
             <Button
               title={t`Get Tailscale`}
               variant="secondary"
@@ -51,7 +51,7 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
               style={styles.stepButton}
             />
           </WelcomeStep>
-          <WelcomeStep number={2} title={t`Stim Desktop on your Mac, with Serve to phones on`}>
+          <WelcomeStep number={2} title={t`Stim Desktop on Your Mac, with Serve to Phones On`}>
             <Touch
               accessibilityRole="link"
               accessibilityLabel={t`stim.appandflow.com/desktop`}
@@ -64,8 +64,8 @@ export function Welcome({ dismiss }: { dismiss: () => void }) {
           <WelcomeStep number={3} title={t`Both signed in to the same tailnet`} />
         </View>
         <View style={styles.actions}>
-          <Button title={t`Pair with your Mac`} onPress={() => router.push('/pair')} />
-          <Button title={t`Not now`} variant="plain" onPress={dismiss} />
+          <Button title={t`Pair with Your Mac`} onPress={() => router.push('/pair')} />
+          <Button title={t`Not Now`} variant="plain" onPress={dismiss} />
         </View>
       </ScrollView>
     </SafeAreaView>

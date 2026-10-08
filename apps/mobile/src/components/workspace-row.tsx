@@ -187,7 +187,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
             })
       }
       accessibilityHint={t`Opens the workspace`}
-      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show Errors` }] : undefined}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'errors') onOpen(item, true);
       }}

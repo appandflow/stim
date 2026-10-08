@@ -137,7 +137,7 @@ export function Pair() {
               tokenRef={tokenInput}
               value={token}
               onChangeText={setToken}
-              placeholder={t`From Pair a phone in Stim Desktop`}
+              placeholder={t`From Pair a Phone in Stim Desktop`}
               textContentType="oneTimeCode"
               autoComplete="off"
               importantForAutofill="no"
@@ -187,13 +187,13 @@ export function Pair() {
             hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
           >
             <Text variant="body" weight="medium" tone="brand" style={styles.centered}>
-              {step.kind === 'scan' ? t`Enter the endpoint and token instead` : t`Scan a QR code instead`}
+              {step.kind === 'scan' ? t`Enter the Endpoint and Token Instead` : t`Scan a QR Code Instead`}
             </Text>
           </Touch>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.centered}>
           <Trans>
-            Stim Desktop shows the code under Pair a phone. The phone connects through Tailscale, so it works on any
+            Stim Desktop shows the code under Pair a Phone. The phone connects through Tailscale, so it works on any
             network where both devices are signed in to the same tailnet.
           </Trans>
         </Text>
@@ -212,7 +212,7 @@ function Scanner({ onScanned }: { onScanned?: (result: BarcodeScanningResult) =>
           <Text variant="footnote" tone="secondary" style={styles.centered}>
             <Trans>Stim needs the camera to scan the pairing QR code.</Trans>
           </Text>
-          {permission.canAskAgain ? <Button title={t`Allow camera`} onPress={requestPermission} /> : null}
+          {permission.canAskAgain ? <Button title={t`Allow Camera`} onPress={requestPermission} /> : null}
         </View>
       </View>
     );

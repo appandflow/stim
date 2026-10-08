@@ -99,12 +99,12 @@ test('manual choice clears the failed scan and returning to the camera permits a
     </GestureHandlerRootView>,
   );
   await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
-  await fireEvent.press(screen.getByText('Enter the endpoint and token instead'));
+  await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
   expect(screen.queryByText('Cannot reach Fixture Mac')).toBeNull();
   expect(screen.queryByTestId('camera')).toBeNull();
   expect(screen.getByText('Endpoint')).toBeTruthy();
 
-  await fireEvent.press(screen.getByText('Scan a QR code instead'));
+  await fireEvent.press(screen.getByText('Scan a QR Code Instead'));
   await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
   expect(pairing).toHaveBeenCalledTimes(2);
 });
