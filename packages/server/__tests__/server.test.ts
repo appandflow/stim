@@ -5650,8 +5650,8 @@ describe('frames.subscribe', () => {
       const commands = () =>
         existsSync(inputs)
           ? readFileSync(inputs, 'utf8')
-              .trim()
               .split('\n')
+              .slice(0, -1)
               .map((line) => JSON.parse(line))
           : [];
       await until(() => commands().some((command) => command.input === 'duo-release'));
