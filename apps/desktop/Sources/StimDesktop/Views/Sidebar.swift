@@ -7,7 +7,6 @@ struct Sidebar: View {
   @ObservedObject var autopilot: AutopilotRunner
   @ObservedObject var onboarding: Onboarding
   let actions: ActionCenter
-  @ObservedObject private var inbox = NotificationInbox.shared
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   @ObservedObject var tips: TipCoordinator
@@ -55,7 +54,8 @@ struct Sidebar: View {
           if entries.isEmpty { emptyText(options) }
         }
       } header: {
-        Text(options.grouping == .project ? "Projects" : "Workspaces").background(PlainSelectionHighlight())
+        SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
+          .background(PlainSelectionHighlight())
       }
     }
     .scrollContentBackground(.hidden)
@@ -133,17 +133,11 @@ struct Sidebar: View {
 
   private var pinned: some View {
     VStack(spacing: Space.xxs) {
-      PinnedRow(item: .wall, selection: $selection) {
-        SidebarLabel(title: "All devices", icon: "square.grid.2x2", selected: selection == .wall)
+      PinnedRow(item: .overview, selection: $selection) {
+        SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
-      PinnedRow(item: .notifications, selection: $selection) {
-        SidebarLabel(title: "Notifications", icon: "bell", selected: selection == .notifications)
-        Spacer()
-        let unread = inbox.inbox.unreadCount
-        if unread > 0 {
-          Pill(unread > 99 ? "99+" : "\(unread)", tone: .brand, size: .small)
-            .help("\(unread) unread notification\(unread == 1 ? "" : "s")")
-        }
+      PinnedRow(item: .wall, selection: $selection) {
+        SidebarLabel(title: "Active worktrees", icon: "rectangle.stack", selected: selection == .wall)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
@@ -255,15 +249,12 @@ struct ProjectRow: View {
         .accessibilityHidden(true)
       Text(store.title(of: summary.project)).lineLimit(1).truncationMode(.middle)
       Spacer()
-      if summary.live > 0 {
-        Text("\(summary.live) live").font(.stim(.caption)).foregroundStyle(Palette.success).fixedSize()
-          .help("\(countLabel(summary.live, "live workspace")) of \(summary.total)")
-      } else if summary.settingUp > 0 {
+      if summary.live == 0, summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
-          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none live yet")
-      } else {
+          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none active yet")
+      } else if summary.live == 0 {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
-          .help("\(countLabel(summary.total, "workspace")), none live")
+          .help("\(countLabel(summary.total, "workspace")), none active")
       }
     }
     .contextMenu {
@@ -272,7 +263,7 @@ struct ProjectRow: View {
         onStopAllLiveWorkspaces: { confirmingStopAll = true })
     }
     .confirmationDialog(
-      "Stop every live workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      "Stop every active workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
       titleVisibility: .visible
     ) {
       Button("Run stim stop", role: .destructive) {
@@ -712,7 +703,7 @@ struct SidebarFooter: View {
   private var agentsTooltip: String {
     let count = drivenDevices.count
     return
-      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show all devices"]
+      (["\(count) device\(count == 1 ? "" : "s") driven by an agent or tool \u{2014} click to show Active worktrees"]
       + drivenDevices.map { "\($0.workspaceTitle) \u{2192} \($0.deviceLabel)" }).joined(separator: "\n")
   }
 

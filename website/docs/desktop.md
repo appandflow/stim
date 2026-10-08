@@ -44,6 +44,9 @@ Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
+On a remote Mac, Stim Desktop shows build requests from other Macs as a
+notification and inbox entry with **Allow** and **Deny**. It watches a
+stim-server already running there even when **Serve to phones** is off.
 Placement is set by config or agents: use
 `stim settings set ios.remote auto --scope machine` (or `android.remote`; a
 workspace, repo or committed value overrides the machine default),
@@ -213,8 +216,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured remote Mac for its readiness, capacity and build history.
-  Click the toolbar's CPU, memory or disk figure for details; **Open Machines**
-  in each popover opens the Machines page. CPU covers live workspace processes,
+  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   **Link machine** opens the existing **Remote Macs** settings flow, whose
   **Add...** button walks through picking a Mac, choosing Builds and Hosted
@@ -283,7 +286,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   you** category lists only what agents cannot handle, such as a doctor
   finding, a signing failure or an expired device lease, with **Run**, **Copy
   command**, **Fix**, **Open logs** or **Show in Finder** on its row in
-  **Notifications**. It is Silent by default. The inbox starts with 50 matching
+  **Notifications**. It is Silent by default. While Desktop is in front, an Alert
+  shakes the top-right bell and bumps its count, and Silent and Off entries only
+  bump the count; under Reduce Motion the bell keeps its colour change and skips
+  the shake. A build or hosting request and an Alert-level machine problem also
+  open a card in the window. Background macOS alerts follow notification settings.
+  The inbox starts with 50 matching
   notifications; **Show older notifications** loads another 50. Changing a filter
   returns to the first batch. **Mark all read** and **Clear** apply to all matching
   notifications, including rows that have not been loaded.
@@ -382,12 +390,27 @@ another source; click **Allow Paste** in the viewer. Unicode and line breaks are
 preserved. Physical devices, hosted and remote sessions and replay never sync, so
 no clipboard text crosses the network or reaches another Mac.
 
-The All devices and project wall creates rows and device tiles as you scroll.
-Offscreen previews pause and reconnect when you return to them.
+Overview opens first. Running projects come first, as cards with a live preview of
+one device; click a card to open the project. Idle projects follow in a compact list
+with their last activity, an open pull request, a failed last build and errors; click
+a row to open the project. A **Recently archived** row and a **Try this** section
+follow. **Try this** suggests up to three features you have not used yet, such as EAS
+development builds and simulators, another Mac for builds or simulators, `stim macos`,
+running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a
+copyable prompt for your coding agent. A tip appears only when it applies, so EAS tips
+need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
+with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's tip card.
 
-On the All devices and project wall, active workspaces without running or building
-devices use compact cards labelled **No running devices**, with Metro status,
-warnings and error links. CPU and RAM stay on the workspace page.
+**Active worktrees** groups every worktree with something running, building or warming,
+each with a compact header (name, project, Metro port, who drives it, memory, errors)
+above its device tiles, so several worktrees fit on one screen; worktrees wrap across the page and a worktree's tiles scroll sideways when they do not fit. Click a
+header to open the project, or a tile to open its workspace with that device focused.
+
+On the Active worktrees and project wall, offscreen previews pause and reconnect when you return to them.
+
+On the Active worktrees and project wall, active workspaces without running or building
+devices show a **No running devices** line under their header, with Metro status
+and error links. CPU stays on the workspace page.
 
 Run, Reload app, Start dev server and Stop from the workspace or sidebar menus keep
 you on the workspace page, as do Stop or Shut down in the now band and Build and run and Stop
@@ -424,8 +447,8 @@ uses **Launching app** and **Verifying launch** labels.
 
 Closing the window leaves Stim Desktop running, so notifications and the phone
 server keep working. Click the Dock icon to reopen the window, or press
-Command-Q to quit. Command-1, Command-2 and Command-3 open All devices,
-Notifications and Machine.
+Command-Q to quit. Command-1 through Command-4 open Overview, Active worktrees, Notifications and Machines.
+The bell at the top right opens Notifications and shows the unread count; it stays visible when there are no unread notifications.
 
 Stim Desktop checks the npm registry once a day for a newer `stim`. When the
 `stim` it runs was installed by npm, pnpm or bun and is older, the sidebar
@@ -489,7 +512,7 @@ supported. Binary video uses its existing stream format.
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to
-a workspace. When no live workspace matches the exact path within 10 seconds, the
+a workspace. When no active workspace matches the exact path within 10 seconds, the
 link opens its newest archive; an optional `&archive=<id>` opens a specific archive
 belonging to that path at once. Settings and other details are in the
 [app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).

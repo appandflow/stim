@@ -274,7 +274,7 @@ struct SetupGuideView: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       heading("Hear about it when something needs you")
       Text(
-        "Stim Desktop can alert you when an agent or this Mac needs you. Alert shows a card in the Stim window, or a macOS notification when the window is in the background; Silent only lists it under Notifications in the sidebar."
+        "Stim Desktop can alert you when an agent or this Mac needs you. Alert sends a macOS notification when the window is in the background, and shakes the bell in the toolbar while it is in front; a request or machine problem also shows a card in the window. Silent only lists it under the bell."
       )
       .foregroundStyle(Palette.secondary)
       VStack(spacing: Space.sm) {

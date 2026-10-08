@@ -29,7 +29,7 @@ const pending: HelloReply = {
     capabilities: [],
     device: { id: 'host12', name: 'laptop' },
     deviceToken: 'hosting-secret',
-    approval: { state: 'pending', expiresAt: '2026-10-03T12:00:00Z' },
+    approval: { state: 'pending', expiresAt: '2099-10-03T12:00:00Z' },
   },
 };
 function fakeIo(replies: HelloReply[], nodeId = 'nMini') {
@@ -124,6 +124,42 @@ test('only a definite unauthorized response and fix ask again on the same pinned
     expect.objectContaining({ auth: { deviceToken: 'hosting-secret' } }),
     expect.objectContaining({ auth: { request: 'device-host', deviceName: 'laptop' } }),
   ]);
+});
+
+test('a pending hosting request stores and reports its expiry; a forgotten one past it is lapsed, and --fix asks again', async () => {
+  const expiredPending: HelloReply = {
+    result: { ...pending.result!, approval: { state: 'pending', expiresAt: '2020-01-01T00:15:00Z' } },
+  };
+  const asked = await inspectDeviceHostMachines({ fix: true }, fakeIo([expiredPending]).io, ['mini']);
+  expect(asked.machines[0]).toMatchObject({ state: 'pending', expiresAt: '2020-01-01T00:15:00Z' });
+  expect(readDeviceHostMachines()[0]).toMatchObject({ expiresAt: '2020-01-01T00:15:00Z' });
+  const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };
+  const report = await inspectDeviceHostMachines({ fix: false }, fakeIo([unknown]).io, ['mini']);
+  expect(report.machines[0]).toMatchObject({ state: 'lapsed' });
+  expect(report.findings[0]?.fix).toContain('stim doctor --fix');
+  const again = await inspectDeviceHostMachines({ fix: true }, fakeIo([unknown, pending]).io, ['mini']);
+  expect(again.machines[0]).toMatchObject({ state: 'pending', expiresAt: '2099-10-03T12:00:00Z' });
+});
+
+test('an approved hosting credential and one stored without an expiry stay revoked', async () => {
+  const unknown: HelloReply = { error: { code: 'unauthorized', message: 'Unknown device.' } };
+  await inspectDeviceHostMachines({ fix: true }, fakeIo([pending]).io, ['mini']);
+  await inspectDeviceHostMachines(
+    { fix: false },
+    fakeIo([{ result: { capabilities: ['device-host'], device: { id: 'host12', name: 'laptop' } } }]).io,
+    ['mini'],
+  );
+  expect(readDeviceHostMachines()[0]).not.toHaveProperty('expiresAt');
+  expect((await inspectDeviceHostMachines({ fix: false }, fakeIo([unknown]).io, ['mini'])).machines[0]?.state).toBe(
+    'revoked',
+  );
+  const file = deviceHostMachinesFile();
+  const stored = JSON.parse(readFileSync(file, 'utf8')) as { machines: Record<string, unknown>[] };
+  for (const each of stored.machines) each.state = 'pending';
+  writeFileSync(file, JSON.stringify(stored));
+  expect((await inspectDeviceHostMachines({ fix: false }, fakeIo([unknown]).io, ['mini'])).machines[0]?.state).toBe(
+    'revoked',
+  );
 });
 
 test.each(['{"result":null}', '{"error":null}', '{"result":{"device":null}}', '{"error":{"code":null}}'])(

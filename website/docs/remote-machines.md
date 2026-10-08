@@ -389,13 +389,17 @@ code={`stim settings set remote.machines '["janics-mac-mini"]'
 stim doctor --fix`}
 />
 
-On the worker, inspect `stim-server devices` and approve the printed build
+Stim Desktop on the worker shows each build request and device-host request as a
+notification with **Allow** and **Deny**, including when a stim-server already
+runs there as a LaunchAgent and **Serve to phones** is off. Without Desktop, on the worker, inspect `stim-server devices` and approve the printed build
 request with `stim-server devices grant <build-id> --build`, and the separate
 hosting request with `stim-server devices grant <host-id> --device-host`.
 Use the server package's npx prefix above if it is not installed globally.
 Approve only what you want to use; a listed Mac that never granted an approval
 is not used for it, and `stim doctor` says so.
-Requests lapse after 15 minutes. Run `stim doctor` on the main Mac to check
+Requests lapse after 15 minutes. While a request is pending, `stim doctor --json`
+reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
+`stim doctor --fix` asks again. Run `stim doctor` on the main Mac to check
 approval and compatibility before running the app.
 
 ## Permissions

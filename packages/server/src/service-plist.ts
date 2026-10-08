@@ -314,16 +314,27 @@ export function answersAs(
 const packageNames = (entries: unknown[]) =>
   entries.map((entry) => (isJsonObject(entry) ? `${String(entry.name)}@${String(entry.version)}` : '?')).join(', ');
 
-/** Why `npm audit signatures --json` output does not vouch for every installed package, or null when it does. */
-export function signatureProblem(output: string): string | null {
+export const lastLines = (text: string): string => text.trim().split('\n').slice(-8).join('\n');
+
+/**
+ * Why `npm audit signatures --json` output does not vouch for every installed package, or null when it does. When npm
+ * fails it prints `{"error":{"summary","detail"}}` on stdout, or only text on stderr; the message carries that error.
+ */
+export function signatureProblem(output: string, stderr = ''): string | null {
   let report: unknown;
   try {
     report = JSON.parse(output);
   } catch {
-    return 'npm audit signatures did not print a JSON report';
+    report = null;
+  }
+  if (isJsonObject(report) && isJsonObject(report.error)) {
+    const { summary, detail } = report.error;
+    const text = [summary, detail].filter((part): part is string => typeof part === 'string' && part.trim() !== '');
+    if (text.length) return `npm audit signatures failed: ${text.map((part) => part.trim()).join(' ')}`;
   }
   if (!isJsonObject(report) || !Array.isArray(report.invalid) || !Array.isArray(report.missing)) {
-    return 'npm audit signatures did not print a JSON report';
+    const error = lastLines(stderr);
+    return `npm audit signatures did not print a JSON report${error ? `:\n${error}` : ''}`;
   }
   if (report.invalid.length)
     return `npm found invalid registry signatures or attestations: ${packageNames(report.invalid)}`;

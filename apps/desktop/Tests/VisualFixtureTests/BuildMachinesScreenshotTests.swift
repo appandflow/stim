@@ -16,17 +16,17 @@
             "reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
             "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
             "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}},
-           {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
+           {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net","expiresAt":"2099-01-01T21:05:00.000Z"}]
           """#.utf8))
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool, updates: [String: MachineUpdatePhase] = [:]
     ) -> some View {
       BuildMachinesContent(
-        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: [:],
-        working: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true, addDisabled: false,
-        sampleExists: false,
+        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
+        working: nil, progress: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true,
+        addDisabled: false, sampleExists: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
         remove: { _ in }, deleteSample: {}, thisMac: EmptyView()
       )
@@ -34,6 +34,19 @@
       .foregroundStyle(Palette.text)
       .background(Palette.background)
       .frame(width: 780, height: 560)
+    }
+
+    private func blocked() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+           {"machine":"studio","state":"approved","offloadable":false,"dnsName":"studio.tail1234.ts.net",
+            "reasons":["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here","no CocoaPods there"],
+            "problems":[{"code":"stim-build","reason":"Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"},
+                        {"code":"cocoapods","reason":"no CocoaPods there"}]}]
+          """#.utf8))
     }
 
     @MainActor func testBuildMachinesScreenshots() throws {
@@ -47,6 +60,31 @@
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
         (
           "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))
+        ),
+        (
+          "lapsed",
+          AnyView(
+            content(
+              entries: ["mini", "studio"],
+              statuses: try JSONDecoder().decode(
+                [BuildMachineStatus].self,
+                from: Data(
+                  #"""
+                  [{"machine":"mini","state":"approved","offloadable":true,"dnsName":"mini.tail1234.ts.net"},
+                   {"machine":"studio","state":"lapsed","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net"}]
+                  """#.utf8)),
+              tailscale: true))
+        ),
+        (
+          "update-failed",
+          AnyView(
+            content(
+              entries: ["mini", "studio"], statuses: try blocked(), tailscale: true,
+              updates: [
+                "studio": .failed(
+                  "npm error code E404\nnpm error 404 Not Found - GET https://registry.npmjs.org/stim-server - Not found\nnpm error 404 'stim-server@0.0.0-dev' is not in this registry. Not switching to it."
+                )
+              ]))
         ),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),

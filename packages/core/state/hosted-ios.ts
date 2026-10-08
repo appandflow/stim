@@ -5,13 +5,19 @@ import {
   parseHostedNativePlacement,
   unreadableHostedNative,
 } from './hosted-native.ts';
+import type { HostedAgentAccess } from './hosted-macos.ts';
 import type { WorkspaceState } from './workspace-state.ts';
 
 /** A workspace slot's placement; null device means its reservation has not reached ready yet. */
 export interface HostedIosPlacement extends HostedNativePlacement<HostedIosDevice> {}
 
 /** Public hosting facts; the host's UDID and private Metro gateway are excluded. */
-export type HostedIosStatus = Pick<HostedIosPlacement, 'machine' | 'session' | 'selected' | 'reason' | 'agent'> & {
+export type HostedIosStatus = {
+  machine: string;
+  session: string;
+  selected: string;
+  reason?: string;
+  agent: HostedAgentAccess;
   device: { name: string; runtime: string } | null;
   /** The latest session probe in status, independent of a conflicting local simulator's state. */
   state?: string;

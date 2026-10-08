@@ -106,7 +106,7 @@ final class ServerController: ObservableObject {
     return false
   }
 
-  private var isResponding: Bool {
+  var isResponding: Bool {
     switch state {
     case .running, .notReady: return true
     case .off, .starting, .failed: return false
@@ -133,6 +133,13 @@ final class ServerController: ObservableObject {
 
   func retry() {
     if case .failed = state { start() } else { refresh() }
+  }
+
+  var isOwned: Bool {
+    switch state {
+    case .running(_, let owned), .notReady(_, let owned): return owned
+    case .off, .starting, .failed: return false
+    }
   }
 
   var canRestart: Bool {
@@ -187,10 +194,7 @@ final class ServerController: ObservableObject {
     retriesFailure = true
     missedProbes = 0
     Task {
-      if let exiting {
-        await Task.detached { Self.waitForExit(exiting) }.value
-        self.exiting = nil
-      }
+      await waitForExiting()
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
@@ -249,6 +253,12 @@ final class ServerController: ObservableObject {
     guard process != nil, startedLoopbackOnly != wantsLoopbackOnly else { return }
     stop()
     start()
+  }
+
+  private func waitForExiting() async {
+    guard let process = exiting else { return }
+    await Task.detached { Self.waitForExit(process) }.value
+    if exiting === process { exiting = nil }
   }
 
   func restart() {

@@ -23,6 +23,8 @@ function pairingState(state: string): State {
       return { title: t`Not asked`, tone: 'tertiary' };
     case 'revoked':
       return { title: t`Revoked`, tone: 'error' };
+    case 'lapsed':
+      return { title: t`Request lapsed`, tone: 'error' };
     case 'node-changed':
       return { title: t`Different Mac`, tone: 'error' };
     case 'not-on-tailnet':

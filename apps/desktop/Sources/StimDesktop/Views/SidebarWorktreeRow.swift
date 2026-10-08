@@ -67,8 +67,10 @@ struct SidebarWorktreeRow: View {
             if prefs.hiddenWorkspaces.contains(archives.isEmpty ? .worktreeGroup(page) : .archivedGroup(archives)) {
               HiddenIndicator()
             }
-            Text(summary.status.text).font(.stim(.caption, weight: .medium)).foregroundStyle(Color(summary.status.tone))
-              .lineLimit(1).fixedSize()
+            if summary.status.kind != .running {
+              Text(summary.status.text).font(.stim(.caption, weight: .semibold)).foregroundStyle(Color(summary.status.tone))
+                .lineLimit(1).fixedSize()
+            }
           }
           if archives.isEmpty, let session = summary.agents.first {
             SessionLine(session: session, others: summary.agents.count - 1)

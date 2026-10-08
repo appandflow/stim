@@ -38,6 +38,10 @@ struct PhonesView: View {
           Toggle(PhoneApp.serverPage(phoneApp: flags.phoneApp).serveToggleTitle, isOn: $servesPhones)
         }
         serverState
+        if !servesPhones, !server.isOwned, server.isResponding {
+          Text("A stim-server already runs on this Mac, and Desktop shows its build requests.")
+            .foregroundStyle(Palette.tertiary)
+        }
         HStack {
           TextField("stim-server executable", text: $executable, prompt: Text("stim-server on the login shell's PATH"))
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
