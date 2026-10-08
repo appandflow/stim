@@ -1182,7 +1182,8 @@ closes its connections and cancels its builds.
   average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
-  `server.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
+  `server.maxLoadPerCore`, default 2), `memoryUsedBytes` (Activity Monitor's
+  Memory Used) and `memoryTotalBytes`, and `declined`: why it would refuse a
   build now, or null. It declines while it runs its limit of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
