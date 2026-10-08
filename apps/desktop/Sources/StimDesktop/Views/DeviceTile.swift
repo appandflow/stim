@@ -32,6 +32,8 @@ struct DeviceTile: View {
   /// False while the device's viewer is open, so the tile does not stream a second copy of its screen.
   var showsScreen = true
   var pausesWhenOffscreen = false
+  /// Only the media area of the preview card, for a card that supplies its own header and width.
+  var embedded = false
   var highlightsHeaderOnHover = false
   var pixelScale: CGFloat? = nil
   var framePixelsPerUnit: CGFloat = 1
@@ -207,7 +209,40 @@ struct DeviceTile: View {
     }
   }
 
-  private var card: some View {
+  @ViewBuilder private var cardMedia: some View {
+    if replaying, let replay {
+      ReplayScreen(controller: replay) { replaySize = $0 }
+        .frame(width: replayWidth)
+        .padding(screenPadding)
+        .frame(height: fittedHeight)
+        .frame(maxWidth: .infinity)
+        .background(Media.screen)
+    } else if let workspace, showsStoppedBar {
+      stoppedBar(runCommand(for: device, cwd: workspace))
+    } else if !showsScreen {
+      placeholder("Open in the viewer")
+        .frame(height: fittedHeight)
+        .background(Media.screen)
+    } else if pausesWhenOffscreen && !isOnscreen {
+      Media.screen.frame(height: fittedHeight).frame(maxWidth: embedded ? .infinity : nil)
+    } else {
+      screen
+        .frame(height: fittedHeight)
+        .frame(maxWidth: embedded ? .infinity : nil)
+        .background(Media.screen)
+        .overlay { screenCover }
+    }
+  }
+
+  @ViewBuilder private var card: some View {
+    if embedded {
+      cardMedia
+    } else {
+      previewCard
+    }
+  }
+
+  private var previewCard: some View {
     Card {
       VStack(spacing: 0) {
         header
@@ -216,27 +251,7 @@ struct DeviceTile: View {
           .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
-        if replaying, let replay {
-          ReplayScreen(controller: replay) { replaySize = $0 }
-            .frame(width: replayWidth)
-            .padding(screenPadding)
-            .frame(height: fittedHeight)
-            .frame(maxWidth: .infinity)
-            .background(Media.screen)
-        } else if let workspace, showsStoppedBar {
-          stoppedBar(runCommand(for: device, cwd: workspace))
-        } else if !showsScreen {
-          placeholder("Open in the viewer")
-            .frame(height: fittedHeight)
-            .background(Media.screen)
-        } else if pausesWhenOffscreen && !isOnscreen {
-          Media.screen.frame(height: fittedHeight)
-        } else {
-          screen
-            .frame(height: fittedHeight)
-            .background(Media.screen)
-            .overlay { screenCover }
-        }
+        cardMedia
       }
     }
     .overlay {

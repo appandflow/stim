@@ -9,15 +9,13 @@ struct OverviewView: View {
   var sidebarTopic: TipTopic?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
+  var openDevice: (String, String) -> Void
   var openIdleProject: (Project) -> Void
   @State private var showsAllIdle = false
-  @State private var pressedCard: SidebarItem?
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
   @State private var tipState = TryThisStore(defaults: .standard).state
-
-  private static let cardWidth: CGFloat = 340
 
   var body: some View {
     if store.payload == nil {
@@ -33,13 +31,8 @@ struct OverviewView: View {
 
   private var projects: [ProjectSummary] { store.projectList }
 
-  private var running: [(summary: ProjectSummary, worktrees: [WorktreePage])] {
-    projects.compactMap { summary in
-      let worktrees = WorktreePage.groups(
-        environments: store.environments(in: summary.project).filter(\.isActive)
-      ).sorted { $0.identity < $1.identity }
-      return worktrees.isEmpty ? nil : (summary, worktrees)
-    }
+  private var running: [WallCard] {
+    WallCard.cards(environments: (store.payload?.environments ?? []).filter(\.isActive))
   }
 
   @ViewBuilder private var content: some View {
@@ -81,9 +74,9 @@ struct OverviewView: View {
     }
   }
 
-  private func runningSection(_ items: [(summary: ProjectSummary, worktrees: [WorktreePage])]) -> some View {
+  private func runningSection(_ cards: [WallCard]) -> some View {
     section("Active") {
-      if items.isEmpty {
+      if cards.isEmpty {
         Card {
           InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
             .font(.stim(.callout))
@@ -91,84 +84,10 @@ struct OverviewView: View {
             .padding(.horizontal, Space.xl)
             .padding(.vertical, Space.lg)
         }
-      }
-      LazyVGrid(
-        columns: [
-          GridItem(.adaptive(minimum: Self.cardWidth, maximum: Self.cardWidth * 1.4), spacing: Space.xl, alignment: .top)
-        ],
-        alignment: .center, spacing: Space.xl
-      ) {
-        ForEach(items, id: \.summary.project.id) { item in
-          projectCard(item.summary, item.worktrees)
-        }
-      }
-      .frame(maxWidth: Self.cardWidth * 1.4 * CGFloat(min(3, items.count)) + Space.xl * CGFloat(min(3, items.count) - 1))
-      .frame(maxWidth: .infinity, alignment: items.count < 3 ? .center : .leading)
-    }
-  }
-
-  private func projectCard(_ summary: ProjectSummary, _ worktrees: [WorktreePage]) -> some View {
-    let itemCount = worktrees.reduce(0) { $0 + max(1, $1.orderedDevices.filter { $0.device.isRunning }.count) }
-    let moreCount = itemCount - 1
-    return Button {
-      pressedCard = nil
-      selection = .project(summary.project)
-    } label: {
-      Card {
-        VStack(alignment: .center, spacing: Space.xl) {
-          Text(store.title(of: summary.project))
-            .font(.stim(.headline))
-            .foregroundStyle(Palette.text)
-            .lineLimit(2)
-          preview(worktrees)
-            .allowsHitTesting(false)
-          if moreCount > 0 {
-            Text("Show more (\(moreCount))")
-              .foregroundStyle(Palette.tertiary)
-          }
-        }
-        .padding(Space.xl)
-        .frame(maxWidth: .infinity, alignment: .center)
-        .multilineTextAlignment(.center)
-        .contentShape(Rectangle())
-      }
-    }
-    .buttonStyle(CardPressStyle())
-    .hoverHighlight(radius: Radius.card)
-    .modifier(CardPressAppearance(pressed: pressedCard == .project(summary.project)))
-    .onPreferenceChange(CardPressedKey.self) { pressed in
-      if pressed {
-        pressedCard = .project(summary.project)
-      } else if pressedCard == .project(summary.project) {
-        pressedCard = nil
-      }
-    }
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel(store.title(of: summary.project))
-    .accessibilityValue(moreCount > 0 ? "Show more (\(moreCount))" : "")
-    .accessibilityHint("Open project")
-  }
-
-  private func preview(_ worktrees: [WorktreePage]) -> some View {
-    let preview = worktrees.flatMap(\.orderedDevices).first { $0.device.isRunning }
-    return VStack(alignment: .center, spacing: Space.lg) {
-      if let env = preview?.workspace ?? worktrees.first?.apps.first {
-        WorkspaceHeader(
-          env: env, project: store.project(of: env), usage: metrics.usage[env.path], stacked: true,
-          openLogs: { openLogs(env.path) }
-        )
-        if let preview {
-          DeviceTile(
-            device: preview.device, screenHeight: 220, workspace: env.path,
-            build: env.runningBuild(for: preview.device), maxWidth: 240, pausesWhenOffscreen: true
-          )
-          .frame(maxWidth: .infinity, alignment: .center)
-        }
-        if let macos = env.macos {
-          Label("\(macos.product) \u{00B7} \(macos.state)", systemImage: "macwindow")
-            .font(.stim(.callout))
-            .foregroundStyle(Palette.secondary)
-        }
+      } else {
+        WorkspaceCardGrid(
+          cards: cards, store: store, metrics: metrics,
+          open: { selection = .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
       }
     }
   }
