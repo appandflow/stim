@@ -61,3 +61,12 @@ test('a host failure is logged without debug, a host success only with it', () =
   loud.log.host('host_connect', { host: 'mini', ms: 5 });
   expect(loud.records).toEqual([{ event: 'host_connect', host: 'mini', ms: 5 }]);
 });
+
+test('a method name cannot add a field or a line to the service log', () => {
+  const { lines, log } = setup(false);
+  const tracker = log.track();
+  tracker.begin(1, 'x ms=0 error=none\nstim-server: forged');
+  tracker.reply({ id: 1, error: { code: 'bad-request' } });
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).not.toMatch(/\n| ms=0 error=none/);
+});

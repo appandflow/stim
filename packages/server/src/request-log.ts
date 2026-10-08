@@ -21,10 +21,16 @@ export interface RequestLog {
   host(event: string, fields: Record<string, unknown>, failed?: boolean): void;
 }
 
+/** One token of a service-log line: no whitespace or control characters, so a client cannot forge another field or line. */
+const printable = (value: unknown): string =>
+  String(value)
+    .replace(/[^\x21-\x7e]+/g, '_')
+    .slice(0, 80);
+
 const text = (fields: Record<string, unknown>): string =>
   Object.entries(fields)
     .filter(([, value]) => value !== undefined && value !== null)
-    .map(([key, value]) => `${key}=${String(value)}`)
+    .map(([key, value]) => `${key}=${printable(value)}`)
     .join(' ');
 
 /**
