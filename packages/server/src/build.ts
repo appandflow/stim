@@ -14,6 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
+import { totalmem } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { WebSocket } from 'ws';
@@ -336,10 +337,12 @@ export class BuildHost {
     try {
       lockfile = readFileSync(join(area, 'lockfile'), 'utf8');
     } catch {}
+    const available = await readAvailableMemory();
+    const memory = available === null ? {} : { memoryTotalBytes: totalmem(), memoryUsedBytes: totalmem() - available };
     return {
       result: {
         toolchain,
-        capacity: this.capacity(),
+        capacity: { ...this.capacity(), ...memory },
         warm: {
           checkout: existsSync(join(area, 'src')),
           dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,

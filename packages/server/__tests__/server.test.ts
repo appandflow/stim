@@ -1882,7 +1882,16 @@ describe('offloaded builds', () => {
       const port = await start();
       const { client } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { builds: 0, maxBuilds: 1, declined: null, cpus: expect.any(Number) } },
+        result: {
+          capacity: {
+            builds: 0,
+            maxBuilds: 1,
+            declined: null,
+            cpus: expect.any(Number),
+            memoryTotalBytes: expect.any(Number),
+            memoryUsedBytes: expect.any(Number),
+          },
+        },
       });
 
       writeActive('compile');

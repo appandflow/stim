@@ -797,8 +797,8 @@ export interface BuildToolchain {
 /**
  * How busy the remote Mac is. `running` counts offloaded builds and `max` is how many it runs at once.
  * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
- * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited) and `maxLoadPerCore` are absent from a
- * stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
+ * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore`, `memoryUsedBytes`
+ * (Activity Monitor's Memory Used) and `memoryTotalBytes` are absent from a stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.
  */
 export interface BuildCapacity {
   running: number;
@@ -810,6 +810,8 @@ export interface BuildCapacity {
   builds?: number;
   maxBuilds?: number;
   maxLoadPerCore?: number;
+  memoryUsedBytes?: number;
+  memoryTotalBytes?: number;
   declined?: string | null;
 }
 
@@ -1023,6 +1025,8 @@ export interface BuildMachineCapacity {
   builds?: number;
   maxBuilds?: number;
   maxLoadPerCore?: number;
+  memoryUsedBytes?: number;
+  memoryTotalBytes?: number;
   declined?: string | null;
 }
 

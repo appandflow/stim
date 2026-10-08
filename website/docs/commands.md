@@ -181,7 +181,9 @@ its reported load:
     "maxLoadPerCore": 2,
     "declined": null,
     "diskFreeBytes": 812000000000,
-    "minDiskFreeBytes": 10737418240
+    "minDiskFreeBytes": 10737418240,
+    "memoryUsedBytes": 9663676416,
+    "memoryTotalBytes": 17179869184
   }
 }
 ```

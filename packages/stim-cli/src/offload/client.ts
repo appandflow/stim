@@ -134,6 +134,8 @@ export interface BuildOffer {
     builds?: number;
     maxBuilds?: number;
     maxLoadPerCore?: number;
+    memoryUsedBytes?: number;
+    memoryTotalBytes?: number;
     declined?: string | null;
   };
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
