@@ -400,7 +400,7 @@ running, it says where active projects will appear. **Idle projects** follow as 
 cards in an adaptive grid, with their last activity, an open pull request, a failed last
 build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
 place. Click a card to open the project with all of its worktrees listed, under a
-**Showing all worktrees** chip you can clear to return to the active ones. A project page
+**Showing all workspaces** chip you can clear to return to the active ones. A project page
 whose worktrees are all inactive says so and has a **Show all** button. A **Recently archived** row and a **Try this** section
 follow. **Try this** suggests up to three features you have not used yet, such as EAS
 development builds and simulators, another Mac for builds or simulators, `stim macos`,
