@@ -260,10 +260,10 @@ export class StimConnection {
               kind: 'connection',
               errorClass: `${refused ? 'refused' : 'request-error'}:${safeName(error.error.code)}`,
             });
-          }
-          if (error instanceof RequestError && REFUSAL_CODES.has(error.error.code)) {
-            this.stopped = true;
-            this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
+            if (refused) {
+              this.stopped = true;
+              this.options.onState?.({ kind: 'refused', code: error.error.code, reason: error.message });
+            }
           }
           socket.close();
         },

@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/react-native';
 
+import { ERROR_CODES } from '@stim-cli/core/protocol';
 import type { RpcIssue } from '@stim-cli/core/receive-protocol';
 
 export type Failure =
@@ -12,11 +13,9 @@ export interface FailureReport {
   fingerprint: string[];
 }
 
-const NAME = /^[A-Za-z][\w.-]{0,40}$/;
-
-/** A protocol name or error code from the Mac, kept only when it looks like an identifier. */
+/** An error code from the Mac, kept only when the protocol defines it. */
 export function safeName(value: unknown): string {
-  return typeof value === 'string' && NAME.test(value) ? value : 'other';
+  return ERROR_CODES.some((code) => code === value) ? (value as string) : 'other';
 }
 
 /** Only the stage, the protocol name and the schema location of a failure. Never a value from the Mac. */

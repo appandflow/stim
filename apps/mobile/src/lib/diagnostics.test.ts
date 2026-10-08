@@ -39,8 +39,9 @@ describe('describeFailure', () => {
 });
 
 describe('safeName', () => {
-  it('keeps identifiers and replaces anything else sent by a Mac', () => {
+  it('keeps the error codes the protocol defines and replaces anything else a Mac sends', () => {
     expect(safeName('pairing-expired')).toBe('pairing-expired');
+    expect(safeName('janics-mac')).toBe('other');
     expect(safeName('wss://janics-mac.tail1a2b3.ts.net')).toBe('other');
     expect(safeName('/Users/janic/app')).toBe('other');
     expect(safeName('has space')).toBe('other');
