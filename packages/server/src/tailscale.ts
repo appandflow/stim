@@ -35,7 +35,6 @@ export function findTailscale(env: NodeJS.ProcessEnv): string | null {
 
 export type TailscaleInstall = 'app' | 'cli' | 'none';
 
-/** The Mac app wins over a PATH command, as in Desktop's `Tailnet.Install.detect`. */
 export function tailscaleInstall(
   env: NodeJS.ProcessEnv,
   isExecutable: (path: string) => boolean = executable,

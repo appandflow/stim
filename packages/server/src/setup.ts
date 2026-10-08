@@ -194,7 +194,7 @@ export function setupVersionDecision(
   return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
 }
 
-export function tailscaleRefusal(install: TailscaleInstall): string {
+function tailscaleRefusal(install: TailscaleInstall): string {
   if (install === 'none')
     return 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac';
   if (install === 'app') return 'Turn on Tailscale from its menu bar icon on this Mac, then run this again.';

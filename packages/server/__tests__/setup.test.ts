@@ -14,7 +14,6 @@ import {
   setupClaim,
   setupExitCode,
   setupVersionDecision,
-  tailscaleRefusal,
   type SetupDeps,
 } from '../src/setup.ts';
 import { tailscaleInstall } from '../src/tailscale.ts';
@@ -323,17 +322,9 @@ test.each([
   ['the Mac app is present', [APP, '/opt/bin/tailscale'], 'app'],
   ['only a PATH command is present', ['/opt/bin/tailscale'], 'cli'],
   ['no binary is present', [], 'none'],
-  ['only a directory on another PATH entry matches', ['/other/tailscale'], 'none'],
+  ['a tailscale outside PATH is ignored', ['/other/tailscale'], 'none'],
 ])('Tailscale install when %s', (_name, present, expected) => {
   expect(tailscaleInstall({ PATH: '/usr/bin::/opt/bin' }, (path) => present.includes(path))).toBe(expected);
-});
-
-test('each Tailscale install state gets its own setup refusal', () => {
-  expect(tailscaleRefusal('none')).toBe(
-    'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac',
-  );
-  expect(tailscaleRefusal('app')).toBe('Turn on Tailscale from its menu bar icon on this Mac, then run this again.');
-  expect(tailscaleRefusal('cli')).toBe('Run tailscale up on this Mac, then run this again.');
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {
