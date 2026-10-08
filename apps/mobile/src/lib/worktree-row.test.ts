@@ -151,6 +151,13 @@ describe('worktreeRowSummary', () => {
     expect(summary.problems.map((p) => p.text)).toContain('iOS build failed');
   });
 
+  it('does not let a stopped app with an old failed build lead over a running app', () => {
+    const stale = env('/w/apps/stale', { ios: shutdown, lastBuilds: failedBuild('ios', 3 * 24 * HOUR) });
+    const summary = worktreeRowSummary([item(stale), item(desktop())], NOW, null);
+    expect(summary.lead.env.path).toBe('/w/apps/desktop');
+    expect(summary.status.kind).toBe('running');
+  });
+
   it('sums errors and warnings across apps, and names a shared problem once', () => {
     const summary = worktreeRowSummary(
       [

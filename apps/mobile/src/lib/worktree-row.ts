@@ -94,9 +94,10 @@ export function worktreeRowSummary(
   now: number,
   offline: { lastSeenAt: number | null } | null,
 ): WorktreeRowSummary {
+  const active = apps.filter((app) => isActive(app.env));
   const leadPath = worktreePage({
-    path: apps[0].env.path,
-    environments: apps.map((app) => app.env),
+    path: (active[0] ?? apps[0]).env.path,
+    environments: (active.length ? active : apps).map((app) => app.env),
     entries: [],
     now,
   }).lead;

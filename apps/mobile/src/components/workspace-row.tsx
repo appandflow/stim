@@ -59,11 +59,17 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
   showsMachine: boolean;
   onOpen: (item: HomeItem | HomeArchive, errors: boolean, checkout?: boolean) => void;
 }) {
-  return workspace.apps.length === 1 ? (
-    <WorkspaceRow item={workspace.apps[0]} {...props} />
-  ) : (
-    <WorkspaceRow item={workspace.apps[0]} apps={workspace.apps} title={workspace.title} {...props} />
-  );
+  if (workspace.apps.length === 1) return <WorkspaceRow item={workspace.apps[0]} {...props} />;
+  if ('archive' in workspace.apps[0]) {
+    return (
+      <>
+        {workspace.apps.map((item) => (
+          <WorkspaceRow key={item.key} item={item} title={item.inCheckout ?? item.title} {...props} />
+        ))}
+      </>
+    );
+  }
+  return <WorkspaceRow item={workspace.apps[0]} apps={workspace.apps} title={workspace.title} {...props} />;
 });
 
 const WorkspaceRow = memo(function WorkspaceRow({
