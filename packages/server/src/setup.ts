@@ -38,7 +38,14 @@ import {
 import { SetupPrinter, setupDisplayFor, type SetupDisplay, type StepText } from './setup-output.ts';
 import { pruneSetupJournals, writeSetupJournal } from './setup-journal.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, readRawTailscaleStatus, serveRoute, type ServeRoute } from './tailscale.ts';
+import {
+  findTailscale,
+  readRawTailscaleStatus,
+  serveRoute,
+  tailscaleInstall,
+  type ServeRoute,
+  type TailscaleInstall,
+} from './tailscale.ts';
 
 const SETUP_MIN_VERSION = '1.16.0';
 
@@ -185,6 +192,13 @@ export function setupVersionDecision(
   if (current === null) return 'install';
   if (managed && compareVersions(current, desired) < 0) return 'update';
   return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
+}
+
+export function tailscaleRefusal(install: TailscaleInstall): string {
+  if (install === 'none')
+    return 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac';
+  if (install === 'app') return 'Turn on Tailscale from its menu bar icon on this Mac, then run this again.';
+  return 'Run tailscale up on this Mac, then run this again.';
 }
 
 export function setupExitCode(journal: SetupJournal): number {
@@ -346,7 +360,7 @@ export function defaultSetupDeps(): SetupDeps {
         typeof status.Self.DNSName !== 'string' ||
         !status.Self.DNSName
       ) {
-        throw new SetupRefusal('Start Tailscale on this Mac: tailscale up.');
+        throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env)));
       }
       if (
         !isJsonObject(status.Peer) ||
