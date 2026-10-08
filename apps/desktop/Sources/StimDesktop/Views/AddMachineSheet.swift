@@ -102,6 +102,7 @@ struct AddMachineSheet: View {
     }
     switch wizard.phase {
     case .pick:
+      if model.checkingTailscale { return .tailnet(connected: false) }
       switch model.reachability {
       case .tailscaleMissing: return .tailnet(connected: false)
       case .tailscaleStopped: return model.tailscaleInstall == .cli ? .tailscaleUp : .tailscaleSwitch
@@ -115,6 +116,20 @@ struct AddMachineSheet: View {
   private var pickContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("Choose a Mac on your tailnet").font(.stim(.title))
+      if model.checkingTailscale {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
+        }
+        .accessibilityElement(children: .combine)
+      } else {
+        pickState
+      }
+    }
+  }
+
+  @ViewBuilder private var pickState: some View {
+    VStack(alignment: .leading, spacing: Space.lg) {
       switch model.reachability {
       case .tailscaleMissing:
         checkLine("Tailscale is not installed on this Mac", ready: false)
@@ -192,9 +207,11 @@ struct AddMachineSheet: View {
   private var chooseContent: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Text("What should \(name) do for this Mac?").font(.stim(.title))
+      Text("Choose what \(name) takes on: building your apps, running simulators, or both.")
+        .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: Space.md) {
-        capability(.build, title: "Builds", detail: "iOS, Android and macOS Debug builds run there.")
-        capability(.deviceHost, title: "Hosted simulators", detail: "iOS simulators run there; you use them from this Mac.")
+        capability(.build, title: "Builds", detail: "iOS, Android and macOS Debug builds run on \(name).")
+        capability(.deviceHost, title: "Hosted simulators", detail: "iOS simulators run on \(name); you use them from this Mac.")
       }
       let lines = previewLines(capabilities: wizard.capabilities, known: model.known, version: model.version)
       TerminalCard(

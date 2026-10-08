@@ -252,7 +252,8 @@ request and `stim-server service uninstall`.
 The wizard has five steps. It refreshes in the background every few seconds,
 so there is no Check again button:
 
-1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac. If
+1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac and
+   shows Checking Tailscale until it has an answer. If
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
    download. Then select an online macOS peer from your tailnet. When no other
@@ -263,7 +264,7 @@ so there is no Check again button:
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
-2. **What it does.** Choose **Builds**, **Hosted simulators**, or both. The
+2. **What it does.** The step is titled with the Mac you picked. Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
