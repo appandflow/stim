@@ -33,8 +33,8 @@ import SwiftUI
 }
 
 /// Stim's Copy button. A click writes to the Mac pasteboard and the button morphs to "Copied": the symbol is replaced,
-/// the label crossfades, the capsule springs to its new width and takes the success tint. It returns to "Copy" after
-/// two seconds. With Reduce Motion on it swaps at once.
+/// the label crossfades and the capsule takes the success tint. It keeps the width of its widest label, so it never
+/// resizes. It returns to "Copy" after two seconds. With Reduce Motion on it swaps at once.
 struct CopyButton: View {
   var variant: ButtonVariant = .secondary
   var size: ButtonSize = .small
@@ -102,13 +102,21 @@ struct CopyButton: View {
       }
     } label: {
       HStack(spacing: Space.xs) {
-        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-          .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+        ZStack {
+          Image(systemName: "doc.on.doc").hidden()
+          Image(systemName: "checkmark").hidden()
+          Image(systemName: copied ? "checkmark" : "doc.on.doc")
+            .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+        }
         if showsTitle {
-          Text(copied ? copiedTitle : title)
-            .contentTransition(reduceMotion ? .identity : .interpolate)
-            .lineLimit(1)
-            .fixedSize()
+          ZStack {
+            Text(title).hidden()
+            Text(copiedTitle).hidden()
+            Text(copied ? copiedTitle : title)
+              .contentTransition(reduceMotion ? .identity : .interpolate)
+          }
+          .lineLimit(1)
+          .fixedSize()
         }
       }
     }
