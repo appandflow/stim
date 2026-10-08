@@ -60,8 +60,9 @@ Keep results outside fingerprinted project inputs.
 The result includes `version: 1`, `projectRoot`, `platform`, `artifactsDir`,
 `resultPath`, `runPath`, `startedAt`, `durationMs`, `exitCode`, the native `run`,
 the `test` result, optional `failure`, `diagnostics`, and `cleanup`.
-If writing `result.json` fails, the returned result includes `reportingError`;
-the CLI still prints it without replacing an earlier test failure.
+If a progress callback or writing `result.json` fails, the result includes
+`reportingError`. Reporter failures cannot interrupt cleanup or replace an earlier
+test failure; after a passing test, they return 1.
 Setup failure leaves `run` and `test` null. Diagnostics include the last 1000
 structured records and their original directory; raw compiler files remain in
 the Stim workspace log directory if additional artifacts are needed.
@@ -97,7 +98,8 @@ result records both failures when relevant. Diagnostics failures are recorded
 without replacing the setup or test result.
 
 `timeoutMs` / `--timeout` covers setup and the test command; there is no timeout
-by default. Timeout returns 124. Cancellation returns 130. Cancellation stops
+by default. Timeout returns 124. Cancellation returns 130. Cancellation during
+cleanup is also recorded, preserving an already completed test failure. Cancellation stops
 the test process tree and aborts the native operation, then uses fresh signals
 to stop the workspace (up to 60 seconds) and collect its persisted diagnostics
 (up to 10 seconds). On macOS/Linux, the test command gets its own process group; children

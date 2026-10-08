@@ -35,8 +35,10 @@ The command after `--` is an argument vector. Use an explicit shell when you
 need shell syntax. Progress and test output go to stderr; stdout and
 `test-results/result.json` contain the structured outcome. A failed test keeps
 its exit code even if diagnostics or cleanup also fail. Timeout returns 124;
-cancellation returns 130. Leave at least 70 seconds between this timeout and
-the provider's hard timeout for diagnostics and cleanup.
+cancellation returns 130, including cancellation during cleanup when the test
+has not already failed. Progress callback failures are retained in
+`reportingError` and cannot interrupt cleanup. Leave at least 70 seconds between
+this timeout and the provider's hard timeout for diagnostics and cleanup.
 The artifacts directory must be empty; choose a new one for each run.
 
 The command receives `STIM_CI_DEVICE_ID`, `STIM_CI_APP_ID`, and

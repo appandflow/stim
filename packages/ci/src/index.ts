@@ -75,6 +75,11 @@ function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.Proces
 /** Runs an app and argv-based test command, stops its workspace or explicit slot, and retains diagnostics. */
 export async function runCI(options: CIOptions): Promise<CIResult> {
   if (!options.command[0]) throw new Error('A non-empty test command is required.');
+  for (const argument of options.command) {
+    if (typeof argument !== 'string' || argument.includes('\0')) {
+      throw new Error('Test command arguments must be strings without null bytes.');
+    }
+  }
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
     throw new Error('timeoutMs must be a positive integer.');
   }
@@ -87,12 +92,6 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   const timeout = options.timeoutMs === undefined ? undefined : AbortSignal.timeout(options.timeoutMs);
   const signals = [options.signal, timeout].filter((value): value is AbortSignal => value !== undefined);
   const signal = signals.length ? AbortSignal.any(signals) : undefined;
-  const stim = createStim({
-    projectRoot,
-    home: options.home ? resolve(options.home) : undefined,
-    buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
-    onProgress: options.onProgress,
-  });
   const started = Date.now();
   const result: CIResult = {
     version: 1,
@@ -109,6 +108,23 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     diagnostics: { path: null },
     cleanup: { result: null },
   };
+  let cleaningUp = false;
+  const onProgress: CIOptions['onProgress'] = options.onProgress
+    ? (event) => {
+        try {
+          options.onProgress!(event);
+        } catch (error) {
+          result.reportingError ??= failure(error, 'STIM_CI_REPORT_FAILED');
+          if (!cleaningUp) throw error;
+        }
+      }
+    : undefined;
+  const stim = createStim({
+    projectRoot,
+    home: options.home ? resolve(options.home) : undefined,
+    buildCache: options.buildCache ? resolve(options.buildCache) : undefined,
+    onProgress,
+  });
   let attempted = false;
   try {
     signal?.throwIfAborted();
@@ -122,7 +138,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       env: commandEnvironment(result, options),
       artifactsDir,
       signal,
-      onOutput: options.onProgress,
+      onOutput: onProgress,
     });
     result.exitCode = result.test.exitCode ?? 1;
     if (result.exitCode < 0 || (result.exitCode === 0 && result.test.error)) result.exitCode = 1;
@@ -137,6 +153,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   } catch (error) {
     result.failure = failure(error, result.run ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_SETUP_FAILED');
   } finally {
+    cleaningUp = true;
     if (signal?.aborted) {
       const timedOut = timeout?.aborted && !options.signal?.aborted;
       result.exitCode = timedOut ? 124 : 130;
@@ -165,10 +182,18 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       } catch (error) {
         result.diagnostics.error = failure(error, 'STIM_CI_DIAGNOSTICS_FAILED');
       }
+      if (options.signal?.aborted && result.exitCode === 0) {
+        result.exitCode = 130;
+        result.failure = { code: 'STIM_CI_CANCELLED', message: 'CI run was cancelled.' };
+      }
       if (result.cleanup.error && result.exitCode === 0) {
         result.exitCode = 1;
         result.failure = result.cleanup.error;
       }
+    }
+    if (result.reportingError && result.exitCode === 0) {
+      result.exitCode = 1;
+      result.failure = result.reportingError;
     }
     result.durationMs = Date.now() - started;
     try {
