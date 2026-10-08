@@ -45,8 +45,9 @@ after cancellation or partial failure. Always inspect cleanup.ok.
 
 diagnostics({ tail: 200, errors: false }) returns { directory, records } from
 the local timeline, even before a successful run. tail: 0 returns paths only.
-It does not fetch remote logs or capture new crashes. Failures reject with
+It does not fetch remote logs or capture new crashes. Stim failures reject with
 StimError carrying code, message, remedy and details (including the log path).
+An exception thrown by onProgress cancels its worker and propagates unchanged.
 
 Normal ownership, device creation, cache locks and coordination remain active.
 All concurrent artifact-cache writers must share the same coordinating home.

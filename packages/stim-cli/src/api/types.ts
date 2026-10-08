@@ -17,7 +17,10 @@ export interface StimOptions {
   home?: string;
   /** Absolute native artifact cache directory. Its coordinating home must be shared by all writers. */
   buildCache?: string;
-  /** Receives output chunks without writing to the importing process's terminal. */
+  /**
+   * Receives output chunks without writing to the importing process's terminal.
+   * An exception cancels the operation and rejects it with that exception.
+   */
   onProgress?: (event: StimProgress) => void;
 }
 

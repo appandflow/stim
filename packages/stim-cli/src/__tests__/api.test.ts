@@ -1,7 +1,9 @@
 import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ChildProcess } from 'node:child_process';
 import { workspaceName } from '@stim-cli/core';
+import { getExecutor } from '../exec.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createStim, StimError } from '../api.ts';
 
@@ -113,6 +115,13 @@ test('an already aborted request does not start work and invalid paths fail befo
   await expect(stim.run({ platform: 'ios', signal: controller.signal })).rejects.toBeInstanceOf(StimError);
   await expect(stim.diagnostics({ tail: -1 })).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
   expect(() => createStim({ projectRoot: root, home: './relative' })).toThrow('home must be an absolute path');
+  expect(() => createStim({ projectRoot: join(root, 'missing') })).toThrowError(
+    expect.objectContaining({
+      name: 'StimError',
+      code: 'STIM_NO_PROJECT',
+      remedy: 'Pass the path to an existing, readable app directory.',
+    }),
+  );
 });
 
 test('client home stays stable if the caller later changes its environment', async () => {
@@ -128,4 +137,46 @@ test('relative inherited state paths refuse instead of falling back to the real 
   vi.stubEnv('STIM_HOME', 'relative');
   const stim = createStim({ projectRoot: root });
   await expect(stim.diagnostics()).rejects.toMatchObject({ code: 'STIM_RELATIVE_PATH' });
+});
+
+test('a throwing progress callback interrupts its worker and rejects without preventing cleanup', async () => {
+  const { root, home } = fixture('progress-failure');
+  const claim = tryAcquireClaim({
+    root: join(home, 'workspaces', workspaceName(root), 'native-run.lock'),
+    mode: 'exclusive',
+    label: 'API progress failure fixture',
+    details: { command: 'ios', platform: 'ios' },
+  });
+  if (!claim.acquired) throw new Error('Could not acquire fixture claim.');
+  const spawned: ChildProcess[] = [];
+  const executor = getExecutor();
+  const spawn = executor.spawn.bind(executor);
+  const observer = vi.spyOn(executor, 'spawn').mockImplementation((...args) => {
+    const child = spawn(...args);
+    spawned.push(child);
+    return child;
+  });
+  const failure = new Error('The progress sink failed.');
+  let output = '';
+  let threw = false;
+  const stim = createStim({
+    projectRoot: root,
+    home,
+    onProgress: ({ message }) => {
+      output += message;
+      if (!threw && output.includes('waiting for')) {
+        threw = true;
+        throw failure;
+      }
+    },
+  });
+  try {
+    await expect(stim.run({ platform: 'ios' })).rejects.toBe(failure);
+    expect(spawned.length).toBeGreaterThan(0);
+    expect(spawned.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+  } finally {
+    observer.mockRestore();
+    releaseClaim(claim.acquired);
+  }
+  expect((await stim.stop()).ok).toBe(true);
 });

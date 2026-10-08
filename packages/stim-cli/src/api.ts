@@ -36,7 +36,16 @@ export class StimError extends Error {
  * Each operation runs in a separate Stim worker. Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
-  const projectRoot = realpathSync(options.projectRoot);
+  let projectRoot: string;
+  try {
+    projectRoot = realpathSync(options.projectRoot);
+  } catch (error) {
+    throw new StimError({
+      code: 'STIM_NO_PROJECT',
+      message: `Could not resolve projectRoot ${options.projectRoot}: ${error instanceof Error ? error.message : String(error)}`,
+      remedy: 'Pass the path to an existing, readable app directory.',
+    });
+  }
   for (const [name, path] of [
     ['home', options.home],
     ['buildCache', options.buildCache],

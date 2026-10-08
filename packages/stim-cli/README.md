@@ -77,7 +77,9 @@ home; do not point independent homes at a concurrently writable artifact cache.
 Ownership checks and cache locks remain active. `stop()` acts on this workspace,
 including resources from earlier runs, so use a dedicated workspace in CI.
 
-Errors are `StimError` instances with `code`, `message`, `remedy`, and `details`.
+Stim failures are `StimError` instances with `code`, `message`, `remedy`, and
+`details`. An exception thrown by `onProgress` cancels the worker and is
+propagated unchanged.
 `diagnostics()` returns the workspace log directory and up to 200 local records,
 even if no run has succeeded. It does not fetch remote logs or capture new crashes.
 See [the API reference](https://stim.appandflow.com/docs/programmatic-api) or

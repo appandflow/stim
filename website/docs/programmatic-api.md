@@ -92,9 +92,10 @@ Resources belong to the workspace, not to an individual JavaScript client.
 `stop()` can stop resources from an earlier invocation in the same workspace.
 Use a dedicated checkout/workspace for a CI job.
 
-Failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
+Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
 preserve failure information. Operation errors returned by workers include the workspace log path
-in `details.logs`.
+in `details.logs`. An exception thrown by `onProgress` cancels the worker and
+is propagated unchanged.
 
 ## Diagnostics and CI state
 
