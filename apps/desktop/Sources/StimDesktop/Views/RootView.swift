@@ -778,6 +778,10 @@ struct RootView: View {
       OverviewView(
         store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic, selection: $selection,
         openLogs: openErrors,
+        openDevice: { path, deviceID in
+          focusedDeviceID = deviceID
+          selection = .environment(path)
+        },
         openIdleProject: { project in
           showingAllWorktrees = project
           selection = .project(project)
