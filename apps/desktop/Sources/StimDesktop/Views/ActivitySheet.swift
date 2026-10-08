@@ -320,6 +320,7 @@ struct ActivitySheet: View {
                 .id(index)
             }
           }
+          .finiteAccessibilityFrame()
           .font(.stim(.caption, mono: true))
           .textSelection(.enabled)
           .padding(Space.md)
