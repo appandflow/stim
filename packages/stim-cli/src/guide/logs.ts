@@ -237,7 +237,7 @@ Timings of requests that succeed are debug records (below).
 stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
 no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
 ms=<n> error=<code>" for an error reply (once a minute per client, method and
-code) and "host_connect ... error=<reason>" when its connection to a hosting
+code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
 Mac fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;

@@ -56,7 +56,7 @@ test('a host failure is logged without debug, a host success only with it', () =
   const quiet = setup(false);
   quiet.log.host('host_connect', { host: 'mini', ms: 5 });
   quiet.log.host('host_connect', { host: 'mini', ms: 3000, error: 'the host did not connect in time' }, true);
-  expect(quiet.lines).toEqual(['stim-server: host_connect host=mini ms=3000 error=the host did not connect in time']);
+  expect(quiet.lines).toEqual(['stim-server: host_connect host=mini ms=3000 error=the_host_did_not_connect_in_time']);
   const loud = setup(true);
   loud.log.host('host_connect', { host: 'mini', ms: 5 });
   expect(loud.records).toEqual([{ event: 'host_connect', host: 'mini', ms: 5 }]);
