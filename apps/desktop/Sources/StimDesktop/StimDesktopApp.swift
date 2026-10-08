@@ -265,6 +265,7 @@ struct StimDesktopApp: App {
       SidebarCommands()
       InspectorCommands()
       NavigationCommands()
+      GoCommands()
     }
 
     #if DEBUG
