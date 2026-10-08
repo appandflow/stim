@@ -394,6 +394,9 @@ public struct IosDevice: Decodable, Hashable, Sendable {
 
   enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host, devicePlacement }
 
+  /// The name of a record that carries none: a simulator that no longer exists, or a hosted one not yet created.
+  public static let unnamed = "Missing simulator"
+
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
     self.udid = udid
@@ -407,7 +410,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
     host = try c.decodeIfPresent(HostedIos.self, forKey: .host)
     devicePlacement = try c.decodeIfPresent(DevicePlacement.self, forKey: .devicePlacement)
     udid = try c.decode(String.self, forKey: .udid)
-    name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Missing simulator"
+    name = try c.decodeIfPresent(String.self, forKey: .name) ?? Self.unnamed
     owned = try c.decode(Bool.self, forKey: .owned)
     state = try c.decode(String.self, forKey: .state)
     activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)

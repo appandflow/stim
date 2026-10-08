@@ -534,15 +534,16 @@ struct WorkspaceDetail: View {
       device.isInteractive
       && ((!device.isPhysical && device.hostedMachine == nil)
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
-    let viewerAction = canControl ? "Control" : "View"
+    let build = workspace.runningBuild(for: device)
+    let status = DeviceTileStatus(device: device, canControl: canControl, building: build != nil)
     let tile = DeviceTile(
       device: device, screenHeight: 900, workspace: workspace.path, project: project,
-      build: workspace.runningBuild(for: device),
+      build: build,
       usage: device.isRunning ? workspace.usage(of: device, machine: machine) : nil,
       presence: workspace.appPresence(device),
       showsCovers: true,
       focused: focused,
-      viewerAction: viewerAction,
+      status: status,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path
     )
@@ -559,7 +560,7 @@ struct WorkspaceDetail: View {
         }
         .buttonStyle(.plain)
         .help(canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)")
-        .accessibilityLabel("\(viewerAction) \(device.label)")
+        .accessibilityLabel("\(status.headerAction?.rawValue ?? "View") \(device.label)")
       }
       .frame(width: tile.showsStoppedBar ? min(DeviceTile.stoppedMaximumWidth, cardWidth) : cardWidth)
   }
