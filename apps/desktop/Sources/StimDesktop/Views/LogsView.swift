@@ -11,6 +11,7 @@ struct LogsView: View {
   var page: WorktreePage? = nil
   var selectedApp: Binding<String?>? = nil
   var archive: ArchivedWorkspace? = nil
+  var availableSources: [LogSource] = LogSource.allCases
   @ObservedObject private var server = ServerSession.shared
   @StateObject private var model = LogsModel()
   @State private var search = ""
@@ -109,7 +110,7 @@ struct LogsView: View {
           }, isActive: true
         )
       }
-      ForEach(LogSource.allCases, id: \.self) { source in
+      ForEach(availableSources, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {
           if on {
