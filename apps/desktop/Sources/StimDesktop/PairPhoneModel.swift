@@ -94,7 +94,7 @@ final class PairPhoneModel {
         },
         stopServing: {
           UserDefaults.standard.set(false, forKey: AppPreferences.Key.servesPhones)
-          server.stop()
+          server.stopServing()
         },
         setUpRoute: { await server.setUpConnection() }, pair: { try await server.pairPhone(control: $0) }),
       fixing: fixing)

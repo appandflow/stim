@@ -19,6 +19,7 @@ final class BuildMachinesModel {
   private(set) var tailscaleRunning: Bool?
   private(set) var macs: [TailnetMac]?
   private(set) var working: String?
+  private(set) var progress: String?
   private(set) var writeFailure: String?
   private(set) var runs = 0
   private(set) var stats = Fetched<MachineStats>()
@@ -262,8 +263,10 @@ final class BuildMachinesModel {
 
   func ask(_ entry: String, checkout: String?) async {
     working = entry
+    progress = "Asking \(entry)\u{2026}"
     await refreshStatuses(checkout: checkout, ask: true)
     working = nil
+    progress = nil
   }
 
   func remove(_ entry: String, checkout: String?) async {
@@ -273,6 +276,8 @@ final class BuildMachinesModel {
 
   private func write(_ entry: String, value: String?, ask: Bool, checkout: String?) async {
     working = entry
+    progress = "Removing \(entry)\u{2026}"
+    defer { progress = nil }
     let result = await settings.write("remote.machines", value: value, scope: .machine, cwd: NSHomeDirectory())
     switch result {
     case .success(.written):

@@ -117,30 +117,33 @@ and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote Macs,
 doctor reports their separate device-host approval in `deviceHosts`. Only
-`--fix` requests approval, retries a definite revoked or lapsed request, and
+`--fix` requests approval, retries a revoked or lapsed request, and
 forgets names removed from the setting. A person on the hosting Mac runs the
 printed `stim-server devices grant <id> --device-host` command. Tokens remain
 private and pinned to that tailnet node. A changed node refuses access;
 unreadable credentials and uncertain replies preserve the pin. Invalid hosting
 settings report an error and preserve every saved credential. JSON states
-are `approved`, `pending`, `not-asked`, `revoked`, `node-changed`,
+are `approved`, `pending`, `not-asked`, `revoked`, `lapsed`, `node-changed`,
 `not-on-tailnet`, `tailscale-off`, `unreachable`, `invalid`,
-`credentials-unavailable` and `busy`. Hosting approval does not yet change
+`credentials-unavailable` and `busy`. A `pending` entry carries `expiresAt`,
+when the request lapses; `lapsed` means the request expired before approval. Hosting approval does not yet change
 `ios` or `android` placement.
 
 When the [`remote.machines`](./settings.md#machine-settings) setting names
 remote Macs, doctor reports each one this Mac is not approved on: not on the
 tailnet, not asked yet, waiting for approval (with the
 `stim-server devices grant <id> --build` or `--device-host` command to run
-there), revoked, or now a different tailnet node than the one this Mac paired
-with. A listed Mac that never granted an approval is not used for it. `--fix`
-asks each named Mac without a pairing for build and device-host access, asks
-again one that revoked or let the request lapse, and forgets the pairing of a
-Mac no longer named. It never re-pairs with a different node. `--json` lists
+there), revoked, lapsed, or now a different tailnet node than the one this Mac
+paired with. A listed Mac that never granted an approval is not used for it.
+`--fix` asks each named Mac without a pairing for build and device-host access,
+asks again one that revoked or let the request lapse, and forgets the pairing of
+a Mac no longer named. It never re-pairs with a different node. `--json` lists
 each named Mac's build approval under `remoteMachines`, and its device-host
 approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
-`revoked`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
-`invalid`.
+`revoked`, `lapsed`, `node-changed`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
+`invalid`. A `pending` entry carries `expiresAt`, when the request lapses; `lapsed`
+means the remote Mac no longer knows a request whose expiry has passed, while
+`revoked` means it refused or revoked this Mac.
 
 Approved entries in `remoteMachines` and `deviceHosts` also include
 `host: { name, screenRecording, accessibility }` when the worker reports its

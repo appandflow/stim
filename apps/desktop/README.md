@@ -1000,6 +1000,18 @@ there. This warning appears when Desktop uses the default home and
 has adopted a server started with another home. Those phones stop working once Stim Desktop
 serves `~/.stim` again.
 
+Desktop also watches a stim-server that already answers on the port with a
+matching Stim home when **Serve to phones** is off, such as the LaunchAgent
+that `stim-server setup` or `stim-server service install` creates, and adopts
+it as not started by the app, as it does a running server when **Serve to
+phones** is on. The app probes the port on
+its regular poller while the server state is off, so build and device-host
+requests from other Macs reach the Allow / Deny dialog. Turning **Serve to
+phones** off stops a server the app started and never stops watching one it did
+not. A server with another Stim home is not watched. The Phones page shows "A
+stim-server already runs on this Mac, and Desktop shows its build requests."
+while a server the app did not start runs and the toggle is off.
+
 A server answering health with HTTP 503 appears as **Starting** or
 **Degraded** with its reason in Phones and the sidebar tooltip. Desktop keeps
 checking it without starting another server or terminating one it launched.
@@ -1166,11 +1178,14 @@ is a list of the entries of the `remote.machines` machine setting. Each row
 shows the Mac's name, one status pill, a detail line, what it does (**Builds**, plus
 **Simulators** when its device-host access is approved), and a **...** menu with
 **Details...** and **Remove**. The pill reads **Approved**, **Waiting for
-approval** (the row keeps the approval command to copy), **Unreachable**,
+approval** (the row keeps the approval command to copy and says when the
+request lapses, such as "Waiting for approval until 21:05", in local time),
+**Unreachable**,
 **Not offloading** (doctor reports the approved machine as not offloadable, for
 any reason but load or an unanswered server), or the machine's other readiness or
-pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked, denied,
-or the request lapsed), **Different Mac** (the name now belongs to another
+pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
+denied), **Request lapsed** (nobody on the remote Mac approved it in time;
+**Ask Again** is available), **Different Mac** (the name now belongs to another
 tailnet node than the one this Mac asked, so Stim does not connect to it),
 **Not on the tailnet**, **Tailscale is off** or **Not a tailnet name**. The
 states come from the `remoteMachines` field of `stim doctor --json --platform
@@ -1203,6 +1218,9 @@ approved this one. **Remove** takes a Mac out of the setting with `stim settings
 set remote.machines <list> --scope machine` after a confirmation, unsetting it
 when the list is empty; removing a **Different Mac** also runs `--fix`, which
 forgets the old node so the Mac can be asked again.
+While a `--fix` run goes, the row shows "Asking <machine>…" or "Removing
+<machine>…" beside the spinner. A `--fix` run stops after 2 minutes and a
+plain check after 30 seconds, and the tab shows that stim did not answer.
 
 A remote Mac that runs another Stim build than this Mac (doctor's
 `stim-build` reason) offers **Install This Mac's Build**, here and on its
@@ -1221,6 +1239,8 @@ follows `machines.update.status` every 2 seconds:
 - the restart;
 - the outcome, or the refusal (for example, the setting the machine needs).
 
+A failure shows its full text, selectable, with a **Copy** button.
+
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
 Then the row checks the machine again. **Keep remote Macs on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
@@ -1230,7 +1250,8 @@ reason each time Desktop launches. Either way, the machine gets this Mac's build
 whether it is newer or older than the one it runs.
 
 On the Mac that builds, the app checks `stim-server devices --json` every 10
-seconds while a server runs. Each new build request adds "<Mac> wants to build
+seconds while a server runs, including one it did not start while **Serve to
+phones** is off. Each new build request adds "<Mac> wants to build
 on this Mac" to **Notifications** (category **A Mac asks to build here**,
 Alert by default) and shows it as a card or a macOS notification. Its
 **Review** opens a dialog with the Mac's name, its tailnet node and user, the

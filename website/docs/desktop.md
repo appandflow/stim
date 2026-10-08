@@ -44,6 +44,9 @@ control them through this Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
+On a remote Mac, Stim Desktop shows build requests from other Macs as a
+notification and inbox entry with **Allow** and **Deny**. It watches a
+stim-server already running there even when **Serve to phones** is off.
 Placement is set by config or agents: use
 `stim settings set ios.remote auto --scope machine` (or `android.remote`; a
 workspace, repo or committed value overrides the machine default),
