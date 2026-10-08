@@ -47,7 +47,7 @@ so upgrading Stim does not require reinstalling the skill.
 Ask for the outcome:
 
 <PromptBox
-title="Build and Run"
+title="Build and run"
 response={'Trailhead launched on stim-trailhead (iPhone 17 / iOS 26.5).\ncom.appandflow.trailhead · ready · cache hit · 58.8s · errors clean'}
 
 >
