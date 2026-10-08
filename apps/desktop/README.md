@@ -60,7 +60,7 @@ in the workspace directory:
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
 While details are open, hover another resource figure to switch the contents. Click outside to close.
-CPU covers live workspace processes; memory covers the whole Mac.
+CPU covers active workspace processes; memory covers the whole Mac.
 
 The bell at the top right opens **Notifications** and shows the unread count.
 **Overview**, **Active worktrees** and **Machines** stay pinned at the top of
@@ -70,20 +70,20 @@ small previews are centered. Click anywhere on a project card to open its full p
 with bordered cards and full-size previews. Click a card's header or empty area to open its project; click a device to open its workspace's running view focused on that device. The sidebar lists projects as a
 tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
-with a live, warming or ready workspace start expanded, and the app remembers each project you
+with an active, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
 worktree's branch, else the worktree's folder, else its project for a main
 checkout. The second line is where it sits inside its checkout, such as
 `apps/mobile`. The view options button next to the logo opens a menu:
 
-- **Status**: select any combination of Live, Idle, Not set up and Archived. The
-  default is Live + Idle. All selects all four states, Archived included, and
+- **Status**: select any combination of Active, Idle, Not set up and Archived. The
+  default is Active + Idle. All selects all four states, Archived included, and
   shows as checked only when all four are on. Each state shows its sidebar row count, counting a
   multi-app worktree once and excluding hidden projects. When mixed with current
   rows, archives follow those rows within each project, newest removal first.
   Archived uses the same repository and worktree grouping, with app labels, PR
   number or Merged, removal time, retained size and a media expiry indicator.
-  Live also shows a workspace with a running build, and one that
+  Active also shows a workspace with a running build, and one that
   `stim worktree warm` is preparing ("Warming...", with an activity indicator)
   or has prepared before its first run ("Ready").
 - **Hidden**: off by default and not part of All. It shows the workspaces you hid
@@ -134,7 +134,7 @@ paired phone gets the flag on at first launch with flags. The phone app is docum
 ## Hiding a workspace
 
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
-row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Live,
+row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Active,
 Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
 a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
 this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
@@ -142,18 +142,18 @@ archive). It is not shared with the phone app or another Mac, and Stim itself do
 
 A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
 or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
-workspace in use cannot be hidden. Entries for a workspace that is no longer live, idle, not set up or
+workspace in use cannot be hidden. Entries for a workspace that is no longer active, idle, not set up or
 archived are dropped.
 
 ## Archived workspaces
 
-The Archived sidebar filter opens the same workspace page as live workspaces in a read-only variant.
+The Archived sidebar filter opens the same workspace page as active workspaces in a read-only variant.
 The header line matches the live page's: an Archived state with the removal age (hover for the exact time), the git chip with branch, PR and Merged, and a menu with **Reveal folder** (while the folder exists) and **Delete archive**.
 The Status card holds the removal reason, last use, and Retained with a proportion bar and per-kind bytes and expiry dates; the Build card ends with build totals, known cache hits, builds on a remote Mac and errors at removal.
 Work keeps the branch, PR number and title, final head and subject, and ended agent sessions
 with their duration and a link to retained actions. Only Merged is shown as a PR state:
 other states in the removal snapshot can be stale. Build cards and the build history sheet show retained runs and phase timings.
-Earlier runs on a live workspace link to archives for the same canonical project path,
+Earlier runs on an active workspace link to archives for the same canonical project path,
 including records whose `replacedBy` points to that workspace. The archive page links
 back to its replacement when there is one.
 
@@ -506,7 +506,7 @@ runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
 `stim stop`. Nothing Stim does not own has an action. Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3
 seconds while the window is visible, so the CPU line steps with the 15-second
-refresh. When workspaces are live but `machine` is missing, the band says live
+refresh. When workspaces are active but `machine` is missing, the band says live
 usage is unavailable instead of listing nothing.
 
 Under **Disk on this Mac**, the page shows what uses disk space, largest first,
@@ -635,7 +635,7 @@ status under **Autopilot activity**.
   merged or closed: clean, with no commit that exists only locally except
   those a merged pull request holds, no live Metro, build or device, and past
   `gc.worktreeGraceMinutes`. Right before that it skips a worktree the latest
-  `stim status` shows live, building or on another branch; a `stim start` in the seconds
+  `stim status` shows active, building or on another branch; a `stim start` in the seconds
   between that and `stim worktree remove` would still be stopped. A worktree with a finished pull request that gc
   keeps for another reason notifies in the **Needs you** category, as "PR #123 merged, 2 uncommitted or untracked files", with
   **Open pull request** and **Show in Finder**; the autopilot never forces a removal.

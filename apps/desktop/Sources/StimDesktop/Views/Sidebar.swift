@@ -251,10 +251,10 @@ struct ProjectRow: View {
       Spacer()
       if summary.live == 0, summary.settingUp > 0 {
         Text("\(summary.settingUp) new").font(.stim(.caption)).foregroundStyle(Palette.accent).fixedSize()
-          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none live yet")
+          .help("\(countLabel(summary.settingUp, "workspace")) warming or warmed, none active yet")
       } else if summary.live == 0 {
         Text("\(summary.total)").font(.stim(.caption)).foregroundStyle(Palette.tertiary).fixedSize()
-          .help("\(countLabel(summary.total, "workspace")), none live")
+          .help("\(countLabel(summary.total, "workspace")), none active")
       }
     }
     .contextMenu {
@@ -263,7 +263,7 @@ struct ProjectRow: View {
         onStopAllLiveWorkspaces: { confirmingStopAll = true })
     }
     .confirmationDialog(
-      "Stop every live workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      "Stop every active workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
       titleVisibility: .visible
     ) {
       Button("Run stim stop", role: .destructive) {

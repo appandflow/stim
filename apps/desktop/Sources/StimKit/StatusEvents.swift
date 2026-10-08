@@ -10,7 +10,7 @@ public struct StatusEvent: Hashable, Sendable {
       case .build: return "A build finishes or fails"
       case .errors: return "A workspace logs new errors"
       case .crash: return "A simulator or emulator stops unexpectedly"
-      case .memory: return "Live workspaces exceed the machine's memory"
+      case .memory: return "Active workspaces exceed the machine's memory"
       case .remoteSession: return "A remote EAS session is still running"
       }
     }
@@ -76,7 +76,7 @@ public enum StatusEvents {
         StatusEvent(
           kind: .memory, id: "memory:\(now.timeIntervalSince1970)", title: "Over memory capacity",
           body:
-            "\(cap.liveCount) live workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."
+            "\(cap.liveCount) active workspaces \(current.machine?.memorySource == .footprint ? "use" : "commit") \(cap.committedMb) MB of \(cap.totalMemoryMb) MB."
         ))
     }
     return events

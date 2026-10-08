@@ -830,7 +830,7 @@ struct MachineSummary: View {
           .buttonStyle(.hoverRow(radius: Radius.round))
           .accessibilityLabel("CPU details")
           .accessibilityValue(formatPercent(cpu * 100))
-          .help("CPU of every live workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+          .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
           .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .named("machine-summary"))
           } action: {
@@ -881,7 +881,7 @@ struct MachineSummary: View {
             }
           }
           .help(
-            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
+            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
           )
         }
       }
@@ -937,10 +937,10 @@ struct MachineSummary: View {
       if let cpu = metrics.totalCpuFraction {
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
         ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
-        Text("Used by live workspaces' processes, simulators and emulators. 100% means all of this Mac's cores.")
+        Text("Used by active workspaces' processes, simulators and emulators. 100% means all of this Mac's cores.")
           .foregroundStyle(Palette.secondary)
         if let cap = store.payload?.capacity {
-          Text(countLabel(cap.liveCount, "live workspace")).foregroundStyle(Palette.tertiary)
+          Text(countLabel(cap.liveCount, "active workspace")).foregroundStyle(Palette.tertiary)
         }
       }
     }
@@ -955,7 +955,7 @@ struct MachineSummary: View {
         Text("Memory used on this Mac, as Activity Monitor counts it.").foregroundStyle(Palette.secondary)
         if let cap = store.payload?.capacity {
           Text(
-            "Live workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb))."
+            "Active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb))."
           )
           .foregroundStyle(Palette.secondary)
         }

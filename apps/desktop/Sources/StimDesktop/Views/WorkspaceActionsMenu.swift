@@ -113,7 +113,7 @@ struct WorkspaceActionsMenu: View {
       }
     case .stopAllLiveWorkspaces:
       if let onStopAllLiveWorkspaces {
-        Button("Stop all live workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
+        Button("Stop all active workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
       }
     }
   }
