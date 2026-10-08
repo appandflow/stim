@@ -17,6 +17,7 @@ struct WallView: View {
   var body: some View {
     let content = ProjectPage.content(environments: store.environments(in: project), scope: project == nil ? .active : scope)
     let shown: [Workspace] = if case .worktrees(let environments) = content { environments } else { [] }
+    let cards = WallCard.cards(environments: shown)
     if store.payload == nil {
       if let error = store.error {
         EmptyState(title: "Cannot read stim status", message: error, showsHero: true)
@@ -61,45 +62,35 @@ struct WallView: View {
               }
             }
           }
-          ForEach(shown) { env in
-            let devices = env.orderedDevices.filter { $0.isRunning || env.runningBuild(for: $0) != nil }
+          ForEach(cards) { card in
             let open = {
               pressedCard = nil
-              selection = project == nil ? .project(store.project(of: env)) : .environment(env.path)
+              selection = project == nil ? .project(store.project(of: card.apps[0].workspace)) : .environment(card.id)
             }
-            Card(fill: devices.isEmpty ? Palette.surface : .clear, border: Palette.border, clipsContent: false) {
+            let noDevices = card.apps.allSatisfy { $0.devices.isEmpty }
+            Card(fill: noDevices ? Palette.surface : .clear, border: Palette.border, clipsContent: false) {
               VStack(alignment: .leading, spacing: Space.lg) {
-                Button(action: open) {
-                  WorkspaceHeader(
-                    env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: devices.isEmpty,
-                    openLogs: { openLogs(env.path) }
-                  )
-                }
-                .buttonStyle(CardPressStyle())
-                .accessibilityLabel(env.names.title)
-                if let macos = env.macos {
-                  MacosAppCard(app: macos, workspace: env.path)
-                }
-                if devices.isEmpty && env.macos == nil {
-                  Label("No running devices", systemImage: "iphone.gen3")
-                    .font(.stim(.callout))
-                    .foregroundStyle(Palette.secondary)
-                    .labelStyle(.titleAndIcon)
-                } else if !devices.isEmpty {
-                  FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
-                    ForEach(devices) { device in
-                      Button {
-                        openDevice(env.path, device.id)
-                      } label: {
-                        DeviceTile(
-                          device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
-                          build: env.runningBuild(for: device), pausesWhenOffscreen: true,
-                          highlightsHeaderOnHover: true
-                        )
-                      }
-                      .buttonStyle(CardPressStyle(highlightsDevice: true))
-                    }
+                if card.isMultiApp {
+                  Button(action: open) {
+                    WorktreeHeader(env: card.apps[0].workspace, project: store.project(of: card.apps[0].workspace))
                   }
+                  .buttonStyle(CardPressStyle())
+                  .accessibilityLabel(card.apps[0].workspace.names.title)
+                  ForEach(card.apps) { app in
+                    appGroup(app, openCard: open)
+                  }
+                } else {
+                  let app = card.apps[0]
+                  let env = app.workspace
+                  Button(action: open) {
+                    WorkspaceHeader(
+                      env: env, project: store.project(of: env), usage: metrics.usage[env.path], compact: app.devices.isEmpty,
+                      openLogs: { openLogs(env.path) }
+                    )
+                  }
+                  .buttonStyle(CardPressStyle())
+                  .accessibilityLabel(env.names.title)
+                  appBody(app)
                 }
               }
               .padding(Space.xl)
@@ -108,17 +99,87 @@ struct WallView: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: open)
             .hoverHighlight(radius: Radius.card)
-            .modifier(CardPressAppearance(pressed: pressedCard == env.path))
+            .modifier(CardPressAppearance(pressed: pressedCard == card.id))
             .onPreferenceChange(CardPressedKey.self) { pressed in
               if pressed {
-                pressedCard = env.path
-              } else if pressedCard == env.path {
+                pressedCard = card.id
+              } else if pressedCard == card.id {
                 pressedCard = nil
               }
             }
           }
         }
         .padding(Space.xxxl)
+      }
+    }
+  }
+  private func appGroup(_ app: WallCard.App, openCard: @escaping () -> Void) -> some View {
+    let env = app.workspace
+    return VStack(alignment: .leading, spacing: Space.lg) {
+      Divider()
+      ViewThatFits(in: .horizontal) {
+        HStack(spacing: Space.lg) {
+          appLabel(app)
+          Spacer(minLength: 12)
+          appChips(app)
+        }
+        VStack(alignment: .leading, spacing: Space.md) {
+          appLabel(app)
+          appChips(app)
+        }
+      }
+      if let build = env.build, build.isRunning {
+        BuildProgressBar(build: build).frame(maxWidth: 520)
+      } else if !env.live, env.isSettingUp {
+        SetupBadge(env: env).frame(maxWidth: 520, alignment: .leading)
+      }
+      appBody(app)
+    }
+  }
+
+  private func appLabel(_ app: WallCard.App) -> some View {
+    Button {
+      pressedCard = nil
+      selection = .environment(app.workspace.path)
+    } label: {
+      Text(app.label).font(.stim(.callout, weight: .medium)).lineLimit(1).truncationMode(.middle)
+    }
+    .buttonStyle(.hoverRow())
+    .help("Open \(app.label)")
+    .accessibilityLabel(app.label)
+  }
+
+  private func appChips(_ app: WallCard.App) -> some View {
+    WorkspaceChips(
+      env: app.workspace, usage: metrics.usage[app.workspace.path], compact: app.devices.isEmpty, stacked: false,
+      openLogs: { openLogs(app.workspace.path) })
+  }
+
+  @ViewBuilder
+  private func appBody(_ app: WallCard.App) -> some View {
+    let env = app.workspace
+    if let macos = env.macos {
+      MacosAppCard(app: macos, workspace: env.path)
+    }
+    if app.devices.isEmpty && env.macos == nil {
+      Label("No running devices", systemImage: "iphone.gen3")
+        .font(.stim(.callout))
+        .foregroundStyle(Palette.secondary)
+        .labelStyle(.titleAndIcon)
+    } else if !app.devices.isEmpty {
+      FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
+        ForEach(app.devices) { device in
+          Button {
+            openDevice(env.path, device.id)
+          } label: {
+            DeviceTile(
+              device: device, screenHeight: tileSize.screenHeight, workspace: env.path,
+              build: env.runningBuild(for: device), pausesWhenOffscreen: true,
+              highlightsHeaderOnHover: true
+            )
+          }
+          .buttonStyle(CardPressStyle(highlightsDevice: true))
+        }
       }
     }
   }
@@ -252,6 +313,35 @@ struct WorkspaceHeader: View {
   }
 
   private var chips: some View {
+    WorkspaceChips(env: env, usage: usage, compact: compact, stacked: stacked, openLogs: openLogs)
+  }
+}
+
+struct WorktreeHeader: View {
+  var env: Workspace
+  var project: Project
+
+  var body: some View {
+    HStack(spacing: Space.lg) {
+      Text(env.names.title).font(.stim(.headline)).lineLimit(1).truncationMode(.middle)
+      if project.name != env.names.title {
+        Text(project.name).font(.stim(.callout)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
+      }
+      Spacer(minLength: 0)
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(Rectangle())
+  }
+}
+
+struct WorkspaceChips: View {
+  var env: Workspace
+  var usage: UsageHistory?
+  var compact = false
+  var stacked = false
+  var openLogs: () -> Void
+
+  var body: some View {
     FlowLayout(spacing: Space.md, lineSpacing: Space.sm, centered: stacked) {
       if let metro = env.metro {
         Pill(tone: metro.running ? .neutral : .error) {

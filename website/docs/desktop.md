@@ -409,11 +409,15 @@ copyable prompt for your coding agent. A tip appears only when it applies, so EA
 need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
 with the **x**; it stays dismissed on this Mac. It never repeats the sidebar's tip card.
 
-**Active worktrees** shows every workspace with something running, building or warming
-as one full-width card. Its header shows the name, project, Metro port, who drives it,
+**Active worktrees** shows every worktree with something running, building or warming
+as one full-width card. A worktree with several apps, such as `apps/mobile` and
+`apps/desktop`, gets one card; each app is a labelled group inside it with its own
+Metro port, errors, CPU and memory, followed by its device tiles. Click an app's label
+to open that app's workspace. A worktree with one app looks as described next. Its header shows the name, project, Metro port, who drives it,
 CPU, memory and errors (a card with no running device shows only Metro and errors), with the device tiles under it at the device tile size. The tiles
 wrap onto more rows when they do not fit. Click a card or its header to open the
-project, or a tile to open its workspace with that device focused.
+project (a worktree with several apps opens the worktree), or a tile to open its
+workspace with that device focused.
 
 On the Active worktrees and project wall, offscreen previews pause and reconnect when you return to them.
 
