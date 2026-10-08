@@ -211,7 +211,7 @@ describe('relocatePods', () => {
 
   describe('identical locks', () => {
     const pods = 'ios/Pods';
-    const run = (extra: { canRelocate?: boolean; targetRoot?: string } = {}) =>
+    const run = (extra: { canRelocate?: boolean; sourceRoot?: string; targetRoot?: string } = {}) =>
       relocatePods({
         podsDir: join(base, pods),
         podfileLockPath: join(base, 'ios/Podfile.lock'),
@@ -268,6 +268,21 @@ describe('relocatePods', () => {
         `${SOURCE}/.worktrees/wt/node_modules/expo-image/X.xcframework`,
       );
       expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(true);
+    });
+
+    test('a worktree path that is a string prefix of the source path still finds a leftover', () => {
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Other/script.sh`, '/code/app-main/scripts/x.sh\n');
+      expect(() => run({ sourceRoot: '/code/app-main', targetRoot: '/code/app' })).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+    });
+
+    test('a sibling of the nested worktree path is a leftover', () => {
+      seed();
+      write(`${pods}/Other/script.sh`, `${SOURCE}/.worktrees/wt2/x\n`);
+      expect(() => run({ targetRoot: `${SOURCE}/.worktrees/wt` })).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
     });
   });
 });

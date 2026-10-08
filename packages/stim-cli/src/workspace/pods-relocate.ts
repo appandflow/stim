@@ -38,7 +38,7 @@ function splitChecksums(text: string): { before: string; entries: Map<string, st
 
 function pathPattern(root: string, flags = ''): RegExp {
   const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?:(?<![\\w.-])|(?<=-[IFL]))${escaped}(?![\\w.-])`, flags);
+  return new RegExp(`(?:(?<![\\p{L}\\p{N}_.-])|(?<=-[IFL]))${escaped}(?![\\p{L}\\p{N}_.-])`, `u${flags}`);
 }
 
 function sha1(text: string): string {
@@ -96,8 +96,8 @@ function walkTextFiles(dir: string, visit: (file: string) => void): void {
 function sourceNamer(sourceRoot: string, targetRoot: string, encoding: 'utf-8' | 'latin1') {
   const encode = (value: string) => Buffer.from(value, 'utf-8').toString(encoding);
   const pattern = pathPattern(encode(sourceRoot));
-  const target = encode(targetRoot);
-  return (text: string) => pattern.test(text.split(target).join(''));
+  const nested = targetRoot.startsWith(`${sourceRoot}/`) ? pathPattern(encode(targetRoot), 'g') : null;
+  return (text: string) => pattern.test(nested ? text.replace(nested, '') : text);
 }
 
 function findPath(dir: string, text: (value: string) => boolean, bytes: (value: string) => boolean): string | null {
@@ -152,7 +152,14 @@ export function relocatePods({
   const bytesNameSource = sourceNamer(sourceRoot, targetRoot, 'latin1');
   let pods: string[] = [];
   if (normalize(podfileLock) === normalize(manifest)) {
-    if (!findPath(podsDir, textNamesSource, bytesNameSource)) return { ok: false };
+    let names: string | null;
+    try {
+      names = findPath(podsDir, textNamesSource, bytesNameSource);
+    } catch (error) {
+      unlinkSync(manifestPath);
+      throw error;
+    }
+    if (!names) return { ok: false };
     unlinkSync(manifestPath);
     if (!canRelocate) return { ok: false, withheld: true };
   } else {
