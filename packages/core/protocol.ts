@@ -302,7 +302,7 @@ export interface UnsubscribeParams {
   subscription: string;
 }
 
-export const LOG_SOURCES = ['metro', 'client', 'device', 'build', 'agent', 'maintenance'] as const;
+export const LOG_SOURCES = ['metro', 'client', 'device', 'build', 'agent', 'maintenance', 'placement'] as const;
 
 export type LogSource = (typeof LOG_SOURCES)[number];
 

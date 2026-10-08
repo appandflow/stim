@@ -1,5 +1,6 @@
 import { automaticDevicePlacement, devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { budgetGate } from '../../budget.ts';
+import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
 import type { DevicePlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
@@ -93,6 +94,8 @@ export async function selectAndroidPlacement({
   checkBudget = budgetGate,
   note,
   phase,
+  log,
+  fromFlag,
   noWait,
   buildMachine,
   localSelectors,
@@ -103,6 +106,8 @@ export async function selectAndroidPlacement({
   checkBudget?: typeof budgetGate;
   note: (line: string) => void;
   phase: (label: string, line: string) => void;
+  log?: (record: PlacementRecord) => void;
+  fromFlag: boolean;
   noWait: boolean;
   buildMachine?: string;
   localSelectors: (target: {
@@ -152,6 +157,7 @@ export async function selectAndroidPlacement({
       noWait,
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
+    log?.(devicePlacementRecord({ platform: 'android', fromFlag: fromFlag, placed }));
     if (placed.target && !args.release && !args.metroCheck)
       return {
         failure: {
