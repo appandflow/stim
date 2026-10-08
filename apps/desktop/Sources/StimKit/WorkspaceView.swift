@@ -438,6 +438,8 @@ public struct PhaseStep: Equatable, Sendable {
   public var elapsedMs: Double?
   public var expectedMs: Double?
   public var fraction: Double?
+  /// A fact about a finished phase, such as `428 steps`.
+  public var note: String? = nil
 
   public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
 

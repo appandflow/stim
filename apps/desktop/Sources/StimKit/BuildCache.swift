@@ -118,7 +118,13 @@ public struct LastBuilds: Decodable, Hashable, Sendable {
   public var ios: LastBuild?
   public var android: LastBuild?
 
-  public func build(for platform: String) -> LastBuild? { platform == "ios" ? ios : android }
+  public func build(for platform: String) -> LastBuild? {
+    switch platform {
+    case "ios": return ios
+    case "android": return android
+    default: return nil
+    }
+  }
 }
 
 /// One run in a workspace's recent build history, from `builds.<platform>` in `stim status --json`: the fields
@@ -131,8 +137,10 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
   public var configuration: String?
   /// Milliseconds spent in each build phase the run entered, keyed by phase name.
   public var phases: [String: Double]
+  /// A `stim macos` run's SwiftPM step total; absent for other runs and older stim.
+  public var compileSteps: Int?
 
-  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases }
+  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases, compileSteps }
 
   public init(from decoder: Decoder) throws {
     build = try LastBuild(from: decoder)
@@ -141,6 +149,7 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     slot = try container.decode(String.self, forKey: .slot)
     configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
     phases = try container.decode([String: Double].self, forKey: .phases)
+    compileSteps = try container.decodeIfPresent(Int.self, forKey: .compileSteps)
   }
 
   /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
@@ -149,6 +158,8 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     case ("interrupted", _): return "Interrupted"
     case ("cancelled", _): return "Cancelled"
     case ("failed", _): return "Failed"
+    case (_, .none) where build.platform == "macos":
+      return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Succeeded"
     case (_, .local): return "Local cache"
     case (_, .remote): return "Remote cache"
     case (_, .none): return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Compiled"

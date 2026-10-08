@@ -70,6 +70,7 @@ struct PhaseChecklist: View {
   var steps: [PhaseStep]
   var cacheOutcome: String?
   var stoppedPhase: String? = nil
+  var failedPhase: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xs) {
@@ -85,14 +86,24 @@ struct PhaseChecklist: View {
         HStack(spacing: Space.sm) {
           switch step.state {
           case .done:
-            Image(systemName: step.phase == stoppedPhase ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
-              .foregroundStyle(step.phase == stoppedPhase ? Palette.warning : Palette.success)
+            if step.phase == failedPhase {
+              Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.error)
+            } else {
+              Image(systemName: step.phase == stoppedPhase ? "exclamationmark.circle.fill" : "checkmark.circle.fill")
+                .foregroundStyle(step.phase == stoppedPhase ? Palette.warning : Palette.success)
+            }
           case .current: ProgressView().controlSize(.mini).frame(width: 12, height: 12)
           case .pending: Image(systemName: "circle").foregroundStyle(Palette.tertiary)
           }
-          Text(step.phase == stoppedPhase ? "Stopped in \(PhaseStep.name(step.phase))" : PhaseStep.name(step.phase))
-            .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
-            .foregroundStyle(step.state == .pending ? Palette.tertiary : Palette.text)
+          Text(
+            step.phase == stoppedPhase
+              ? "Stopped in \(PhaseStep.name(step.phase))"
+              : step.phase == failedPhase ? "Failed in \(PhaseStep.name(step.phase))" : PhaseStep.name(step.phase)
+          )
+          .font(.stim(.footnote, weight: step.state == .current ? .semibold : nil))
+          .foregroundStyle(
+            step.phase == failedPhase ? Palette.error : step.state == .pending ? Palette.tertiary : Palette.text)
+          if let note = step.note { Text(note).font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
           if step.phase == "cache-lookup", let outcome = cacheOutcome {
             Pill(outcome == "hit" ? "Hit" : "Miss", tone: outcome == "hit" ? .success : .warning, size: .small)
           }
