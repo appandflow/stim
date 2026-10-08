@@ -92,6 +92,18 @@ public struct Inbox: Codable, Equatable, Sendable {
     }
   }
 
+  /// Whether a new entry wiggles the toolbar bell: not a muted one, not while Notifications is open, and not within
+  /// `wiggleCoalescing` of the last wiggle, so a burst moves the bell once.
+  public static func wigglesBell(
+    suppressed: NoticeSuppression?, notificationsOpen: Bool, now: Date, lastWiggle: Date?
+  ) -> Bool {
+    guard suppressed != .muted, !notificationsOpen else { return false }
+    guard let lastWiggle else { return true }
+    return now.timeIntervalSince(lastWiggle) >= wiggleCoalescing
+  }
+
+  public static let wiggleCoalescing: TimeInterval = 2
+
   public var unreadCount: Int { entries.lazy.filter { !$0.read }.count }
 
   public mutating func add(_ entry: InboxEntry, now: Date) {

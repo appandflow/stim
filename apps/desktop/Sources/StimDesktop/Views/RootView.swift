@@ -725,6 +725,7 @@ private struct NotificationBell: View {
   var selected: Bool
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var wiggles = 0
+  @State private var lastWiggle: Date?
 
   private struct Wiggle {
     var angle = 0.0
@@ -741,21 +742,25 @@ private struct NotificationBell: View {
           .rotationEffect(.degrees(value.angle * swing), anchor: .top)
       } keyframes: { _ in
         KeyframeTrack(\.angle) {
-          CubicKeyframe(-28, duration: 0.14)
-          CubicKeyframe(24, duration: 0.14)
-          CubicKeyframe(-20, duration: 0.14)
-          CubicKeyframe(16, duration: 0.14)
-          CubicKeyframe(-10, duration: 0.14)
-          CubicKeyframe(6, duration: 0.14)
-          CubicKeyframe(0, duration: 0.16)
+          CubicKeyframe(-12, duration: 0.1)
+          CubicKeyframe(10, duration: 0.1)
+          CubicKeyframe(-6, duration: 0.1)
+          CubicKeyframe(0, duration: 0.1)
         }
         KeyframeTrack(\.highlight) {
           MoveKeyframe(1)
-          LinearKeyframe(1, duration: 0.99)
+          LinearKeyframe(1, duration: 0.79)
           LinearKeyframe(0, duration: 0.01)
         }
       }
-      .onReceive(NotificationInbox.shared.arrivals) { wiggles += 1 }
+      .onReceive(NotificationInbox.shared.arrivals) { suppressed in
+        let now = Date()
+        guard
+          Inbox.wigglesBell(suppressed: suppressed, notificationsOpen: selected, now: now, lastWiggle: lastWiggle)
+        else { return }
+        lastWiggle = now
+        wiggles += 1
+      }
   }
 }
 

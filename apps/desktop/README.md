@@ -1328,16 +1328,19 @@ stim-server's leases. The phone app and stim-server do read them, and do not cou
 Each category has a level, with the phone's names: **Alert**, **Silent** or
 **Off**. Every category is Silent by default, except **A Mac asks to build
 here**, which is Alert because a request lapses after 15 minutes. While the main
-window is in front, an Alert shakes the top-right bell and turns it purple for a
-second, and bumps its unread count; Silent and Off entries only bump the count.
-Under Reduce Motion the bell keeps the colour and skips the shake. A build or
+window is in front, every new Alert or Silent entry gives the top-right bell one
+small wiggle and turns it purple for under a second, and bumps its unread count;
+several arrivals within two seconds wiggle once, and the bell stays still while
+Notifications is open. Off entries only bump the count. Under Reduce Motion the
+bell keeps the colour and skips the wiggle. A build or
 device-hosting request, which lapses after 15 minutes, and a machine problem
 at Alert level also open a card in the window's top right corner, newest on top,
 with its call to action and a dismiss button; clicking the card opens its target,
 and it stays until dismissed or answered. Every other category reaches the bell
 only. When the main window is not in front, an Alert is a macOS notification
 with sound, and clicking it brings Stim Desktop up on the target. macOS asks for permission the
-first time one is posted. Silent and Off never interrupt.
+first time one is posted. Silent has no sound, macOS notification or card, only the
+bell wiggle; Off has none of these.
 
 Every notification also lands in **Notifications**, opened from the top-right bell with
 the unread count: newest first, grouped by day, each row with its category icon,

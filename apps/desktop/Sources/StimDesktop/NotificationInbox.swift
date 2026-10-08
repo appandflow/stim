@@ -7,7 +7,7 @@ final class NotificationInbox: ObservableObject {
   static let shared = NotificationInbox()
 
   @Published private(set) var inbox: Inbox
-  let arrivals = PassthroughSubject<Void, Never>()
+  let arrivals = PassthroughSubject<NoticeSuppression?, Never>()
 
   private let file: URL?
   #if DEBUG
@@ -34,9 +34,9 @@ final class NotificationInbox: ObservableObject {
     }
   }
 
-  func add(_ entry: InboxEntry, interrupts: Bool) {
+  func add(_ entry: InboxEntry) {
     update { $0.add(entry, now: Date()) }
-    if interrupts { arrivals.send() }
+    arrivals.send(entry.suppressed)
   }
   func markRead(_ id: String) { update { $0.markRead(id) } }
   func markAllRead(_ filter: InboxFilter) { update { $0.markAllRead(filter) } }

@@ -171,7 +171,7 @@ struct AppPreferencesView: View {
       } footer: {
         Text(
           PhoneApp.Copy.notificationRulesPrefix(phoneApp: FeatureFlags.isEnabled(.phoneApp))
-            + "Alert sends a macOS notification with sound while the Stim window is in the background; macOS asks for permission the first time. While the window is in front, Alert shakes the bell in the toolbar, and a build or device-hosting request or a machine problem also shows a card in the window's top right corner. Silent and Off never interrupt; every notification is kept under the bell, an Off one marked Muted. A request or machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
+            + "Alert sends a macOS notification with sound while the Stim window is in the background; macOS asks for permission the first time. While the window is in front, a build or device-hosting request or a machine problem at Alert also shows a card in the window's top right corner. Silent means no sound, macOS notification or card: the bell in the toolbar gives one small wiggle for an Alert or Silent notification, and Off never does. Every notification is kept under the bell, an Off one marked Muted. A request or machine problem card stays until dismissed. Each workspace notifies once per episode. During quiet hours alerts are silent. A pull request's review is not looked up here; a branch git finds merged still notifies."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
