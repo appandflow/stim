@@ -56,6 +56,13 @@ Stim Desktop honors. An app that activates itself at launch still takes focus.
 Hosted launches (macos --remote) do not set it.
 macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
 A failed build records its error and compiler output without launching an app.
+While it runs, stim status --json reports it as environments[].build with
+platform "macos": phase prepare, compile, install, then launch, and during
+compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
+planning are detail.step "configure"). It has no cache lookup, so outcome and
+plannedPhases are null; finished runs and their phase times are in
+environments[].builds.macos. An offloaded build reports the worker's steps the
+same way.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per

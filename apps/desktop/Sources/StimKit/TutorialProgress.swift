@@ -461,11 +461,11 @@ public struct TutorialProgress: Sendable {
         completed: paired ? now : nil,
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
-          : input.pairedPhoneCount == nil ? "Turn on Serve to phones" : "Pair your phone")
+          : "Pair your phone")
     case "machine":
       let offloaded = last?.offloadedTo != nil && last.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true
       return Checkpoint(
-        completed: input.machineApproved ? now : nil, detail: "Choose an approved build machine",
+        completed: input.machineApproved ? now : nil, detail: "Choose an approved remote Mac",
         ticks: [
           tick("approved", input.machineApproved || record?.done.contains("machine") == true),
           tick("offloaded", offloaded, optional: true),

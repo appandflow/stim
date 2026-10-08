@@ -35,7 +35,8 @@
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
-    case addMachine = "Add build machine"
+    case addMachine = "Add remote Mac"
+    case pairPhone = "Pair a phone"
     case discovery = "Suggestions"
     case tokens = "Design tokens"
     var id: Self { self }
@@ -53,7 +54,7 @@
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .discovery: return [.ready]
+      case .tokens, .addMachine, .pairPhone, .discovery: return [.ready]
       }
     }
   }
@@ -269,6 +270,8 @@
         DiscoveryPlayground()
       case .addMachine:
         AddMachinePlayground()
+      case .pairPhone:
+        PairPhonePlayground()
       case .tokens:
         EmptyView()
       }

@@ -636,7 +636,8 @@ support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
 node. Doctor never prints the token; it reports each machine under deviceHosts
 in JSON. Desktop uses placement set by config or agents, such as
-stim settings set ios.remote auto --scope workspace (or android.remote),
+stim settings set ios.remote auto --scope machine (or android.remote; workspace,
+repo and committed scopes override the machine default),
 or per run stim ios --remote auto / stim ios --remote <machine>.
 New Desktop runs pass no --remote flag; recorded hosted sessions keep their
 machine until stim stop. Only devices outside this Mac show "on <machine>"
@@ -748,7 +749,7 @@ the ones it offloaded.
 automatic iOS and Android device placement. It is the load per core at which a Mac
 counts as saturated, both here and on a remote Mac.
 
-STIM_OFFLOAD_MODE overrides it for one command. Device, Release and
+STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's

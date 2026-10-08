@@ -109,7 +109,12 @@ import Testing
         "android":[
           {"platform":"android","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":null,
            "fingerprint":null,"startedAt":"2026-09-26T13:00:20.861Z","finishedAt":null,"result":"interrupted",
-           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"device":3000,"compile":0}}]}}
+           "slot":"tablet","configuration":null,"cacheKey":null,"phases":{"prepare":1524,"device":3000,"compile":0}}],
+        "macos":[
+          {"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":62000,
+           "fingerprint":null,"startedAt":"2026-09-26T13:10:00.000Z","finishedAt":"2026-09-26T13:11:02.000Z",
+           "result":"succeeded","slot":"default","configuration":"Debug","cacheKey":null,
+           "phases":{"prepare":900,"compile":58000,"install":3100}}]}}
       """)
     let ios = try #require(workspace.builds?.builds(for: "ios"))
     #expect(ios.map(\.result) == ["cancelled", "succeeded"])
@@ -118,6 +123,11 @@ import Testing
     let android = try #require(workspace.builds?.builds(for: "android").first)
     #expect(android.result == "interrupted" && android.slot == "tablet" && android.configuration == nil)
     #expect(android.phases == ["prepare": 1524, "device": 3000, "compile": 0])
+    let macos = try #require(workspace.builds?.builds(for: "macos"))
+    #expect(macos.map(\.build.platform) == ["macos"] && macos[0].phases["compile"] == 58000)
+    #expect(
+      try decode(Workspace.self, #"{"path":"/w","live":true,"warnings":[],"builds":{"android":[]}}"#).builds?.builds(for: "macos")
+        == [])
     let failed = try decode(
       BuildHistoryEntry.self,
       """

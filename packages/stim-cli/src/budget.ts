@@ -508,7 +508,7 @@ function describeShortfall(budget: Budget, measure: BudgetMeasure, short: Budget
         ]
       : []),
     ...(short.workspaces && measure.memory
-      ? [`${measure.memory.liveWorkspaces} live workspaces, over the limit of ${budget.maxLiveWorkspaces}`]
+      ? [`${measure.memory.liveWorkspaces} active workspaces, over the limit of ${budget.maxLiveWorkspaces}`]
       : []),
   ];
 }
@@ -657,9 +657,9 @@ function budgetFindings(
   if (short.memory || short.workspaces) {
     findings.push({
       level: 'note',
-      title: 'Live environments are over the memory budget',
+      title: 'Active environments are over the memory budget',
       detail: `${describeShortfall(budget, measure, { ...short, disk: [] }).join('; ')}. The next ios, android or start shuts down idle owned devices and stops idle dev servers in other workspaces first.`,
-      fix: 'Run `stim status` to see what is live, and `stim stop` in workspaces you own that you no longer need.',
+      fix: 'Run `stim status` to see what is active, and `stim stop` in workspaces you own that you no longer need.',
     });
   }
   return findings;

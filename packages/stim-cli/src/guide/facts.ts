@@ -980,8 +980,8 @@ RULES
               "ready"    its last warm succeeded and nothing has run there
                          since: no start, ios, android, web or reload, for
                          at most 2 hours
-              "live"     live is true: Metro, a device, Chrome or a remote
-                         session of it runs
+              "live"     the workspace is active (live is true): Metro, a
+                         device, Chrome or a remote session of it runs
               "idle"     none of these
   phaseSince  when the warm started ("warming") or finished ("ready"); null
               for "live" and "idle"
@@ -1009,8 +1009,8 @@ RULES
   The first kind that applies wins:
 
   kind        "building"      a build runs; platform names it
-              "warming"       phase is "warming" and nothing is live
-              "ready"         phase is "ready" and nothing is live
+              "warming"       phase is "warming" and nothing is active
+              "ready"         phase is "ready" and nothing is active
               "build-failed"  the newest run of either platform failed;
                               platform names it
               "running"       live is true or a remote session runs
@@ -1264,8 +1264,8 @@ RULES
              finished request, status "ok" or "failed", durationMs from the
              request to the end of the response
 
-  Each entry of environments also carries build: null, or the ios or android
-  run that holds this workspace's native-run.lock:
+  Each entry of environments also carries build: null, or the ios, android or
+  macos run that holds this workspace's native-run.lock:
 
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
@@ -1290,6 +1290,11 @@ RULES
                    finishes during the build adds no device time. An
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
+                   A stim macos run enters only prepare, compile (SwiftPM,
+                   with detail), install (staging the bundle, or fetching
+                   it from a build machine) and launch. It has no cache
+                   lookup: outcome is null, plannedPhases is null, and
+                   builds.macos holds its finished runs and their phases.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1339,13 +1344,17 @@ RULES
                    reads: { step, unit, done, total, line, updatedAt }
     step           the tool's step: configure, compile, link, resources,
                    script, dex, package or sign; null before one is known
-    unit           "targets" for xcodebuild, "tasks" for Gradle
+    unit           "targets" for xcodebuild, "tasks" for Gradle, "steps" for
+                   SwiftPM (stim macos)
     done           xcodebuild: targets it finished (a target counts once
                    xcodebuild touches or signs its product, so an
                    incremental build can end below total); Gradle: tasks
-                   it reported so far
+                   it reported so far; SwiftPM: the done of its latest
+                   [done / total] line
     total          xcodebuild: targets in its dependency graph; Gradle: null,
-                   since its plain output gives no total
+                   since its plain output gives no total; SwiftPM: the
+                   total of its latest [done / total] line, which can grow
+                   as SwiftPM plans more of the build
     line           the latest compile, link or task line, paths shortened
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
@@ -1439,7 +1448,7 @@ RULES
   last 10 runs, newest first. Its newest entry that is not "interrupted" is
   the run lastBuilds reports, once a run has recorded builds.
 
-  builds         { ios?, android? }, each a list of lastBuilds entries
+  builds         { ios?, android?, macos? }, each a list of lastBuilds entries
                  with { result, slot, configuration, cacheKey, phases }
   result         "succeeded", "failed", "cancelled" (Stim stopped the run
                  after an interrupt or \`stim stop\`) or "interrupted": its
@@ -1481,7 +1490,7 @@ RULES
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
   \`status --watch\` runs one du at a time off its refresh path, and measures
-  a folder at most every 5 minutes while its environment is live and every
+  a folder at most every 5 minutes while its environment is active and every
   hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
   one-shot status only reads, so the fields appear once a watcher, such as
   stim-server or Stim Desktop, has measured.
@@ -1601,7 +1610,7 @@ RULES
   started it until that build exits, then as shared. Processes with no owner
   are left out. machine comes from one host ps, the one status reads for
   device activity, and one run of the footprint helper. It is null when no
-  simulator is booted, no workspace is live and no build runs: status then
+  simulator is booted, no workspace is active and no build runs: status then
   runs neither. \`status --watch --json\` rereads both every 15 seconds while
   machine is not null, with no other subprocess.`,
     },

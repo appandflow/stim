@@ -7,11 +7,15 @@ public enum Format {
 
   /// "1.2 GB" for a file or disk size, decimal units. Zero reads "0 bytes".
   public static func fileSize(_ bytes: Int64) -> String {
+    fileSizeFormatter.string(fromByteCount: bytes)
+  }
+
+  private nonisolated(unsafe) static let fileSizeFormatter: ByteCountFormatter = {
     let formatter = ByteCountFormatter()
     formatter.countStyle = .file
     formatter.allowsNonnumericFormatting = false
-    return formatter.string(fromByteCount: bytes)
-  }
+    return formatter
+  }()
 
   /// "16 GB" for memory, binary units (a GB is 1024^3 bytes), as Activity Monitor counts it.
   public static func memory(_ bytes: Int64) -> String {

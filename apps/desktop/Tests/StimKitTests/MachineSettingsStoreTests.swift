@@ -9,14 +9,14 @@ private func payload(_ machines: String) -> SettingsPayload {
     from: Data(
       """
       { "files": {}, "unknown": [], "settings": [
-        { "key": "offload.machines", "value": \(machines), "origin": "machine", "layers": { "machine": \(machines) } },
+        { "key": "remote.machines", "value": \(machines), "origin": "machine", "layers": { "machine": \(machines) } },
         { "key": "recording.enabled", "value": true, "origin": "default", "layers": {} }
       ] }
       """.utf8))
 }
 
 private func entry(_ machines: String) -> SettingEntry {
-  payload(machines).entry("offload.machines")!
+  payload(machines).entry("remote.machines")!
 }
 
 private actor Backend {
@@ -33,7 +33,7 @@ private actor Backend {
 
   func write(_ key: String, _ value: String?, _ scope: SettingScope) -> SettingsWriteResult {
     writes.append("\(scope.rawValue):\(key)=\(value ?? "unset")")
-    if key == "offload.machines" { machines = value ?? "[]" }
+    if key == "remote.machines" { machines = value ?? "[]" }
     return .written(entry(machines))
   }
 
@@ -54,19 +54,19 @@ private actor Backend {
     async let second: Void = store.refresh()
     _ = await (first, second)
     #expect(await backend.reads == 1)
-    #expect(store.entry("offload.machines")?.value.strings == ["a"])
+    #expect(store.entry("remote.machines")?.value.strings == ["a"])
   }
 
   @Test func machineWriteReadsBackAndBumpsRevision() async {
     let backend = Backend()
     let store = store(backend)
     await store.refresh()
-    let result = await store.write("offload.machines", value: "[\"b\"]", scope: .machine, cwd: "/home")
+    let result = await store.write("remote.machines", value: "[\"b\"]", scope: .machine, cwd: "/home")
     guard case .success(.written) = result else {
       Issue.record("write did not report written")
       return
     }
-    #expect(store.entry("offload.machines")?.value.strings == ["b"])
+    #expect(store.entry("remote.machines")?.value.strings == ["b"])
     #expect(store.revision == 1)
     #expect(await backend.reads == 2)
   }
@@ -87,17 +87,17 @@ private actor Backend {
     await store.refresh()
     await backend.setFailReads(true)
     await store.refresh()
-    #expect(store.entry("offload.machines")?.value.strings == ["a"])
+    #expect(store.entry("remote.machines")?.value.strings == ["a"])
     #expect(store.error != nil)
   }
 
   @Test func mergingReplacesTheEntryAndAddsAMissingOne() {
     let merged = payload("[\"a\"]").merging(entry("[\"a\",\"b\"]"))
-    #expect(merged.entry("offload.machines")?.value.strings == ["a", "b"])
+    #expect(merged.entry("remote.machines")?.value.strings == ["a", "b"])
     #expect(merged.entry("recording.enabled") != nil)
     var bare = payload("[]")
-    bare.settings.removeAll { $0.key == "offload.machines" }
-    #expect(bare.merging(entry("[\"c\"]")).entry("offload.machines")?.value.strings == ["c"])
+    bare.settings.removeAll { $0.key == "remote.machines" }
+    #expect(bare.merging(entry("[\"c\"]")).entry("remote.machines")?.value.strings == ["c"])
   }
 
   @Test func aReadStartedBeforeAWriteDoesNotOverwriteIt() async {
@@ -113,10 +113,10 @@ private actor Backend {
       write: { key, value, scope, _ in await backend.write(key, value, scope) })
     let slow = Task { await store.refresh() }
     await gate.entered()
-    _ = await store.write("offload.machines", value: "[\"b\"]", scope: .machine, cwd: NSHomeDirectory())
+    _ = await store.write("remote.machines", value: "[\"b\"]", scope: .machine, cwd: NSHomeDirectory())
     await gate.open()
     await slow.value
-    #expect(store.entry("offload.machines")?.value.strings == ["b"])
+    #expect(store.entry("remote.machines")?.value.strings == ["b"])
   }
 }
 

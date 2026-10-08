@@ -216,8 +216,9 @@ same tailnet or with the Mac shared to the phone's user.
 addresses, never on every interface. It re-reads the Tailscale state in the
 background, so a server that started before Tailscale was up, or while it did
 not answer, starts listening on the Tailscale addresses once it runs, and stops
-when it goes away. In Stim Desktop, choose **Set up connection** in Settings >
-Phones to create and verify the private route without a terminal command. A
+when it goes away. In Stim Desktop, the Pair a Phone wizard (Settings > Phones) creates and
+verifies the private route without a terminal command; with the Phone app flag
+off, **Set up connection** on Settings > Server does. A
 missing or unreadable route keeps Desktop pairing unavailable; HTTPS setup may
 require Tailscale browser approval. Existing routes stay unchanged.
 

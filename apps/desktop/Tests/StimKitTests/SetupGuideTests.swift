@@ -167,6 +167,27 @@ private let setUp = SetupChecks(
   }
 }
 
+@Test func skippingOnboardingHidesTheGuideForOneRunWithoutRecordingCompletion() throws {
+  var missing = setUp
+  missing.skillPath = nil
+  let suite = "SetupGuideTests-\(UUID().uuidString)"
+  let defaults = try #require(UserDefaults(suiteName: suite))
+  defer { defaults.removePersistentDomain(forName: suite) }
+  let fromEnvironment = SetupGuideProgress(defaults, environment: ["STIM_DESKTOP_SKIP_ONBOARDING": "1"])
+  fromEnvironment.saveForRestart(at: .cli)
+  #expect(fromEnvironment.stepAtLaunch(missing) == nil)
+  #expect(!defaults.bool(forKey: SetupGuideProgress.completedKey))
+  defaults.removeObject(forKey: SetupGuideProgress.resumeKey)
+
+  defaults.register(defaults: [SetupGuideProgress.skipDefaultsKey: true])
+  let fromArgument = SetupGuideProgress(defaults, environment: [:])
+  #expect(fromArgument.skipsOnboarding)
+  #expect(fromArgument.stepAtLaunch(missing) == nil)
+  #expect(!defaults.bool(forKey: SetupGuideProgress.completedKey))
+  defaults.register(defaults: [SetupGuideProgress.skipDefaultsKey: false])
+  #expect(SetupGuideProgress(defaults, environment: ["STIM_DESKTOP_SKIP_ONBOARDING": "0"]).stepAtLaunch(missing) == .welcome)
+}
+
 @Test func commandOutputLosesItsColorCodes() {
   #expect(
     "\u{1B}[38;5;250m\u{2588}\u{2588}\u{1B}[0m skills \u{1B}[1;38;2;1;2;3mv1\u{1B}[39m".strippingANSI

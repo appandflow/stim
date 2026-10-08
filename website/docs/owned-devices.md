@@ -532,7 +532,7 @@ back through it in the Stim phone app.
 
 ## Cleanup behavior
 
-- `stim stop` releases the live environment and device leases. It ends an owned
+- `stim stop` releases the active environment and device leases. It ends an owned
   remote session. On a physical iPhone, stopping the log collector also closes
   the app; it does not shut down the phone or uninstall anything.
 - `stim worktree remove` releases leases, parks eligible owned iOS simulators and
@@ -640,7 +640,7 @@ stim status
 stim reload ios
 stim stop`} />
 
-Set `ios.remote` to that name for a workspace default. `eas` and `proxy` keep
+Set `ios.remote` to that name for a default: `--scope machine` for every app on this Mac, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
 Android on an approved Mac when this Mac is full or busy; see
 [automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.

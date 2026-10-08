@@ -11,8 +11,7 @@ public enum TutorialPhoneState: Equatable, Sendable {
 
   public var buttonTitle: String {
     switch self {
-    case .serverOff: return "Turn on Serve to phones"
-    case .unpaired: return "Pair a phone"
+    case .serverOff, .unpaired: return "Pair a phone"
     case .paired: return "Done already"
     }
   }
@@ -26,7 +25,7 @@ public enum TutorialMachineState: Equatable, Sendable {
   }
 
   public var buttonTitle: String {
-    self == .awaitingApproval ? "Open Add build machine" : "Add build machine"
+    self == .awaitingApproval ? "Open Add remote Mac" : "Add remote Mac"
   }
 
   public var skipIsPrimary: Bool { self == .none }

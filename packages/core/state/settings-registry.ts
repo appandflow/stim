@@ -152,7 +152,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       pattern: TAILNET_MACHINE_PATTERN,
       patternHelp: 'eas, proxy, auto, or a tailnet machine name',
     },
-    scopes: PROJECT,
+    scopes: EVERY,
     description:
       'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },
@@ -227,7 +227,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
       pattern: TAILNET_MACHINE_PATTERN,
       patternHelp: 'eas, proxy, auto, or a tailnet machine name',
     },
-    scopes: PROJECT,
+    scopes: EVERY,
     description:
       'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
   },
@@ -492,7 +492,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
     scopedHomeValue: 0,
     description:
-      'Estimated memory, in GB, of live environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
+      'Estimated memory, in GB, of active environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
   },
   {
     key: 'budget.maxLiveWorkspaces',
@@ -500,7 +500,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
     scopedHomeValue: 0,
-    description: 'Live workspaces before idle ones are reclaimed; unset or 0 means no limit',
+    description: 'Active workspaces before idle ones are reclaimed; unset or 0 means no limit',
   },
   {
     key: 'maintenance.mode',
@@ -692,7 +692,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'choice', choices: OFFLOAD_MODES },
     scopes: MACHINE,
     default: 'auto',
-    env: 'STIM_OFFLOAD_MODE',
+    env: 'STIM_REMOTE_BUILD_MODE',
     description:
       'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on a remote Mac whenever one can take the build; off always builds here',
   },

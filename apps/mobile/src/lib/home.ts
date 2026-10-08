@@ -582,7 +582,7 @@ const budgets = (): { key: string; label: string; describe: (value: number | nul
     label: t`Memory budget`,
     describe: (v) => (v === null ? t`60% of memory` : v === 0 ? t`off` : t`${v} GB`),
   },
-  { key: 'budget.maxLiveWorkspaces', label: t`Live workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
+  { key: 'budget.maxLiveWorkspaces', label: t`Active workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
 function settingNumbers(settings: Record<string, unknown> | null): Map<string, number | null> {

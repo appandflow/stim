@@ -70,7 +70,7 @@ export function Filters() {
   }, [canSearch, searchShown]);
   const activity: { value: ActivityFilter; label: string }[] = [
     { value: 'all', label: t`All` },
-    { value: 'live', label: t`Live` },
+    { value: 'live', label: t`Active` },
     { value: 'idle', label: t`Idle` },
     { value: 'archived', label: t`Archived` },
   ];
@@ -112,7 +112,7 @@ export function Filters() {
     <SheetScreen title={t`Filters`} gap="xxl" accessory={<Button title={t`Reset`} variant="plain" onPress={reset} />}>
       <Group
         title={t`Show`}
-        footnote={t`All shows live, idle and archived workspaces. Archived shows only removed worktrees.`}
+        footnote={t`All shows active, idle and archived workspaces. Archived shows only removed worktrees.`}
       >
         {activity.map(({ value, label }) => (
           <Toggle

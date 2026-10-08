@@ -10,17 +10,14 @@ public enum PhoneApp {
     /// The label of the switch that runs stim-server, which Desktop also uses for replay, the diff viewer and
     /// Macs approved to build or host devices here.
     public var serveToggleTitle: String
-    /// The paired phones list and the Pair a Phone button, which opens the pairing sheet.
-    public var showsPairedPhones: Bool
   }
 
   public static func serverPage(phoneApp: Bool) -> ServerPage {
     phoneApp
       ? ServerPage(
-        title: "Phones", systemImage: "iphone.gen3.radiowaves.left.and.right", serveToggleTitle: "Serve to phones",
-        showsPairedPhones: true)
+        title: "Phones", systemImage: "iphone.gen3.radiowaves.left.and.right", serveToggleTitle: "Serve to phones")
       : ServerPage(
-        title: "Server", systemImage: "server.rack", serveToggleTitle: "Run stim-server", showsPairedPhones: false)
+        title: "Server", systemImage: "server.rack", serveToggleTitle: "Run stim-server")
   }
 
   /// The sidebar footer button that shows the phone server's state and opens the Phones page.
@@ -37,12 +34,6 @@ public enum PhoneApp {
 
   /// Words that name phones only while the app is on.
   public enum Copy {
-    public static func addMachineDetail(phoneApp: Bool) -> String {
-      phoneApp
-        ? "iOS simulators run there; you view and control them from here and your phone."
-        : "iOS simulators run there; you view and control them from here."
-    }
-
     public static func screenPermissionUse(phoneApp: Bool) -> String {
       phoneApp ? "Shows the app's window in Desktop and on your paired phone." : "Shows the app's window in Desktop."
     }
@@ -80,16 +71,6 @@ public enum PhoneApp {
       let replayers = phoneApp ? "Stim Desktop and the phone app replay" : "Stim Desktop replays"
       return
         "recording.enabled on this Mac. While stim-server runs it keeps the last 15 minutes of each simulator, emulator and Chrome page, which \(replayers). A workspace or repository setting still wins. Turning it off deletes the recordings."
-    }
-
-    public static func serveFooter(port: Int, phoneApp: Bool) -> String {
-      let base = "Runs stim-server on port \(port) while Stim Desktop is open, or uses one that is already running."
-      guard phoneApp else {
-        return
-          "\(base) Desktop uses it for device replay, the diff viewer and archived logs, and for other Macs you approve to build or host devices here."
-      }
-      return
-        "\(base) Phones connect through Tailscale. A read-only phone sees workspaces, devices and logs, and with workspace diff support the changed and untracked text files of registered workspaces, including unignored .env files; a phone allowed to control can also drive simulators and emulators and run reload and stop."
     }
 
     public static func serverPopupTitle(missing: Bool, phoneApp: Bool) -> String {

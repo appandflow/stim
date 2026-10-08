@@ -133,7 +133,7 @@ final class DiscoveryCoordinator: ObservableObject {
   }
 
   private var hostingEntries: [String] {
-    machines.settings.payload?.entry("hosting.machines")?.value.strings ?? []
+    machines.settings.payload?.entry("remote.machines")?.value.strings ?? []
   }
 
   private func rememberCapacityEvents(_ report: MachineStats?) async {

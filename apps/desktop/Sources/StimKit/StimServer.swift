@@ -210,15 +210,13 @@ public struct StimServerCLI: Sendable {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .custom { decoder in
       let text = try decoder.singleValueContainer().decode(String.self)
-      let formatter = ISO8601DateFormatter()
-      formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-      if let date = formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text) { return date }
+      if let date = parseTimestamp(text) { return date }
       throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a date: \(text)"))
     }
     return decoder
   }()
 
-  public static let minimumVersion = SemanticVersion("1.17.1")!
+  public static let minimumVersion = SemanticVersion("1.17.2")!
 
   /// What `stim-server --version` printed, or nil when it is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {

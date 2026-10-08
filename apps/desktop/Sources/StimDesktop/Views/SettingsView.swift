@@ -31,7 +31,7 @@ struct SettingsView: View {
         .tabItem { Label(serverPage.title, systemImage: serverPage.systemImage) }
         .tag("phones")
       BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
-        .tabItem { Label("Build Machines", systemImage: "hammer") }
+        .tabItem { Label("Remote Macs", systemImage: "hammer") }
         .tag("build-machines")
       stimSettings
         .tabItem { Label("Stim Settings", systemImage: "slider.horizontal.3") }

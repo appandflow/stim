@@ -314,12 +314,12 @@ export function Home() {
 
 function RepoHeader({ section }: { section: HomeSection }) {
   const { project, live, idle } = section;
-  const counts = [live ? t`${live} live` : null, idle ? t`${idle} idle` : null].filter(Boolean).join(' \u00B7 ');
+  const counts = [live ? t`${live} active` : null, idle ? t`${idle} idle` : null].filter(Boolean).join(' \u00B7 ');
   return (
     <View
       accessible
       accessibilityRole="header"
-      accessibilityLabel={[project, live ? t`${live} live` : null, idle ? t`${idle} idle` : null]
+      accessibilityLabel={[project, live ? t`${live} active` : null, idle ? t`${idle} idle` : null]
         .filter(Boolean)
         .join(', ')}
       style={styles.repoHeader}
@@ -385,7 +385,7 @@ function HomeEmpty({
       <View style={styles.empty}>
         <StimJar playing={focused} />
         <Text variant="headline">
-          <Trans>No live workspaces</Trans>
+          <Trans>No active workspaces</Trans>
         </Text>
         <Text tone="secondary" style={styles.emptyMessage}>
           <Trans>Tap a prompt to copy it for your coding agent.</Trans>

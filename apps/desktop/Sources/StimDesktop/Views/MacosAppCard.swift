@@ -14,8 +14,13 @@ struct MacosAppCard: View {
   @StateObject private var capture = MacosWindowCapture()
   @State private var refreshing = false
   @State private var previewRequest = 0
+  @Environment(\.macosViewportHeight) private var viewportHeight
+  @Environment(\.displayScale) private var displayScale
+  @State private var cardHeight: CGFloat = 0
+  @State private var windowHeight: CGFloat = 0
 
   var body: some View {
+    let maxHeight = viewportHeight.map { max(120, $0 - (cardHeight - windowHeight)) }
     Card(border: nil, clipsContent: false) {
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(spacing: Space.sm) {
@@ -75,7 +80,9 @@ struct MacosAppCard: View {
         }
         if let error = app.build.error { Text(error).foregroundStyle(Palette.error).textSelection(.enabled) }
         if app.host != nil {
-          if app.state == "running" || app.state == "unverified" { HostedMacosWindow(app: app, workspace: workspace) }
+          if app.state == "running" || app.state == "unverified" {
+            HostedMacosWindow(app: app, workspace: workspace, maxHeight: maxHeight)
+          }
         } else if let error = capture.error {
           Text(error).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
@@ -86,14 +93,22 @@ struct MacosAppCard: View {
           ) { id in Task { await capture.select(id.map(UInt32.init)) } }
         }
         if app.host == nil, let image = capture.image {
-          MacosWindowCanvas(image: image)
-            .aspectRatio(CGFloat(image.width) / CGFloat(image.height), contentMode: .fit)
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel("\(app.product) owned window")
+          NativeFitted(
+            pointSize: capture.current?.frame.size ?? image.pointSize(scale: displayScale), maxHeight: maxHeight
+          ) {
+            MacosWindowCanvas(image: image)
+          }
+          .accessibilityLabel("\(app.product) owned window")
         }
       }
       .padding(Space.lg)
     }
+    .onGeometryChange(for: CGFloat.self) {
+      $0.size.height
+    } action: {
+      cardHeight = $0
+    }
+    .onPreferenceChange(NativeFittedHeightKey.self) { windowHeight = $0 }
     .task(id: "\(app.launchId)|\(app.state)|\(previewRequest)") {
       refreshing = true
       await capture.start(app)
@@ -123,14 +138,17 @@ extension MacosAppCard {
 private struct HostedMacosWindow: View {
   var app: MacosApp
   var workspace: String
+  var maxHeight: CGFloat?
+  @Environment(\.displayScale) private var displayScale
   @ObservedObject private var session = ServerSession.shared
   @StateObject private var stream: PhysicalStream
   @State private var controlling = false
   @State private var pixelSize: CGSize?
 
-  init(app: MacosApp, workspace: String) {
+  init(app: MacosApp, workspace: String, maxHeight: CGFloat?) {
     self.app = app
     self.workspace = workspace
+    self.maxHeight = maxHeight
     _stream = StateObject(
       wrappedValue: PhysicalStream(
         target: ReplayTarget(workspace: workspace, platform: "macos", slot: "default"), physical: false))
@@ -186,17 +204,20 @@ private struct HostedMacosWindow: View {
               .nativeControlStyle()
           }
         }
-        PhysicalDisplay(
-          stream: stream, activityKey: nil, interactive: controlling && isControlling,
-          onPixelSizeChange: { pixelSize = $0 }
-        )
-        .aspectRatio(pixelSize.map { $0.width / max($0.height, 1) } ?? 1.6, contentMode: .fit)
-        .frame(maxWidth: .infinity)
-        .overlay {
-          if let problem = stream.problem
-            ?? (stream.receiving ? nil : "Connecting to \(machineName(app.host?.machine ?? "the host"))")
-          {
-            PhysicalMessage(text: problem)
+        NativeFitted(
+          pointSize: pixelSize.map { CGSize(width: $0.width / displayScale, height: $0.height / displayScale) },
+          maxHeight: maxHeight
+        ) {
+          PhysicalDisplay(
+            stream: stream, activityKey: nil, interactive: controlling && isControlling,
+            onPixelSizeChange: { pixelSize = $0 }
+          )
+          .overlay {
+            if let problem = stream.problem
+              ?? (stream.receiving ? nil : "Connecting to \(machineName(app.host?.machine ?? "the host"))")
+            {
+              PhysicalMessage(text: problem)
+            }
           }
         }
         .accessibilityLabel("\(app.product) window on \(machineName(app.host?.machine ?? "the host"))")
@@ -514,6 +535,63 @@ private struct MacosWindowCanvas: NSViewRepresentable {
       context.scaleBy(x: 1, y: -1)
       context.draw(image, in: bounds)
       context.restoreGState()
+    }
+  }
+}
+
+extension CGImage {
+  fileprivate func pointSize(scale: CGFloat) -> CGSize {
+    CGSize(width: CGFloat(width) / scale, height: CGFloat(height) / scale)
+  }
+}
+
+private struct MacosViewportHeightKey: EnvironmentKey {
+  static let defaultValue: CGFloat? = nil
+}
+
+extension EnvironmentValues {
+  var macosViewportHeight: CGFloat? {
+    get { self[MacosViewportHeightKey.self] }
+    set { self[MacosViewportHeightKey.self] = newValue }
+  }
+}
+
+private struct NativeFittedHeightKey: PreferenceKey {
+  static let defaultValue: CGFloat = 0
+  static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct NativeFitted<Content: View>: View {
+  var pointSize: CGSize?
+  var maxHeight: CGFloat?
+  @ViewBuilder var content: Content
+
+  var body: some View {
+    NativeFitLayout(pointSize: pointSize ?? CGSize(width: 480, height: 300), maxHeight: maxHeight) { content }
+      .background(
+        GeometryReader { Color.clear.preference(key: NativeFittedHeightKey.self, value: $0.size.height) })
+  }
+}
+
+private struct NativeFitLayout: Layout {
+  var pointSize: CGSize
+  var maxHeight: CGFloat?
+
+  private func fitted(width: CGFloat?) -> CGSize {
+    nativeFittedSize(
+      pointSize: pointSize, maxWidth: width ?? pointSize.width, maxHeight: maxHeight ?? .greatestFiniteMagnitude)
+  }
+
+  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    let size = fitted(width: proposal.width)
+    return CGSize(width: proposal.width ?? size.width, height: size.height)
+  }
+
+  func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    let size = fitted(width: bounds.width)
+    for subview in subviews {
+      subview.place(
+        at: CGPoint(x: bounds.midX, y: bounds.minY), anchor: .top, proposal: ProposedViewSize(size))
     }
   }
 }

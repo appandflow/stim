@@ -116,7 +116,7 @@ final class Onboarding: ObservableObject {
     let defaults = UserDefaults.standard
     let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
     let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
-    let offersViewer = !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
+    let offersViewer = !progress.skipsOnboarding && !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
       let launched = await cli.value
