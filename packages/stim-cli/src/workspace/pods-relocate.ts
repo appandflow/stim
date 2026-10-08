@@ -93,6 +93,18 @@ function walkTextFiles(dir: string, visit: (file: string) => void): void {
   }
 }
 
+function findPath(dir: string, needle: Buffer): string | null {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isSymbolicLink() && Buffer.from(readlinkSync(path)).includes(needle)) return path;
+    if (entry.isDirectory()) {
+      const found = findPath(path, needle);
+      if (found) return found;
+    } else if (entry.isFile() && readFileSync(path).includes(needle)) return path;
+  }
+  return null;
+}
+
 function walkSymlinks(dir: string, visit: (link: string) => void): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
@@ -105,7 +117,7 @@ function walkSymlinks(dir: string, visit: (link: string) => void): void {
  * Makes a Pods directory cloned from `sourceRoot` read as one CocoaPods generated for
  * `targetRoot`: it rewrites the source path in the generated text files and absolute symlinks,
  * then points Pods/Manifest.lock at the checkout's Podfile.lock. The lock files are written
- * last, so an interrupted run leaves them differing and `pod install` still runs.
+ * last, and only after no file or symlink in Pods names the source path, so an interrupted or incomplete run leaves them differing and `pod install` still runs.
  */
 export function relocatePods({
   podsDir,
@@ -159,6 +171,8 @@ export function relocatePods({
       throw error;
     }
   });
+  const leftover = findPath(podsDir, Buffer.from(sourceRoot));
+  if (leftover) throw new Error(`${leftover} still names ${sourceRoot}`);
   writeFileSync(manifestPath, podfileLock);
   return plan;
 }

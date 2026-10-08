@@ -135,7 +135,6 @@ describe('relocatePods', () => {
     write(`${pods}/Local Podspecs/ExpoModulesCore.podspec.json`, PODSPEC);
     write(`${pods}/Target Support Files/A/A.xcconfig`, `HEADER_SEARCH_PATHS = "${SOURCE}/node_modules/a"\n`);
     write(`${pods}/Pods.xcodeproj/project.pbxproj`, `path = ${SOURCE}/node_modules/b;\n`);
-    write(`${pods}/Other/untouched.txt`, `${SOURCE}/kept\n`);
     mkdirSync(join(base, pods, 'ExpoImage'), { recursive: true });
     symlinkSync(`${SOURCE}/node_modules/expo-image/X.xcframework`, join(base, pods, 'ExpoImage/X.xcframework'));
     symlinkSync('../relative', join(base, pods, 'ExpoImage/rel'));
@@ -162,7 +161,24 @@ describe('relocatePods', () => {
       '/wt/trailhead/node_modules/expo-image/X.xcframework',
     );
     expect(readlinkSync(join(base, pods, 'ExpoImage/rel'))).toBe('../relative');
-    expect(readFileSync(join(base, pods, 'Other/untouched.txt'), 'utf-8')).toBe(`${SOURCE}/kept\n`);
+  });
+
+  test('keeps the old Manifest.lock when another Pods file still names the source path', () => {
+    const pods = 'ios/Pods';
+    write('ios/Podfile.lock', lock());
+    write(`${pods}/Manifest.lock`, lock({ core: SEED_CHECKSUM }));
+    write(`${pods}/Local Podspecs/ExpoModulesCore.podspec.json`, PODSPEC);
+    write(`${pods}/Other/script.sh`, `${SOURCE}/x\n`);
+
+    expect(() =>
+      relocatePods({
+        podsDir: join(base, pods),
+        podfileLockPath: join(base, 'ios/Podfile.lock'),
+        sourceRoot: SOURCE,
+        targetRoot: '/wt/trailhead',
+      }),
+    ).toThrow(/still names/);
+    expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock({ core: SEED_CHECKSUM }));
   });
 
   test('changes nothing when the locks differ for another reason', () => {

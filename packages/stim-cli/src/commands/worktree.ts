@@ -68,6 +68,7 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
 }
 
 function relocateCarriedPods(root: string, target: string, copied: string[]): void {
+  if (depsOutOfSync(root, target, copied).length > 0) return;
   for (const rel of copied) {
     if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
     const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
