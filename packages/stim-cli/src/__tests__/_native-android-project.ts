@@ -23,6 +23,7 @@ export const nativeAndroidFixture: ProjectIntegration = {
         packageRemedy: 'Check the selected native APK applicationId.',
         appIds: () => ({ bundleId: null, androidPackage: 'org.example.native' }),
         variantProblem: () => null,
+        runtimeKind: () => 'process',
         runtime: () => androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
         artifact: ({ writer, buildPlan, target }) => {
           let hash = '';

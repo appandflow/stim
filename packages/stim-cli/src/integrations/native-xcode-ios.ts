@@ -209,7 +209,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     },
     async materialize(path) {
       if (context.device) {
-        const gate = gateProfileForDevice({ appPath: path, udid: context.target.udid, configuration });
+        const gate = gateProfileForDevice({ appPath: path, udid: context.device.udid, configuration });
         if (!gate.ok) throw new IosRecipeRefusal({ code: gate.code, message: gate.reason, remedy: gate.remedy });
       }
       return path;
@@ -356,6 +356,7 @@ export function nativeXcodeIosProject(root: string): IosProject {
     isExpo: false,
     targets: ['simulator', 'physical'],
     eas: false,
+    runtimeKind: () => 'process',
     plan: (options) => planNativeXcode(root, options),
     bundleId: () => null,
     schemeProblem(scheme, configuration) {

@@ -30,6 +30,7 @@ import { planHostedDevice } from '../device-host/plan-placement.ts';
 import { resolveAndroidRunPlan } from '../commands/android/plan.ts';
 import { androidBuildOptions, NO_DEVICE, NO_FINGERPRINT, PLATFORM } from '../commands/android/support.ts';
 
+import type { AndroidProject } from './android-project.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
 import type { PlanRefusal, ProjectPlanResult } from './project-plan.ts';
 
@@ -115,6 +116,7 @@ function avdListed(avdName: string, list: AndroidPlanDeps['listAvds']): boolean 
 export async function planReactNativeAndroid(
   root: string,
   opts: AndroidPlanOptions,
+  runtimeKind: AndroidProject['runtimeKind'],
   overrides: Partial<AndroidPlanDeps> = {},
 ): Promise<ProjectPlanResult> {
   const deps = { ...DEFAULT_PLAN_DEPS, ...overrides };
@@ -136,6 +138,7 @@ export async function planReactNativeAndroid(
       buildCache: opts.buildCache !== false,
     },
     {
+      runtimeKind,
       warn: (label, message) => note(phaseLine(label, chalk.yellow(message))),
       resolveCompilerCache: ({ optimizations }) => ({ cas: null, optimizations, warning: null }),
       listSystemImages: deps.listSystemImages,

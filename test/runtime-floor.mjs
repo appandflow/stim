@@ -87,6 +87,19 @@ function runPlatform<P extends StimPlatform>(platform: P) {
   return stim.run({ platform });
 }
 const generic: StimRunResult = await runPlatform('ios');
+const builtIos = await stim.build({ platform: 'ios', scheme: 'App', arch: 'arm64' });
+const appPath: string = builtIos.facts.appPath;
+const builtIosPlatform: 'ios' = builtIos.platform;
+const builtAndroid = await stim.build({ platform: 'android', variant: 'debug', abi: 'x86_64' });
+const apkPath: string = builtAndroid.facts.apkPath;
+const builtMacos = await stim.build({ platform: 'macos' });
+const macosBundle: string = builtMacos.facts.bundle;
+const builtNative = await stim.build({ platform });
+if (builtNative.platform === 'ios') {
+  const path: string = builtNative.facts.appPath;
+} else {
+  const path: string = builtNative.facts.apkPath;
+}
 const result: StimStopResult = await stim.stop();
 const ok: boolean = result.ok;
 const status: string = result.outcomes.supervisor.status;
@@ -117,6 +130,9 @@ const summary: string = result.summary;
     ["await stim.run({ platform: 'ios', variant: 'debug' });", 'variant'],
     ["await stim.run({ platform: 'android', scheme: 'App' });", 'scheme'],
     ["await stim.run({ platform: 'web', slot: 'browser' });", 'slot'],
+    ["await stim.build({ platform: 'ios', variant: 'debug' });", 'variant'],
+    ["await stim.build({ platform: 'android', scheme: 'App' });", 'scheme'],
+    ["(await stim.build({ platform: 'ios' })).facts.apkPath;", 'apkPath'],
     ["(await stim.run({ platform: 'ios' })).facts.serial;", 'serial'],
   ]) {
     writeFileSync(

@@ -401,7 +401,11 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
 export function recordFinishedBuild(
   root: string,
   record: Record<string, unknown>,
-  { update = updateWorkspaceState, now = Date.now }: { update?: typeof updateWorkspaceState; now?: () => number } = {},
+  {
+    update = updateWorkspaceState,
+    now = Date.now,
+    preserveRuntime = false,
+  }: { update?: typeof updateWorkspaceState; now?: () => number; preserveRuntime?: boolean } = {},
 ): void {
   const platform = record.platform as BuildPlatform;
   update(root, (state) => {
@@ -417,7 +421,7 @@ export function recordFinishedBuild(
     const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
     const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
     const savedDevice = slot === 'default' ? state[platform] : savedSlot[platform];
-    if (platform !== 'macos' && (record.devicePlacement || isJsonObject(savedDevice))) {
+    if (!preserveRuntime && platform !== 'macos' && (record.devicePlacement || isJsonObject(savedDevice))) {
       const device = isJsonObject(savedDevice) ? { ...savedDevice } : {};
       if (record.devicePlacement) device.devicePlacement = record.devicePlacement;
       else delete device.devicePlacement;

@@ -1,6 +1,9 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import * as xcode from '../engine/xcode.ts';
+import { buildIosOperation } from '../commands/ios/build.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts';
@@ -19,6 +22,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetExecutor();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
@@ -609,4 +613,52 @@ test('native planning refuses unresolved source closure without dependency prepa
   expect(commands.some((command) => command.includes('-resolvePackageDependencies') || command.includes('build'))).toBe(
     false,
   );
+});
+
+test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {
+  writeNativeXcodeProject(root);
+  write(join(root, '.stim.json'), JSON.stringify({ optimizations: { releaseBundleSwap: false } }));
+  vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const compiled = join(home, 'derived', 'Native.app');
+  const compile = vi.spyOn(xcode, 'buildXcode').mockImplementation(async (options) => {
+    expect(options.udid).toBeNull();
+    expect(options.destination).toBe('generic/platform=iOS Simulator');
+    expect(options.configuration).toBe('Release');
+    write(join(compiled, 'Native'), readFileSync(join(root, 'Native.swift'), 'utf8'));
+    write(
+      join(compiled, 'Info.plist'),
+      '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.Native</string></dict></plist>',
+    );
+    return {
+      ok: true,
+      appPath: compiled,
+      bundleId: 'org.example.Native',
+      scheme: 'Native',
+      project: { dir: root, path: join(root, 'Native.xcodeproj'), kind: 'project', flag: '-project', name: 'Native' },
+      derivedDataPath: join(home, 'derived'),
+      productsDir: join(home, 'derived'),
+      durationMs: 1,
+      transcriptLines: 1,
+      compilationCache: xcode.COMPILATION_CACHE_NOT_RUN,
+    };
+  });
+  const existing = { udid: 'existing-device', devicePlacement: { machine: 'paired-host' } };
+  writeWorkspaceState(root, { ios: existing });
+  const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
+  const cold = await buildIosOperation(root, options);
+  const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
+  const warm = await buildIosOperation(root, options);
+  expect(warm).toMatchObject({ cacheHit: 'local', cacheSkipped: false, cacheKey: cold.cacheKey });
+  expect(compile).toHaveBeenCalledTimes(1);
+  write(join(root, 'Native.swift'), 'struct EditedApp {}');
+  const edited = await buildIosOperation(root, options);
+  expect(edited.cacheKey).not.toBe(cold.cacheKey);
+  expect(compile).toHaveBeenCalledTimes(2);
+  rmSync(join(home, 'derived'), { recursive: true });
+  expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
+  expect(readFileSync(join(edited.appPath, 'Native'), 'utf8')).toBe('struct EditedApp {}');
+  expect(readWorkspaceState(root)?.ios).toEqual(existing);
+  expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
 });

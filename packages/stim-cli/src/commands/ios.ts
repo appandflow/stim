@@ -345,6 +345,7 @@ function iosArtifactTargetInputs({
     },
     device: physical
       ? {
+          udid,
           lanAddress,
           metroPort,
           signingName: iosSigningIdentitySetting(settings),
@@ -581,6 +582,11 @@ async function runIos(
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
+  const cachePolicy = artifactCachePolicy(
+    optimizations,
+    opts.buildCache !== false,
+    integration.runtimeKind(configuration) === 'embedded-js',
+  );
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);
   const runtime = resolveRuntime(opts.runtime, settings);
@@ -785,11 +791,6 @@ async function runIos(
     let lanOriginUrl: string | null = null;
     let devServer: DevServerStart | null = null;
     const appRuntime = composeRuntime();
-    const cachePolicy = artifactCachePolicy(
-      optimizations,
-      opts.buildCache !== false,
-      appRuntime.kind === 'embedded-js',
-    );
     const preparation = await appRuntime.prepare();
     if (!preparation.ok) return fail(preparation.error);
     const runtimePreparation = preparation.prepared;

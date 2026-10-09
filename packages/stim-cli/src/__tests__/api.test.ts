@@ -78,6 +78,17 @@ test('a run refusal preserves its error and diagnostics and permits independent 
   expect((await stim.stop()).ok).toBe(true);
 });
 
+test('a build refusal preserves its error without starting or stopping a workspace runtime', async () => {
+  const { root, home, directory } = fixture('build-refusal');
+  const stim = createStim({ projectRoot: root, home });
+  await expect(stim.build({ platform: 'android' })).rejects.toMatchObject({
+    name: 'StimError',
+    code: 'STIM_NO_PROJECT',
+    details: { logs: directory },
+  });
+  expect(await stim.diagnostics()).toEqual({ directory, records: [] });
+});
+
 test('aborting a waiting operation leaves other clients usable and cleanup uses a fresh signal', async () => {
   const { root, home } = fixture('cancelled');
   const claim = tryAcquireClaim({
@@ -113,6 +124,9 @@ test('an already aborted request does not start work and invalid paths fail befo
   const controller = new AbortController();
   controller.abort();
   await expect(stim.run({ platform: 'ios', signal: controller.signal })).rejects.toBeInstanceOf(StimError);
+  await expect(stim.build({ platform: 'android', signal: controller.signal })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
   await expect(stim.diagnostics({ tail: -1 })).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
   expect(() => createStim({ projectRoot: root, home: './relative' })).toThrow('home must be an absolute path');
   expect(() => createStim({ projectRoot: join(root, 'missing') })).toThrowError(
