@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
+import { cleanupTmp, createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
 
 function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
   const home = mkdtempSync(join(tmpdir(), 'stim-native-cleanup-'));
@@ -311,4 +311,33 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
     f.output[field] = '';
   }
   await f.verify();
+});
+
+test('a failed JSON command keeps native ownership and diagnostics available to failure cleanup', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-native-failure-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const home = join(base, 'home');
+  const worktree = join(base, 'worktree');
+  mkdirSync(home);
+  mkdirSync(worktree);
+  const files = [
+    [join(home, 'created-devices.json'), 'ownership'],
+    [join(home, 'android-failure-diagnostics.json'), 'diagnostics'],
+    [join(worktree, 'package.json'), 'fixture'],
+  ];
+  for (const [path, content] of files) writeFileSync(path, content);
+  const cliPath = join(home, 'failing-cli.mjs');
+  writeFileSync(cliPath, "process.stderr.write('STIM_LAUNCH_FAILED: fixture launch failed'); process.exit(23);");
+  const h = createHarness({ env: { ...process.env, STIM_HOME: home }, cliPath, label: 'failure' });
+  let failure;
+  assert.throws(
+    () => h.cliJson(['android', '--json']),
+    (error) => {
+      assert.match(error.message, /failed \(exit 23\).*STIM_LAUNCH_FAILED/s);
+      failure = error;
+      return true;
+    },
+  );
+  cleanupTmp([worktree, home], failure);
+  for (const [path, content] of files) assert.equal(readFileSync(path, 'utf-8'), content);
 });
