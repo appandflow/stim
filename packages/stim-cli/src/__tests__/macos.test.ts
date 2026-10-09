@@ -1,4 +1,4 @@
-import { writeConfigSetting } from '../workspace/config.ts';
+import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -318,6 +318,17 @@ describe('macOS build placement and promotion', () => {
     expect(calls).toContainEqual(['plutil', ['-replace', 'CFBundleName', '-string', 'Sample \u00b7 wt', infoPlist]]);
     expect(order.indexOf('codesign --force')).toBeGreaterThan(order.lastIndexOf('plutil -replace'));
     expect(order.indexOf('codesign --verify')).toBeGreaterThan(order.indexOf('codesign --force'));
+  });
+
+  it('automatic placement never falls back to Swift when local is excluded', async () => {
+    const config = loadConfig()!;
+    config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
+    saveConfig(config);
+    vi.mocked(offload.chooseBuildMachine).mockResolvedValue('mini: offline');
+    await expect(build()).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
   it.each(['no-machine', 'worker-failed', 'bad-bundle', 'verification-failed'])(

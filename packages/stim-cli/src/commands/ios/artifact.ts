@@ -57,7 +57,7 @@ import {
 } from '../../offload/client.ts';
 import type { pairedMachines } from '../../offload/build-machines.ts';
 import { bundlerPin } from '../../engine/bundler.ts';
-import { namedBuildMachine, OffloadRefusal } from '../../offload/selection.ts';
+import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
 import { iosToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
@@ -302,6 +302,7 @@ export async function acquireIosArtifact(
       }),
     );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+    requireLocalBuild(buildMachine);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
     phase('build', `${line} -> building here`);
@@ -711,9 +712,11 @@ export async function acquireIosArtifact(
   }
 
   async function takeBuildSlot(): Promise<void> {
+    requireLocalBuild(buildMachine);
     if (!maxBuilds) return;
     try {
       buildSlot = await d.acquireBuildSlot({
+        automatic: buildMachine === 'auto',
         max: maxBuilds,
         root,
         logFile,
@@ -722,6 +725,7 @@ export async function acquireIosArtifact(
       });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (e) {
+      requireLocalBuild(buildMachine);
       const refusal = claimFailure(e, 'stim ios');
       if (refusal) {
         fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
@@ -743,8 +747,9 @@ export async function acquireIosArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
-    const { mode, machines } = buildPlacementCandidates(buildMachine);
-    if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
+    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
+      return null;
     const runtime =
       physical || release ? null : (hostedDestination?.runtime ?? (remoteDestination ? null : simulatorRuntime(udid)));
     const unsupported = physical
@@ -759,7 +764,14 @@ export async function acquireIosArtifact(
               ? `the runtime of simulator ${udid} is unknown`
               : null;
     const here = machineCapacity();
-    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
+    const placement = offloadPlacement({
+      mode,
+      localEnabled,
+      machines: machines.length,
+      here,
+      unsupported,
+      selected: buildMachine,
+    });
     if (!placement.offload) {
       hereReason = placement.reason;
       logWriter().write(
@@ -1084,6 +1096,7 @@ export async function acquireIosArtifact(
         deviceSlotWaitMs: stats.deviceSlotWaitMs(),
       });
     }
+    requireLocalBuild(buildMachine);
     builtOn = 'here';
     buildFailure = { ...buildFailure, builtOn };
     phase('build', `compiling ${configuration || 'Debug'} with xcodebuild`);

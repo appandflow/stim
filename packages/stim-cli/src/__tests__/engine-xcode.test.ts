@@ -12,14 +12,18 @@ import { readManifest } from '../cache/cache-manifest.ts';
 import {
   buildIos,
   ccacheEnabled,
-  COMPILATION_CACHE_MIN_XCODE,
-  compilationCacheActivityLine,
-  compilationCacheSettings,
+  reactNativeCompilationCacheSettings as compilationCacheSettings,
   detectReactNativeVersion,
-  detectSwiftVersion,
   parseReactNativeVersion,
-  parseSwiftVersion,
   discoverXcodeProject,
+  readPodfileProperties,
+} from '../integrations/react-native-build.ts';
+import {
+  COMPILATION_CACHE_MIN_XCODE,
+  buildXcode,
+  compilationCacheActivityLine,
+  detectSwiftVersion,
+  parseSwiftVersion,
   findAppBundle,
   listSchemes,
   parseBundleExecutable,
@@ -27,7 +31,6 @@ import {
   parseCompilationCacheActivity,
   parseSchemeList,
   prefixMapping,
-  readPodfileProperties,
   pickAppBundle,
   pickScheme,
   pickXcodeProject,
@@ -1748,5 +1751,88 @@ describe('buildIos with a mocked executor', () => {
       TypeError,
     );
     await expect(() => buildIos({ root: tmp, logWriter: writer })).rejects.toThrow(TypeError);
+  });
+});
+
+describe('buildXcode with explicit project inputs', () => {
+  test('builds a root-level Debug project with explicit cache settings and resolves its product', async () => {
+    const project = { flag: '-project', path: join(tmp, 'Native.xcodeproj'), dir: tmp, name: 'Native' };
+    mkdirSync(project.path);
+    const dd = join(tmp, 'derived');
+    const app = join(productsDir(dd), 'Native.app');
+    mkdirSync(app, { recursive: true });
+    const child = fakeChild();
+    const calls: { cmd: string; args: readonly string[]; cwd: string | URL | undefined }[] = [];
+    const exec = makeExecutor({
+      runQuiet: () => {
+        throw new Error('explicit cache settings must skip toolchain probes');
+      },
+      runFile: (file, args = []) => {
+        if (file === 'xcodebuild' && args.includes('-list'))
+          return '{"project":{"name":"Native","schemes":["Native"]}}';
+        if (file === 'plutil') return '{"CFBundleIdentifier":"com.example.native","CFBundleExecutable":"Native"}';
+        throw new Error(`unexpected probe ${file} ${args.join(' ')}`);
+      },
+      spawn: (cmd, args, opts) => {
+        calls.push({ cmd, args: args ?? [], cwd: opts?.cwd });
+        return child as unknown as ChildProcess;
+      },
+    });
+    const promise = buildXcode({
+      root: tmp,
+      project,
+      compilationCache: ['SWIFT_ENABLE_COMPILE_CACHE=NO'],
+      udid: 'owned-simulator',
+      configuration: 'Debug',
+      sdk: 'iphonesimulator',
+      derivedDataPath: dd,
+      logWriter: recordingWriter(),
+      exec,
+    });
+    child.emit('close', 0, null);
+    const result = await promise;
+    assert(result.ok);
+    expect(result.appPath).toBe(app);
+    expect(result.bundleId).toBe('com.example.native');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.cmd).toBe('xcodebuild');
+    expect(calls[0]?.cwd).toBe(tmp);
+    expect(calls[0]?.args).toEqual([
+      '-project',
+      project.path,
+      '-scheme',
+      'Native',
+      '-configuration',
+      'Debug',
+      '-sdk',
+      'iphonesimulator',
+      '-destination',
+      'id=owned-simulator',
+      '-derivedDataPath',
+      dd,
+      'build',
+      'SWIFT_ENABLE_COMPILE_CACHE=NO',
+    ]);
+  });
+
+  test('an invalid scheme refuses before a lazy cache plan probes or a build starts', async () => {
+    const result = await buildXcode({
+      root: tmp,
+      project: { flag: '-project', path: join(tmp, 'Native.xcodeproj'), dir: tmp, name: 'Native' },
+      scheme: 'Missing',
+      udid: 'owned-simulator',
+      logWriter: recordingWriter(),
+      compilationCache: () => {
+        throw new Error('invalid schemes must skip cache preparation');
+      },
+      exec: makeExecutor({
+        runFile: () => '{"project":{"name":"Native","schemes":["Native"]}}',
+        spawn: () => {
+          throw new Error('invalid schemes must not spawn');
+        },
+      }),
+    });
+    assert(!result.ok);
+    expect(result.code).toBe('STIM_NO_SCHEME');
   });
 });

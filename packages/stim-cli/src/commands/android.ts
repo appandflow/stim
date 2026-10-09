@@ -6,6 +6,7 @@ import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
 import { parseMachine } from '@stim-cli/core/state';
+import { buildAndroid } from '../integrations/react-native-build.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -24,7 +25,7 @@ import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import { appProjectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
+import { projectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import {
   resolveCacheProviderConfig,
@@ -111,7 +112,7 @@ import {
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 import { planPrebuild, runPrebuild } from '../engine/prebuild.ts';
-import { buildAndroid } from '../engine/gradle.ts';
+
 import { CCACHE_NOT_RUN, resolveCcache } from '../engine/ccache.ts';
 import { swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
@@ -732,9 +733,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) {
-    const { message, remedy } = projectProblem;
+  const problem = projectProblem(root, 'android');
+  if (problem) {
+    const { message, remedy } = problem;
     out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
@@ -882,6 +883,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
   const deviceSlotWait = {
+    automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),

@@ -16,28 +16,35 @@ import { join } from 'node:path';
 import { androidHome } from '../devices/android.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
-  ASSEMBLE_TASK,
-  BUILD_ERROR,
-  androidSdkRefusal,
   apkOutputsDir,
-  assembleTaskFor,
   buildAndroid as buildAndroidImpl,
   debugApkDir,
   discoverAndroidProject,
-  gradleArgs,
   gradlewPath,
-  locateApk,
+  readProductFlavors,
+  productFlavorRefusal,
+} from '../integrations/react-native-build.ts';
+import {
+  ASSEMBLE_TASK,
+  BUILD_ERROR,
+  buildGradle,
+  androidSdkRefusal,
+  assembleTaskFor,
+  gradleArgs,
+  locateApk as locateProjectApk,
   parseApkFromTranscript,
   parseOutputMetadata,
   parseProductFlavors,
   pickDebugApk,
-  productFlavorRefusal,
-  readProductFlavors,
   variantNameOf,
 } from '../engine/gradle.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { makeWriter } from './_factories.ts';
+
+function locateApk(root: string, transcript = '', variant: string | null = null) {
+  return locateProjectApk({ directory: join(root, 'android'), outputsDir: apkOutputsDir(root) }, transcript, variant);
+}
 
 let root: string;
 let sdk: string;
@@ -111,7 +118,12 @@ describe('discoverAndroidProject', () => {
 
 describe('androidSdkRefusal', () => {
   test('refuses with the ANDROID_HOME remedy when nothing points at an SDK', () => {
-    const refusal = androidSdkRefusal({ sdkPath: '/nope', sdkExists: false, hasLocalProperties: false });
+    const refusal = androidSdkRefusal({
+      sdkPath: '/nope',
+      sdkExists: false,
+      hasLocalProperties: false,
+      localPropertiesPath: 'android/local.properties',
+    });
     assert(refusal);
     expect(refusal.code).toBe(BUILD_ERROR);
     expect(refusal.remedy).toMatch(/ANDROID_HOME/);
@@ -119,8 +131,22 @@ describe('androidSdkRefusal', () => {
   });
 
   test('an existing SDK, or a local.properties, is enough', () => {
-    expect(androidSdkRefusal({ sdkPath: '/sdk', sdkExists: true, hasLocalProperties: false })).toBe(null);
-    expect(androidSdkRefusal({ sdkPath: '/nope', sdkExists: false, hasLocalProperties: true })).toBe(null);
+    expect(
+      androidSdkRefusal({
+        sdkPath: '/sdk',
+        sdkExists: true,
+        hasLocalProperties: false,
+        localPropertiesPath: 'android/local.properties',
+      }),
+    ).toBe(null);
+    expect(
+      androidSdkRefusal({
+        sdkPath: '/nope',
+        sdkExists: false,
+        hasLocalProperties: true,
+        localPropertiesPath: 'android/local.properties',
+      }),
+    ).toBe(null);
   });
 });
 
@@ -354,14 +380,6 @@ describe('gradleArgs', () => {
 
   test('explicitly disables even a project-enabled Gradle build cache', () => {
     expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug', '--no-build-cache']);
-  });
-
-  test('limits React Native native compilation to a proven target ABI', () => {
-    expect(gradleArgs('assembleDebug', { abi: 'arm64-v8a' })).toEqual([
-      'assembleDebug',
-      '--build-cache',
-      '-PreactNativeArchitectures=arm64-v8a',
-    ]);
   });
 });
 
@@ -750,13 +768,14 @@ describe('buildAndroid', () => {
     }
   });
 
-  test('a missing Android SDK is reported before anything is spawned', async () => {
+  test('a missing Android SDK refuses before the RN Windows path bound and spawn', async () => {
     makeAndroidProject();
     process.env.ANDROID_HOME = join(root, 'no-such-sdk');
     let spawned = false;
     const result = await buildAndroid(
       { root, logWriter: recordingWriter() },
       {
+        platform: 'win32',
         spawnFn: () => {
           spawned = true;
           return fakeChild();
@@ -765,6 +784,7 @@ describe('buildAndroid', () => {
     );
     expect(spawned).toBe(false);
     assert(!result.ok);
+    expect(result.code).toBe(BUILD_ERROR);
     expect(result.remedy).toMatch(/ANDROID_HOME/);
   });
 
@@ -1165,4 +1185,87 @@ test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gra
   }
   expect(profiles[0]).toMatch(/^[a-f0-9]{16}$/);
   expect(profiles[0]).not.toBe(profiles[1]);
+});
+
+describe('buildGradle with explicit project inputs', () => {
+  function projectAtRoot() {
+    return {
+      directory: root,
+      gradlew: join(root, 'gradlew'),
+      module: ':mobile',
+      outputsDir: join(root, 'products', 'apk'),
+    };
+  }
+
+  test('a root wrapper builds the selected module and reads its metadata without RN layout or ABI arguments', async () => {
+    const project = projectAtRoot();
+    const output = join(project.outputsDir, 'debug');
+    const apk = join(output, 'mobile.apk');
+    mkdirSync(output, { recursive: true });
+    writeFileSync(apk, 'selected module');
+    writeFileSync(join(output, 'output-metadata.json'), JSON.stringify({ elements: [{ outputFile: 'mobile.apk' }] }));
+    writeFileSync(join(root, 'local.properties'), 'sdk.dir=/configured/by/project');
+    const result = await buildGradle(
+      { root, project, task: ':mobile:assembleDebug' },
+      {
+        env: { ANDROID_HOME: join(root, 'absent-sdk') },
+        spawnFn: (cmd, args, opts) => {
+          expect(cmd).toBe(project.gradlew);
+          expect(opts.cwd).toBe(root);
+          expect(args[0]).toBe(':mobile:assembleDebug');
+          expect(args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL'] });
+        },
+      },
+    );
+    assert(result.ok);
+    expect(result.apkPath).toBe(apk);
+    expect(existsSync(join(root, 'android'))).toBe(false);
+  });
+
+  test('relative transcript output resolves against the supplied Gradle directory', async () => {
+    const project = projectAtRoot();
+    const apk = join(root, 'custom-mobile.apk');
+    writeFileSync(apk, 'selected module');
+    const result = await buildGradle(
+      { root, project, task: ':mobile:assembleDebug' },
+      { spawnFn: () => fakeChild({ lines: ['Wrote APK to custom-mobile.apk'] }) },
+    );
+    assert(result.ok);
+    expect(result.apkPath).toBe(apk);
+  });
+
+  test.each([null, 'stagingDebug'])(
+    'missing selected output refuses rather than falling back to android/app (%s)',
+    async (variant) => {
+      const project = projectAtRoot();
+      writeApk();
+      writeFlavoredApk('staging', 'debug', 'app-staging-debug.apk');
+      const result = await buildGradle(
+        { root, project, task: ':mobile:assembleDebug', variant },
+        { spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL'] }) },
+      );
+      assert(!result.ok);
+      expect(result.reason).toContain(project.outputsDir);
+      expect(result.remedy).toContain(variant ? ':mobile:tasks' : ':mobile:assembleDebug');
+      expect(result.remedy).not.toContain(':mobile::mobile');
+      expect(result.remedy).not.toContain(':app');
+      expect(result).not.toHaveProperty('apkPath');
+    },
+  );
+
+  test('missing SDK points at the supplied local.properties and refuses before spawning', async () => {
+    const result = await buildGradle(
+      { root, project: projectAtRoot(), task: ':mobile:assembleDebug' },
+      {
+        env: { ANDROID_HOME: join(root, 'absent-sdk') },
+        spawnFn: () => {
+          throw new Error('SDK refusal must not spawn');
+        },
+      },
+    );
+    assert(!result.ok);
+    expect(result.remedy).toContain('into local.properties');
+    expect(result.remedy).not.toContain('android/local.properties');
+  });
 });

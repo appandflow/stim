@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
         'agent-skills',
         'cache-packages',
         'programmatic-api',
+        'ci',
       ],
     },
     'changelog',

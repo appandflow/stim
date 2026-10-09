@@ -226,3 +226,21 @@ test('a full Mac marks the local result so the caller asks EAS, and keeps the wa
     skipped: [{ machine: 'eas', code: 'eas-no-cli' }],
   });
 });
+
+test('an excluded local device never becomes a fallback or triggers EAS without the existing capacity condition', () => {
+  const excluded = { ...here, localEnabled: false };
+  expect(decide(excluded, [offered('slower', 9)])).toMatchObject({ kind: 'host', machines: [{ machine: 'slower' }] });
+  expect(decide({ ...excluded, devices: { ...here.devices, count: null } })).toMatchObject({ kind: 'host' });
+  expect(decide(excluded, [], { eas: { usable: true } })).toMatchObject({ kind: 'refused' });
+  expect(decide({ ...full, localEnabled: false }, [], { eas: { usable: true } })).toMatchObject({ kind: 'eas' });
+  expect(
+    decide({ ...excluded, devices: { count: 1, max: 0, queued: 1 } }, [], { eas: { usable: true } }),
+  ).toMatchObject({ kind: 'eas' });
+  expect(
+    decide({ ...excluded, devices: { count: null, max: 3, queued: 1 } }, [], { eas: { usable: true } }),
+  ).toMatchObject({ kind: 'refused' });
+  expect(decide(excluded, [{ machine: 'mini', failure: 'offline' }])).toMatchObject({
+    kind: 'refused',
+    skipped: [{ machine: 'mini', reason: 'offline' }],
+  });
+});
