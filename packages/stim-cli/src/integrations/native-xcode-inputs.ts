@@ -10,7 +10,7 @@ export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
 }
 
-function nativeXcodeMetadataDirectories(selection: NativeXcodeSelection): string[] {
+export function nativeXcodeMetadataDirectories(selection: NativeXcodeSelection): string[] {
   const workspaces = selection.projects.map((project) => join(project.path, 'project.xcworkspace'));
   if (selection.container.kind === 'workspace') workspaces.push(selection.container.path);
   return workspaces.flatMap((workspace) => [
