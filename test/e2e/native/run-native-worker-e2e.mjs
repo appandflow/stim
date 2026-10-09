@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -104,6 +105,8 @@ const summary = {
   source: process.env.GITHUB_SHA,
   transport: 'synthetic Tailnet identity over verified loopback TLS',
   runs: [],
+  debugLogs: [],
+  diagnostics: [],
   failure: null,
   cleanup: null,
 };
@@ -422,6 +425,25 @@ try {
   } catch (error) {
     failures.push(error.message);
   }
+  for (const [label, directory] of [
+    ['client', home],
+    ['host', hostHome],
+  ]) {
+    try {
+      const logs = join(directory, 'logs', 'debug');
+      assert(existsSync(join(logs, 'cli.ndjson')), `${label} CLI debug log is missing.`);
+      for (const name of ['cli.ndjson', 'cli.ndjson.1', 'server.ndjson', 'server.ndjson.1']) {
+        const file = join(logs, name);
+        if (!existsSync(file)) continue;
+        assert(statSync(file).size <= 10 * 1024 * 1024, `${label}/${name} exceeds the evidence limit.`);
+        const destination = `${label}-${name}`;
+        writeFileSync(join(evidence, destination), redact(readFileSync(file, 'utf8')));
+        summary.debugLogs.push(destination);
+      }
+    } catch (error) {
+      summary.diagnostics.push(`${label} debug evidence: ${error.message}`);
+    }
+  }
   summary.cleanup = { ok: failures.length === 0, failures };
   let recorded = false;
   try {
@@ -430,9 +452,9 @@ try {
   } catch (error) {
     console.error(redact(`Summary evidence failed: ${error.message}`));
   }
-  if (failures.length || !recorded) {
+  if (failures.length || summary.diagnostics.length || !recorded) {
     process.exitCode = 1;
-    console.error(`Retained task state at ${root}: ${failures.join('; ')}`);
+    console.error(`Retained task state at ${root}: ${[...failures, ...summary.diagnostics].join('; ')}`);
   } else rmSync(root, { recursive: true, force: true });
 }
 if (summary.failure) console.error(summary.failure);
