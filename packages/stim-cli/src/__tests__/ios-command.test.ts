@@ -8263,6 +8263,24 @@ describe('strict remote Mac selection', () => {
     );
   });
 
+  test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
+    reserve();
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: offline');
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await run({ remoteBuild: 'auto', json: true }, { buildIos: build, acquireBuildSlot: slot });
+    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    const path = join(root, 'cached.app');
+    mkdirSync(path, { recursive: true });
+    const cached = await run({ remoteBuild: 'auto' }, { resolveBuild: () => path, buildIos: build });
+    expect(cached.exitCode).toBeNull();
+    expect(build).not.toHaveBeenCalled();
+  });
+
   test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {
     reserve();
     configureMini();

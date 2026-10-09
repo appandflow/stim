@@ -882,6 +882,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
   const deviceSlotWait = {
+    automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),

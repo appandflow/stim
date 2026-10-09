@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -557,6 +557,25 @@ describe('strict client routing', () => {
       note: () => {},
     });
 
+  it('automatic placement skips disabled remotes but an explicit name still connects', async () => {
+    mkdirSync(join(root, 'home'), { recursive: true });
+    writeFileSync(join(root, 'home', 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['mini'] } }));
+    const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue({ failure: 'offline' });
+    await chooseBuildMachine({
+      projectRoot: root,
+      selected: 'auto',
+      target: IOS,
+      mode: 'force',
+      here: IDLE,
+      machines: credentials,
+      note: () => {},
+    });
+    expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['other']);
+    open.mockClear();
+    await choose();
+    expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
+  });
+
   it.each(['unreachable', 'approval-pending', 'forbidden', 'pinned identity changed'])(
     'strict %s never probes another configured worker',
     async (reason) => {
@@ -565,6 +584,55 @@ describe('strict client routing', () => {
       expect(open.mock.calls.map(([endpoint]) => endpoint.url)).toEqual(['mini']);
     },
   );
+
+  it('a member disabled during source sync receives no new remote build', async () => {
+    mkdirSync(join(root, 'home'), { recursive: true });
+    const request = vi.fn<BuildConnection['request']>().mockImplementation(async (method) => {
+      if (method === 'build.offer') return { result: offer() };
+      if (method === 'build.sync') {
+        writeFileSync(join(root, 'home', 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['mini'] } }));
+        return { result: { missing: [] } };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    const close = vi.fn<() => void>();
+    const connection = Object.assign(Object.create(BuildConnection.prototype), {
+      request,
+      close,
+      onProgress: () => {},
+    }) as BuildConnection;
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
+    const choice = await chooseBuildMachine({
+      projectRoot: root,
+      selected: 'auto',
+      target: IOS,
+      mode: 'force',
+      here: IDLE,
+      machines: [credentials[0]!],
+      note: () => {},
+    });
+    assert(typeof choice !== 'string');
+    const outcome = await offloadBuild({
+      choice,
+      expectedFingerprint: 'fingerprint',
+      request: {
+        platform: 'ios',
+        runtime: RUNTIME,
+        configuration: null,
+        scheme: null,
+        isExpo: false,
+        optimizations: {},
+      },
+      stagingDir: join(root, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(outcome).toMatchObject({ ok: false, machine: 'mini', reason: expect.stringContaining('disabled') });
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['build.offer', 'build.sync']);
+    expect(close).toHaveBeenCalled();
+  });
 
   it.each(['sync', 'start'])(
     'strict %s failure closes the chosen worker without trying another',
@@ -606,4 +674,29 @@ describe('strict client routing', () => {
       expect(close).toHaveBeenCalled();
     },
   );
+});
+
+test('excluded local builds require a remote regardless of relative load and refuse unsupported fallback', () => {
+  const base = {
+    selected: 'auto',
+    mode: 'auto' as const,
+    machines: 1,
+    here: IDLE,
+    unsupported: null,
+    localEnabled: false,
+  };
+  expect(offloadPlacement(base).offload).toBe(true);
+  for (const override of [{ machines: 0 }, { unsupported: 'Release builds build here' }, { mode: 'off' as const }])
+    expect(() => offloadPlacement({ ...base, ...override })).toThrow('local is disabled');
+  expect(offloadPlacement({ ...base, selected: 'local' }).offload).toBe(false);
+  expect(
+    pickOffer({
+      selected: 'auto',
+      mode: 'auto',
+      here: IDLE,
+      localEnabled: false,
+      target: IOS,
+      offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 9 }) }) }],
+    }).order,
+  ).toEqual([0]);
 });

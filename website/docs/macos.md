@@ -131,7 +131,10 @@ or `--remote-build local`.
 
 With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved remote Mac when one accepts,
-and `off` always builds here. Configure `remote.machines` and approve build
+and `off` builds here when local remains in the automatic build pool.
+[`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
+members from automatic placement and its local fallback; explicit local or named
+placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and

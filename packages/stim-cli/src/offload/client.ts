@@ -15,6 +15,8 @@ import { basename, dirname, join, relative } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
+  automaticMachineEnabled,
+  requireAutomaticMachine,
   isJsonObject,
   runId,
   OFFLOAD_MODES,
@@ -59,15 +61,21 @@ function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
-export function buildPlacementCandidates(selected: string): { mode: OffloadMode; machines: BuildMachineCredential[] } {
+export function buildPlacementCandidates(selected: string): {
+  mode: OffloadMode;
+  machines: BuildMachineCredential[];
+  localEnabled: boolean;
+} {
+  const config = loadConfig();
   return {
+    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local', config),
     mode: selected === 'local' ? 'off' : offloadMode(),
     machines:
       selected === 'local'
         ? []
         : namedBuildMachine(selected)
           ? pairedMachines([selected]).slice(0, 1)
-          : pairedMachines(),
+          : pairedMachines().filter((entry) => automaticMachineEnabled('build', entry.machine, config)),
   };
 }
 
@@ -102,6 +110,7 @@ export function offloadPlacement({
   machines,
   here,
   unsupported,
+  localEnabled = true,
   selected = 'auto',
 }: {
   selected?: string;
@@ -109,6 +118,7 @@ export function offloadPlacement({
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
+  localEnabled?: boolean;
 }): { offload: boolean; code: string; reason: string } {
   if (namedBuildMachine(selected)) {
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote Mac cannot take it`);
@@ -116,6 +126,14 @@ export function offloadPlacement({
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
   if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
+  if (!localEnabled) {
+    const reason =
+      mode === 'off'
+        ? 'remote.buildMode is off'
+        : (unsupported ?? (machines === 0 ? 'no enabled remote Mac is paired' : null));
+    if (reason) throw new OffloadRefusal('auto', `${reason}; local is disabled in remote.buildPoolDisabled`);
+    return { offload: true, code: 'local-disabled', reason: 'local is disabled in remote.buildPoolDisabled' };
+  }
   if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote Mac is paired' };
   if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
@@ -178,11 +196,13 @@ export function pickOffer({
   here,
   offers,
   target,
+  localEnabled = true,
   selected = 'auto',
 }: {
   mode: OffloadMode;
   here: MachineCapacity;
   selected?: string;
+  localEnabled?: boolean;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
 }): { order: number[]; reasons: string[]; candidates: PlacementCandidate[] } {
@@ -207,7 +227,7 @@ export function pickOffer({
       );
     }
     const load = offer.capacity.loadPerCore;
-    if (selected === 'auto' && mode === 'auto' && !slotsFull) {
+    if (selected === 'auto' && localEnabled && mode === 'auto' && !slotsFull) {
       if (typeof load !== 'number') {
         return skip(machine, 'load', 'capacity unknown (older stim-server) while this Mac has a free slot');
       }
@@ -626,6 +646,7 @@ export interface OffloadChoice extends OfferingMachine {
   offerMs: number;
   identity: RepoIdentity;
   runnersUp: OfferingMachine[];
+  automatic?: boolean;
 }
 
 /** Closes every connection the choice still holds. */
@@ -696,9 +717,11 @@ export async function chooseBuildMachine({
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
+  else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
   const asked = await Promise.all(machines.map((credential) => probeMachine(credential, { ...identity, rubyVersion })));
   const { order, reasons, candidates } = pickOffer({
+    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local'),
     selected,
     mode,
     here,
@@ -730,6 +753,7 @@ export async function chooseBuildMachine({
     offerMs: Date.now() - started,
     identity,
     runnersUp: rest,
+    automatic: selected === 'auto',
   };
 }
 
@@ -944,6 +968,11 @@ export async function offloadBuild({
       return true;
     };
     for (;;) {
+      if (choice.automatic && !automaticMachineEnabled('build', choice.machine)) {
+        const reason = `${choice.machine} is disabled in remote.buildPoolDisabled`;
+        if (moveOn(reason)) continue;
+        return fail(reason);
+      }
       const synced = await syncSource(choice.connection, identity, onEnter);
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
@@ -957,6 +986,7 @@ export async function offloadBuild({
       workerStarted = Date.now();
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
+      if (choice.automatic) requireAutomaticMachine('build', choice.machine);
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
         project: identity.project,
