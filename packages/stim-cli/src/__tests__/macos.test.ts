@@ -203,7 +203,9 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
     mkdirSync(join(executable, '..'), { recursive: true });
     if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
-    const child = getExecutor().spawn(executable, ['-e', `${script}; setInterval(() => {}, 1000)`], { stdio: 'ignore' });
+    const child = getExecutor().spawn(executable, ['-e', `${script}; setInterval(() => {}, 1000)`], {
+      stdio: 'ignore',
+    });
     children.push(child);
     return child;
   }
@@ -246,7 +248,10 @@ describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned b
     writeWorkspaceState(root, { macos: record({ app: { ...bystander, processToken: 'invalid' } }) });
     const result = await reclaimProject(root, { deleteOwnedDevices: false });
     expect(result.keptEntry).toBe(true);
-    expect(result.failedDevices[0]).toMatchObject({ name: 'macOS app', reason: expect.stringContaining('Cannot verify') });
+    expect(result.failedDevices[0]).toMatchObject({
+      name: 'macOS app',
+      reason: expect.stringContaining('Cannot verify'),
+    });
     expect(inspectProcessIdentity(bystander)).toBe('same');
     expect(existsSync(macosDir(root))).toBe(true);
   });
