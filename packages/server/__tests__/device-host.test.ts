@@ -165,7 +165,7 @@ if(input.mode === 'inspect') {
       writeFileSync(join(workspace,'state.json'),JSON.stringify({macos}));
       writeFileSync(join(home,'hosted-macos-app.json'),JSON.stringify({bundleId}));
     }
-    out({state:'installed',device:stored,launched:app.mode === 'release' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
+    out({state:'installed',device:stored,launched:app.mode !== 'development' ? true : 'unverified',...(input.platform === 'macos' ? {pid:4242} : {})});
   }
 } else {
   writeFileSync(join(home,'stopped'),String(process.pid));
@@ -1022,20 +1022,28 @@ test('refuses app mutations after the real session owner disappears until explic
   await state(retained.session, 'stopped');
 });
 
-test.each(['ios', 'android', 'macos'])(
-  'resumes %s app bytes and reconciles a lost install reply without another native launch',
-  async (platform) => {
+test.each([
+  ['ios', 'release'],
+  ['android', 'release'],
+  ['macos', 'release'],
+  ['ios', 'process'],
+])(
+  'resumes %s %s app bytes and reconciles a lost install reply without another native launch',
+  async (platform, mode) => {
     const validator = new Ajv2020({ strict: false, validateFormats: false });
     validator.addSchema(protocolJsonSchema(), 'protocol');
     const acceptsDelivery = validator.compile({ $ref: 'protocol#/$defs/HostedAppDelivery' });
+    const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
     const first = await reserve({ platform });
     await state(first.id, 'ready');
     const app = appOffer(first.id, 'app-first', platform);
     const { content, sha256 } = app;
     const params = {
       ...app.params,
+      mode,
       ...(platform === 'macos' ? { arguments: ['-autopilot.enabled', 'true', ''] } : {}),
     };
+    expect(acceptsRequest({ id: 1, method: 'device-host.app.offer', params })).toBe(true);
     expect(host.appOffer('other', params)).toHaveProperty('error');
     expect(host.appOffer('client', params)).toHaveProperty('result.missing.0.offset', 0);
     const receiving = host.appAttach('client', params);
@@ -1062,6 +1070,9 @@ test.each(['ios', 'android', 'macos'])(
     ).toHaveProperty('result.offset', content.length);
     expect(host.appOffer('client', params)).toHaveProperty('result.missing', []);
     expect(host.appOffer('client', { ...params, bundleId: 'different.app' })).toHaveProperty('error');
+    expect(host.appOffer('client', { ...params, mode: mode === 'process' ? 'release' : 'process' })).toHaveProperty(
+      'error',
+    );
     for (const args of platform === 'macos'
       ? [undefined, ['-autopilot.enabled', 'false'], ['true', '-autopilot.enabled', '']]
       : [])
@@ -1078,6 +1089,7 @@ test.each(['ios', 'android', 'macos'])(
     for (const answer of [installed, host.appLaunch('client', params)]) {
       if ('error' in answer) throw new Error(answer.error.message);
       expect(answer.result.launched).toBe(true);
+      expect(answer.result.mode).toBe(mode);
       expect(acceptsDelivery(answer.result)).toBe(true);
       expect(answer.result.arguments).toEqual(params.arguments);
       expect(answer.result.agent).toEqual({ driver: 'none' });
@@ -3486,4 +3498,16 @@ test('devices formats hosted rows as single safe lines and omits an empty Hosted
     'ClientMac  ios  iPhone(27.1)  dev.fixture.app  unknown  since 2026-10-07T00:00:00.000Z',
     `client  ios  -  -  unknown  since ${record.createdAt}`,
   ]);
+});
+
+test.each(['android', 'macos'])('process offers do not broaden %s session app admission', async (platform) => {
+  const first = await reserve({ platform });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'native', platform);
+  expect(host.appOffer('client', { ...app.params, mode: 'process' })).toHaveProperty(
+    'error.message',
+    'Process-mode app offers are supported only for hosted iOS sessions.',
+  );
+  expect(existsSync(join(deviceHostArea(first.id), 'apps', 'native', 'receipt.json'))).toBe(false);
+  expect(host.appOffer('client', app.params)).toHaveProperty('result');
 });

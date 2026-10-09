@@ -100,7 +100,7 @@ export function protocolJsonSchema(): JsonSchema {
           session: { type: 'string' },
           attempt: { type: 'string' },
           bundleId: { type: 'string' },
-          mode: { enum: ['development', 'release'] },
+          mode: { enum: ['development', 'release', 'process'] },
           devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
           arguments: {
             type: 'array',
@@ -1090,7 +1090,7 @@ export function protocolJsonSchema(): JsonSchema {
               {
                 attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
                 bundleId: { type: 'string' },
-                mode: { enum: ['development', 'release'] },
+                mode: { enum: ['development', 'release', 'process'] },
                 devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
                 arguments: {
                   type: 'array',

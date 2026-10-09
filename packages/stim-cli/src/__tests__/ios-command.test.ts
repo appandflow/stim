@@ -9015,6 +9015,122 @@ describe('registered iOS project recipes', () => {
     },
   );
 
+  test.each(['Debug', 'Release'])(
+    'native %s automatic placement preserves local capacity refusal without inspecting unsupported EAS',
+    async (configuration) => {
+      nativeProject();
+      writeNativeXcodeProject(root);
+      const requests = compiler();
+      const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+      const result = await run(
+        { remote: 'auto', configuration, wait: false, json: true },
+        {
+          projectRegistry: createProjectRegistry(projectIntegrations),
+          resolveSettings: () => ({ remote: { easFallback: true } }),
+          getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
+          checkDeviceCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: 'at capacity' }),
+          checkEasFallback,
+          automaticDevicePlacement: (args) =>
+            automaticDevicePlacement(args, {
+              machines: () => [],
+              peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+              capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+              memory: () => 'normal',
+              budget: async () => null,
+            }),
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_AT_CAPACITY' });
+      expect(checkEasFallback).not.toHaveBeenCalled();
+      expect(requests).toEqual([]);
+      expect(result.calls.order).not.toContain('ensureOwnedDevice');
+      expect(result.calls.order).not.toContain('installIosApp');
+      expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'local' } });
+    },
+  );
+
+  test.each(['Debug', 'Release', 'Staging'])(
+    'the native Xcode provider delivers cached %s artifacts in hosted process mode without Metro',
+    async (configuration) => {
+      nativeProject();
+      writeNativeXcodeProject(root);
+      const requests = compiler(() => {}, join(tmpHome, 'native-products'));
+      const hostDevice = {
+        udid: 'host-owned',
+        name: 'stim-hosted',
+        deviceType: 'iPhone',
+        deviceTypeId: 'iphone',
+        runtime: '27.0',
+        runtimeId: 'ios27',
+        architecture: 'x86_64' as const,
+      };
+      const placement: HostedIosPlacement = {
+        machine: 'mini',
+        selected: 'mini',
+        session: '12345678-1234-1234-1234-123456789abc',
+        appAttempt: 'native',
+        device: hostDevice,
+        agent: { driver: 'none', setting: 'hosting.agentDriver' },
+      };
+      const modes: unknown[] = [];
+      const delivered: unknown[] = [];
+      const deps: LooseDeps = {
+        projectRegistry: createProjectRegistry(projectIntegrations),
+        readBundleId,
+        readBundleExecutable,
+        listAllIosSims: () => [{ udid: UDID, state: 'Shutdown', name: 'stim-fixture' }],
+        resolveSettings: () => ({ optimizations: { releaseBundleSwap: false } }),
+        prepareHostedIos: async (_machine, _selectors, _recorded, mode) => {
+          modes.push(mode);
+          return { host: { machine: 'mini', connection: { close() {} } }, choice: hostDevice, session: null };
+        },
+        placeHostedIos: async (_target, options) => {
+          delivered.push({ mode: options.mode, release: options.release, devClientScheme: options.devClientScheme });
+          options.reserved(placement);
+          return { placement, launched: true };
+        },
+      };
+      for (const cacheHit of [false, 'local']) {
+        const result = await run({ remote: 'mini', configuration, metroCheck: false, json: true }, deps);
+        expect(result.exitCode).toBe(null);
+        expect(parseFirst(result.logs)).toMatchObject({
+          configuration,
+          cacheHit,
+          launched: true,
+          metroPort: null,
+          host: { machine: 'mini' },
+        });
+        for (const forbidden of [
+          'startDevServer',
+          'fingerprintProject',
+          'runPrebuild',
+          'buildIos',
+          'swapJsBundle',
+          'verifyLaunch',
+          'ensureOwnedDevice',
+          'ensureBooted',
+          'installIosApp',
+          'launchIosApp',
+        ])
+          expect(result.calls.order).not.toContain(forbidden);
+      }
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.args).toEqual(
+        expect.arrayContaining(['-configuration', configuration, '-destination', 'generic/platform=iOS Simulator']),
+      );
+      expect(readWorkspaceLaunches(root).ios).toMatchObject({
+        runtime: 'process',
+        metroPort: null,
+        deviceId: placement.session,
+      });
+      expect(modes).toEqual(['process', 'process']);
+      expect(delivered).toHaveLength(2);
+      for (const delivery of delivered)
+        expect(delivery).toEqual({ mode: 'process', release: configuration !== 'Debug', devClientScheme: undefined });
+    },
+  );
+
   test('a recipe refusing fresh materialization cleans its owned copy and never installs', async () => {
     nativeProject();
     compiler();

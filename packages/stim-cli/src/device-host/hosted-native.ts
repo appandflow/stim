@@ -19,6 +19,7 @@ import {
   isJsonObject,
   type HostedDeviceSelectors,
   type HostedIosChoice,
+  type HostedAppOffer,
   hostedNativeRecords,
   parseHostedNativePlacement,
   unreadableHostedNative,
@@ -26,6 +27,7 @@ import {
 import {
   call,
   connectHost,
+  requireHostedAppMode,
   attach,
   hostedSession,
   settle,
@@ -71,12 +73,15 @@ export function prepareHostedNative(
   recorded: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice> | undefined,
   platform: 'ios' | 'android',
   resumeOnly: true,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null>;
 export function prepareHostedNative(
   machine: string,
   selectors: HostedDeviceSelectors,
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform?: 'ios' | 'android',
+  resumeOnly?: false,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget>;
 export async function prepareHostedNative(
   machine: string,
@@ -84,10 +89,12 @@ export async function prepareHostedNative(
   recorded?: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>,
   platform: 'ios' | 'android' = 'ios',
   resumeOnly = false,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedNativeTarget | null> {
   let host: HostConnection | undefined;
   try {
     host = await connectHost(machine, undefined, true);
+    requireHostedAppMode(host, platform, mode);
     if (recorded) {
       let session: HostedSession | null = null;
       try {
@@ -190,6 +197,7 @@ export async function placeHostedNative(
     bundleId,
     selectors,
     release,
+    mode = release ? 'release' : 'development',
     devClientScheme,
     reserved,
     note,
@@ -206,6 +214,7 @@ export async function placeHostedNative(
     bundleId: string;
     selectors: HostedDeviceSelectors;
     release: boolean;
+    mode?: HostedAppOffer['mode'];
     devClientScheme?: string;
     reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
     note: (line: string) => void;
@@ -214,9 +223,10 @@ export async function placeHostedNative(
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
   try {
-    if (!release && metro === requestHostedMetro) requireHostedMetro(root);
+    if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
     host = await connectHost(host.machine, undefined, true);
     target.host = host;
+    requireHostedAppMode(host, platform, mode);
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
       (await reserveHostedNative(
@@ -261,7 +271,7 @@ export async function placeHostedNative(
       );
     placement = { ...placement, device };
     reserved(placement);
-    if (!release) {
+    if (mode === 'development') {
       const gateway = await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {
         session: session.id,
@@ -289,8 +299,8 @@ export async function placeHostedNative(
     const offer = {
       ...ids,
       bundleId,
-      mode: release ? 'release' : 'development',
-      ...(!release && devClientScheme ? { devClientScheme } : {}),
+      mode,
+      ...(mode === 'development' && devClientScheme ? { devClientScheme } : {}),
       manifest: { sha256: sha256(manifest), size: manifest.length },
     };
     note(
@@ -362,7 +372,7 @@ export async function placeHostedNative(
         platform,
       ),
     };
-    return { placement, launched: release && delivery.launched === true ? true : 'unverified' };
+    return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };
   } catch (error) {
     throw hostingRefusal(host.machine, error);
   } finally {

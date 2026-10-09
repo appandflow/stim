@@ -7,6 +7,7 @@ import {
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
+  type HostedAppOffer,
 } from '@stim-cli/core/state';
 import { BuildConnection } from '../offload/client.ts';
 import { pinnedEndpoint } from '../offload/tailnet.ts';
@@ -114,6 +115,19 @@ export async function connectHost(
     );
   }
   return { machine, credential, connection: opened };
+}
+
+export function requireHostedAppMode(
+  host: HostConnection,
+  platform: 'ios' | 'android',
+  mode?: HostedAppOffer['mode'],
+): void {
+  if (mode !== 'process') return;
+  if (platform !== 'ios' || !host.connection.supports('hosted-ios-process'))
+    throw credentialRefusal(
+      `${host.machine} does not support hosted ${platform} process apps.`,
+      `Update stim-server on ${host.machine} to a version supporting hosted iOS process apps, then retry.`,
+    );
 }
 
 const gatewaySecrets = new WeakMap<HostConnection, string>();
