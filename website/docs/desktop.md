@@ -83,26 +83,28 @@ opens the panel once for that tutorial path, after any open sheet closes.
 
 <img src="/img/desktop/tutorial-panel.png" alt="Stim Tutorial panel showing the agent actions step" width="320" />
 
-<PromptBox title="Run the Stim tutorial">
-{`Run the Stim tutorial.`}
+<PromptBox title="Get the test app">
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and run it on iOS with stim. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
 </PromptBox>
 
-The panel follows a small iOS app in its own worktree. It shows:
+The tutorial shows what worktree isolation and automated validation buy you.
+Two agents work on two changes at once, each in its own worktree with its own
+simulator and dev server, and each checks its own work on the device. The panel
+clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
+a tiny Expo app, and shows:
 
-- **Create the Tutorial / Workspace in Sidebar:** the run prompt and the new workspace.
-- **First iOS build:** build progress, phase timings and build failures.
-- **Rebuild from Cache:** the repeated build's cache hit or miss reason.
-- **Live View and Control:** Open the live view, then tap Log an error.
-- **App Logs:** find the tagged error; **Crash me** and **Slow request** are optional checks.
-- **Agent Actions and Replay:** watch the agent drive the simulator and inspect its recording. If recording is off, the panel points to Settings.
-- **Fast Refresh:** change the title to purple and watch the app update; new errors point to Logs.
-- **Watch on Your Phone:** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tour workspace is there". **Skip** stays available.
-- **Build on Another Mac:** **Add Remote Mac** opens the wizard for the tour workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals the prompt below; name the approved machine to your agent. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
-- **Finish and Archive:** revert the tutorial edit, stop, then remove only its worktree. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels. The page also shows removal and last activity, retention dates and sizes, build totals, final branch head, PR number and title (only Merged is treated as a final state), and ended agent sessions.
+- **Get the Test App:** the prompt above and the new workspace.
+- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Watch the first build, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
+- **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The second worktree has its own simulator and Metro port, and its first iOS build is a cache hit.
+- **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
+- **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
+- **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
+- **Finish and Archive:** your agent stops both apps and removes only the two worktrees. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
+- **Share Your Finish (optional, last):** a prompt you may paste to open a public pull request on the tutorial repo with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 
-<PromptBox title="Try an approved remote Mac">
-{`Continue the Stim tutorial: machine`}
-</PromptBox>
+When agent-device is not installed, **Make a Change** shows a card with
+`npm i -g agent-device` and a prompt that installs it. The tutorial completes
+either way; without it your agent can only check the build and logs.
 
 Completed optional steps stay expanded so you can follow the phone handoff or
 copy the machine prompt. The tutorial does not start the server, pair phones or
@@ -129,7 +131,7 @@ known. Create the Tutorial has only the prompt. Desktop remembers whether the
 section is open. Copying a command does not start the three-minute workspace
 warning. The default base is `~/stim-tutorial`, and the machine step needs the
 name of an approved Mac.
-**Run iOS** on First iOS Build and Rebuild from Cache runs `stim ios` for the
+**Run iOS** on Make a Change runs `stim ios` for the
 tour workspace, the same action as **Run** in the workspace's Build section. To
 read the complete manual:
 

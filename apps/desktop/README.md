@@ -1822,13 +1822,20 @@ The three-minute workspace warning starts at the first Copy of the run prompt
 and survives relaunch. Copying commands does not start it. Only archives
 removed after this run started can complete the tutorial.
 
-The panel follows workspace creation, the first iOS build, a cached rebuild,
-live view and control, app logs, agent actions and replay, Fast Refresh, optional
-phone and remote Mac steps, then stop/removal and Archived. Both optional
-steps keep Skip available.
+The panel clones appandflow/stim-tutorial and follows: the first workspace
+appearing (Get the Test App), its first iOS build (Make a Change), a second
+workspace in the same repository whose first iOS build is a cache hit (Change It
+Again in Parallel), optional live view, agent actions and logs steps, optional
+phone and remote Mac steps, then removal and Archived of both worktrees (Finish).
+A last optional Share Your Finish step is only a copyable prompt; with it current,
+the tutorial already counts as complete. The tutorial version is 2, from the
+repository's `expo.extra.stimTutorial`; a version 1 record or workspace shows the
+restart message. The record's `secondPath` is the newest other tutorial workspace
+in the tracked workspace's repository, fixed once chosen. Both optional steps
+keep Skip available.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
-followed by "Open Stim on your phone: the tour workspace is there".
+followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Mac opens the existing wizard using the tour workspace as its
 checkout. With no machine configured, Skip is the primary action. Once a machine
@@ -1844,12 +1851,12 @@ section; whether it is open is a per-user `tutorial.commandsExpanded` preference
 short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
 `tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
 simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
-Tutorial has no commands. Desktop never runs the commands. First iOS Build and Rebuild
-from Cache have a Run iOS button that calls the same `ActionCenter.runApp` as the
+Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
 Build section's Run, and is disabled while a build or action runs in the workspace.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.
+The Make a Change step shows an agent-device card when status reports `agentDevice.installed: false`.
 Removals started through Desktop's workspace actions can show a refusal in the panel.
 
 All tutorial Stim reads go through the CLI: the panel waits for the first loaded
