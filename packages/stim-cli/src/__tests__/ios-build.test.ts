@@ -8,6 +8,7 @@ import { skippedMissReason } from '../cache/miss-reason.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
+import { getExecutor } from '../exec.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -18,6 +19,7 @@ let compilations: number;
 let failBuild: boolean;
 let cancelBuild: boolean;
 let copies: string[];
+let projectBundleId: string | null;
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-ios-build-'));
@@ -31,11 +33,20 @@ beforeEach(() => {
   failBuild = false;
   cancelBuild = false;
   copies = [];
+  projectBundleId = 'org.example.native';
+  const runFile = getExecutor().runFile;
+  vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
+    if (command === 'plutil') {
+      const plist = readFileSync(String(args?.at(-1)), 'utf8');
+      return JSON.stringify({ CFBundleIdentifier: plist.match(/<string>([^<]+)<\/string>/)?.[1] });
+    }
+    return runFile(command, args, options);
+  });
   const project: IosProject = {
     isExpo: false,
     targets: [],
     eas: false,
-    bundleId: () => 'org.example.native',
+    bundleId: () => projectBundleId,
     schemeProblem: () => null,
     runtimeKind: () => 'process',
     runtime: () => {
@@ -135,8 +146,10 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
   const existing = { udid: 'existing', devicePlacement: { machine: 'mini' } };
   writeWorkspaceState(root, { ios: existing });
+  projectBundleId = null;
   const warm = await buildIosOperation(root, options);
-  expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });
+  expect(warm).toMatchObject({ bundleId: 'org.example.native', cacheKey: cold.cacheKey, cacheHit: 'local' });
+  expect(readWorkspaceState(root)?.lastIosBuild).toMatchObject({ bundleId: 'org.example.native' });
   expect(compilations).toBe(1);
   expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(copies.length).toBeGreaterThan(0);
