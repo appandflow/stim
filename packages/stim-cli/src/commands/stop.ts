@@ -1,3 +1,4 @@
+import { debugLog } from '../debug-log.ts';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import {
@@ -482,6 +483,7 @@ async function stopWorkspace({
   let stillHolding: string | null | undefined = null;
   let keepPort: string | null = null;
 
+  debugLog.log('stop.phase.start', { phase: 'supervisor' });
   const target = resolveSupervisorTarget({
     state: sup,
     record: proj?.supervisor ?? null,
@@ -512,6 +514,8 @@ async function stopWorkspace({
     }
   }
 
+  debugLog.log('stop.phase.end', { phase: 'supervisor', status: outcomes.supervisor.status });
+  debugLog.log('stop.phase.start', { phase: 'collectors' });
   outcomes.collectors = await reapCollectors(root, collectorRecords, {
     isAlive,
     signal: signalCollector,
@@ -534,10 +538,16 @@ async function stopWorkspace({
   } else if (outcomes.collectors.entries.some((entry) => entry.status === 'failed')) {
     ok = false;
     stillHolding ??= 'a collector could not be stopped';
-  } else if (outcomes.collectors.entries.length && clearCollectors(root, collectorRecords) === false) {
-    ok = false;
-    stillHolding ??= 'a replacement collector appeared during cleanup';
+  } else if (outcomes.collectors.entries.length) {
+    debugLog.log('stop.phase.start', { phase: 'clear-collectors' });
+    const cleared = clearCollectors(root, collectorRecords);
+    debugLog.log('stop.phase.end', { phase: 'clear-collectors', cleared });
+    if (cleared === false) {
+      ok = false;
+      stillHolding ??= 'a replacement collector appeared during cleanup';
+    }
   }
+  debugLog.log('stop.phase.end', { phase: 'collectors', status: outcomes.collectors.status });
 
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
@@ -932,12 +942,10 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
       } else {
-        device[iosKey] = reportDevice(
-          iosUdid,
-          teardownIos(iosUdid, { del: false, label: iosName, workspace }),
-          report,
-          'ios',
-        );
+        debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
+        const result = teardownIos(iosUdid, { del: false, label: iosName, workspace });
+        debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: result.status });
+        device[iosKey] = reportDevice(iosUdid, result, report, 'ios');
       }
     }
 
@@ -952,12 +960,15 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
       } else {
-        device[androidKey] = reportDevice(
-          android.avdName,
-          teardownAvd(android.avdName, { del: false, workspace }),
-          report,
-          'android',
-        );
+        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: android.avdName });
+        const result = teardownAvd(android.avdName, { del: false, workspace });
+        debugLog.log('stop.device.end', {
+          platform: 'android',
+          slot,
+          deviceId: android.avdName,
+          status: result.status,
+        });
+        device[androidKey] = reportDevice(android.avdName, result, report, 'android');
       }
     }
   }

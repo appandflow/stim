@@ -585,6 +585,7 @@ jobs:
           name: windows-android-${{ matrix.suite }}-logs
           path: |
             D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\logs\debug\*
             D:\e\stim-home\archive\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
