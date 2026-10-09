@@ -115,30 +115,32 @@ struct OverviewView: View {
   }
 
   private func idleCard(_ item: IdleProject) -> some View {
-    Button {
+    let metadata =
+      [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+      .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    let pullRequest = item.pullRequest.map { "PR #\(String($0.number)) \u{00B7} \($0.state)" }
+    let failedBuild = item.failedBuild.map { "\($0.platform == "ios" ? "iOS" : "Android") build failed" }
+    let errors = item.errors > 0 ? countLabel(item.errors, "error") : nil
+    return Button {
       openIdleProject(item.project)
     } label: {
       Card {
         VStack(alignment: .leading, spacing: Space.xs) {
           Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-          FlowLayout(spacing: Space.sm, lineSpacing: Space.xs) {
-            Text(
-              [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
-                .compactMap { $0 }.joined(separator: " \u{00B7} ")
-            )
-            .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
-            if let pullRequest = item.pullRequest {
-              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand, size: .small) {
-                Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
-              }
+          HStack(spacing: Space.sm) {
+            Text(metadata).foregroundStyle(Palette.tertiary)
+            if let pullRequest {
+              Text(pullRequest).foregroundStyle(Color(item.pullRequest?.state == "draft" ? Tone.neutral : Tone.brand))
             }
-            if let failed = item.failedBuild {
-              Pill(tone: .error, size: .small) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
+            if let failedBuild {
+              Text(failedBuild).foregroundStyle(Palette.error)
             }
-            if item.errors > 0 {
-              Pill(tone: .error, size: .small) { Text(countLabel(item.errors, "error")) }
+            if let errors {
+              Text(errors).foregroundStyle(Palette.error)
             }
           }
+          .font(.stim(.caption)).lineLimit(1)
+          .help([metadata, pullRequest, failedBuild, errors].compactMap { $0 }.joined(separator: " \u{00B7} "))
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
