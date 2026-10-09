@@ -41,7 +41,7 @@ jobs:
       matrix:
         include:
           - platform: ios
-            runner: xcode-27
+            runner: xcode-27-xlarge
             project: apps/mobile
           - platform: android
             runner: ubuntu-latest
