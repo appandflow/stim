@@ -91,12 +91,12 @@ parallel one reuses it. Uncached dependencies need network access.
 
 <PromptBox
 title="Run the Stim tutorial"
-response={`The tutorial app is running. Look at Build, then the device, then Logs.
+response={`The test app is cloned and its dependencies are installed.
 Next, ask for a change in your own words.`}
 
 >
 
-{`Clone appandflow/stim-tutorial into ~/stim-tutorial and run it on iOS with stim. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
 </PromptBox>
 
 To type the commands yourself:

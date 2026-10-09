@@ -558,18 +558,19 @@ test('tutorial prompts route to rendered sections', () => {
   }
 });
 
-test('the run section names the marker version the status payload reports', () => {
-  const run = renderSection('tutorial', 'run');
-  assert(run);
-  expect(run).toContain(`expo.extra.stimTutorial equal to\n${TUTORIAL_VERSION}`);
+const flat = (topicSection: string) => renderSection('tutorial', topicSection)?.replace(/\s+/g, ' ') ?? '';
+
+test('the run section names the marker version the status payload reports and only clones', () => {
+  const run = flat('run');
+  expect(run).toContain(`expo.extra.stimTutorial equal to ${TUTORIAL_VERSION}`);
+  expect(run).toMatch(/Do not run the app/);
   expect(detectTutorial({ expo: { extra: { stimTutorial: TUTORIAL_VERSION } } })).toEqual({
     version: TUTORIAL_VERSION,
   });
 });
 
 test('tutorial setup protects existing folders and the user repository', () => {
-  const run = renderSection('tutorial', 'run')?.replace(/\s+/g, ' ');
-  assert(run);
+  const run = flat('run');
   expect(run).toMatch(/If \{base\} exists, stop and ask the user for another folder; never overwrite or delete it/i);
   expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
@@ -583,14 +584,31 @@ test('the cloning tutorial step checks the repository before cloning, and its pr
   expect(ask).toMatch(/never git add in my own repo/);
 });
 
-test('tutorial finish removes the tour worktree without forcing removal', () => {
-  const finish = renderSection('tutorial', 'finish');
-  assert(finish);
-  expect(finish).toMatch(/stim worktree remove "\{tour\}"\nstim worktree remove "\{second\}"/);
-  expect(finish).toMatch(/authorizes removing the worktrees made for the\ntutorial's changes, and nothing else/i);
-  expect(finish).toMatch(/Never use --force on another worktree or on the clone/i);
+test('tutorial finish names the two tracked worktrees as the only --force targets', () => {
+  const finish = flat('finish');
+  expect(finish).toContain('stim worktree remove "{tour}" stim worktree remove "{second}"');
+  expect(finish).toMatch(
+    /consent stim guide agent asks for before worktree remove --force, for exactly those two paths/i,
+  );
+  expect(finish).toMatch(/Never use --force on the clone or on any other worktree/i);
   expect(finish).toMatch(/Use a plain remove first/i);
   expect(finish).not.toMatch(/stim worktree remove "[^"]*" --force/);
+  const ask = TUTORIAL_STEPS.find((step) => step.id === 'finish')!.ask!;
+  expect(ask).toContain('{worktrees}');
+});
+
+test('tutorial restart removes nothing, so it cannot contradict the finish force rule', () => {
+  expect(flat('restart')).toMatch(/remove nothing/i);
+});
+
+test('the share step comes before finish and pushes to a fork with the simulator udid', () => {
+  const ids = TUTORIAL_STEPS.map((step) => step.id);
+  expect(ids.indexOf('share')).toBeLessThan(ids.indexOf('finish'));
+  const commands = TUTORIAL_STEPS.find((step) => step.id === 'share')!.commands.join('\n');
+  expect(commands).toContain('{udid}');
+  expect(commands).not.toContain('booted');
+  expect(commands).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
+  expect(flat('share')).toMatch(/never booted/);
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {

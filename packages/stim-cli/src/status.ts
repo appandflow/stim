@@ -655,10 +655,19 @@ export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: numbe
   return lines;
 }
 
+const AGENT_DEVICE_CACHE_MS = 30_000;
+let agentDeviceCache: { at: number; installed: boolean } | undefined;
+
 function agentDeviceInstalled(): boolean {
+  const now = Date.now();
+  const age = agentDeviceCache ? now - agentDeviceCache.at : -1;
+  if (agentDeviceCache && age >= 0 && age < AGENT_DEVICE_CACHE_MS) return agentDeviceCache.installed;
+  let installed = false;
   try {
-    return Boolean(getExecutor().findExecutable('agent-device'));
+    installed = Boolean(getExecutor().findExecutable('agent-device'));
   } catch {
-    return false;
+    installed = false;
   }
+  agentDeviceCache = { at: now, installed };
+  return installed;
 }

@@ -15,13 +15,14 @@ const tutorial: GuideTopic = {
   sectionHint: 'run',
   preamble: () => `STIM TUTORIAL
 
-The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, and runs it on iOS.
-The user then asks for a visual change, and for another change while the first
-build runs. Stim works in a worktree for each, so the second workspace has its
-own simulator and Metro port and its first iOS build reuses the first one's
-native build. Only the first request, the cleanup and an optional share need
-this guide: the changes are ordinary requests, so follow stim guide agent for
-them, and check each change on the device.
+The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, into {base}; the clone is
+never run or removed. The user then asks for a visual change, and for another
+change while the first builds. Each change runs in its own linked worktree of
+{base}, so each has its own simulator and Metro port, and the second worktree's
+first iOS build reuses the first one's native build. Only the clone, the
+optional share and the cleanup need this guide: the changes are ordinary
+requests, so follow stim guide agent for them, and check each change on the
+device.
 
 "Follow stim guide tutorial run" means stim guide tutorial run.
 "Follow stim guide tutorial finish" means stim guide tutorial finish.
@@ -33,7 +34,7 @@ Never pair phones, approve machines, or grant access on the user's behalf.
 For commands to type yourself, read stim guide tutorial manual.`,
   sections: {
     run: {
-      summary: 'Clone the test app into a fresh folder and run it on iOS',
+      summary: 'Clone the test app into a fresh folder and install its dependencies',
       body: () => `RUN THE TUTORIAL
 
 ${paths}
@@ -50,36 +51,37 @@ Then, from the parent folder, run:
 
 Check that app.json in the clone has expo.extra.stimTutorial equal to
 ${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user needs a newer Stim.
-Enter the clone, run the project's package install (npm install), and follow
-stim guide agent to run the app on iOS (stim start, stim ios). Tell the user the
-first build can take about five minutes on a cold cache, and the parallel one about one. Relay the Open in Stim
-Desktop link printed by stim ios once. On npm or network failure, report stderr
+Enter the clone and install its dependencies (npm ci) so the worktrees made for
+the changes inherit them. Do not run the app: the clone is only the base for the
+user's changes and is never removed. On npm or network failure, report stderr
 and stop.
 
-PAUSE: end the turn. Ask the user to look at the Build section in Stim Desktop
-and then the simulator. Without Desktop use stim status, stim stats and
-stim logs --errors. Suggest they ask for a visual change next, such as making
-the title purple, in their own words. Leave the workspace running.`,
+PAUSE: end the turn. Tell the user to ask for a visual change next, such as
+making the title purple, in their own words. Each change runs in a new linked
+worktree of {base} (stim guide agent), and its first iOS build takes a few
+minutes.`,
     },
     finish: {
-      summary: 'Stop and remove only the worktrees made for the tutorial changes',
+      summary: 'Stop and remove the two tutorial worktrees, keeping the clone',
       body: () => `FINISH
 
 ${paths}
 
-The user's finish request authorizes removing the worktrees made for the
-tutorial's changes, and nothing else. Find them with stim status --json: they
-are the tutorial app's workspaces other than the {base} clone. For each, stop
-from its path, then remove it from the clone:
+The worktrees to remove are the two the tutorial tracked: the linked
+worktrees of {base} made for the user's changes. The finish request names them
+as {tour} and {second}. Never touch any other worktree, an earlier tutorial
+clone, or the clone itself. For each, stop from its path, then remove it from
+the clone:
 
 ${commands('finish')}
 
-Use a plain remove first. The user said they do not need the experiments'
-changes, so when it refuses one of these worktrees only because of uncommitted
-changes or commits found nowhere else, remove that worktree with --force.
-Never use --force on another worktree or on the clone, and on any other
-refusal report it and stop. Keep the clone. Print these optional cleanup
-commands for the user; do not run them:
+Use a plain remove first. The user's finish request says they do not need the
+changes, which is the consent stim guide agent asks for before worktree remove
+--force, for exactly those two paths: if the plain remove refuses one of them
+only because of uncommitted changes or commits found nowhere else, remove that
+worktree with --force. Never use --force on the clone or on any other
+worktree, and on any other refusal report it and stop. Keep the clone. Print
+these optional cleanup commands for the user; do not run them:
 
   rm -rf "{base}"
 
@@ -92,38 +94,47 @@ environments. End the turn.`,
       summary: 'Optionally open a public pull request with a screenshot of the change',
       body: () => `SHARE YOUR FINISH (OPTIONAL)
 
-Only on the user's explicit request, which the share prompt is. The pull
-request is public: the user's GitHub name and change appear on ${TUTORIAL_REPO},
-and a bot replies and closes it. It needs gh signed in. Never open it
-unprompted or from any other step.
+Only on the user's explicit request, which the share prompt is, and before the
+finish step removes the worktrees. The pull request is public: the user's GitHub
+name and change appear on ${TUTORIAL_REPO}, and a bot replies and closes it. It
+needs gh signed in. Never open it unprompted or from any other step.
 
-Open it from the branch holding the user's change. In the body, add one short
-line with the build time and whether the second worktree's first iOS build was
-a cache hit, when you know them from stim status --json or stim stats.
+Work from the worktree holding the user's change, {tour}. Commit the change
+there, fork the repository and push the branch to the fork, since the user has
+no write access:
+
+  gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork
+  git push -u fork HEAD
 
 Screenshot: take a PNG under 1 MB of the app showing the change, with
 agent-device screenshot when it is installed, otherwise
-xcrun simctl io <ios.udid> screenshot finish.png (stim status --json reports
-the udid). If the app is no longer running, run it again from the change's
-branch first.
+xcrun simctl io <ios.udid> screenshot finish.png, using the udid of that
+worktree from stim status --json, never booted. If the app is no longer
+running, run it again from the branch first.
 
-Attach it with gh: gh pr create --attach "finish.png#The change running in the
-simulator" uploads the image and appends it to the body. gh 2.99.0 (2026-09-01)
-has --attach; confirm with gh pr create --help rather than guessing a version.
-When gh has no --attach, commit the PNG on the PR branch as
-finish/<github-login>.png and embed it in the body with a relative link:
-![the change](finish/<github-login>.png).`,
+Open the pull request with gh pr create --repo ${TUTORIAL_REPO}. In the body, add
+one short line with the build time and whether the second worktree's first iOS
+build was a cache hit, when you know them from stim status --json or stim stats.
+
+Attach the screenshot with gh: gh pr create --attach "finish.png#The change
+running in the simulator" uploads the image and appends it to the body. gh
+2.99.0 (2026-09-01) has --attach; confirm with gh pr create --help rather than
+guessing a version. When gh has no --attach, commit the PNG on the PR branch as
+finish/<github-login>.png before pushing and embed it in the body with a
+relative link: ![the change](finish/<github-login>.png).`,
     },
     restart: {
-      summary: 'Remove the existing tutorial worktrees safely and start again',
+      summary: 'Start the tutorial again without removing anything',
       body: () => `RESTART
 
 ${paths}
 
-For "${TUTORIAL_RESTART_PROMPT}", remove the tutorial's worktrees as stim guide
-tutorial finish describes, never with --force, keep the clone, then follow
-stim guide tutorial run again, reusing the clone only if its stimTutorial
-marker equals ${TUTORIAL_VERSION}. Pause after the build as run instructs.`,
+For "${TUTORIAL_RESTART_PROMPT}", remove nothing: the user may still want the
+earlier worktrees, and stim guide tutorial finish removes them on request.
+Reuse the clone at {base} only if its stimTutorial marker equals
+${TUTORIAL_VERSION}; otherwise follow stim guide tutorial run into a fresh
+folder. Pause as run instructs. Stim Desktop starts over from the next tutorial
+worktree that appears after the restart.`,
     },
     manual: {
       summary: 'The commands behind each step, for typing yourself',
@@ -137,11 +148,12 @@ Replace {base}, {tour} and {second} with absolute paths: {base} is the clone,
 {udid} with the workspace's ios.udid. For the optional machine step, replace
 {machine} with a machine you have already approved, or skip it. Clone with git
 clone https://github.com/${TUTORIAL_REPO}.git into a fresh folder outside any
-repository, then run the app with stim guide agent.
+repository. Each change runs in its own worktree of that clone (stim guide
+agent); the clone itself is never run.
 
 ${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.commands.length ? `\`\`\`sh\n${step.commands.join('\n')}\n\`\`\`` : 'Ask your agent in your own words, or observe this step in Stim Desktop.'}`).join('\n\n')}
 
-Finish removes only the tutorial worktrees. Use --force only when the plain remove refuses an experiment worktree you do not need; report any other refusal.`,
+Finish removes only the two tutorial worktrees, never the clone; stim guide tutorial finish says when --force is allowed for them.`,
     },
   },
 };

@@ -18,7 +18,7 @@
         Workspace.self,
         from: Data(
           """
-          {"path":"/tmp/tutorial-tour","live":true,"warnings":[],"tutorial":{"version":2},
+          {"path":"/tmp/tutorial-tour","live":true,"warnings":[],"tutorial":{"version":2},"worktree":{"path":"/tmp/tutorial-tour","repository":"/tmp/tutorial"},
            "phase":"ready","phaseSince":"\(since)"}
           """.utf8))
     }
@@ -80,7 +80,7 @@
       XCTAssertEqual(model.snapshot?.currentStep, "machine")
       XCTAssertFalse(model.machineState.showsPrompt)
       model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved, approvedMachine: "Studio")
-      XCTAssertEqual(model.snapshot?.currentStep, "finish")
+      XCTAssertEqual(model.snapshot?.currentStep, "share")
       XCTAssertTrue(model.machineState.showsPrompt)
       XCTAssertEqual(model.machineState, .approved)
       let step = try XCTUnwrap(TutorialSteps.all.first { $0.id == "machine" })
@@ -190,7 +190,7 @@
         Workspace.self,
         from: Data(
           """
-          {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":2},"phase":"ready",
+          {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":2},"worktree":{"path":"/tmp/new-tour","repository":"/tmp/tutorial"},"phase":"ready",
            "ios":{"udid":"reused-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
       for (count, beginning) in [(62, false), (64, false), (64, true)] {
@@ -256,6 +256,20 @@
       XCTAssertFalse(model.snapshot?.isComplete == true)
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(11))
       XCTAssertTrue(model.snapshot?.isComplete == true)
+    }
+
+    @MainActor func testStoredVersionOneProgressStartsOverOnAVersionTwoTourAtANewPath() throws {
+      let defaults = isolatedDefaults()
+      var old = TutorialRecord(
+        version: 1, tourPath: "/tmp/old-tour", startedAt: Date(), step: "refresh", done: ["begin", "build"])
+      old.stepSince = Date()
+      TutorialRecordStore(defaults).record = old
+      let model = TutorialModel(defaults: defaults)
+      model.update(workspaces: [try workspace()], archived: [], sheetOpen: false)
+      XCTAssertEqual(model.snapshot?.record.version, 2)
+      XCTAssertEqual(model.snapshot?.record.tourPath, "/tmp/tutorial-tour")
+      XCTAssertEqual(model.snapshot?.currentStep, "build")
+      XCTAssertNotEqual(model.message, "Restart the tutorial with the current Stim CLI")
     }
   }
 #endif

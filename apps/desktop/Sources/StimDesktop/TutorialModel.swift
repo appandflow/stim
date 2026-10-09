@@ -53,7 +53,8 @@ final class TutorialModel: ObservableObject {
     }
     return template.map {
       tutorialAsk(
-        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine)
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine,
+        second: snapshot?.record.secondPath)
     }
   }
 
@@ -92,6 +93,15 @@ final class TutorialModel: ObservableObject {
     machineState: TutorialMachineState = .none, approvedMachine: String? = nil, removalRefused: Bool = false
   ) {
     self.now = now
+    if let stored = progress.record ?? records.record, !TutorialSteps.supportedVersions.contains(stored.version) {
+      progress = TutorialProgress()
+      records.record = nil
+      snapshot = nil
+      archiveEnabled = nil
+      logs = []
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
+      launchPending = false
+    }
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)

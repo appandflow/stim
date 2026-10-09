@@ -18,7 +18,7 @@ public enum TutorialSteps {
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Get the Test App", who: "agent", optional: false,
-      ask: "Clone appandflow/stim-tutorial into {base} and run it on iOS with stim. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
+      ask: "Clone appandflow/stim-tutorial into {base} and install its dependencies. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
       commands: [
 
       ]),
@@ -72,8 +72,18 @@ public enum TutorialSteps {
         "stim ios --remote-build \"{machine}\" --no-build-cache",
       ]),
     TutorialStep(
+      id: "share", title: "Share Your Finish", who: "you", optional: true,
+      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
+      commands: [
+        "cd \"{tour}\"",
+        "xcrun simctl io {udid} screenshot finish.png",
+        "gh repo fork appandflow/stim-tutorial --remote --remote-name fork",
+        "git push -u fork HEAD",
+        "gh pr create --repo appandflow/stim-tutorial --attach \"finish.png#The change running in the simulator\"",
+      ]),
+    TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
-      ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove only the worktrees you made for them, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
+      ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
       commands: [
         "cd \"{tour}\"",
         "stim stop",
@@ -82,13 +92,6 @@ public enum TutorialSteps {
         "cd \"{base}\"",
         "stim worktree remove \"{tour}\"",
         "stim worktree remove \"{second}\"",
-      ]),
-    TutorialStep(
-      id: "share", title: "Share Your Finish", who: "you", optional: true,
-      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
-      commands: [
-        "xcrun simctl io booted screenshot finish.png",
-        "gh pr create --repo appandflow/stim-tutorial --attach \"finish.png#The change running in the simulator\"",
       ]),
   ]
 }

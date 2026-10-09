@@ -1822,16 +1822,17 @@ The three-minute workspace warning starts at the first Copy of the run prompt
 and survives relaunch. Copying commands does not start it. Only archives
 removed after this run started can complete the tutorial.
 
-The panel clones appandflow/stim-tutorial and follows: the first workspace
-appearing (Get the Test App), its first iOS build (Make a Change), a second
-workspace in the same repository whose first iOS build is a cache hit (Change It
-Again in Parallel), optional live view, agent actions and logs steps, optional
-phone and remote Mac steps, then removal and Archived of both worktrees (Finish).
-A last optional Share Your Finish step is only a copyable prompt; with it current,
-the tutorial already counts as complete. The tutorial version is 2, from the
-repository's `expo.extra.stimTutorial`; a version 1 record or workspace shows the
-restart message. The record's `secondPath` is the newest other tutorial workspace
-in the tracked workspace's repository, fixed once chosen. Both optional steps
+The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
+appearing (Get the Test App; the clone only, which is never the tour), the first
+linked worktree of the clone and its first iOS build (Make a Change, `tourPath`),
+the next linked worktree created after that step began and its first iOS build,
+which must start after the step began and be a cache hit (Change It Again in
+Parallel, `secondPath`), optional live view, agent actions and logs steps,
+optional phone and remote Mac steps, an optional Share Your Finish prompt, then
+removal and Archived of both tracked worktrees (Finish; the clone stays). The
+tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
+version 1 record is dropped and starts over on a version 2 workspace; Restart
+adopts the next supported tour created after it, at any path. Both optional steps
 keep Skip available.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,

@@ -5,15 +5,15 @@ const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
 /**
- * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour} and {machine} are
- * filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
+ * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour}, {worktrees} and
+ * {machine} are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
  */
 export const TUTORIAL_ASKS = {
-  begin: `Clone ${TUTORIAL_REPO} into {base} and run it on iOS with stim. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
+  begin: `Clone ${TUTORIAL_REPO} into {base} and install its dependencies. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
   agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
-    "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove only the worktrees you made for them, and keep the clone. Follow stim guide tutorial finish.",
+    "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
   retry: 'The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again.',
 };
@@ -107,6 +107,21 @@ export const TUTORIAL_STEPS: {
     commands: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
   },
   {
+    id: 'share',
+    title: 'Share Your Finish',
+    who: 'you',
+    optional: true,
+    ask: TUTORIAL_ASKS.share,
+    section: 'share',
+    commands: [
+      'cd "{tour}"',
+      'xcrun simctl io {udid} screenshot finish.png',
+      `gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork`,
+      'git push -u fork HEAD',
+      `gh pr create --repo ${TUTORIAL_REPO} --attach "finish.png#The change running in the simulator"`,
+    ],
+  },
+  {
     id: 'finish',
     title: 'Finish and Archive',
     who: 'agent',
@@ -121,18 +136,6 @@ export const TUTORIAL_STEPS: {
       'cd "{base}"',
       'stim worktree remove "{tour}"',
       'stim worktree remove "{second}"',
-    ],
-  },
-  {
-    id: 'share',
-    title: 'Share Your Finish',
-    who: 'you',
-    optional: true,
-    ask: TUTORIAL_ASKS.share,
-    section: 'share',
-    commands: [
-      'xcrun simctl io booted screenshot finish.png',
-      `gh pr create --repo ${TUTORIAL_REPO} --attach "finish.png#The change running in the simulator"`,
     ],
   },
 ];

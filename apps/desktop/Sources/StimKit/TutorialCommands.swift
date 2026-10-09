@@ -14,16 +14,21 @@ public func tutorialCommands(
     ], shellDoubleQuotedValue)
 }
 
-public func tutorialAsk(_ template: String, tourPath: String?, repository: String?, machine: String?) -> String {
+public func tutorialAsk(
+  _ template: String, tourPath: String?, repository: String?, machine: String?, second: String? = nil
+) -> String {
   let base = repository ?? "~/stim-tutorial"
+  let worktrees = [tourPath, second].compactMap { $0 }.joined(separator: " and ")
   return fillTutorial(
     template,
-    ["base": base, "tour": tourPath ?? "\(base)-tour", "machine": machine ?? "my approved Mac"],
-    { $0 })
+    [
+      "base": base, "tour": tourPath ?? "\(base)-tour", "machine": machine ?? "my approved Mac",
+      "worktrees": worktrees.isEmpty ? "you made for them" : worktrees,
+    ], { $0 })
 }
 
 private func fillTutorial(_ source: String, _ values: [String: String], _ format: (String) -> String) -> String {
-  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|second|stateDir|machine|udid)\}"#)
+  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|second|worktrees|stateDir|machine|udid)\}"#)
   var result = source
   for match in pattern.matches(in: source, range: NSRange(source.startIndex..., in: source)).reversed() {
     let key = String(source[Range(match.range(at: 1), in: source)!])

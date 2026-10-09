@@ -84,23 +84,23 @@ opens the panel once for that tutorial path, after any open sheet closes.
 <img src="/img/desktop/tutorial-panel.png" alt="Stim Tutorial panel showing the agent actions step" width="320" />
 
 <PromptBox title="Get the test app">
-{`Clone appandflow/stim-tutorial into ~/stim-tutorial and run it on iOS with stim. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
 </PromptBox>
 
 The tutorial shows what worktree isolation and automated validation buy you.
-Two agents work on two changes at once, each in its own worktree with its own
-simulator and dev server, and each checks its own work on the device. The panel
-clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
+Two agents work on two changes at once, each in its own linked worktree of the
+clone with its own simulator and dev server, and each checks its own work on the
+device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
 a tiny Expo app, and shows:
 
-- **Get the Test App:** the prompt above and the new workspace.
-- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Watch the first build, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
-- **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The second worktree has its own simulator and Metro port, and its first iOS build is a cache hit.
+- **Get the Test App:** the prompt above. It only clones and installs; the clone is the base for your changes and is never run or removed.
+- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
+- **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
 - **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
-- **Finish and Archive:** your agent stops both apps and removes only the two worktrees, dropping their changes. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
-- **Share Your Finish (optional, last):** a prompt you may paste to open a public pull request on the tutorial repo with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
+- **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
+- **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 
 When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes

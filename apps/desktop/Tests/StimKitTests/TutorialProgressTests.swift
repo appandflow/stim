@@ -8,7 +8,7 @@ private let tourStart = parseTimestamp("2026-10-07T04:56:00.000Z")!
 private let afterBuild = parseTimestamp("2026-10-07T05:02:00.000Z")!
 private let afterRebuild = parseTimestamp("2026-10-07T05:06:00.000Z")!
 private let stepIDs = [
-  "begin", "build", "parallel", "device", "agent", "logs", "phone", "machine", "finish", "share",
+  "begin", "build", "parallel", "device", "agent", "logs", "phone", "machine", "share", "finish",
 ]
 
 private func fixture(_ name: String) throws -> StatusPayload {
@@ -28,6 +28,13 @@ private func saved(at step: String, since: Date = tourStart) -> TutorialRecord {
     done: Array(stepIDs.prefix(while: { $0 != step })))
   record.stepSince = since
   return record
+}
+
+private func linked(_ workspace: Workspace, repository: String = "/Users/example/stim-tutorial") throws -> Workspace {
+  var workspace = workspace
+  workspace.worktree = try JSONDecoder().decode(
+    WorktreeInfo.self, from: Data(#"{"path":"\#(workspace.path)","repository":"\#(repository)"}"#.utf8))
+  return workspace
 }
 
 private func state(_ id: String, in snapshot: TutorialSnapshot) -> TutorialStepProgress {
@@ -183,9 +190,14 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var second = first
   second.path = "/Users/example/second-tour"
   second.phaseSince = "2026-10-07T05:06:00.000Z"
+  first = try linked(first)
+  second = try linked(second)
   #expect(TutorialEnvironment.select([first, second], trackedPath: tourPath)?.path == tourPath)
   #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == second.path)
   #expect(TutorialEnvironment.select([first, second], trackedPath: "/missing")?.path == second.path)
+  var clone = first
+  clone.path = "/Users/example/stim-tutorial"
+  #expect(TutorialEnvironment.select([clone], trackedPath: nil) == nil)
 }
 
 @Test func tutorialUnsupportedVersionsFailBeforeAcceptingSignals() throws {
@@ -251,7 +263,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   let archives = try fixture("06-archived").archived!.map(\.projectRoot)
   let result = progress.update(TutorialInput(environment: nil, archivedProjectRoots: archives, now: afterRebuild))
   #expect(result.isComplete)
-  #expect(result.currentStep == "share")
+  #expect(result.currentStep == nil)
   #expect(state("finish", in: result).state == .done)
   #expect(state("finish", in: result).ticks.first { $0.id == "stopped" }?.done == false)
   #expect(state("finish", in: result).ticks.first { $0.id == "archived" }?.done == true)
@@ -273,7 +285,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("finish", in: firstOnly).ticks.first { $0.id == "archived" }?.done == false)
   let both = progress.update(
     TutorialInput(environment: nil, archivedProjectRoots: archives + [secondPath], now: afterRebuild))
-  #expect(both.currentStep == "share")
+  #expect(both.currentStep == nil)
 }
 
 @Test func tutorialFinishStopTickAloneDoesNotComplete() throws {
@@ -323,7 +335,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var relaunched = TutorialProgress()
   let result = relaunched.update(
     TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(122), record: progress.record))
-  #expect(result.currentStep == "finish")
+  #expect(result.currentStep == "share")
   #expect(state("phone", in: result).state == .done)
   #expect(state("machine", in: result).state == .skipped)
 }
@@ -394,7 +406,7 @@ func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(pha
     TutorialInput(
       environment: try environment(), pairedPhoneCount: 1, machineApproved: true,
       now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
-  #expect(result.currentStep == "finish")
+  #expect(result.currentStep == "share")
   #expect(result.record.phonePairedAtStart == true)
   #expect(state("phone", in: result).detail.contains("Open Stim on your phone"))
   #expect(state("machine", in: result).ticks.first { $0.id == "offloaded" }?.done == false)
@@ -470,9 +482,10 @@ func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(pha
 }
 
 @Test func tutorialSelectUsesNewestBuildAndDeterministicPathForLiveTours() throws {
-  var first = try fixture("02-after-ios1").environments[0]
-  var second = try fixture("03-after-rebuild").environments[0]
+  var first = try linked(fixture("02-after-ios1").environments[0])
+  var second = try linked(fixture("03-after-rebuild").environments[0])
   second.path = "/Users/example/newer-tour"
+  second = try linked(second)
   #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == second.path)
   #expect(TutorialEnvironment.select([second, first], trackedPath: nil)?.path == second.path)
   first.builds = nil
@@ -522,11 +535,60 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
 }
 
 @Test func tutorialSelectPrefersASupportedVersionOverANewerOldOne() throws {
-  var current = try fixture("02-after-ios1").environments[0]
+  var current = try linked(fixture("02-after-ios1").environments[0])
   current.tutorial = TutorialMarker(version: 2)
   var old = try fixture("03-after-rebuild").environments[0]
   old.path = "/Users/example/old-tour"
+  old = try linked(old)
   old.tutorial = TutorialMarker(version: 1)
   #expect(TutorialEnvironment.select([current, old], trackedPath: nil)?.path == current.path)
   #expect(TutorialEnvironment.select([old], trackedPath: nil)?.path == old.path)
+}
+
+@Test func tutorialBeginCompletesWhenOnlyTheCloneIsRegistered() throws {
+  var clone = try environment("01-started")
+  clone.repository = clone.path
+  var progress = TutorialProgress()
+  let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterBuild))
+  #expect(state("begin", in: result).state == .done)
+  #expect(result.currentStep == "build")
+  #expect(result.record.tourPath == nil)
+}
+
+@Test func tutorialSecondWorkspaceMustBeLinkedAndNewerThanTheFirstChangeStep() throws {
+  var base = try environment()
+  base.repository = "/Users/example/stim-tutorial"
+  var record = saved(at: "parallel", since: afterBuild)
+  record.stepTimes = ["build": afterBuild]
+  let old = try sibling(path: "/Users/example/leftover")
+  var clone = try sibling(path: "/Users/example/stim-tutorial")
+  clone.repository = clone.path
+  var progress = TutorialProgress()
+  let stale = progress.update(
+    TutorialInput(environment: base, siblings: [old, clone], now: afterRebuild, record: record))
+  #expect(stale.record.secondPath == nil)
+  #expect(stale.currentStep == "parallel")
+  var fresh = try sibling()
+  fresh.phaseSince = afterBuild.addingTimeInterval(30)
+  fresh.lastBuild?.startedAt = "2026-10-07T04:00:00.000Z"
+  let oldBuild = progress.update(TutorialInput(environment: base, siblings: [old, fresh], now: afterRebuild))
+  #expect(oldBuild.record.secondPath == secondPath)
+  #expect(oldBuild.currentStep == "parallel")
+  fresh.lastBuild?.startedAt = "2026-10-07T05:03:00.000Z"
+  let done = progress.update(TutorialInput(environment: base, siblings: [fresh], now: afterRebuild))
+  #expect(done.currentStep == "device")
+}
+
+@Test func tutorialRestartAdoptsANewTourAtADifferentPath() throws {
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "device")))
+  progress.requestRestart(now: afterRebuild)
+  var next = try environment("01-started")
+  next.path = "/Users/example/new-tour"
+  next.phaseSince = afterRebuild.addingTimeInterval(60)
+  let result = progress.update(TutorialInput(environment: next, now: afterRebuild.addingTimeInterval(61)))
+  #expect(result.record.tourPath == "/Users/example/new-tour")
+  #expect(result.record.restartAfter == nil)
+  #expect(result.record.startedAt == afterRebuild.addingTimeInterval(60))
+  #expect(result.currentStep == "build")
 }
