@@ -84,6 +84,10 @@ on:
         default: preview
         options: [preview, ga-large]
 
+      native_gradle_worker:
+        description: Run only native Gradle build-worker acceptance
+        type: boolean
+        default: false
       native_gradle:
         description: Run only native Gradle provider validation
         type: boolean
@@ -115,7 +119,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle_worker && '-gradle-worker' || inputs.native_gradle && '-gradle' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -124,7 +128,7 @@ permissions:
 jobs:
   plan:
     name: plan
-    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.native_gradle_worker)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -627,7 +631,7 @@ jobs:
 
   native-xcode:
     name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
-    if: github.event_name == 'workflow_dispatch' && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    if: github.event_name == 'workflow_dispatch' && !inputs.native_gradle_worker && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
     runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -677,7 +681,7 @@ jobs:
 
   native-gradle:
     name: native Gradle Android
-    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
+    if: github.event_name == 'workflow_dispatch' && !inputs.native_gradle_worker && inputs.native_gradle
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -735,3 +739,48 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
             ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  native-gradle-worker:
+    name: native Gradle build-worker acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle_worker
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_NATIVE_GRADLE_WORKER_EVIDENCE: ${{ github.workspace }}/artifacts/native-gradle-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install the pinned fixture SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Validate task harness format and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint
+      - name: Native Gradle worker lifecycle
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-gradle-worker
+          node test/e2e/native/run-native-gradle-worker-e2e.mjs 2>&1 | tee artifacts/native-gradle-worker/driver.log
+      - name: Upload native worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-gradle-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/native-gradle-worker
+          if-no-files-found: warn
