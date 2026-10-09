@@ -1,0 +1,49 @@
+name: Run Stim CI
+description: Build and launch an app, run a test command, and retain diagnostics through stim-ci.
+inputs:
+  platform:
+    description: ios, android, macos, or web.
+    required: true
+  project:
+    description: App directory relative to the checked-out repository.
+    default: '.'
+  command:
+    description: Test command executed by Bash in the app directory.
+    required: true
+  version:
+    description: Exact published @stim-cli/ci version. Required unless cli-path is supplied.
+  cli-path:
+    description: Built stim-ci executable from the checkout, relative to the repository root.
+  artifacts:
+    description: Empty diagnostics directory relative to the repository root. Use a different path for each run.
+    default: stim-ci-results
+  home:
+    description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
+  build-cache:
+    description: Optional local build cache directory restored by the workflow.
+  timeout:
+    description: Session timeout in seconds.
+    default: '1800'
+outputs:
+  result:
+    description: Absolute path to result.json.
+    value: ${{ steps.run.outputs.result }}
+  artifacts:
+    description: Absolute diagnostics directory.
+    value: ${{ steps.run.outputs.artifacts }}
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      env:
+        STIM_ACTION_PLATFORM: ${{ inputs.platform }}
+        STIM_ACTION_PROJECT: ${{ inputs.project }}
+        STIM_ACTION_COMMAND: ${{ inputs.command }}
+        STIM_ACTION_VERSION: ${{ inputs.version }}
+        STIM_ACTION_CLI: ${{ inputs.cli-path }}
+        STIM_ACTION_ARTIFACTS: ${{ inputs.artifacts }}
+        STIM_ACTION_HOME: ${{ inputs.home }}
+        STIM_ACTION_CACHE: ${{ inputs.build-cache }}
+        STIM_ACTION_TIMEOUT: ${{ inputs.timeout }}
+      run: exec node "$GITHUB_ACTION_PATH/run.mjs"
