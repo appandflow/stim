@@ -12,6 +12,8 @@ import type {
 } from './api/types.ts';
 
 export type {
+  StimBuildOptions,
+  StimBuildResult,
   StimClient,
   StimDiagnostics,
   StimDiagnosticsOptions,
@@ -73,6 +75,9 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
+    build({ signal, ...request }) {
+      return invoke(context, { operation: 'build', options: request }, signal) as ReturnType<StimClient['build']>;
+    },
     run: (({ signal, ...request }: StimRunOptions) =>
       invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
     stop({ signal, ...request } = {}) {

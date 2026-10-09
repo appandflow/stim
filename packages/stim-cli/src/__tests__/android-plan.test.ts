@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  resolveAndroidBuildPlan,
   resolveAndroidRunPlan,
   type AndroidPlanInputs,
   type AndroidPlanDependencies,
@@ -108,6 +109,34 @@ test('a plan binds build selectors and cache policy to the selected emulator', (
   });
 });
 
+test('build planning needs no installed image, emulator profile, device lease or Expo project', () => {
+  const calls: string[] = [];
+  const result = resolveAndroidBuildPlan(
+    inputs({
+      settings: { android: { systemImage: 'not-installed', deviceProfile: 'not-installed' } },
+      variant: ' nativeRelease ',
+      buildCache: false,
+    }),
+    {
+      ...inspection(calls),
+      variantProblem: () => null,
+    },
+  );
+
+  assert(result.ok);
+  expect(result.plan.build).toMatchObject({
+    variant: 'nativeRelease',
+    release: true,
+    cache: { read: false, write: true },
+  });
+  expect(calls).not.toEqual(expect.arrayContaining(['pool']));
+  expect(calls).not.toEqual(expect.arrayContaining(['avd']));
+  expect(calls).not.toEqual(expect.arrayContaining(['images']));
+  expect(calls).not.toEqual(expect.arrayContaining(['profiles']));
+  expect(calls).not.toEqual(expect.arrayContaining(['expo']));
+  expect(calls).not.toEqual(expect.arrayContaining(['flavors']));
+});
+
 test('a physical target overrides configured remote mode and carries its parsed lease options', () => {
   const events: string[] = [];
   const result = resolveAndroidRunPlan(
@@ -155,16 +184,16 @@ const REFUSALS: Array<{
     events: ['pool'],
   },
   {
-    name: 'data-partition refusal follows compiler and provider warnings but precedes AVD inspection',
+    name: 'data-partition refusal follows build planning but precedes AVD inspection',
     inputs: { settings: { cache: { provider: '' }, android: { dataPartitionSizeGb: 5 } } },
     message: /Invalid android.dataPartitionSizeGb/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'warning:cache'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'warning:cache', 'flavors'],
   },
   {
-    name: 'AVD validation precedes product-flavor validation',
+    name: 'AVD validation follows build planning and precedes target inspection',
     inputs: { settings: { android: { avdConfig: { 'image.sysdir.1': '/image' } } } },
     message: /Unsupported android.avdConfig key/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd'],
   },
   {
     name: 'a malformed remote target refuses at shape validation',
@@ -176,20 +205,20 @@ const REFUSALS: Array<{
     name: 'a lease flag conflict precedes system-image inspection',
     inputs: { device: true, wait: false, waitConflict: true, systemImage: 'installed-image' },
     message: /--wait and --no-wait ask for opposite things/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {
     name: 'a named remote slot refuses before system-image inspection',
     inputs: { remote: 'proxy', slot: 'second', systemImage: 'installed-image' },
     message: /Named slots currently support local simulators and physical devices/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo'],
   },
   {
     name: 'a device profile avdmanager does not offer refuses with the offered ids',
     inputs: { settings: { android: { deviceProfile: 'pixel_fold' } }, deviceProfile: 'pixel_folded' },
     message:
       /^No Android hardware profile is named "pixel_folded"\. Profiles avdmanager offers: pixel_6, pixel_fold, 7\.6in Foldable\.$/,
-    events: ['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors', 'expo', 'profiles'],
+    events: ['pool', 'compiler', 'warning:cache', 'provider', 'flavors', 'avd', 'expo', 'profiles'],
   },
 ];
 
@@ -211,7 +240,7 @@ test('a product-flavor refusal precedes Expo inspection and target/lease conflic
 
   assert(!result.ok);
   expect(result.message).toMatch(/2 product flavors/);
-  expect(events).toEqual(['pool', 'compiler', 'warning:cache', 'provider', 'avd', 'flavors']);
+  expect(events).toEqual(['pool', 'compiler', 'warning:cache', 'provider', 'flavors']);
 });
 
 describe('planAndroid', () => {

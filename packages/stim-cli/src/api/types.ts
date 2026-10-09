@@ -1,4 +1,5 @@
 import type { MacosBuild, NdjsonRecord } from '@stim-cli/core/state';
+import type { AndroidBuildFacts, AndroidBuildOptions } from '../commands/android/build.ts';
 import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
@@ -67,6 +68,10 @@ export type StimRunResult =
     }
   | { platform: 'web'; facts: WebFacts };
 
+export type StimBuildOptions = AndroidBuildOptions & { platform: 'android'; signal?: AbortSignal };
+
+export type StimBuildResult = { platform: 'android'; facts: AndroidBuildFacts };
+
 export interface StimStopOptions {
   slot?: string;
   signal?: AbortSignal;
@@ -88,6 +93,8 @@ export interface StimDiagnostics {
 
 export interface StimClient {
   readonly projectRoot: string;
+  /** Builds an artifact without acquiring a device or starting a runtime. */
+  build(options: StimBuildOptions): Promise<StimBuildResult>;
   run<P extends StimPlatform>(
     options: StimRunOptions & { platform: P },
   ): Promise<Extract<StimRunResult, { platform: P }>>;
@@ -109,9 +116,10 @@ type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 
 export type WorkerRequest =
   | { operation: 'run'; options: WithoutSignal<StimRunOptions> }
+  | { operation: 'build'; options: WithoutSignal<StimBuildOptions> }
   | { operation: 'stop'; options: Omit<StimStopOptions, 'signal'> }
   | { operation: 'diagnostics'; options: Omit<StimDiagnosticsOptions, 'signal'> };
 
 export type WorkerResponse =
-  | { ok: true; result: StimRunResult | StimStopResult | StimDiagnostics }
+  | { ok: true; result: StimRunResult | StimBuildResult | StimStopResult | StimDiagnostics }
   | { ok: false; error: StimFailure };

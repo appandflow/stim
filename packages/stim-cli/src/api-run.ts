@@ -1,4 +1,5 @@
 import { queryJsonLogs } from '@stim-cli/core/state';
+import { buildAndroidOperation } from './commands/android/build.ts';
 import { runAndroidOperation } from './commands/android.ts';
 import { runIosOperation } from './commands/ios.ts';
 import { runMacos } from './commands/macos.ts';
@@ -35,6 +36,11 @@ async function dispatch({
       });
       if ('refusal' in result) throw new StimError({ ...result.refusal, details: result.remote });
       return { ok: true, result };
+    }
+    if (request.operation === 'build') {
+      if (request.options.platform !== 'android')
+        throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim build platform.' });
+      return { ok: true, result: { platform: 'android', facts: await buildAndroidOperation(root, request.options) } };
     }
     const options = request.options;
     switch (options.platform) {

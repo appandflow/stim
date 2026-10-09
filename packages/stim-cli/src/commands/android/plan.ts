@@ -58,19 +58,22 @@ interface SettingsContext {
   readonly repoRoot: string | null;
 }
 
-export interface AndroidPlanInputs {
+export interface AndroidBuildPlanInputs {
   readonly settings: SettingsObject;
   readonly settingsContext: SettingsContext;
-  readonly slot: string;
   readonly easProfile?: string;
   readonly variant: string | null;
+  readonly buildCache: boolean;
+}
+
+export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
+  readonly slot: string;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;
   readonly device: string | boolean | null;
   readonly wait: string | boolean | undefined;
   readonly waitConflict: boolean;
   readonly remote: string | null;
-  readonly buildCache: boolean;
 }
 
 type AndroidTargetPlan =
@@ -93,7 +96,7 @@ type AndroidTargetPlan =
       readonly lease: { readonly waitSeconds: number; readonly noWait: boolean };
     };
 
-export interface AndroidRunPlan {
+export interface AndroidBuildPlan {
   readonly build: {
     readonly variant: string | null;
     readonly release: boolean;
@@ -105,15 +108,18 @@ export interface AndroidRunPlan {
     readonly pch: Optimizations['android']['pch'];
     readonly targetAbiOnly: boolean;
   };
-  readonly target: AndroidTargetPlan;
-  readonly deviceSlotWaitMs: number;
-  readonly isExpo: boolean;
   readonly metroWarmup: boolean;
   readonly cacheProviderConfig: CacheProviderConfig | null;
 }
 
-export type AndroidPlanResult =
-  | { readonly ok: true; readonly plan: AndroidRunPlan }
+export interface AndroidRunPlan extends AndroidBuildPlan {
+  readonly target: AndroidTargetPlan;
+  readonly deviceSlotWaitMs: number;
+  readonly isExpo: boolean;
+}
+
+type PlanResult<Plan> =
+  | { readonly ok: true; readonly plan: Plan }
   | {
       readonly ok: false;
       readonly code: string;
@@ -122,13 +128,19 @@ export type AndroidPlanResult =
       readonly lines: string[];
     };
 
-export interface AndroidPlanDependencies {
+export type AndroidPlanResult = PlanResult<AndroidRunPlan>;
+
+export interface AndroidBuildPlanDependencies {
   warn: (label: 'setting' | 'cache', message: string) => void;
   resolveCompilerCache?: typeof androidCompilerCache;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
+  variantProblem: (variant: string | null) => ReturnType<typeof productFlavorRefusal>;
+}
+
+export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependencies, 'variantProblem'> {
   validateAvdConfig?: typeof androidAvdConfigSettingError;
   readFlavors?: typeof readProductFlavors;
-  variantProblem?: (variant: string | null) => ReturnType<typeof productFlavorRefusal>;
+  variantProblem?: AndroidBuildPlanDependencies['variantProblem'];
   detectExpo?: typeof detectIsExpo;
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: typeof listAvdDeviceProfiles;
@@ -184,6 +196,66 @@ function androidCompilerCache({
   return { cas, optimizations: resolved, warning: `Warning: ${message}` };
 }
 
+export function resolveAndroidBuildPlan(
+  {
+    settings,
+    settingsContext,
+    easProfile,
+    variant: variantFlag,
+    buildCache: requestedBuildCache,
+  }: AndroidBuildPlanInputs,
+  {
+    warn,
+    resolveCompilerCache = androidCompilerCache,
+    resolveCacheProvider = resolveCacheProviderConfig,
+    variantProblem,
+  }: AndroidBuildPlanDependencies,
+): PlanResult<AndroidBuildPlan> {
+  const root = settingsContext.projectPath;
+  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
+  if (shapeError) return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
+  for (const key of unknownSettingKeys(settings)) {
+    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+  }
+  let optimizations: Optimizations;
+  try {
+    optimizations = resolveOptimizations(settings);
+  } catch (error) {
+    return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
+  }
+  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext });
+  const cas = compilerCache.cas;
+  optimizations = compilerCache.optimizations;
+  if (compilerCache.warning) warn('cache', compilerCache.warning);
+  const buildProfile = optimizationBuildProfile('android', optimizations);
+  const cacheProviderConfig = resolveCacheProvider(settingsContext);
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
+  const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
+  const flavorRefusal = variantProblem(variant);
+  if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
+  const release = isReleaseVariant(variant);
+  const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
+  return {
+    ok: true,
+    plan: {
+      build: {
+        variant,
+        release,
+        profile: buildProfile,
+        cas,
+        cache: cachePolicy,
+        compilerCache: optimizations.android.compilerCache,
+        gradleBuildCache: optimizations.android.gradleBuildCache,
+        pch: optimizations.android.pch,
+        targetAbiOnly: optimizations.android.targetAbiOnly,
+      },
+      metroWarmup: optimizations.metroWarmup,
+      cacheProviderConfig,
+    },
+  };
+}
+
 export function resolveAndroidRunPlan(
   {
     settings,
@@ -221,23 +293,11 @@ export function resolveAndroidRunPlan(
   if (shapeError) {
     return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
   }
-  for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
-  }
-  let optimizations: Optimizations;
-  try {
-    optimizations = resolveOptimizations(settings);
-  } catch (error) {
-    return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
-  }
-  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext });
-  const cas = compilerCache.cas;
-  optimizations = compilerCache.optimizations;
-  if (compilerCache.warning) warn('cache', compilerCache.warning);
-  const buildProfile = optimizationBuildProfile('android', optimizations);
-  const cacheProviderConfig = resolveCacheProvider(settingsContext);
-  const cacheProviderError = cacheProviderSettingError(settings);
-  if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
+  const plannedBuild = resolveAndroidBuildPlan(
+    { settings, settingsContext, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
+    { warn, resolveCompilerCache, resolveCacheProvider, variantProblem },
+  );
+  if (!plannedBuild.ok) return plannedBuild;
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(
@@ -256,11 +316,6 @@ export function resolveAndroidRunPlan(
   }
   const systemImage = resolveSystemImage(systemImageFlag, settings);
   const deviceProfile = resolveDeviceProfile(deviceProfileFlag, settings);
-  const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
-  const flavorRefusal = variantProblem(variant);
-  if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
-  const release = isReleaseVariant(variant);
-  const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
   const isExpo = detectExpo(root);
   const physical = isPhysicalDeviceRequest(deviceFlag);
   if (physical && deviceFlag === '') {
@@ -332,17 +387,7 @@ export function resolveAndroidRunPlan(
   return {
     ok: true,
     plan: {
-      build: {
-        variant,
-        release,
-        profile: buildProfile,
-        cas,
-        cache: cachePolicy,
-        compilerCache: optimizations.android.compilerCache,
-        gradleBuildCache: optimizations.android.gradleBuildCache,
-        pch: optimizations.android.pch,
-        targetAbiOnly: optimizations.android.targetAbiOnly,
-      },
+      ...plannedBuild.plan,
       target,
       deviceSlotWaitMs: noWait
         ? 0
@@ -350,8 +395,6 @@ export function resolveAndroidRunPlan(
           ? DEFAULT_DEVICE_SLOT_WAIT_MS
           : waitSeconds * 1000,
       isExpo,
-      metroWarmup: optimizations.metroWarmup,
-      cacheProviderConfig,
     },
   };
 }
