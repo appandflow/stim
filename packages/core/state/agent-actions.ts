@@ -189,8 +189,8 @@ function readCompleteLines(
   let fd: number | undefined;
   try {
     fd = openSync(path, 'r');
-    const stat = fstatSync(fd);
-    const size = stat.size;
+    const stat = fstatSync(fd, { bigint: true });
+    const size = Number(stat.size);
     const identity = `${stat.dev}:${stat.ino}`;
     if (size <= start) return { text: '', next: start, size, identity };
     const buffer = Buffer.alloc(size - start);

@@ -199,7 +199,8 @@ const REFUSALS: Array<{
   {
     name: 'a malformed remote target refuses at shape validation',
     inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
-    message: /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, or a tailnet machine name\.$/,
+    message:
+      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, local, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 export function launchEvidenceMessage(launched, label) {
   if (launched === true) return `${label} launched and verified.`;
@@ -20,4 +21,15 @@ export function noCompileEvidenceMessage({ cwd, logPath, text, compileSigns }) {
     );
   }
   return 'no-compile proof: the second worktree build log holds no compiler invocation.';
+}
+
+export async function waitForKnownObservation(probe, { deadline, now = Date.now, wait = sleep }) {
+  for (;;) {
+    assert(now() < deadline, 'observation deadline expired without a known result');
+    const observed = await probe();
+    const remaining = deadline - now();
+    assert(remaining > 0, 'observation deadline expired without a known result');
+    if (observed !== undefined) return observed;
+    await wait(Math.min(500, remaining));
+  }
 }

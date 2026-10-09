@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   commandWithReportedStatus,
   shellCommandSegments,
+  sameLiteralShellCommand,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
 
@@ -59,6 +60,12 @@ function iosRelaunchGroup(command, output) {
     lines.some((line) => new RegExp(`^${group[1].replaceAll('.', '\\.')}: \\d+$`).test(line)) &&
     lines.includes(group[2])
   );
+}
+
+function successfulAgentDeviceLaunch(command, expected) {
+  if (!expected || command.exitCode !== 0 || !sameLiteralShellCommand(command.command, expected.command)) return false;
+  const lines = String(command.output ?? '').split(/\r?\n/);
+  return lines.includes(`Opened: ${expected.appId}`) && lines.includes(`Session state: ${expected.sessionState}`);
 }
 
 function successfulLaunch(command, arm, platform) {
@@ -398,6 +405,7 @@ export function launchCrashDiagnosis(
     setup = {},
     reviewedDiagnostics = [],
     initialLaunchCapture = false,
+    agentDeviceLaunch,
   },
 ) {
   const ordered = orderedCommands(commands);
@@ -405,6 +413,7 @@ export function launchCrashDiagnosis(
   const initialLaunchIndex = ordered.findIndex(
     (command, index) =>
       successfulLaunch(command, arm, platform) ||
+      successfulAgentDeviceLaunch(command, agentDeviceLaunch) ||
       (arm === 'control' && platform === 'android' && confirmedAndroidLaunchLog(command, ordered.slice(0, index))),
   );
   if (initialLaunchIndex === -1) {
@@ -466,6 +475,7 @@ export function launchCrashDiagnosis(
   const unrecognizedBeforeCapture = preCaptureActivity.filter(
     (command) =>
       timestamp(command, 'startedAt') < captureEndedAt &&
+      !successfulAgentDeviceLaunch(command, agentDeviceLaunch) &&
       !allowedBeforeErrorCapture(command.command, arm, platform, setup),
   );
   const disallowedBeforeCapture = unrecognizedBeforeCapture.filter(

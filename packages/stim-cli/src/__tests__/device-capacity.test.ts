@@ -342,6 +342,34 @@ test('cancelling a queued run promptly releases its ticket without booting', asy
   expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
 });
 
+test.each(['wait notification', 'progress output'])(
+  'cancellation during %s starts no idle reclaim',
+  async (boundary) => {
+    const controller = new AbortController();
+    const boot = vi.fn<() => Promise<void>>(async () => {});
+    const waitingFor = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>((info) => {
+      if (info && boundary === 'wait notification') controller.abort();
+    });
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+        root,
+        max: 1,
+        signal: controller.signal,
+        sources: { ...empty, sims: occupied },
+        waitingFor,
+        out: () => {
+          if (boundary === 'progress output') controller.abort();
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reclaimIdleDevice).not.toHaveBeenCalled();
+    expect(boot).not.toHaveBeenCalled();
+    expect(waitingFor).toHaveBeenLastCalledWith(null);
+    expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+    expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
+  },
+);
+
 test('an error reporting an admitted wait still releases the boot reservation', async () => {
   let full = true;
   await expect(

@@ -254,8 +254,7 @@ struct DeviceTile: View {
     Card {
       VStack(spacing: 0) {
         header
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.md)
+          .padding(CardMetrics.headerPadding)
           .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
@@ -268,8 +267,8 @@ struct DeviceTile: View {
         DeviceTileMenu(
           device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
         )
-        .padding(.trailing, Space.lg)
-        .padding(.top, Space.md + 2)
+        .padding(.trailing, CardMetrics.headerPadding)
+        .padding(.top, CardMetrics.headerPadding + 2)
       }
     }
     .overlay {
@@ -329,6 +328,8 @@ struct DeviceTile: View {
           Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
+            .lineLimit(1)
+            .fixedSize()
             .accessibilityHidden(true)
         }
         if case .remote = device {
@@ -504,6 +505,8 @@ struct DeviceTile: View {
   private var hasMenu: Bool {
     clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
   }
+
+  private var buildCovered: Bool { showsCovers && !interactive && build != nil }
 
   @ViewBuilder private var screenCover: some View {
     if !showsCovers || interactive {
@@ -999,7 +1002,7 @@ struct DeviceTile: View {
         }
       } else if let workspace {
         PhysicalDeviceScreen(
-          device: device, workspace: workspace, interactive: interactive,
+          device: device, workspace: workspace, interactive: interactive, covered: buildCovered,
           onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
         )
         .id([device.id, device.activityKey].compactMap { $0 }.joined(separator: "|"))

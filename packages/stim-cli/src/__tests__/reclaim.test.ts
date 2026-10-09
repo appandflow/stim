@@ -820,7 +820,8 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   const identify = vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM' });
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runFile: (file: string) => (file === 'lsof' ? '41219' : ''),
+    runFile: (file: string) =>
+      file === 'netstat' ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n' : file === 'lsof' ? '41219' : '',
     runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null),
     runFileQuiet: () => null,
   });
@@ -829,7 +830,8 @@ test('worktree reclaim releases named ports and keeps the entry when a listener 
   identify.mockRestore();
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runFile: () => {
+    runFile: (file: string) => {
+      if (file === 'netstat') return 'Proto Local Address Foreign Address State PID\n';
       throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
     },
     runQuiet: () => null,
