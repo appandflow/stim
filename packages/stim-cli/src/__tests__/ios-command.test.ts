@@ -6674,6 +6674,8 @@ describe('--simulator-app', () => {
 });
 
 describe('the simulator model and runtime flags', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([
     { opts: { remote: 'eas', runtime: '18.6' }, settings: {}, given: '--runtime' },
     {
