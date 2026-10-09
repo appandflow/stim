@@ -21,6 +21,7 @@ let root: string;
 let compilations: number;
 let failBuild: boolean;
 let cancelCompile: boolean;
+let cancelMaterialize: boolean;
 let temporaryCopies: string[];
 
 beforeEach(() => {
@@ -33,6 +34,7 @@ beforeEach(() => {
   compilations = 0;
   failBuild = false;
   cancelCompile = false;
+  cancelMaterialize = false;
   temporaryCopies = [];
   const project: AndroidProject = {
     isExpo: false,
@@ -67,6 +69,7 @@ beforeEach(() => {
           temporaryCopies.push(directory);
           const apkPath = join(directory, 'app.apk');
           copyFileSync(cached, apkPath);
+          if (cancelMaterialize) cancelActiveBuild();
           return { apkPath, directory };
         },
         compile: async () => {
@@ -169,13 +172,16 @@ function cancelActiveBuild() {
   process.emit('SIGINT');
 }
 
-test.each(['compile', 'upload'])(
+test.each(['compile', 'upload', 'materialize'])(
   'a whole-workspace cancellation during %s is reported as cancelled and allows recovery',
   async (during) => {
     const existing = { serial: 'already-running' };
     writeWorkspaceState(root, { android: existing });
     if (during === 'compile') cancelCompile = true;
-    else
+    else if (during === 'materialize') {
+      await buildAndroidOperation(root, { remoteBuild: 'local' });
+      cancelMaterialize = true;
+    } else
       vi.spyOn(results, 'finishAndroidUpload').mockImplementationOnce(async () => {
         cancelActiveBuild();
         return false;
@@ -189,7 +195,10 @@ test.each(['compile', 'upload'])(
     });
     expect(readWorkspaceState(root)?.android).toEqual(existing);
     expect(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]).toBeUndefined();
+    expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);
+    expect(temporaryCopies.length > 0).toBe(during === 'materialize');
     cancelCompile = false;
+    cancelMaterialize = false;
     const recovered = await buildAndroidOperation(root, { remoteBuild: 'local' });
     expect(existsSync(recovered.apkPath)).toBe(true);
     expect(readWorkspaceState(root)?.android).toEqual(existing);

@@ -112,7 +112,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  swapDir: string | null;
+  /** Removes only owned temporary copies; repeated calls are safe. */
+  release(): void;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
@@ -408,6 +409,15 @@ export async function acquireAndroidArtifact(
   }
 
   let swapDir: string | null = null;
+  const releaseArtifact = () => {
+    if (!swapDir) return;
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+      swapDir = null;
+    } catch (error) {
+      out(phaseLine('cleanup', chalk.yellow(`could not remove the temporary APK: ${(error as Error).message}`)));
+    }
+  };
   const installableCachedApk = async (key: string, cachedPath: string): Promise<string | null> => {
     const prepared = await recipe.materialize(key, cachedPath);
     if (!prepared) {
@@ -849,6 +859,7 @@ export async function acquireAndroidArtifact(
       },
     });
   } catch (error) {
+    releaseArtifact();
     if (error instanceof OffloadRefusal) {
       const { code, message, remedy } = error;
       return { ok: false, failure: fail(code, message, remedy, { lastBuildStatus: true }), ccache: ccacheActivity };
@@ -863,7 +874,7 @@ export async function acquireAndroidArtifact(
       apkPath,
       handoff,
       androidPackage,
-      swapDir,
+      release: releaseArtifact,
       waitedForBuild,
       ccache: ccacheActivity,
       uploadPending,
