@@ -158,6 +158,7 @@ jobs:
         exclude:
           - framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_E2E_IOS_RUNTIME: ${{ matrix.suite == 'loop' && '26.5' || '' }}
       STIM_E2E_IOS_DEVICE_TYPE: ${{ matrix.suite == 'loop' && 'iPhone 17' || '' }}
@@ -362,6 +363,7 @@ jobs:
           - suite: smoke
             framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
       STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-android-${{ matrix.framework }}
@@ -526,6 +528,7 @@ jobs:
       matrix:
         suite: ${{ fromJSON(needs.plan.outputs.windows) }}
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
       # under it. It is D:\e rather than a path inside the workspace because
       # every CMake object path is built from the fixture root and Windows caps
@@ -634,6 +637,7 @@ jobs:
       matrix:
         suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || format('["{0}"]', inputs.suite)) }}
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8

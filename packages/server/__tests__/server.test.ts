@@ -3655,8 +3655,12 @@ while (true) {}
       true,
     );
     try {
-      await until(() => existsSync(ready));
-      const pid = Number(readFileSync(ready, 'utf8'));
+      let pid = 0;
+      await until(() => {
+        if (!existsSync(ready)) return false;
+        pid = Number(readFileSync(ready, 'utf8'));
+        return Number.isSafeInteger(pid) && pid > 0;
+      });
       await run.cancel();
       expect(alive(pid)).toBe(false);
     } finally {
@@ -3844,7 +3848,7 @@ describe('build.plan', () => {
     const staying = await authed(port);
     void closing.request('build.plan', { workspace, platform: 'ios' });
     void closing.request('build.plan', { workspace, platform: 'android' });
-    await until(() => childPids().length === 1);
+    await until(() => childPids().length === 1 && stimCalls().length === 1);
     const plan = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
     closing.socket.close();
     await until(() => stimCalls().length === 2);
