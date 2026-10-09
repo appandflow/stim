@@ -53,6 +53,11 @@ export function createHarness({ env, cliPath, label }) {
     if (r.code !== 0)
       throw Object.assign(new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`), {
         preserveNativeState: true,
+        nativeCommand: {
+          cwd: opts.cwd,
+          platform: argv[0],
+          slot: argv.includes('--slot') ? argv[argv.indexOf('--slot') + 1] : 'default',
+        },
       });
     const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
@@ -538,8 +543,10 @@ export function workspaceLogsDir(cwd) {
   return join(home, 'workspaces', `${slug}--${id}`, 'logs');
 }
 
-export function dumpDiagnostics(h, created) {
+export function dumpDiagnostics(h, created, error) {
   h.banner('DIAGNOSTICS (build log tails)');
+  if (error?.nativeCommand?.platform === 'android' && created.includes(error.nativeCommand.cwd))
+    dumpFailedAndroidCommand(h, error.nativeCommand);
   for (const wt of created) {
     const logPath = buildLog(wt);
     if (!logPath) {
@@ -578,6 +585,75 @@ export function dumpDiagnostics(h, created) {
     writeFileSync(join(dirname(logPath), 'android-failure-diagnostics.json'), output + '\n');
     h.log(output);
   }
+}
+
+function dumpFailedAndroidCommand(h, command) {
+  const evidence = { command, observedAt: Date.now(), queries: [], deviceId: null, avdName: null, error: null };
+  const query = (file, argv, timeout = 10_000) => {
+    const started = Date.now();
+    const result = h.sh(file, argv, { allowFail: true, timeout });
+    evidence.queries.push({ file, argv, elapsedMs: Date.now() - started, ...result });
+    return result;
+  };
+  try {
+    if (process.platform === 'win32')
+      query(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          "$ErrorActionPreference='Stop'; $m=Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize -OperationTimeoutSec 2; $c=Get-CimInstance Win32_Processor -Property LoadPercentage,NumberOfLogicalProcessors -OperationTimeoutSec 2; $p=Get-CimInstance Win32_Process -Filter \"Name='java.exe' OR Name='qemu-system-x86_64.exe' OR Name='adb.exe' OR Name='node.exe'\" -Property ProcessId,ParentProcessId,Name,CreationDate,WorkingSetSize,PageFileUsage,KernelModeTime,UserModeTime -OperationTimeoutSec 2; @{memory=$m | Select-Object FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize; cpu=@($c | Select-Object LoadPercentage,NumberOfLogicalProcessors); processes=@($p | Select-Object ProcessId,ParentProcessId,Name,CreationDate,WorkingSetSize,PageFileUsage,KernelModeTime,UserModeTime)} | ConvertTo-Json -Depth 5 -Compress",
+        ],
+        8000,
+      );
+    const config = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'config.json'), 'utf8'));
+    const ledger = JSON.parse(readFileSync(join(h.env.STIM_HOME, 'created-devices.json'), 'utf8'));
+    const project = config.projects?.[resolve(command.cwd)];
+    const device = (command.slot === 'default' ? project?.platforms : project?.deviceSlots?.[command.slot])?.android;
+    assert(
+      device?.owned === true &&
+        typeof device.avdName === 'string' &&
+        device.avdName.length > 0 &&
+        Array.isArray(ledger.android) &&
+        ledger.android.includes(device.avdName),
+      'failed command has no verified task-owned AVD assignment',
+    );
+    evidence.avdName = device.avdName;
+    const inventory = query('adb', ['devices']);
+    assert(
+      inventory.code === 0 && /^List of devices attached/m.test(inventory.stdout),
+      'Android transport inventory unavailable',
+    );
+    const serials = inventory.stdout
+      .split(/\r?\n/)
+      .flatMap((line) => /^(emulator-\d+)\s+device\s*$/.exec(line)?.[1] ?? []);
+    assert(serials.length <= 8, 'refusing unbounded Android transport inspection');
+    const matches = serials.filter((serial) => {
+      const result = query('adb', ['-s', serial, 'emu', 'avd', 'name']);
+      const lines = result.stdout.trim().split(/\r?\n/);
+      return result.code === 0 && lines.length === 2 && lines[0] === device.avdName && lines[1] === 'OK';
+    });
+    assert(matches.length === 1, 'failed command AVD has no unique verified online transport');
+    evidence.deviceId = matches[0];
+    for (const argv of [
+      ['get-state'],
+      ['shell', 'cat', '/proc/sys/kernel/random/boot_id'],
+      ['shell', 'cat', '/proc/meminfo'],
+      ['logcat', '-b', 'all', '-d', '-t', '2000'],
+    ])
+      query('adb', ['-s', evidence.deviceId, ...argv]);
+  } catch (error) {
+    evidence.error = error.message;
+  }
+  const output = JSON.stringify(evidence, null, 2);
+  try {
+    const dir = workspaceLogsDir(command.cwd);
+    if (existsSync(dir)) writeFileSync(join(dir, 'android-failed-command-diagnostics.json'), output + '\n');
+  } catch (error) {
+    h.log(`could not retain failed-command diagnostics: ${error.message}`);
+  }
+  h.log(output);
 }
 
 export function cleanupTmp(dirs, error) {
