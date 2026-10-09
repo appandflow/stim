@@ -16,6 +16,16 @@ final class NativeViewerPermissions: ObservableObject {
   @Published private(set) var revision = 0
   @Published private(set) var serverOwned: Bool?
 
+  init() {}
+
+  #if DEBUG
+    init(screenRecording: Bool, accessibility: Bool, serverOwned: Bool? = nil) {
+      self.screenRecording = screenRecording
+      self.accessibility = accessibility
+      self.serverOwned = serverOwned
+    }
+  #endif
+
   var screenPermissionTitle: String {
     if #available(macOS 15, *) { return "Screen & System Audio Recording" }
     return "Screen Recording"
@@ -26,16 +36,14 @@ final class NativeViewerPermissions: ObservableObject {
     return "Accessibility"
   }
 
-  var controlPermissionDetail: String {
-    let use = "Lets Control interact with the captured app window and Open app bring it forward."
-    if #available(macOS 27, *) { return "\(use) Named Accessibility on macOS 26 and earlier." }
-    return use
+  var controlPermissionAlias: String? {
+    if #available(macOS 27, *) { return "Named Accessibility on macOS 26 and earlier." }
+    return nil
   }
 
-  var screenPermissionDetail: String {
-    let use = PhoneApp.Copy.screenPermissionUse(phoneApp: FeatureFlags.isEnabled(.phoneApp))
-    if #available(macOS 15, *) { return "\(use) Named Screen Recording on macOS 14." }
-    return use
+  var screenPermissionAlias: String? {
+    if #available(macOS 15, *) { return "Named Screen Recording on macOS 14." }
+    return nil
   }
 
   func viewerOpened(serverOwned: Bool? = nil) {
@@ -56,8 +64,21 @@ final class NativeViewerPermissions: ObservableObject {
     revision += 1
   }
 
-  func requestPermissions() {
+  func poll() {
+    let screen = CGPreflightScreenCaptureAccess()
+    let control = AXIsProcessTrusted() && CGPreflightPostEventAccess()
+    guard screen != screenRecording || control != accessibility else { return }
+    screenRecording = screen
+    accessibility = control
+    revision += 1
+  }
+
+  func requestScreenRecording() {
     if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
+    refresh()
+  }
+
+  func requestControl() {
     if !AXIsProcessTrusted() {
       _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
     } else if !CGPreflightPostEventAccess() {
