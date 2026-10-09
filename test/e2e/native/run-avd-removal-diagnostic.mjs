@@ -102,7 +102,7 @@ for (const [name, expected] of packages) {
 const javaVersion = exec.runFile(join(process.env.JAVA_HOME, 'bin/java.exe'), ['--version'], { timeoutMs: 10000 });
 writeFileSync(join(evidence, 'java-version.txt'), javaVersion);
 assert.match(javaVersion, /17\.0\.20/);
-assert.match(javaVersion, /17\.0\.20\+101/);
+assert.match(javaVersion, /Temurin-17\.0\.20\.1\+1\b/);
 record('source', { sha: exec.runFile('git', ['rev-parse', 'HEAD'], { timeoutMs: 10000 }) });
 const originalAvds = listAvds({ timeoutMs: 10000 }).toSorted();
 const originalAdb = listAdbDevices({ timeoutMs: 10000 });
