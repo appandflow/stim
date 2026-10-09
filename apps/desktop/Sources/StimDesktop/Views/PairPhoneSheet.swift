@@ -44,7 +44,7 @@ struct PairPhoneSheet: View {
       }
     }
     .frame(width: 740, height: 600)
-    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
+    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .task { await model.start() }
     .onDisappear { model.cancel() }

@@ -153,19 +153,33 @@ struct BuildSheet: View {
           platformName(entry.platform) + (page.subtitle(for: entry, among: entries).map { " \u{00B7} " + $0 } ?? "")
         }
         if !entries.isEmpty {
-          Picker("Platform", selection: $selectedEntry) {
-            ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+          HStack(spacing: Space.sm) {
+            ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in
+              Button {
+                selectedEntry = entry
+              } label: {
+                Pill(tone: entry == selectedEntry ? .brand : .neutral, outlined: entry != selectedEntry) { Text(title) }
+              }
+              .buttonStyle(.hoverRow())
+              .accessibilityAddTraits(entry == selectedEntry ? .isSelected : [])
+            }
           }
-          .pickerStyle(.segmented)
-          .labelsHidden()
           .fixedSize()
         }
       } else if platforms.count > 1 {
-        Picker("Platform", selection: $nativePlatform) {
-          ForEach(platforms, id: \.self) { Text(platformName($0)).tag($0) }
+        HStack(spacing: Space.sm) {
+          ForEach(platforms, id: \.self) { platform in
+            Button {
+              nativePlatform = platform
+            } label: {
+              Pill(tone: platform == nativePlatform ? .brand : .neutral, outlined: platform != nativePlatform) {
+                Text(platformName(platform))
+              }
+            }
+            .buttonStyle(.hoverRow())
+            .accessibilityAddTraits(platform == nativePlatform ? .isSelected : [])
+          }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
         .fixedSize()
       }
       Spacer(minLength: Space.sm)
@@ -180,7 +194,7 @@ struct BuildSheet: View {
         } label: {
           Label(lastFailed ? "Rebuild" : "Run", systemImage: "play.fill")
         }
-        .buttonStyle(.stim(.primary, .regular))
+        .buttonStyle(.stim(.primary))
         .disabled(busy)
         .help(
           isMacos

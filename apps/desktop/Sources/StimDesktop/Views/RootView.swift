@@ -103,6 +103,10 @@ struct RootView: View {
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs,
         tips: tips
       )
+      .toolbar(removing: .sidebarToggle)
+      .toolbar {
+        if columnVisibility != .detailOnly { sidebarToggleToolbar }
+      }
       .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
@@ -148,9 +152,18 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
-        ToolbarItem(placement: .navigation) {
-          HistoryButtons(
-            navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        if columnVisibility == .detailOnly { sidebarToggleToolbar }
+        let history = HistoryButtons(
+          navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        if #available(macOS 26.0, *) {
+          ToolbarItem(placement: .navigation) {
+            history.padding(.horizontal, Space.xs).frame(height: 40)
+              .glassEffect(.regular, in: Capsule())
+          }
+          .sharedBackgroundVisibility(.hidden)
+          ToolbarSpacer(.fixed, placement: .navigation)
+        } else {
+          ToolbarItem(placement: .navigation) { history }
         }
         if columnVisibility == .detailOnly, !operations.runs.isEmpty {
           ToolbarItem(placement: .navigation) {
@@ -167,19 +180,30 @@ struct RootView: View {
               .clipped()
           }
         }
+        ToolbarItem(placement: .primaryAction) { Spacer() }
         if !controlsBesideInspector {
-          ToolbarItem(placement: .primaryAction) { Spacer() }
-          if showsWorkspace {
-            ToolbarItem(placement: .primaryAction) { logsToggleButton }
-            ToolbarItem(placement: .primaryAction) {
-              InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
-            }
-          }
-          if #available(macOS 26.0, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-          }
           ToolbarItem(id: "notifications", placement: .primaryAction) {
             notificationButton
+          }
+          if showsWorkspace, #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+          }
+        }
+        if showsWorkspace {
+          let controls = HStack(spacing: Space.md) {
+            logsToggleButton
+            InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+          }
+          .padding(.horizontal, Space.md + Space.xxs)
+          .frame(height: 40)
+          .accessibilityElement(children: .contain)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) {
+              controls.glassEffect(.regular, in: Capsule()).padding(.trailing, Space.md)
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(placement: .primaryAction) { controls.padding(.trailing, Space.md) }
           }
         }
       }
@@ -215,7 +239,7 @@ struct RootView: View {
     }
     .environment(\.windowSize, windowSize)
     .toolbarBackground(.hidden, for: .windowToolbar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .environmentObject(actions)
@@ -475,6 +499,33 @@ struct RootView: View {
 
   private var controlsBesideInspector: Bool { showsWorkspace && inspector == .column }
 
+  @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
+    if #available(macOS 26.0, *) {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.glassEffect(.regular.interactive(), in: Capsule())
+      }
+      .sharedBackgroundVisibility(.hidden)
+    } else {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.background(.regularMaterial, in: Capsule())
+      }
+    }
+  }
+
+  private var sidebarToggleButton: some View {
+    Button {
+      withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+    } label: {
+      Image(systemName: "sidebar.left")
+        .font(.system(size: 17))
+        .frame(width: 40, height: 40)
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(Palette.secondary)
+    .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
+  }
+
   private var logsToggleButton: some View {
     LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
       if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
@@ -484,16 +535,9 @@ struct RootView: View {
     }
   }
 
-  /// A column inspector fills the window toolbar's trailing edge, so these controls sit over the content, left of it.
   @ViewBuilder private var inspectorSideControls: some View {
     if controlsBesideInspector {
-      let controls = HStack(spacing: Space.xxs) {
-        logsToggleButton
-        InspectorToggleButton(isShown: true, action: toggleInspector)
-        notificationButton
-      }
-      .padding(.horizontal, Space.xs)
-      .frame(height: 40)
+      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: 40)
       Group {
         if #available(macOS 26.0, *) {
           controls.glassEffect(.regular, in: Capsule())
@@ -964,7 +1008,6 @@ struct MachineSummary: View {
     }
     .padding(.horizontal, Space.lg)
     .padding(.vertical, Space.xs)
-    .background(Palette.surface, in: Capsule())
   }
 
   private func cpuItem(_ cpu: Double) -> some View {
@@ -1206,7 +1249,7 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
@@ -1223,7 +1266,7 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {
