@@ -123,7 +123,7 @@ public struct WorktreePage: Hashable, Sendable {
   public var buildEntries: [Entry] {
     let entries = apps.flatMap { app in
       let platforms = app.supportedPlatforms.filter { $0 == "ios" || $0 == "android" }
-      return (app.macos == nil ? [] : [Entry(path: app.path, platform: "macos")])
+      return (app.supportedPlatforms.contains("macos") ? [Entry(path: app.path, platform: "macos")] : [])
         + platforms.map { Entry(path: app.path, platform: $0) }
     }
     guard isUnified else { return entries }

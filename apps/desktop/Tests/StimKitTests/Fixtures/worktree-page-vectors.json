@@ -677,6 +677,10 @@
     },
     {
       "name": "a detected macOS package without recorded state has a label only",
+      "desktopExpected": {
+        "buildEntries": [{ "path": "/w/app", "platform": "macos" }],
+        "subtitles": [null]
+      },
       "input": {
         "now": "2026-10-05T12:00:00.000Z",
         "path": "/w/app",
