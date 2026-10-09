@@ -1,8 +1,8 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
-import type { IosProject } from './ios-project.ts';
 import type { AndroidProject } from './android-project.ts';
+import type { IosProject } from './ios-project.ts';
 import type { MacosProject } from './macos-project.ts';
 import type { WebProject } from './web-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
@@ -22,8 +22,8 @@ interface ProjectMatch {
   application: boolean;
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
-  ios?(): Promise<IosProject>;
   android?(): Promise<AndroidProject>;
+  ios?(): Promise<IosProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
   doctor?(): Promise<ProjectDoctor>;
@@ -38,8 +38,8 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
-  selectIos(root: string): { id: string; load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
+  selectIos(root: string): { id: string; load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
   selectDoctor(
@@ -157,23 +157,6 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     };
   }
 
-  function selectIos(root: string): ReturnType<ProjectRegistry['selectIos']> {
-    root = canonicalPath(root);
-    const matches = inspect(root);
-    const problem = ownedRootProblem(root, matches);
-    if (problem) return { problem };
-    const selected = operationSelection(root, matches, 'ios');
-    if ('problem' in selected) return selected;
-    if (selected.match.ios) return { id: selected.match.id, load: selected.match.ios };
-    return {
-      problem: {
-        kind: 'not-an-app',
-        message: `The ${selected.match.id} integration does not provide an iOS operation.`,
-        remedy: 'Use an integration with an iOS build and runtime recipe.',
-      },
-    };
-  }
-
   function selectMacos(root: string): ReturnType<ProjectRegistry['selectMacos']> {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -204,6 +187,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
         kind: 'not-an-app',
         message: `The ${selected.match.id} integration does not provide a web operation.`,
         remedy: 'Use an integration with a web runtime recipe.',
+      },
+    };
+  }
+
+  function selectIos(root: string): ReturnType<ProjectRegistry['selectIos']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'ios');
+    if ('problem' in selected) return selected;
+    if (selected.match.ios) return { id: selected.match.id, load: selected.match.ios };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide an iOS operation.`,
+        remedy: 'Use an integration with an iOS build and runtime recipe.',
       },
     };
   }

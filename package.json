@@ -8,7 +8,7 @@
   ],
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/cache/tsconfig.json && tsc --noEmit -p packages/stim-cli/tsconfig.json && tsc --noEmit -p packages/metro/tsconfig.json && tsc --noEmit -p packages/expo-build-cache/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/ci/tsconfig.json",
+    "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/cache/tsconfig.json && tsc --noEmit -p packages/stim-cli/tsconfig.json && tsc --noEmit -p packages/metro/tsconfig.json && tsc --noEmit -p packages/expo-build-cache/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/ci/tsconfig.json && tsc --noEmit -p .github/actions/stim-ci/tsconfig.json",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt .",
@@ -17,7 +17,7 @@
     "test:compat": "vitest run --config vitest.compat.config.ts",
     "test:runtime": "node test/runtime-floor.mjs",
     "test:watch": "vitest",
-    "build": "pnpm -r --filter \"./packages/*\" run build",
+    "build": "pnpm -r --filter \"./packages/*\" --filter @stim-cli/github-action run build",
     "test:e2e": "node --test test/e2e/*.e2e.js",
     "knip": "knip",
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",

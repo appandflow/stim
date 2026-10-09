@@ -4,7 +4,7 @@ import { defineConfig } from 'tsdown';
 const { version } = JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8'));
 
 export default defineConfig({
-  entry: { index: 'src/index.ts', 'stim-ci': 'bin/node-check.ts' },
+  entry: { index: 'src/index.ts', artifacts: 'src/artifacts.ts', 'stim-ci': 'bin/node-check.ts' },
   format: 'esm',
   dts: true,
   outDir: 'dist',

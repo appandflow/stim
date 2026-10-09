@@ -635,9 +635,11 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
 
 export type IosRemoteTarget = { kind: 'backend'; backend: RemoteDeviceBackend } | { kind: 'machine'; machine: string };
 
-export function parseIosRemote(remote: string): IosRemoteTarget {
+/** The remote target `remote` names, or null for `local`, which runs on this Mac whatever a lower layer sets. */
+export function parseIosRemote(remote: string): IosRemoteTarget | null {
   const selected = remote.trim();
   const reserved = selected.toLowerCase();
+  if (reserved === 'local') return null;
   return (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(reserved)
     ? { kind: 'backend', backend: reserved as RemoteDeviceBackend }
     : { kind: 'machine', machine: reserved === 'auto' ? 'auto' : selected };

@@ -1,4 +1,5 @@
 import { getExecutor, type Executor } from '../exec.ts';
+import { debugLog } from '../debug-log.ts';
 import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
 import { deviceHoldsApk, deviceHoldsBundle } from './installed-artifact.ts';
 import { iosSimulatorFailureAdvice, listUserApps, uninstallIosApp } from '../devices/ios.ts';
@@ -263,19 +264,39 @@ export function iosAppProcess(
   { exec = null }: ExecOpt = {},
 ): number | null | undefined {
   const e = exec || getExecutor();
-  let out = '';
+  const started = performance.now();
+  let pid: number | null | undefined;
+  let failure: { code?: string; exit?: number } = {};
   try {
-    out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
-  } catch {
+    const out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
+    const label = `UIKitApplication:${bundleId}[`;
+    pid = null;
+    for (const line of out.split('\n')) {
+      if (!line.includes(label)) continue;
+      const candidate = Number(line.trim().split(/\s+/)[0]);
+      if (Number.isInteger(candidate) && candidate > 0) {
+        pid = candidate;
+        break;
+      }
+    }
+    return pid;
+  } catch (error) {
+    const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
+    failure = {
+      ...(typeof code === 'string' ? { code } : {}),
+      ...(typeof status === 'number' ? { exit: status } : {}),
+    };
     return undefined;
+  } finally {
+    debugLog.log('ios.app-process', {
+      deviceId: udid,
+      bundleId,
+      state: pid === undefined ? 'unknown' : pid === null ? 'absent' : 'running',
+      ...(typeof pid === 'number' ? { appPid: pid } : {}),
+      ms: Math.round(performance.now() - started),
+      ...failure,
+    });
   }
-  const label = `UIKitApplication:${bundleId}[`;
-  for (const line of out.split('\n')) {
-    if (!line.includes(label)) continue;
-    const pid = Number(line.trim().split(/\s+/)[0]);
-    if (Number.isInteger(pid) && pid > 0) return pid;
-  }
-  return null;
 }
 
 function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: string, exec: Executor): number | null {
