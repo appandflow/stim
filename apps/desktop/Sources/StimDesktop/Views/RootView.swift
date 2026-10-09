@@ -343,6 +343,13 @@ struct RootView: View {
       navigate(.environment(path), .request("workspace path"))
     }
     .onReceive(store.$payload) { payload in
+      if let payload, case .environment(let path) = selection,
+        WorktreePage(path: path, environments: payload.environments) == nil,
+        let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+      {
+        navigate(.archived(archive.id), .automatic("workspace removed, opening its archive"))
+        return
+      }
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
       else { return }
@@ -431,7 +438,7 @@ struct RootView: View {
   }
 
   private var showsWorkspace: Bool {
-    if case .environment = selection { return true }
+    if case .environment = selection { return selectedPage != nil }
     if case .archived = selection { return true }
     return false
   }
@@ -816,7 +823,9 @@ struct RootView: View {
           host
         }
       } else {
-        EmptyState(title: "Workspace Gone", message: "stim status no longer reports this workspace.")
+        EmptyState(
+          title: "Workspace Gone", message: "stim status no longer reports this workspace.",
+          actionTitle: "Go to Overview", action: { navigate(.overview, .click("workspace gone overview")) })
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
