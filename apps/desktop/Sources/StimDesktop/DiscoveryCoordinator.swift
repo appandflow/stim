@@ -215,9 +215,7 @@ final class DiscoveryCoordinator: ObservableObject {
       if let prompt = Discovery.slotWait(placements: placements, macs: macs, now: now) { candidates.append(prompt) }
     }
     let sizes = gc.report?.sections.caches?.compactMap(\.bytes)
-    if let prompt = Discovery.lowWithCaches(
-      plan: autopilot.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }, mac: macs.first)
-    {
+    if let prompt = Discovery.lowWithCaches(plan: autopilot.pressure, cacheBytes: sizes.map { $0.reduce(0, +) }) {
       candidates.append(prompt)
     }
     let tipsShown = TipStore(defaults: .standard).state.lastShown
@@ -256,10 +254,7 @@ final class DiscoveryCoordinator: ObservableObject {
     Notice(
       icon: "lightbulb", title: prompt.title, detail: prompt.detail, actionTitle: prompt.actionTitle,
       perform: { perform(prompt.action) }, onDismiss: snooze, key: AppPreferences.Key.discovery(prompt.type),
-      secondaryAction: prompt.secondaryAction.map { action in
-        Notice.Action(title: "Review Caches", perform: { perform(action) })
-      } ?? Notice.Action(title: "Don't Suggest Again", perform: never),
-      alternateAction: prompt.secondaryAction == nil ? nil : Notice.Action(title: "Don't Suggest Again", perform: never))
+      secondaryAction: Notice.Action(title: "Don't Suggest Again", perform: never))
   }
 
   private func perform(_ action: DiscoveryAction) {

@@ -96,13 +96,13 @@ struct DiscoveryTests {
   @Test func cacheSuggestionRequiresPressureAndMoreThanTwentyGiB() {
     let plan = PressurePlan.make(freeBytes: 0, minimumFreeGb: 1, hardFloorGb: 0, report: nil)
     let boundary: Int64 = 20 * 1_073_741_824
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary, mac: mini) == nil)
-    #expect(Discovery.lowWithCaches(plan: nil, cacheBytes: boundary + 1, mac: mini) == nil)
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: nil, mac: mini) == nil)
-    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary + 1, mac: mini)?.secondaryAction == .reviewCaches)
-    #expect(
-      Discovery.lowWithCaches(plan: plan, cacheBytes: 48 * 1_073_741_824, mac: nil)?.title
-        == "Native caches use 48 GB. Build on another Mac?")
+    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary) == nil)
+    #expect(Discovery.lowWithCaches(plan: nil, cacheBytes: boundary + 1) == nil)
+    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: nil) == nil)
+    #expect(Discovery.lowWithCaches(plan: plan, cacheBytes: boundary + 1)?.action == .reviewCaches)
+    let prompt = Discovery.lowWithCaches(plan: plan, cacheBytes: 48 * 1_073_741_824)
+    #expect(prompt?.title == "Disk is low. Native caches use 48 GB.")
+    #expect(prompt?.actionTitle == "Review Caches")
   }
 
   @Test func capacityRefusalNeedsAFailedRunWithTheCapacityCode() {

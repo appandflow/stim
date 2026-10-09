@@ -50,8 +50,6 @@ public struct DiscoveryPrompt: Hashable, Sendable {
   public var actionTitle: String
   public var action: DiscoveryAction
   public var surface: Surface
-
-  public var secondaryAction: DiscoveryAction? { type == .lowWithCaches ? .reviewCaches : nil }
 }
 
 public enum Discovery {
@@ -138,10 +136,12 @@ public enum Discovery {
       mac: firstMac(macs))
   }
 
-  public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?, mac: TailnetMac?) -> DiscoveryPrompt? {
+  public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?) -> DiscoveryPrompt? {
     guard plan != nil, let cacheBytes, cacheBytes > 20 * 1_073_741_824 else { return nil }
     let gb = Int((Double(cacheBytes) / 1_073_741_824).rounded())
-    return banner(.lowWithCaches, title: "Native caches use \(gb) GB. Build on another Mac?", mac: mac)
+    return DiscoveryPrompt(
+      type: .lowWithCaches, title: "Disk is low. Native caches use \(gb) GB.", actionTitle: "Review Caches",
+      action: .reviewCaches, surface: .banner)
   }
 
   public static func refusedForCapacity(lines: [String], exitStatus: Int32) -> Bool {
