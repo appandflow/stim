@@ -69,6 +69,31 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertNil(model.approvedHostingMachines(in: "/w"))
   }
 
+  @MainActor func testAutomaticCheckSkipsDoctorWithoutMachinesOrSettingAndFollowsVersionChanges() async {
+    let harness = Harness()
+    harness.machines = "[]"
+    let model = harness.make()
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, version: "1.18.0")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    harness.machines = "[\"mini\"]"
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, version: "1.18.0")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, version: "1.18.0")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, version: "1.18.0")
+    XCTAssertEqual(harness.calls.count, 1)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, version: "1.19.0")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    harness.now = harness.now.addingTimeInterval(15 * 60)
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, version: "1.19.0")
+    XCTAssertEqual(harness.calls.count, 3)
+  }
+
   @MainActor func testPickerRefreshesAreSharedPerWorkspaceAndWaitMoreThanFiveMinutesAfterCompletion() async {
     let harness = Harness()
     let model = harness.make()

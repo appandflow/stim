@@ -29,6 +29,7 @@ final class BuildMachinesModel {
   private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
+  @ObservationIgnored private var lastMachineCheck: BuildMachineCheck?
 
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
@@ -138,19 +139,35 @@ final class BuildMachinesModel {
     }
   }
 
-  /// Checks the build machines once a minute while the automatic-install setting is on, whichever page is open.
+  /// Looks for a build machine on another Stim build while the automatic-install setting is on, whichever page is
+  /// open: when status first has a checkout, when this Mac's Stim version or the machine list changes, and every
+  /// 15 minutes otherwise. The wake-ups only compare cached values and `stim --version`.
   func keepMachinesCurrent(status: StatusStore) {
     Task { [weak self, weak status] in
       while !Task.isCancelled {
         guard let self, let status else { return }
-        if UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines),
-          let checkout = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
-        {
-          await refresh(checkout: checkout)
-        }
-        try? await Task.sleep(for: .seconds(60))
+        let checkout = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+        let enabled = UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines)
+        if enabled, checkout != nil, settings.payload == nil { await settings.refresh() }
+        let version = enabled && checkout != nil ? await cli.value.versionOutput() : nil
+        await checkMachinesIfDue(checkout: checkout, enabled: enabled, version: version)
+        try? await Task.sleep(for: .seconds(30))
       }
     }
+  }
+
+  func checkMachinesIfDue(checkout: String?, enabled: Bool, version: String?) async {
+    guard enabled else {
+      lastMachineCheck = nil
+      return
+    }
+    guard !isBusy, let checkout else { return }
+    let due = shouldCheckBuildMachines(
+      BuildMachineCheckState(
+        entries: entries, checkout: checkout, last: lastMachineCheck, version: version, now: now()))
+    guard due else { return }
+    lastMachineCheck = BuildMachineCheck(at: now(), version: version, entries: entries ?? [])
+    await refreshStatuses(checkout: checkout, ask: false)
   }
 
   var entries: [String]? {
@@ -289,4 +306,26 @@ final class BuildMachinesModel {
     }
     working = nil
   }
+}
+
+struct BuildMachineCheck: Equatable {
+  var at: Date
+  var version: String?
+  var entries: [String]
+}
+
+struct BuildMachineCheckState {
+  var entries: [String]?
+  var checkout: String?
+  var last: BuildMachineCheck?
+  var version: String?
+  var now: Date
+}
+
+/// Whether the automatic install should look at the build machines now. Callers pass `enabled` separately: a
+/// disabled setting never checks.
+func shouldCheckBuildMachines(_ state: BuildMachineCheckState, interval: TimeInterval = 15 * 60) -> Bool {
+  guard let entries = state.entries, !entries.isEmpty, state.checkout != nil else { return false }
+  guard let last = state.last else { return true }
+  return last.version != state.version || last.entries != entries || state.now.timeIntervalSince(last.at) >= interval
 }
