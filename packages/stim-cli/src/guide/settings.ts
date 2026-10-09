@@ -113,7 +113,8 @@ KEYS STIM READS
   ios.remote            "proxy", "eas", or a named approved Mac from
                         remote.machines, with the same meaning as --remote.
                         "auto" places on an approved Mac when this Mac is full or
-                        busy. Unset runs here. See lifecycle hosted-ios.
+                        busy. Unset runs here; "local" runs here even when a
+                        lower layer says otherwise. See lifecycle hosted-ios.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -255,7 +256,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         means the debug keystore's fixed "android".
   android.remote        "proxy", "eas", or a named approved Mac in
                         remote.machines; "auto" places on an approved Mac when
-                        this Mac is full or busy. Unset runs here.
+                        this Mac is full or busy. Unset runs here; "local"
+                        runs here even when a lower layer says otherwise.
                         See lifecycle hosted-android.
   remote.easFallback    true lets "auto" (ios.remote, android.remote or
                         --remote auto) run the simulator or emulator on a
