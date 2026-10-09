@@ -105,7 +105,20 @@ test('a real repository: canonical containment through a symlinked temp dir, the
   const dir = mkdtempSync(join(tmpdir(), 'stim-watchman-'));
   try {
     git(dir, 'init', '-q', '-b', 'main');
-    git(dir, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git(
+      dir,
+      '-c',
+      'user.email=t@t',
+      '-c',
+      'user.name=t',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'init',
+    );
     git(dir, 'worktree', 'add', '-q', '-b', 'a', join(dir, '.worktrees', 'a'));
     git(dir, 'worktree', 'add', '-q', '-b', 'b', join(dir, '.worktrees', 'b'));
     writeFileSync(join(dir, '.watchmanconfig'), '{"ignore_vcs": [".git"]}');
