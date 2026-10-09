@@ -564,6 +564,7 @@ test('the run section names the marker version the status payload reports and on
   const run = flat('run');
   expect(run).toContain(`expo.extra.stimTutorial equal to ${TUTORIAL_VERSION}`);
   expect(run).toMatch(/Do not run the app/);
+  expect(run).toMatch(/do not act on them/);
   expect(run).toMatch(/stim doctor --platform ios there: it registers the clone/);
   expect(detectTutorial({ expo: { extra: { stimTutorial: TUTORIAL_VERSION } } })).toEqual({
     version: TUTORIAL_VERSION,

@@ -39,8 +39,12 @@ public struct TutorialEnvironment: Sendable {
       + [build?.startedDate, lastBuild.flatMap { parseTimestamp($0.startedAt) }].compactMap { $0 }
   }
 
-  public static func select(_ workspaces: [Workspace], trackedPath: String?, since: Date? = nil) -> Self? {
-    let tours = workspaces.compactMap(Self.init).filter(\.isLinked)
+  public static func select(
+    _ workspaces: [Workspace], trackedPath: String?, since: Date? = nil, repository: String? = nil
+  ) -> Self? {
+    let tours = workspaces.compactMap(Self.init).filter { tour in
+      tour.isLinked && (repository == nil || tour.repository == repository)
+    }
     if let tracked = tours.first(where: { $0.path == trackedPath }) { return tracked }
     let supported = tours.filter { TutorialSteps.supportedVersions.contains($0.version) }
     if supported.isEmpty { return since == nil ? newest(tours) : nil }
@@ -82,6 +86,8 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stepSince: Date?
   public var stepTimes: [String: Date]?
   public var secondPath: String?
+  public var clonePath: String?
+  public var baselineClones: [String]?
   public var stopped: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
@@ -253,9 +259,13 @@ public struct TutorialProgress: Sendable {
         ?? environment?.build?.startedDate ?? input.now
       record = TutorialRecord(version: environment?.version ?? TutorialSteps.supportedVersions.max()!, startedAt: started)
     }
+    if record?.baselineClones == nil {
+      record?.baselineClones = Self.registeredClones(input.siblings).map(\.path)
+    }
     if record?.tourPath == nil, let environment {
       record?.tourPath = environment.path
       record?.version = environment.version
+      if record?.clonePath == nil { record?.clonePath = environment.repository }
     }
     let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
     let second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
@@ -337,6 +347,10 @@ public struct TutorialProgress: Sendable {
       shouldReopen: launching && (tracked != nil || current == nil))
   }
 
+  private static func registeredClones(_ siblings: [TutorialEnvironment]) -> [TutorialEnvironment] {
+    siblings.filter { !$0.isLinked && TutorialSteps.supportedVersions.contains($0.version) }
+  }
+
   private static func pairedSecond(
     _ record: inout TutorialRecord?, tracked: TutorialEnvironment?, siblings: [TutorialEnvironment]
   ) -> TutorialEnvironment? {
@@ -399,8 +413,9 @@ public struct TutorialProgress: Sendable {
     switch id {
     case "begin":
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
-      let exists =
-        environment != nil || input.siblings.contains { TutorialSteps.supportedVersions.contains($0.version) }
+      let newClone = Self.registeredClones(input.siblings).first { !(record?.baselineClones ?? []).contains($0.path) }
+      if let newClone, record?.clonePath == nil { record?.clonePath = newClone.path }
+      let exists = environment != nil || newClone != nil
       return Checkpoint(
         completed: exists ? appeared : nil,
         detail: record?.beginWaitTimedOut(now: now) == true && environment == nil
@@ -420,7 +435,12 @@ public struct TutorialProgress: Sendable {
           completed: build.endedAt, detail: build.summary + (build.missReason.map { ": " + $0.summary } ?? ""),
           ticks: first?.finishedSteps.map { tick($0.phase, true) } ?? [])
       }
-      let inClone = environment == nil && input.siblings.contains { !$0.isLinked && ($0.lastBuild != nil || $0.build != nil) }
+      let inClone =
+        environment == nil
+        && Self.registeredClones(input.siblings).contains { clone in
+          (record?.clonePath == clone.path || !(record?.baselineClones ?? []).contains(clone.path))
+            && (clone.build != nil || clone.lastBuild.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true)
+        }
       return Checkpoint(
         detail: inClone
           ? "Ask your agent to make the change in a new worktree, not in the clone" : "Waiting for the iOS build")

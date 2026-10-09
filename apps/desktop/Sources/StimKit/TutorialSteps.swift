@@ -76,7 +76,7 @@ public enum TutorialSteps {
       ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
       commands: [
         "cd \"{tour}\"",
-        "git commit -am \"Tutorial change\"",
+        "git commit -am \"Tutorial change\" -m \"Build <time>, second build cache <hit or miss>\"",
         "xcrun simctl io {udid} screenshot finish.png",
         "gh repo fork appandflow/stim-tutorial --remote --remote-name fork",
         "git push -u fork HEAD",

@@ -124,7 +124,7 @@
       XCTAssertNil(model.snapshot)
       model.update(workspaces: [try workspace()], archived: [], sheetOpen: false, now: begun)
       XCTAssertNil(model.snapshot?.record.tourPath)
-      XCTAssertEqual(model.snapshot?.currentStep, "build")
+      XCTAssertEqual(model.snapshot?.currentStep, "begin")
       XCTAssertGreaterThanOrEqual(try XCTUnwrap(model.snapshot?.record.startedAt), begun.addingTimeInterval(-5))
       let later = ISO8601DateFormatter().string(from: begun.addingTimeInterval(60))
       let fresh = try workspace(path: "/tmp/fresh-tour", since: later)
@@ -273,6 +273,15 @@
       XCTAssertEqual(model.snapshot?.record.tourPath, "/tmp/tutorial-tour")
       XCTAssertEqual(model.snapshot?.currentStep, "build")
       XCTAssertNotEqual(model.message, "Restart the tutorial with the current Stim CLI")
+    }
+
+    @MainActor func testRelaunchDuringTheFirstStepReopensThePanel() throws {
+      let defaults = isolatedDefaults()
+      TutorialRecordStore(defaults).record = TutorialRecord(version: 2, startedAt: Date(), step: "begin")
+      let model = TutorialModel(defaults: defaults)
+      model.update(workspaces: [], archived: [], sheetOpen: false)
+      XCTAssertTrue(model.isOpen)
+      XCTAssertEqual(model.snapshot?.currentStep, "begin")
     }
   }
 #endif

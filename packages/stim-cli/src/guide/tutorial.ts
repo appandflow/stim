@@ -54,7 +54,9 @@ ${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user need
 Enter the clone and install its dependencies (npm ci) so the worktrees made for
 the changes inherit them, then run stim doctor --platform ios there: it registers
 the clone with Stim so Stim Desktop sees it, and builds or boots nothing. Do not
-run the app: the clone is only the base for the user's changes and is never removed. On npm or network failure, report stderr
+run the app: the clone is only the base for the user's changes and is never removed.
+Report the findings of stim doctor and do not act on them: no SimSlim install, no
+--fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
 and stop.
 
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
@@ -113,9 +115,11 @@ xcrun simctl io <ios.udid> screenshot finish.png, using the udid of that
 worktree from stim status --json, never booted. If the app is no longer
 running, run it again from the branch first.
 
-Open the pull request with gh pr create --repo ${TUTORIAL_REPO}. In the body, add
-one short line with the build time and whether the second worktree's first iOS
-build was a cache hit, when you know them from stim status --json or stim stats.
+Open the pull request with gh pr create --repo ${TUTORIAL_REPO} --fill. Put one
+short line with the build time and whether the second worktree's first iOS build
+was a cache hit, when you know them from stim status --json or stim stats, in the
+commit message body (git commit -m "<title>" -m "<that line>"), so --fill carries it
+into the pull request body.
 
 Attach the screenshot with gh: gh pr create --attach "finish.png#The change
 running in the simulator" uploads the image and appends it to the body. gh

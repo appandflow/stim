@@ -115,7 +115,7 @@ export const TUTORIAL_STEPS: {
     section: 'share',
     commands: [
       'cd "{tour}"',
-      'git commit -am "Tutorial change"',
+      'git commit -am "Tutorial change" -m "Build <time>, second build cache <hit or miss>"',
       'xcrun simctl io {udid} screenshot finish.png',
       `gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork`,
       'git push -u fork HEAD',

@@ -79,7 +79,6 @@ struct TutorialPanel: View {
     VStack(alignment: .leading, spacing: Space.lg) {
       if restarting {
         TutorialPromptBox(prompt: TutorialSteps.restartPrompt, onCopy: copied)
-        Text("Waiting for a restarted tutorial workspace...").foregroundStyle(Palette.secondary)
       }
       if snapshot.isComplete {
         Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
@@ -110,8 +109,7 @@ struct TutorialPanel: View {
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
     let current = snapshot.currentStep == step.id
     let open =
-      !restarting
-      && (current || expanded == step.id || (step.optional && state.state == .done && !collapsedOptional.contains(step.id)))
+      (current || expanded == step.id || (step.optional && state.state == .done && !collapsedOptional.contains(step.id)))
     return VStack(alignment: .leading, spacing: Space.md) {
       Button {
         if step.optional, state.state == .done {

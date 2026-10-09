@@ -488,14 +488,35 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(TutorialEnvironment.select([old], trackedPath: nil)?.path == old.path)
 }
 
-@Test func tutorialBeginCompletesWhenOnlyTheCloneIsRegistered() throws {
-  var clone = try environment("01-started")
-  clone.repository = clone.path
+@Test func tutorialBeginCompletesOnlyForACloneRegisteredAfterTheStart() throws {
+  var older = try environment("01-started")
+  older.path = "/Users/example/older-clone"
+  older.repository = older.path
+  var fresh = try environment("01-started")
+  fresh.repository = fresh.path
   var progress = TutorialProgress()
-  let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterBuild))
-  #expect(state("begin", in: result).state == .done)
-  #expect(result.currentStep == "build")
-  #expect(result.record.tourPath == nil)
+  let before = progress.update(TutorialInput(environment: nil, siblings: [older], now: afterBuild))
+  #expect(before.currentStep == "begin")
+  #expect(before.record.baselineClones == [older.path])
+  let after = progress.update(TutorialInput(environment: nil, siblings: [older, fresh], now: afterBuild))
+  #expect(state("begin", in: after).state == .done)
+  #expect(after.currentStep == "build")
+  #expect(after.record.clonePath == fresh.path)
+  #expect(after.record.tourPath == nil)
+}
+
+@Test func tutorialTourOnlyComesFromTheClonePinnedByBegin() throws {
+  var mine = try linked(fixture("01-started").environments[0], repository: "/Users/example/clone-a")
+  mine.phaseSince = "2026-10-07T05:10:00.000Z"
+  var other = mine
+  other.path = "/Users/example/other-clone-worktree"
+  other.phaseSince = "2026-10-07T05:05:00.000Z"
+  other = try linked(other, repository: "/Users/example/clone-b")
+  let start = parseTimestamp("2026-10-07T05:00:00.000Z")!
+  #expect(TutorialEnvironment.select([other, mine], trackedPath: nil, since: start)?.path == mine.path)
+  #expect(
+    TutorialEnvironment.select([other, mine], trackedPath: nil, since: start, repository: "/Users/example/clone-b")?.path
+      == other.path)
 }
 
 @Test func tutorialSecondWorkspaceMustBeLinkedAndNewerThanTheFirstChangeStep() throws {
@@ -565,13 +586,23 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(TutorialEnvironment.select([idle], trackedPath: nil, since: start) == nil)
 }
 
-@Test func tutorialFirstChangeInTheCloneGetsAWorktreeHint() throws {
+@Test func tutorialFirstChangeInTheCloneGetsAWorktreeHintOnlyForNewBuilds() throws {
   var clone = try environment()
   clone.repository = clone.path
+  var idle = clone
+  idle.builds = []
+  idle.lastBuild = nil
   var progress = TutorialProgress()
-  let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterRebuild))
-  #expect(result.currentStep == "build")
-  #expect(state("build", in: result).detail.contains("new worktree"))
+  _ = progress.update(TutorialInput(environment: nil, siblings: [], now: tourStart))
+  let registered = progress.update(TutorialInput(environment: nil, siblings: [idle], now: afterBuild))
+  #expect(registered.currentStep == "build")
+  #expect(!state("build", in: registered).detail.contains("new worktree"))
+  clone.lastBuild?.startedAt = "2026-10-07T05:03:00.000Z"
+  let built = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterRebuild))
+  #expect(state("build", in: built).detail.contains("new worktree"))
+  clone.lastBuild?.startedAt = "2026-10-07T05:00:00.000Z"
+  let older = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterRebuild))
+  #expect(!state("build", in: older).detail.contains("new worktree"))
 }
 
 @Test func tutorialSecondWorkspaceNeedsACreationTimeAfterTheStep() throws {

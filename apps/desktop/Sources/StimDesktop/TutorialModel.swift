@@ -114,13 +114,17 @@ final class TutorialModel: ObservableObject {
     let saved = progress.record ?? records.record
     let archivedRoots = saved?.archivedProjectRoots(in: archived) ?? []
     let candidate = TutorialEnvironment.select(
-      workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil })
+      workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
+      repository: saved?.clonePath)
     let tracked = saved?.tourPath
     workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
     if launchPending, let saved {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
         openPending = saved.step != "done"
+        launchPending = false
+      } else if saved.tourPath == nil, saved.step != "done" {
+        openPending = true
         launchPending = false
       }
     } else if let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
