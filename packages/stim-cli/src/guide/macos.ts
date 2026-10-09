@@ -50,6 +50,7 @@ executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
+  stim macos --plan --json # validate the next build without running it
   stim status --json      # environments[].macos and build state
   stim logs --source build
   stim logs --errors
@@ -61,7 +62,19 @@ Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors. An app that activates itself at launch still takes focus.
 Hosted launches (macos --remote) do not set it.
-macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
+macOS artifacts are not cached. This prototype has no --slot or reload command.
+--plan validates the Swift Package directory, macos settings, development plist
+and declared resources without building, signing, staging, stopping or launching
+an app, writing workspace state or claiming a build slot. It does not execute
+Package.swift, so it cannot validate the executable product or package dependencies.
+--remote-build is respected, including named-machine setup refusals; no worker
+is contacted and live worker availability is unknown. --remote is launch-only
+and refuses with --plan. The JSON plan has platform "macos", product and
+buildMachine; fingerprint, cacheKey, provider, prebuild, outcome and expectedMs
+are null, cacheHit and cacheSkipped are false, and basis is 0. SwiftPM decides
+incremental compile work when a build runs; the plan predicts no cache outcome
+or duration. Desktop checks automatically while build details are visible,
+reusing a completed build or check for 60 seconds and skipping running builds.
 A failed build records its error and compiler output without launching an app.
 While it runs, stim status --json reports it as environments[].build with
 platform "macos": phase prepare, compile, install, then launch, and during

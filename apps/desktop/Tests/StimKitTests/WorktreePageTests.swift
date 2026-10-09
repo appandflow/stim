@@ -17,10 +17,15 @@ struct WorktreePageTests {
       var appLabels: [String]
       var buildEntries: [WorktreePage.Entry]
     }
+    struct DesktopExpected: Decodable {
+      var buildEntries: [WorktreePage.Entry]
+      var subtitles: [String?]
+    }
     struct Case: Decodable {
       var name: String
       var input: Input
       var expected: Expected
+      var desktopExpected: DesktopExpected?
     }
     var cases: [Case]
   }
@@ -45,8 +50,8 @@ struct WorktreePageTests {
     #expect(page.projects == c.expected.projects)
     #expect(page.lead(now: now).path == c.expected.lead)
     let entries = page.buildEntries
-    #expect(page.buildEntries == c.expected.buildEntries)
-    #expect(page.subtitles(entries: entries) == c.expected.subtitles)
+    #expect(page.buildEntries == (c.desktopExpected?.buildEntries ?? c.expected.buildEntries))
+    #expect(page.subtitles(entries: entries) == (c.desktopExpected?.subtitles ?? c.expected.subtitles))
     #expect(page.appLabels(entries: entries + page.canvasEntries) == c.expected.appLabels)
   }
 
@@ -118,6 +123,25 @@ struct WorktreePageTests {
     #expect(page.usage(machine: nil).isEmpty)
     #expect(page.errors == nil)
     #expect(page.diskBreakdown == nil)
+  }
+
+  @Test func unifiedPageOffersDetectedMacosBeforeItsFirstRun() throws {
+    let environments = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        """
+        [
+          {"path":"/w/desktop","live":false,"warnings":[],"worktree":{"path":"/w"},"platforms":["macos"]},
+          {"path":"/w/mobile","live":false,"warnings":[],"worktree":{"path":"/w"},"platforms":["ios","android"]}
+        ]
+        """.utf8))
+    let unified = try #require(WorktreePage(path: "/w/desktop", environments: environments))
+    #expect(
+      unified.buildEntries == [
+        .init(path: "/w/mobile", platform: "ios"),
+        .init(path: "/w/mobile", platform: "android"),
+        .init(path: "/w/desktop", platform: "macos"),
+      ])
   }
 
   @Test func sharedAgentSessionsAppearOnceInAssociatedOrder() throws {

@@ -66,7 +66,9 @@ struct BuildSheet: View {
   }
   private var run: BuildRun? { runs.first { $0.id == selectedRun } ?? runs.first }
   private var entry: BuildPlanChecks.Entry? { checks.entry(workspace: app.path, platform: platform) }
-  private var buildKey: String { app.lastBuilds?.build(for: platform)?.planKey ?? "" }
+  private var lastBuild: LastBuild? { app.lastBuilds?.build(for: platform) ?? history(platform).first?.build }
+  private var buildKey: String { lastBuild?.planKey ?? "" }
+  private var finishedAt: Date? { lastBuild.flatMap { $0.finishedAt == nil ? nil : $0.endedAt } }
   private var lastFailed: Bool {
     isMacos ? history("macos").first?.result == "failed" : app.lastBuilds?.build(for: platform)?.status == "failed"
   }
@@ -88,14 +90,14 @@ struct BuildSheet: View {
             .tutorialAnchor(.buildSection, workspace: app.path)
             .id(page == nil ? run.id : "\(app.path)|\(run.id)")
             .padding(Space.xxl)
-            if archive == nil, !isMacos, run.running == nil, run.id == runs.first?.id { nextBuild }
+            if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
           } else {
             EmptyState(
               title: "No \(platformName(platform)) Build Recorded",
               message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
             )
             .padding(Space.xxl)
-            if archive == nil, !isMacos { nextBuild }
+            if archive == nil { nextBuild }
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -106,11 +108,16 @@ struct BuildSheet: View {
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
     .task(id: (page == nil ? "" : app.path + "|") + "\(platform)|\(buildKey)|\(running?.key ?? "idle")") {
-      guard archive == nil, !isMacos else { return }
-      if running == nil {
-        checks.check(workspace: app.path, builds: [platform: buildKey])
-      } else {
-        checks.cancel(workspace: app.path, platforms: page == nil ? ["ios", "android"] : [platform])
+      guard archive == nil else { return }
+      while !Task.isCancelled {
+        if running == nil, actions.active(for: app.path) == nil {
+          checks.check(
+            workspace: app.path, builds: [platform: buildKey],
+            finishedAt: finishedAt.map { [platform: $0] } ?? [:])
+        } else {
+          checks.cancel(workspace: app.path, platforms: page == nil ? ["ios", "android", "macos"] : [platform])
+        }
+        try? await Task.sleep(for: .seconds(30))
       }
     }
     .onAppear { selectedRun = run?.id }
@@ -127,15 +134,11 @@ struct BuildSheet: View {
 
   private var nextBuild: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      HStack {
-        SectionLabel(title: "Next build")
-        Spacer()
-        checkButton
-      }
+      SectionLabel(title: "Next build")
       if running != nil {
         Text("Checked after the running build").foregroundStyle(Palette.tertiary)
       } else {
-        NextBuildView(entry: entry, inlineDetails: true)
+        NextBuildView(entry: entry, inlineDetails: true, recentBuildAt: finishedAt)
       }
     }
     .padding([.horizontal, .bottom], Space.xxl)
@@ -201,7 +204,6 @@ struct BuildSheet: View {
             ? "stim macos: builds the Swift package and launches the app"
             : "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
         )
-        if !isMacos { checkButton }
       }
       Button("Open in Logs Panel") {
         if let query = run.flatMap({
@@ -218,17 +220,6 @@ struct BuildSheet: View {
         .keyboardShortcut(.cancelAction)
     }
     .padding(Space.xxl)
-  }
-
-  private var checkButton: some View {
-    Button {
-      checks.check(workspace: app.path, builds: [platform: buildKey], force: true)
-    } label: {
-      Label("Check", systemImage: "magnifyingglass")
-    }
-    .buttonStyle(.stim())
-    .disabled(busy || entry?.state == .checking)
-    .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
   }
 
   private var recentBuilds: some View {

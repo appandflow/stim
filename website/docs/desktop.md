@@ -210,14 +210,17 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan with **Check**. The header's running-build progress opens the current
+  plan. Checks run automatically while visible, reusing a completed build or check
+  for 60 seconds and skipping running builds; there is no manual Check button. The header's running-build progress opens the current
   run in the same sheet. **Open in Logs Panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run
-  chip to return to generic logs. **Run** starts iOS or Android; a failed last
+  chip to return to generic logs. **Run** starts iOS, Android or macOS; a failed last
   build offers **Rebuild**. For multi-app worktrees, the sheet switches among
   all apps' iOS, Android and macOS entries, adding project names only for repeated
-  platforms; checks, runs, history and logs use the selected app. The macOS panel
-  shows the product, build state, duration, error and build logs.
+  platforms; checks, runs, history and logs use the selected app. macOS uses the
+  same Details/Run and Last Build/Next Build card layout. Its plan validates
+  packaging settings but does not predict SwiftPM incremental work, worker
+  availability, a cache outcome or duration.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every

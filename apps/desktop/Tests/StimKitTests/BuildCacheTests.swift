@@ -187,6 +187,25 @@ import Testing
     #expect(refused.refusal?.code == "STIM_EAS_BUILD_MISSING" && refused.outcome == nil)
   }
 
+  @Test func macosPlanDoesNotClaimAColdBuildOrCacheMiss() throws {
+    let plan = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"macos","product":"Sample","buildMachine":"local","fingerprint":null,"cacheKey":null,
+       "cacheHit":false,"provider":null,"cacheSkipped":false,"prebuild":null,"outcome":null,"expectedMs":null,"basis":0}
+      """)
+    #expect(plan.fingerprint == nil && plan.outcome == nil && plan.expectedMs == nil)
+    #expect(plan.nextBuild == "SwiftPM Debug build")
+    #expect(plan.detail?.contains("incremental work") == true)
+    let last = try decode(
+      LastBuild.self,
+      """
+      {"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":1000,
+       "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":"2026-09-25T12:00:01.000Z"}
+      """)
+    #expect(last.summary.hasPrefix("Built") && !last.summary.contains("Cache"))
+  }
+
   @Test func hidesHistoricalOutcomesUntilTheRunKnowsItsCacheResult() throws {
     var build = try decode(
       Build.self,
@@ -333,6 +352,33 @@ import Testing
     try await settled(checks, "/w", ["ios", "android"])
     #expect(planner.recorded.count == 5)
     #expect(planner.mostActive == 1)
+  }
+
+  @Test func defersRecentBuildsThenReusesOneFreshCheckAcrossViews() async throws {
+    let planner = Planner()
+    var now = Date(timeIntervalSince1970: 100)
+    let checks = BuildPlanChecks(planner: planner.plan, now: { now })
+    let finished = ["macos": now]
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    #expect(planner.recorded.isEmpty)
+    now += 59
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.isEmpty)
+    now += 1
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded == ["/w macos"])
+    now += 30
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.count == 1)
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now])
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    now += 60
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now - 60])
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded.count == 2)
   }
 
   @Test func cancellingOnePlatformPreservesTheOtherInFlightCheck() async throws {
