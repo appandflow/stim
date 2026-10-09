@@ -10,6 +10,29 @@ its own checkout. The run stops that checkout's workspace, including resources
 started before a build failure; an explicit API `run.slot` limits cleanup to
 that slot. Do not point CI at a developer's active checkout.
 
+## Build only
+
+```sh
+npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app --artifacts ./build-results
+```
+
+This compiles or restores an artifact without starting a simulator, emulator,
+Metro server, or app. It does not stop an existing workspace session. iOS builds
+target the simulator; archives, device distribution and web compilation are
+not supported. A later `run` step uses normal cache validation in the same job.
+
+The result has `stage: "build"`, `build`, `buildPath`, and `artifactPath`.
+The results directory contains `build.json`, `result.json`, diagnostics, and
+`app.apk` for Android or `app.tar.gz` for iOS/macOS. The archive preserves app
+executable permissions and symlinks when uploaded through an artifact service.
+Extract it with `tar -xzf app.tar.gz`. Importing a downloaded artifact into a
+Stim run is not part of this command.
+
+The library exports `buildCI({ projectRoot, build: { platform: "ios" }, ... })`.
+It accepts the same home/cache, timeout, cancellation and progress options as
+`runCI`. Build cancellation waits for the owned build operation to finish
+cleanup and retains diagnostics; it never calls workspace `stop()`.
+
 ## Command line
 
 Without installing:
@@ -125,12 +148,20 @@ shuts down owned devices; it does not delete them.
 
 ## Disposable and shared runners
 
-`CI=true` changes no coordination or ownership guarantees. The default keeps
-normal Stim configuration, including configured build/device caps. Use it for
-persistent runners and local reproduction.
+GitHub-hosted jobs need no home or cache configuration. When `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_TEMP` is set, the package defaults to
+`$RUNNER_TEMP/stim-ci/home` and `$RUNNER_TEMP/stim-ci/build-cache`. Repeated steps
+in the same job reuse these paths. The public API and test command receive the
+same paths without changing the caller's environment.
 
-For a disposable runner dedicated to one job, explicitly provide a fresh job
-home and a job-local artifact cache:
+An explicit `home` / `--home` or `STIM_HOME` retains the caller's home and normal
+cache configuration. An explicit `buildCache` / `--build-cache` or
+`STIM_BUILD_CACHE` overrides the automatic cache path. Self-hosted runners,
+other providers and local runs keep normal Stim configuration and configured
+build/device caps. `CI=true` alone changes no defaults or coordination guarantees.
+
+For another disposable runner dedicated to one job, explicitly provide a fresh
+job home and a job-local artifact cache:
 
 ```sh
 stim-ci run --platform ios --project ./app \

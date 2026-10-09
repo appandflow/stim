@@ -31,6 +31,32 @@ npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --ar
 </TabItem>
 </Tabs>
 
+## Build without launching
+
+```sh
+stim-ci build --platform android --project ./app --artifacts ./build-results
+```
+
+`build` needs no test command or device. It preserves existing workspace
+sessions and shares normal cache validation with a later `run` step. GitHub-hosted
+steps automatically share the job's temporary home and cache. Use a separate
+results directory for each step.
+
+Upload the results directory through your CI provider. It includes `result.json`,
+`build.json`, diagnostics, and an APK or a `tar.gz` app bundle. Apple bundles are
+archived to preserve executable modes and symlinks across artifact transport.
+iOS outputs target the simulator; distribution archives and web compilation
+are outside this command. Downloaded-artifact import into a Stim run is not
+provided.
+
+```ts
+import { buildCI } from '@stim-cli/ci';
+const result = await buildCI({ projectRoot: '/checkout/app', build: { platform: 'ios' } });
+process.exitCode = result.exitCode;
+```
+
+## Run and test
+
 The command after `--` is an argument vector. Use an explicit shell when you
 need shell syntax. Progress and test output go to stderr; stdout and
 `test-results/result.json` contain the structured outcome. A failed test keeps
@@ -65,16 +91,21 @@ const result = await runCI({
 process.exitCode = result.exitCode;
 ```
 
-For a disposable runner dedicated to one job, set `--home` to a fresh job
-directory and `--build-cache` to a job-local cache restored by the provider.
+On GitHub-hosted runners, home and cache paths are automatic:
+`$RUNNER_TEMP/stim-ci/home` and `$RUNNER_TEMP/stim-ci/build-cache`. Repeated steps
+reuse the job's paths. Detection requires `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_TEMP`.
+
+An explicit `--home` or `STIM_HOME` keeps the selected home and normal cache
+configuration; `--build-cache` or `STIM_BUILD_CACHE` overrides the cache path.
+Self-hosted runners and local runs retain their normal Stim home and capacity
+limits. For other disposable providers, set job-local paths explicitly.
 Persist only compatible cache entries, never runtime state or device ledgers.
 Independent Stim homes must not write one shared filesystem cache.
 
-For persistent/shared runners and local reproduction, keep the normal Stim
-home and its configured capacity limits. `CI=true` does not disable ownership,
-locking, or cleanup checks. Capacity admission is already skipped when its
-limits are unset; there is no measured reason yet to bypass the remaining
-coordination.
+`CI=true` does not disable ownership, locking, or cleanup checks. Capacity
+admission is already skipped when its limits are unset; there is no measured
+reason yet to bypass the remaining coordination.
 
 ## GitHub Actions
 

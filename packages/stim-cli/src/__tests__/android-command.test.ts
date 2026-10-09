@@ -1,4 +1,15 @@
+import { nativeAndroidFixture } from './_native-android-project.ts';
+import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { runReload } from '../commands/reload.ts';
+import { resolveBuild } from '../cache/build-cache.ts';
+import { projectIntegrations } from '../integrations/projects.ts';
+import { createProjectRegistry } from '../integrations/project-registry.ts';
+import {
+  reactNativeAndroidProject,
+  type ReactNativeAndroidDependencies,
+} from '../integrations/react-native-android.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { androidProcessRuntime } from '../commands/android/launch.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
@@ -17,10 +28,11 @@ import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/devic
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -298,9 +310,7 @@ function makeAndroidBuildFailure(
   return { ok: false, diagnostics: [], truncated: 0, durationMs: 0, lastLines: [], ...fields };
 }
 
-function harness(
-  overrides: Record<string, unknown> & Pick<NonNullable<Parameters<typeof runAndroid>[0]>, 'build'> = {},
-) {
+function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDependencies, 'build'> = {}) {
   const calls: Calls = {
     ensureDevice: [],
     booted: [],
@@ -337,6 +347,7 @@ function harness(
   const stdout: string[] = [];
   const options = {
     root,
+    projectRegistry: undefined as NonNullable<Parameters<typeof runAndroid>[0]>['projectRegistry'],
     ensureRemoteBootOwned: (args: Parameters<typeof ensureRemoteBootOwned>[0]) =>
       ensureRemoteBootOwned({ ...args, ledgerRoot: join(home, 'machine-eas') }),
     deviceAbi: () => null,
@@ -527,6 +538,21 @@ function harness(
     run: () =>
       runAndroid({
         ...options,
+        projectRegistry:
+          options.projectRegistry ??
+          createProjectRegistry(
+            projectIntegrations.map((integration) =>
+              integration.id !== 'react-native'
+                ? integration
+                : {
+                    ...integration,
+                    inspect: (path) => {
+                      const match = integration.inspect(path);
+                      return match ? { ...match, android: async () => reactNativeAndroidProject(path, options) } : null;
+                    },
+                  },
+            ),
+          ),
         ensureDevice: async (args) => {
           const device = await ensureDevice(args);
           if (device.owned) setDevice(root, 'android', device, args.slot);
@@ -4254,6 +4280,55 @@ describe('variant resolution', () => {
   });
 });
 
+test('a runtime preparation refusal returns a structured error before device or artifact work', async () => {
+  const error = {
+    code: 'STIM_BAD_ARG',
+    message: 'The selected runtime cannot prepare this endpoint.',
+    remedy: 'Select an available endpoint.',
+    lines: ['The requested endpoint is unavailable.'],
+  };
+  const h = harness({
+    json: true,
+    runtimePlan: androidProcessRuntime(async () => ({ ok: false, error })),
+  });
+  const result = await h.run();
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: error.code, message: error.message, remedy: error.remedy },
+  });
+  expect(h.stdout).toHaveLength(1);
+  expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: error.code, message: error.message, remedy: error.remedy });
+  expect(h.stderr.join('\n')).toContain(error.lines[0]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.booted).toEqual([]);
+  expect(h.calls.fingerprint).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(h.calls.install).toEqual([]);
+  expect(h.calls.launch).toEqual([]);
+  expect(h.calls.launchRelease).toEqual([]);
+});
+
+test('a process runtime preserves Debug compilation, cache identity and signer policy without Metro', async () => {
+  const h = harness({
+    json: true,
+    variant: 'productionDebug',
+    runtimePlan: androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    resolveMetro: never('the Metro probe'),
+    startServer: never('the dev server start'),
+    warmMetro: never('Metro warmup'),
+    verifyLaunched: never('bundle readiness'),
+    launch: never('Metro launch routing'),
+  });
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.build[0]?.variant).toBe('productionDebug');
+  expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productiondebug-sim`);
+  expect(h.calls.install[0]?.allowUninstall).toBe(false);
+  expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
+  expect(h.calls.verifyRelease).toHaveLength(1);
+  expect(result.facts).toMatchObject({ variant: 'productionDebug', metroPort: null, launched: true });
+});
+
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain am start', async () => {
     const h = harness({
@@ -7463,4 +7538,168 @@ test('stop cancels Android device preparation waiting for a slot before any buil
   expect(h.calls.build).toEqual([]);
   expect(h.calls.install).toEqual([]);
   expect(readClaimSet(join(home, 'device-waits')).live).toEqual([]);
+});
+
+describe('registered Android project recipes', () => {
+  afterEach(() => resetExecutor());
+
+  function run(h: ReturnType<typeof harness>) {
+    return withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+  }
+
+  function nativeProject() {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'tooling-only' }));
+    rmSync(join(root, 'android'), { recursive: true });
+    mkdirSync(join(root, 'mobile', 'src'), { recursive: true });
+    writeFileSync(join(root, 'build.gradle.kts'), 'plugins { id("com.android.application") }');
+    writeFileSync(join(root, 'gradlew'), 'fixture wrapper');
+    writeFileSync(join(root, 'local.properties'), 'sdk.dir=/fixture-sdk');
+    writeFileSync(join(root, 'mobile', 'src', 'Main.kt'), 'class MainActivity');
+    return createProjectRegistry([...projectIntegrations, nativeAndroidFixture]);
+  }
+
+  function compiler(onCompile: () => void = () => {}) {
+    const requests: { file: string; args: readonly string[]; cwd: unknown }[] = [];
+    setExecutor(
+      makeExecutor({
+        runFile(file, args = []) {
+          if (file === 'cp') cpSync(args.at(-2)!, args.at(-1)!);
+          return '';
+        },
+        spawn(file, args = [], options = {}) {
+          requests.push({ file, args, cwd: options.cwd });
+          const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+          child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          setImmediate(() => {
+            const dir = join(root, 'products', 'apk', 'debug');
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, 'mobile.apk'), 'native APK');
+            writeFileSync(
+              join(dir, 'output-metadata.json'),
+              JSON.stringify({ elements: [{ outputFile: 'mobile.apk' }] }),
+            );
+            onCompile();
+            child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
+            child.emit('exit', 0, null);
+          });
+          return child as unknown as ChildProcess;
+        },
+      }),
+    );
+    return requests;
+  }
+
+  test('an added native recipe compiles Debug, reuses its APK, installs and verifies the process without RN or Metro', async () => {
+    const registry = nativeProject();
+    const requests = compiler();
+    const h = harness({ projectRegistry: registry, variant: 'debug', json: true });
+    const first = await run(h);
+    expect(first.ok).toBe(true);
+    expect(first.facts).toMatchObject({
+      variant: 'debug',
+      metroPort: null,
+      bundleId: 'org.example.native',
+      launched: true,
+      cacheHit: false,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ file: join(root, 'gradlew'), cwd: root });
+    expect(requests[0]!.args[0]).toBe(':mobile:assembleDebug');
+    expect(requests[0]!.args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
+    expect(h.calls.install[0]).toMatchObject({
+      serial: 'emulator-5584',
+      packageName: 'org.example.native',
+      allowUninstall: false,
+    });
+    expect(h.calls.launchRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+    expect(h.calls.verifyRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+    for (const calls of [
+      h.calls.metro,
+      h.calls.fingerprint,
+      h.calls.prebuild,
+      h.calls.build,
+      h.calls.swapApk,
+      h.calls.loadProvider,
+      h.calls.launch,
+    ])
+      expect(calls).toEqual([]);
+    const launch = readWorkspaceLaunches(root).android;
+    expect(launch).toMatchObject({ appId: 'org.example.native', metroPort: null, release: false, runtime: 'process' });
+    const second = await run(h);
+    expect(second.facts).toMatchObject({ variant: 'debug', metroPort: null, cacheHit: 'local', launched: true });
+    expect(requests).toHaveLength(1);
+    expect(readFileSync(second.facts!.appPath!, 'utf8')).toBe('native APK');
+    const reload = await runReload({
+      root,
+      platform: 'android',
+      deps: {
+        findWorkspace: () => root,
+        getProject: () => getProject(root),
+        resolveAndroid: () => ({ serial: 'emulator-5584' }),
+        androidProcess: () => 4242,
+        readBrowser: () => null,
+        resolveMetro: never('a native reload Metro probe'),
+        reloadMetro: never('a native reload Metro command'),
+        ensureReverse: never('a native reload reverse'),
+      },
+    });
+    expect(reload).toMatchObject({ ok: false, error: { code: 'STIM_NO_METRO' } });
+    assert(!reload.ok);
+    expect(reload.error.message).toContain('native process without Metro');
+    const log = readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8');
+    expect(log).toContain('native process');
+    expect(log).not.toContain('fetched a bundle');
+    expect(log).not.toContain('embedded JS');
+  });
+
+  test('a native source edit during compilation prevents publication and the next run recompiles', async () => {
+    const registry = nativeProject();
+    let edited = false;
+    const requests = compiler(() => {
+      if (!edited) writeFileSync(join(root, 'mobile', 'src', 'Main.kt'), 'class ChangedActivity');
+      edited = true;
+    });
+    const h = harness({ projectRegistry: registry, variant: 'debug' });
+    const first = await run(h);
+    expect(first.ok).toBe(true);
+    expect(first.facts).toMatchObject({ cacheKey: null, fingerprint: null, launched: true });
+    expect(resolveBuild('android', h.calls.acquireLock[0]!.key!)).toBeNull();
+    const second = await run(h);
+    expect(second.ok).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(resolveBuild('android', second.facts!.cacheKey!)).not.toBeNull();
+    const third = await run(h);
+    expect(third.facts?.cacheHit).toBe('local');
+    expect(requests).toHaveLength(2);
+  });
+
+  test.each([{ device: true }, { easProfile: 'development' }])(
+    'unsupported recipe capabilities refuse before resources: %j',
+    async (options) => {
+      const registry = nativeProject();
+      const h = harness({ ...options, projectRegistry: registry });
+      const result = await run(h);
+      expect(result.error?.code).toBe('STIM_BAD_ARG');
+      expect(result.error?.message).toContain('This project integration does not support');
+      expect(h.calls.ensureDevice).toEqual([]);
+      expect(h.calls.fingerprint).toEqual([]);
+      expect(h.calls.metro).toEqual([]);
+      expect(h.calls.build).toEqual([]);
+    },
+  );
+
+  test('two admitted Android recipes refuse before source or device work', async () => {
+    const registry = nativeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    const h = harness({ projectRegistry: registry });
+    const result = await run(h);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain('react-native, test-native-android');
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(h.calls.fingerprint).toEqual([]);
+  });
 });

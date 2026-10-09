@@ -10,6 +10,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      build_stage_macos:
+        description: Validate build-only Apple operations and artifact export on macOS
+        type: boolean
+        default: false
   schedule:
     - cron: '0 6 * * *'
   push:
@@ -149,6 +154,23 @@ jobs:
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.test.ts
 
+  native-process-inspection:
+    name: native process inspection (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify recorded process inspection and exit
+        run: node --test test/e2e/native-processes.e2e.js
+
   windows-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/windows-full.yml
@@ -184,3 +206,23 @@ jobs:
 
       - name: Verify the refusal below the runtime floor
         run: node test/runtime-refusal.mjs
+
+  build-stage-macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_stage_macos
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Build-stage regression tests
+        run: pnpm test packages/stim-cli/src/__tests__/macos.test.ts packages/stim-cli/src/__tests__/ios-build.test.ts packages/stim-cli/src/__tests__/android-build.test.ts packages/ci/src/__tests__/build.test.ts
+      - name: Real SwiftPM build and artifact export with a running app
+        env:
+          STIM_BUILD_QA_ARTIFACTS: ${{ runner.temp }}/stim-build-stage-evidence
+        run: node test/e2e/native/build-api-macos.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-stage-macos
+          path: ${{ runner.temp }}/stim-build-stage-evidence
+          if-no-files-found: warn
