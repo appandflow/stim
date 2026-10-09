@@ -51,10 +51,11 @@ final class TutorialModel: ObservableObject {
     {
       template = TutorialSteps.retryAsk
     }
+    let existing = Set(workspaces.map(\.path))
     return template.map {
       tutorialAsk(
         $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine,
-        second: snapshot?.record.secondPath)
+        second: snapshot?.record.secondPath, existing: existing)
     }
   }
 
@@ -112,11 +113,10 @@ final class TutorialModel: ObservableObject {
     statusLoaded = true
     let saved = progress.record ?? records.record
     let archivedRoots = saved?.archivedProjectRoots(in: archived) ?? []
-    let candidate = TutorialEnvironment.select(workspaces, trackedPath: saved?.tourPath)
+    let candidate = TutorialEnvironment.select(
+      workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil })
     let tracked = saved?.tourPath
-    workspace =
-      workspaces.first { $0.path == (tracked ?? candidate?.path) }
-      ?? (restarting ? workspaces.first { $0.path == candidate?.path } : nil)
+    workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
     if launchPending, let saved {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
@@ -141,7 +141,6 @@ final class TutorialModel: ObservableObject {
       if opening { checkCLI() }
     }
     guard isOpen || progress.record != nil || records.record != nil else { return }
-    let oldStart = progress.record?.startedAt
     if workspace == nil, tourPath != nil {
       if missingSince == nil { missingSince = now }
     } else {
@@ -160,7 +159,7 @@ final class TutorialModel: ObservableObject {
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))
     if snapshot?.steps.first(where: { $0.id == "machine" })?.state == .done { self.machineState = .approved }
-    if restarting, oldStart != snapshot?.record.startedAt {
+    if restarting, snapshot?.record.tourPath != nil {
       restarting = false
       logs = []
     }
@@ -172,7 +171,7 @@ final class TutorialModel: ObservableObject {
   func open(beginning: Bool = false) {
     if beginning {
       progress = TutorialProgress()
-      records.record = nil
+      records.record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: Date())
       snapshot = nil
       workspace = nil
       logs = []
@@ -209,6 +208,7 @@ final class TutorialModel: ObservableObject {
   func restart(now: Date = Date()) {
     viewerEventSequence = viewerEvents.last?.sequence ?? 0
     progress.requestRestart(now: now)
+    records.record = progress.record
     restarting = true
     isOpen = true
   }

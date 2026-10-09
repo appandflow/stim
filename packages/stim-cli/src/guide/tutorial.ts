@@ -52,8 +52,9 @@ Then, from the parent folder, run:
 Check that app.json in the clone has expo.extra.stimTutorial equal to
 ${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user needs a newer Stim.
 Enter the clone and install its dependencies (npm ci) so the worktrees made for
-the changes inherit them. Do not run the app: the clone is only the base for the
-user's changes and is never removed. On npm or network failure, report stderr
+the changes inherit them, then run stim doctor --platform ios there: it registers
+the clone with Stim so Stim Desktop sees it, and builds or boots nothing. Do not
+run the app: the clone is only the base for the user's changes and is never removed. On npm or network failure, report stderr
 and stop.
 
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
@@ -130,11 +131,12 @@ relative link: ![the change](finish/<github-login>.png).`,
 ${paths}
 
 For "${TUTORIAL_RESTART_PROMPT}", remove nothing: the user may still want the
-earlier worktrees, and stim guide tutorial finish removes them on request.
-Reuse the clone at {base} only if its stimTutorial marker equals
-${TUTORIAL_VERSION}; otherwise follow stim guide tutorial run into a fresh
-folder. Pause as run instructs. Stim Desktop starts over from the next tutorial
-worktree that appears after the restart.`,
+earlier worktrees. Finish only removes the pair named in its request, so leave
+any earlier worktrees and tell the user they stay until they ask for each by
+path; never use --force for them. Reuse the clone at {base} only if its
+stimTutorial marker equals ${TUTORIAL_VERSION}; otherwise follow stim guide
+tutorial run into a fresh folder. Pause as run instructs. Stim Desktop starts
+over: only worktrees and builds after the restart count.`,
     },
     manual: {
       summary: 'The commands behind each step, for typing yourself',

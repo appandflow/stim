@@ -39,11 +39,23 @@ public struct TutorialEnvironment: Sendable {
       + [build?.startedDate, lastBuild.flatMap { parseTimestamp($0.startedAt) }].compactMap { $0 }
   }
 
-  public static func select(_ workspaces: [Workspace], trackedPath: String?) -> Self? {
+  public static func select(_ workspaces: [Workspace], trackedPath: String?, since: Date? = nil) -> Self? {
     let tours = workspaces.compactMap(Self.init).filter(\.isLinked)
     if let tracked = tours.first(where: { $0.path == trackedPath }) { return tracked }
     let supported = tours.filter { TutorialSteps.supportedVersions.contains($0.version) }
-    return newest(supported.isEmpty ? tours : supported)
+    if supported.isEmpty { return since == nil ? newest(tours) : nil }
+    let eligible = supported.filter { tour in since.map { start in tour.created.map { $0 >= start } ?? false } ?? true }
+    let byRepository = Dictionary(grouping: eligible) { $0.repository ?? "" }
+    let latest = byRepository.max {
+      let lhs = $0.value.compactMap(\.created).max() ?? .distantPast
+      let rhs = $1.value.compactMap(\.created).max() ?? .distantPast
+      return lhs == rhs ? $0.key < $1.key : lhs < rhs
+    }
+    return latest?.value.min {
+      let lhs = $0.created ?? .distantFuture
+      let rhs = $1.created ?? .distantFuture
+      return lhs == rhs ? $0.path < $1.path : lhs < rhs
+    }
   }
 
   public static func newest(_ tours: [Self]) -> Self? {
@@ -71,8 +83,6 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stepTimes: [String: Date]?
   public var secondPath: String?
   public var stopped: Bool?
-  public var restartAfter: Date?
-  public var restartDisappeared: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
   public var approvedMachine: String?
@@ -198,19 +208,14 @@ public struct TutorialProgress: Sendable {
   public private(set) var record: TutorialRecord?
   private var viewerOpened = false
   private var viewerInput = false
-  private var restartAfter: Date?
   private var details: [String: String] = [:]
   private var phoneApp = true
 
   public init() {}
 
   public mutating func requestRestart(now: Date) {
-    if record != nil {
-      record?.restartAfter = now
-      record?.restartDisappeared = nil
-    } else {
-      restartAfter = now
-    }
+    self = Self()
+    record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: now)
   }
 
   public mutating func skip(now: Date) {
@@ -248,40 +253,13 @@ public struct TutorialProgress: Sendable {
         ?? environment?.build?.startedDate ?? input.now
       record = TutorialRecord(version: environment?.version ?? TutorialSteps.supportedVersions.max()!, startedAt: started)
     }
-    if let restartAfter {
-      record?.restartAfter = restartAfter
-      self.restartAfter = nil
-    }
     if record?.tourPath == nil, let environment {
       record?.tourPath = environment.path
       record?.version = environment.version
     }
-    var tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
-    var second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
-    if let restartAfter = record?.restartAfter, input.now > restartAfter {
-      if tracked == nil {
-        record?.restartDisappeared = true
-        if let environment, environment.path != record?.tourPath,
-          TutorialSteps.supportedVersions.contains(environment.version),
-          environment.created.map({ $0 > restartAfter }) == true
-        {
-          self = Self()
-          record = TutorialRecord(
-            version: environment.version, tourPath: environment.path, startedAt: environment.created ?? input.now)
-          tracked = environment
-          second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
-        }
-      } else if let tracked {
-        let oldestBuild = tracked.buildDates.min()
-        if record?.restartDisappeared == true || oldestBuild.map({ $0 > restartAfter }) == true {
-          self = Self()
-          let started = oldestBuild.flatMap { $0 > restartAfter ? $0 : nil } ?? input.now
-          record = TutorialRecord(version: tracked.version, tourPath: tracked.path, startedAt: started)
-          second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
-        }
-      }
-    }
-    if launching, record?.restartAfter == nil, record?.tourPath != nil, tracked == nil, second == nil,
+    let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
+    let second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
+    if launching, record?.tourPath != nil, tracked == nil, second == nil,
       record?.allArchived(input.archivedProjectRoots) == true || (!input.archiveEnabled && record?.step == "finish")
     {
       let skipped = record!.skipped
@@ -366,7 +344,7 @@ public struct TutorialProgress: Sendable {
       let since = record?.stepTimes?["build"] ?? record?.startedAt ?? .distantPast
       let candidates = siblings.filter {
         $0.isLinked && $0.repository == tracked.repository && $0.path != tracked.path
-          && $0.created.map({ $0 >= since }) ?? true
+          && $0.created.map({ $0 >= since }) == true
       }
       record?.secondPath =
         candidates.min {
@@ -421,7 +399,8 @@ public struct TutorialProgress: Sendable {
     switch id {
     case "begin":
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
-      let exists = environment != nil || !input.siblings.isEmpty
+      let exists =
+        environment != nil || input.siblings.contains { TutorialSteps.supportedVersions.contains($0.version) }
       return Checkpoint(
         completed: exists ? appeared : nil,
         detail: record?.beginWaitTimedOut(now: now) == true && environment == nil
@@ -441,7 +420,10 @@ public struct TutorialProgress: Sendable {
           completed: build.endedAt, detail: build.summary + (build.missReason.map { ": " + $0.summary } ?? ""),
           ticks: first?.finishedSteps.map { tick($0.phase, true) } ?? [])
       }
-      return Checkpoint(detail: "Waiting for the iOS build")
+      let inClone = environment == nil && input.siblings.contains { !$0.isLinked && ($0.lastBuild != nil || $0.build != nil) }
+      return Checkpoint(
+        detail: inClone
+          ? "Ask your agent to make the change in a new worktree, not in the clone" : "Waiting for the iOS build")
     case "parallel":
       guard let second else { return Checkpoint(detail: "Waiting for the second workspace") }
       let failedSince = record?.stepTimes?["build"] ?? record?.startedAt ?? .distantPast

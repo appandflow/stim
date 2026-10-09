@@ -8,22 +8,24 @@ public func tutorialCommands(
   return fillTutorial(
     lines.joined(separator: "\n"),
     [
-      "base": base, "tour": tourPath ?? "\(base)-tour",
+      "base": base, "tour": tourPath ?? "<first worktree>",
       "stateDir": stateDir ?? "<agentDevice.stateDir>", "machine": machine ?? "<approved machine>",
       "udid": udid ?? "<ios.udid>", "second": second ?? "<second worktree>",
     ], shellDoubleQuotedValue)
 }
 
 public func tutorialAsk(
-  _ template: String, tourPath: String?, repository: String?, machine: String?, second: String? = nil
+  _ template: String, tourPath: String?, repository: String?, machine: String?, second: String? = nil,
+  existing: Set<String>? = nil
 ) -> String {
   let base = repository ?? "~/stim-tutorial"
-  let worktrees = [tourPath, second].compactMap { $0 }.joined(separator: " and ")
+  let worktrees = [tourPath, second].compactMap { $0 }.filter { existing?.contains($0) ?? true }
+    .joined(separator: " and ")
   return fillTutorial(
     template,
     [
-      "base": base, "tour": tourPath ?? "\(base)-tour", "machine": machine ?? "my approved Mac",
-      "worktrees": worktrees.isEmpty ? "you made for them" : worktrees,
+      "base": base, "tour": tourPath ?? "the first worktree", "machine": machine ?? "my approved Mac",
+      "worktrees": worktrees.isEmpty ? "(there are none, so there is nothing to remove)" : worktrees,
     ], { $0 })
 }
 

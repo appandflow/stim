@@ -9,13 +9,13 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
  * {machine} are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
  */
 export const TUTORIAL_ASKS = {
-  begin: `Clone ${TUTORIAL_REPO} into {base} and install its dependencies. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
+  begin: `Clone ${TUTORIAL_REPO} into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
   agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
-  retry: 'The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again.',
+  retry: 'The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again.',
 };
 
 export const TUTORIAL_STEPS: {
@@ -115,10 +115,11 @@ export const TUTORIAL_STEPS: {
     section: 'share',
     commands: [
       'cd "{tour}"',
+      'git commit -am "Tutorial change"',
       'xcrun simctl io {udid} screenshot finish.png',
       `gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork`,
       'git push -u fork HEAD',
-      `gh pr create --repo ${TUTORIAL_REPO} --attach "finish.png#The change running in the simulator"`,
+      `gh pr create --repo ${TUTORIAL_REPO} --fill --attach "finish.png#The change running in the simulator"`,
     ],
   },
   {

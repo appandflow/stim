@@ -32,6 +32,7 @@ private func saved(at step: String, since: Date = tourStart) -> TutorialRecord {
 
 private func linked(_ workspace: Workspace, repository: String = "/Users/example/stim-tutorial") throws -> Workspace {
   var workspace = workspace
+  workspace.tutorial = TutorialMarker(version: 2)
   workspace.worktree = try JSONDecoder().decode(
     WorktreeInfo.self, from: Data(#"{"path":"\#(workspace.path)","repository":"\#(repository)"}"#.utf8))
   return workspace
@@ -184,7 +185,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(result.record.approvedMachine == "Studio")
 }
 
-@Test func tutorialTracksSavedPathOtherwiseNewestPhase() throws {
+@Test func tutorialTracksSavedPathOtherwiseTheOldestWorktree() throws {
   var first = try fixture("01-started").environments[0]
   first.phaseSince = "2026-10-07T04:56:00.000Z"
   var second = first
@@ -193,8 +194,8 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   first = try linked(first)
   second = try linked(second)
   #expect(TutorialEnvironment.select([first, second], trackedPath: tourPath)?.path == tourPath)
-  #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == second.path)
-  #expect(TutorialEnvironment.select([first, second], trackedPath: "/missing")?.path == second.path)
+  #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == first.path)
+  #expect(TutorialEnvironment.select([first, second], trackedPath: "/missing")?.path == first.path)
   var clone = first
   clone.path = "/Users/example/stim-tutorial"
   #expect(TutorialEnvironment.select([clone], trackedPath: nil) == nil)
@@ -341,66 +342,6 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("machine", in: result).state == .skipped)
 }
 
-@Test(arguments: [false, true])
-func tutorialPendingRestartStillAcceptsViewerOpenAndInput(relaunch: Bool) throws {
-  let env = try environment("04-live-clean")
-  var progress = TutorialProgress()
-  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "device")))
-  progress.requestRestart(now: afterRebuild)
-  var input = TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(1))
-  if relaunch {
-    input.record = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(progress.record!))
-    progress = TutorialProgress()
-  }
-  input.viewerEvents = [.opened("tutorial-simulator")]
-  #expect(progress.update(input).currentStep == "device")
-  input.viewerEvents = [.input("tutorial-simulator")]
-  let result = progress.update(input)
-  #expect(result.currentStep == "agent")
-  #expect(state("device", in: result).state == .done)
-}
-
-@Test(arguments: ["live", "idle"])
-func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(phase: String) throws {
-  var progress = TutorialProgress()
-  var env = try environment("01-started")
-  env.phase = phase
-  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "finish")))
-  progress.requestRestart(now: afterRebuild)
-  #expect(progress.update(TutorialInput(environment: env, now: afterRebuild)).currentStep == "finish")
-  var other = env
-  other.path = "/Users/example/other-tour"
-  let absent = progress.update(TutorialInput(environment: other, now: afterRebuild.addingTimeInterval(1)))
-  #expect(absent.currentStep == "finish")
-  var relaunched = TutorialProgress()
-  let persisted = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(absent.record))
-  let result = relaunched.update(TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(10), record: persisted))
-  #expect(result.currentStep == "build")
-  #expect(result.record.done == ["begin"])
-  #expect(result.record.startedAt == afterRebuild.addingTimeInterval(10))
-}
-
-@Test func tutorialRestartRelaunchUsesOldestBuildEvenWithoutSeeingDisappearance() throws {
-  var progress = TutorialProgress()
-  let env = try environment("02-after-ios1")
-  _ = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "finish")))
-  progress.requestRestart(now: afterRebuild)
-  let persisted = try JSONDecoder().decode(TutorialRecord.self, from: JSONEncoder().encode(progress.record!))
-  var relaunched = TutorialProgress()
-  var rebuilt = try environment()
-  rebuilt.builds[0].build.startedAt = "2026-10-07T05:07:00.000Z"
-  #expect(
-    relaunched.update(TutorialInput(environment: rebuilt, now: afterRebuild.addingTimeInterval(120), record: persisted))
-      .currentStep == "finish")
-  rebuilt.builds = Array(rebuilt.builds.prefix(1))
-  rebuilt.lastBuild = rebuilt.builds[0].build
-  rebuilt.lastBuild?.finishedAt = "2026-10-07T05:07:30.000Z"
-  rebuilt.builds[0].build = rebuilt.lastBuild!
-  let result = relaunched.update(TutorialInput(environment: rebuilt, now: afterRebuild.addingTimeInterval(120)))
-  #expect(result.currentStep == "parallel")
-  #expect(result.record.startedAt == parseTimestamp("2026-10-07T05:07:00.000Z"))
-}
-
 @Test func tutorialOptionalStepsAcceptExistingPairingAndOnlyFreshOffload() throws {
   var progress = TutorialProgress()
   let result = progress.update(
@@ -482,13 +423,14 @@ func tutorialRestartWaitsForTrackedTourToDisappearAndReturnWithoutPhaseSince(pha
   #expect(result.currentStep == "parallel")
 }
 
-@Test func tutorialSelectUsesNewestBuildAndDeterministicPathForLiveTours() throws {
+@Test func tutorialSelectIsDeterministicForLiveTours() throws {
   var first = try linked(fixture("02-after-ios1").environments[0])
   var second = try linked(fixture("03-after-rebuild").environments[0])
   second.path = "/Users/example/newer-tour"
   second = try linked(second)
-  #expect(TutorialEnvironment.select([first, second], trackedPath: nil)?.path == second.path)
-  #expect(TutorialEnvironment.select([second, first], trackedPath: nil)?.path == second.path)
+  #expect(
+    TutorialEnvironment.select([first, second], trackedPath: nil)?.path
+      == TutorialEnvironment.select([second, first], trackedPath: nil)?.path)
   first.builds = nil
   first.lastBuilds = nil
   second.builds = nil
@@ -580,16 +522,76 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(done.currentStep == "device")
 }
 
-@Test func tutorialRestartAdoptsANewTourAtADifferentPath() throws {
+@Test func tutorialRestartForgetsTheOldTourEvenWhileItIsStillPresent() throws {
+  var old = try environment()
+  old.repository = "/Users/example/stim-tutorial"
   var progress = TutorialProgress()
-  _ = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "device")))
+  _ = progress.update(TutorialInput(environment: old, now: afterRebuild, record: saved(at: "device")))
   progress.requestRestart(now: afterRebuild)
-  var next = try environment("01-started")
-  next.path = "/Users/example/new-tour"
-  next.phaseSince = afterRebuild.addingTimeInterval(60)
-  let result = progress.update(TutorialInput(environment: next, now: afterRebuild.addingTimeInterval(61)))
+  #expect(progress.record?.tourPath == nil)
+  #expect(progress.record?.startedAt == afterRebuild)
+  var fresh = try environment("01-started")
+  fresh.path = "/Users/example/new-tour"
+  fresh.repository = old.repository
+  fresh.phaseSince = afterRebuild.addingTimeInterval(60)
+  let result = progress.update(
+    TutorialInput(environment: fresh, siblings: [old, fresh], now: afterRebuild.addingTimeInterval(61)))
   #expect(result.record.tourPath == "/Users/example/new-tour")
-  #expect(result.record.restartAfter == nil)
-  #expect(result.record.startedAt == afterRebuild.addingTimeInterval(60))
   #expect(result.currentStep == "build")
+  #expect(result.record.done == ["begin"])
+}
+
+@Test func tutorialSelectAdoptsTheOldestWorktreeAfterTheStartAndIgnoresOlderOnes() throws {
+  var first = try linked(fixture("01-started").environments[0])
+  first.phaseSince = "2026-10-07T05:00:00.000Z"
+  var second = first
+  second.path = "/Users/example/second-tour"
+  second.phaseSince = "2026-10-07T05:10:00.000Z"
+  second = try linked(second)
+  var leftover = first
+  leftover.path = "/Users/example/leftover"
+  leftover.phaseSince = "2026-10-06T05:00:00.000Z"
+  leftover = try linked(leftover)
+  let tracked = TutorialEnvironment.select([second, leftover, first], trackedPath: nil)
+  #expect(tracked?.path == leftover.path)
+  let start = parseTimestamp("2026-10-07T04:59:00.000Z")!
+  #expect(TutorialEnvironment.select([second, leftover, first], trackedPath: nil, since: start)?.path == first.path)
+  var idle = first
+  idle.path = "/Users/example/idle"
+  idle.phaseSince = nil
+  idle.builds = nil
+  idle.lastBuilds = nil
+  idle = try linked(idle)
+  #expect(TutorialEnvironment.select([idle], trackedPath: nil, since: start) == nil)
+}
+
+@Test func tutorialFirstChangeInTheCloneGetsAWorktreeHint() throws {
+  var clone = try environment()
+  clone.repository = clone.path
+  var progress = TutorialProgress()
+  let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterRebuild))
+  #expect(result.currentStep == "build")
+  #expect(state("build", in: result).detail.contains("new worktree"))
+}
+
+@Test func tutorialSecondWorkspaceNeedsACreationTimeAfterTheStep() throws {
+  var base = try environment()
+  base.repository = "/Users/example/stim-tutorial"
+  var idle = try sibling()
+  idle.phaseSince = nil
+  idle.builds = []
+  idle.lastBuild = nil
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(environment: base, siblings: [idle], now: afterRebuild, record: saved(at: "parallel")))
+  #expect(result.record.secondPath == nil)
+}
+
+@Test func tutorialBeginIgnoresARegisteredCloneFromAnOlderTutorialVersion() throws {
+  var clone = try environment("01-started")
+  clone.repository = clone.path
+  clone.version = 1
+  var progress = TutorialProgress()
+  let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterBuild))
+  #expect(result.currentStep == "begin")
 }

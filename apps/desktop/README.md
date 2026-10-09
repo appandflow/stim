@@ -1816,8 +1816,7 @@ Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after ope
 sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
-resets progress when the tracked tour disappears and returns, or its oldest build
-started after Restart. A newer phase timestamp alone does not reset progress.
+resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
 and survives relaunch. Copying commands does not start it. Only archives
 removed after this run started can complete the tutorial.
@@ -1831,8 +1830,10 @@ Parallel, `secondPath`), optional live view, agent actions and logs steps,
 optional phone and remote Mac steps, an optional Share Your Finish prompt, then
 removal and Archived of both tracked worktrees (Finish; the clone stays). The
 tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
-version 1 record is dropped and starts over on a version 2 workspace; Restart
-adopts the next supported tour created after it, at any path. Both optional steps
+version 1 record is dropped and starts over on a version 2 workspace. Restart and
+"take the tutorial" start a fresh record at the current time that forgets the old tour paths even
+while the old worktrees are still registered; only linked worktrees whose creation time is after
+that start count, and the oldest one becomes the tour. Both optional steps
 keep Skip available.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,

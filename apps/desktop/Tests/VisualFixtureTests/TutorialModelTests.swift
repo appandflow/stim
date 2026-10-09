@@ -13,12 +13,12 @@
       return defaults
     }
 
-    private func workspace(since: String = "2026-10-07T12:00:00Z") throws -> Workspace {
+    private func workspace(path: String = "/tmp/tutorial-tour", since: String = "2026-10-07T12:00:00Z") throws -> Workspace {
       try JSONDecoder().decode(
         Workspace.self,
         from: Data(
           """
-          {"path":"/tmp/tutorial-tour","live":true,"warnings":[],"tutorial":{"version":2},"worktree":{"path":"/tmp/tutorial-tour","repository":"/tmp/tutorial"},
+          {"path":"\(path)","live":true,"warnings":[],"tutorial":{"version":2},"worktree":{"path":"\(path)","repository":"/tmp/tutorial"},
            "phase":"ready","phaseSince":"\(since)"}
           """.utf8))
     }
@@ -117,12 +117,19 @@
       XCTAssertTrue(model.snapshot?.isComplete == true)
     }
 
-    @MainActor func testBeginningWaitsForStatusAndUsesReportedRunStart() throws {
+    @MainActor func testBeginningStartsNowAndIgnoresWorktreesFromBefore() throws {
       let model = TutorialModel(defaults: isolatedDefaults())
+      let begun = Date()
       model.open(beginning: true)
       XCTAssertNil(model.snapshot)
-      model.update(workspaces: [try workspace()], archived: [], sheetOpen: false)
-      XCTAssertEqual(model.snapshot?.record.startedAt, ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z"))
+      model.update(workspaces: [try workspace()], archived: [], sheetOpen: false, now: begun)
+      XCTAssertNil(model.snapshot?.record.tourPath)
+      XCTAssertEqual(model.snapshot?.currentStep, "build")
+      XCTAssertGreaterThanOrEqual(try XCTUnwrap(model.snapshot?.record.startedAt), begun.addingTimeInterval(-5))
+      let later = ISO8601DateFormatter().string(from: begun.addingTimeInterval(60))
+      let fresh = try workspace(path: "/tmp/fresh-tour", since: later)
+      model.update(workspaces: [try workspace(), fresh], archived: [], sheetOpen: false, now: begun.addingTimeInterval(61))
+      XCTAssertEqual(model.snapshot?.record.tourPath, "/tmp/fresh-tour")
     }
 
     @MainActor func testOldArchiveCannotCompleteFinishInRestartedRun() throws {
@@ -140,29 +147,26 @@
       XCTAssertTrue(model.snapshot?.isComplete == true)
     }
 
-    @MainActor func testRestartIgnoresNewerPhaseUntilWorkspaceDisappearsAndReturns() throws {
+    @MainActor func testRestartAdoptsANewerTourWhileTheOldOneIsStillRegistered() throws {
       let defaults = isolatedDefaults()
       let start = ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!
       TutorialRecordStore(defaults).record = TutorialRecord(
         version: 2, tourPath: "/tmp/tutorial-tour", startedAt: start, step: "build",
         done: ["begin"], skipped: ["device"])
       let model = TutorialModel(defaults: defaults)
-      let env = try workspace()
-      model.update(workspaces: [env], archived: [], sheetOpen: false, now: start)
+      let old = try workspace()
+      model.update(workspaces: [old], archived: [], sheetOpen: false, now: start)
       model.restart(now: start.addingTimeInterval(30))
-      model.update(workspaces: [env], archived: [], sheetOpen: false, now: start.addingTimeInterval(31))
-      let newerPhase = try workspace(since: "2026-10-07T12:01:00Z")
-      model.update(
-        workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(61))
+      XCTAssertEqual(model.snapshot?.record.tourPath, "/tmp/tutorial-tour")
+      model.update(workspaces: [old], archived: [], sheetOpen: false, now: start.addingTimeInterval(31))
       XCTAssertTrue(model.restarting)
-      XCTAssertEqual(model.snapshot?.record.startedAt, start)
-      XCTAssertEqual(model.snapshot?.record.skipped, ["device"])
-      XCTAssertEqual(model.snapshot?.currentStep, "build")
-      model.update(workspaces: [], archived: [], sheetOpen: false, now: start.addingTimeInterval(62))
-      model.update(workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(63))
+      XCTAssertNil(model.snapshot?.record.tourPath)
+      let fresh = try workspace(path: "/tmp/restarted-tour", since: "2026-10-07T12:02:00Z")
+      model.update(workspaces: [old, fresh], archived: [], sheetOpen: false, now: start.addingTimeInterval(121))
       XCTAssertFalse(model.restarting)
+      XCTAssertEqual(model.snapshot?.record.tourPath, "/tmp/restarted-tour")
       XCTAssertEqual(model.snapshot?.record.skipped, [])
-      XCTAssertEqual(model.snapshot?.record.startedAt, start.addingTimeInterval(63))
+      XCTAssertEqual(model.snapshot?.record.startedAt, start.addingTimeInterval(30))
       XCTAssertEqual(model.snapshot?.currentStep, "build")
     }
 
@@ -193,7 +197,7 @@
           {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":2},"worktree":{"path":"/tmp/new-tour","repository":"/tmp/tutorial"},"phase":"ready",
            "ios":{"udid":"reused-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
-      for (count, beginning) in [(62, false), (64, false), (64, true)] {
+      for count in [62, 64] {
         let events = TutorialViewerEvents()
         for _ in 0..<(count / 2) {
           events.opened("reused-simulator")
@@ -201,7 +205,6 @@
         }
         let model = TutorialModel(defaults: isolatedDefaults())
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
-        if beginning { model.open(beginning: true) }
         for _ in 0..<2 { model.skip() }
         XCTAssertEqual(model.snapshot?.currentStep, "device")
         events.opened("reused-simulator")

@@ -14,11 +14,11 @@ public struct TutorialStep: Sendable {
 public enum TutorialSteps {
   public static let supportedVersions: Set<Int> = [2]
   public static let restartPrompt = "Restart the Stim tutorial."
-  public static let retryAsk = "The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again."
+  public static let retryAsk = "The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again."
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Get the Test App", who: "agent", optional: false,
-      ask: "Clone appandflow/stim-tutorial into {base} and install its dependencies. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
+      ask: "Clone appandflow/stim-tutorial into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
       commands: [
 
       ]),
@@ -76,10 +76,11 @@ public enum TutorialSteps {
       ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
       commands: [
         "cd \"{tour}\"",
+        "git commit -am \"Tutorial change\"",
         "xcrun simctl io {udid} screenshot finish.png",
         "gh repo fork appandflow/stim-tutorial --remote --remote-name fork",
         "git push -u fork HEAD",
-        "gh pr create --repo appandflow/stim-tutorial --attach \"finish.png#The change running in the simulator\"",
+        "gh pr create --repo appandflow/stim-tutorial --fill --attach \"finish.png#The change running in the simulator\"",
       ]),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,

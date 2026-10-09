@@ -96,7 +96,7 @@ Next, ask for a change in your own words.`}
 
 >
 
-{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
 </PromptBox>
 
 To type the commands yourself:

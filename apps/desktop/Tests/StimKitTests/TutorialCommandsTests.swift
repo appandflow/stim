@@ -16,7 +16,7 @@ import Testing
   let result = tutorialCommands(
     [#"base="{base}""#, #"cd "{tour}""#, "cat > App.js <<'EOF'", "console.log(`${TAG} title color=${TITLE_COLOR}`);", "EOF"],
     tourPath: nil, repository: nil, stateDir: nil, machine: nil)
-  #expect(result.hasPrefix("base=\"$HOME/stim-tutorial\"\ncd \"$HOME/stim-tutorial-tour\""))
+  #expect(result.hasPrefix("base=\"$HOME/stim-tutorial\"\ncd \"<first worktree>\""))
   #expect(result.hasSuffix("cat > App.js <<'EOF'\nconsole.log(`${TAG} title color=${TITLE_COLOR}`);\nEOF"))
 }
 
