@@ -1,8 +1,34 @@
 import { request } from 'http';
-import { connect } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, releaseMetroPort, claimMetroPort } from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
+import { PortInspectionError, probeLoopback, readLsofListeningPorts, readListeningPorts } from './listening-ports.ts';
+
+/**
+ * Creates one lazy listener snapshot for an allocation attempt; discard the probe before retrying.
+ * When the native TCP table cannot be read, each port is checked with an lsof listener scan and
+ * loopback connects instead. Rejects with `PortInspectionError` only when none of them can answer.
+ */
+export function createPortProbe(): (port: number) => Promise<boolean> {
+  let snapshot: Promise<ReadonlySet<number> | Error> | undefined;
+  let lsof: Promise<ReadonlySet<number> | null> | undefined;
+  return async (port) => {
+    const listening = await (snapshot ??= readListeningPorts().catch((error: unknown) =>
+      error instanceof Error ? error : new Error(String(error)),
+    ));
+    if (!(listening instanceof Error)) return !listening.has(port);
+    const [listed, ipv4, ipv6] = await Promise.all([
+      (lsof ??= readLsofListeningPorts()),
+      probeLoopback(port, '127.0.0.1'),
+      probeLoopback(port, '::1'),
+    ]);
+    if (listed?.has(port) || ipv4 === 'taken' || ipv6 === 'taken') return false;
+    if (listed || (ipv4 === 'free' && ipv6 === 'free')) return true;
+    throw new PortInspectionError(
+      `Cannot tell whether TCP port ${port} is free: the TCP listener table failed (${listening.message.replace(/\s+/g, ' ').trim()}), lsof could not list listeners, and a loopback connect failed.`,
+    );
+  };
+}
 
 export function isMetroRunning(port: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -22,25 +48,10 @@ export function isMetroRunning(port: number): Promise<boolean> {
   });
 }
 
-export function isPortFree(port: number, { timeoutMs = 400 }: { timeoutMs?: number } = {}): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const sock = connect({ port, host: '127.0.0.1' });
-    const done = (free: boolean) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(free);
-    };
-    sock.setTimeout(timeoutMs);
-    sock.once('connect', () => done(false));
-    sock.once('error', () => done(true));
-    sock.once('timeout', () => done(false));
-  });
-}
-
 const FIRST_PORT = 8082;
 const PORT_SCAN_LIMIT = 200;
 
-export async function computeNextPort(isFree: (port: number) => Promise<boolean> = isPortFree): Promise<number> {
+export async function computeNextPort(isFree: (port: number) => Promise<boolean> = createPortProbe()): Promise<number> {
   const taken = new Set(allMetroPorts());
   for (let port = FIRST_PORT; port < FIRST_PORT + PORT_SCAN_LIMIT; port++) {
     if (taken.has(port)) continue;
@@ -88,7 +99,7 @@ export async function findReclaimablePort(
 export async function allocatePort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
-  isFree: (port: number) => Promise<boolean> = isPortFree,
+  isFree: (port: number) => Promise<boolean> = createPortProbe(),
 ): Promise<number> {
   const reclaim = await findReclaimablePort(projectPath, probe);
   if (reclaim && (await isFree(reclaim.port))) {
@@ -103,7 +114,7 @@ const RESERVE_ATTEMPTS = 5;
 export async function reserveMetroPort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
-  isFree: (port: number) => Promise<boolean> = isPortFree,
+  isFree?: (port: number) => Promise<boolean>,
   pinned: number | null = null,
 ): Promise<number> {
   if (pinned !== null) {

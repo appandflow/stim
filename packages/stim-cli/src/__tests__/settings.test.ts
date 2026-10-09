@@ -361,7 +361,7 @@ describe('remote device settings', () => {
   test('reports invalid platform values instead of silently disabling remote mode', () => {
     expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'bad name' } })).toEqual([
       'Invalid ios.remote setting true. Expected a string.',
-      'Invalid android.remote setting "bad name". Expected eas, proxy, auto, or a tailnet machine name.',
+      'Invalid android.remote setting "bad name". Expected eas, proxy, auto, local, or a tailnet machine name.',
     ]);
   });
 
@@ -430,7 +430,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.remote': {
     valid: 'mini:7443',
     invalid: 'bad name',
-    expected: 'eas, proxy, auto, or a tailnet machine name',
+    expected: 'eas, proxy, auto, local, or a tailnet machine name',
   },
   'metro.tunnel': {
     valid: 'tailscale',
