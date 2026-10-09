@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -48,8 +48,11 @@ export function createHarness({ env, cliPath, label }) {
   const cli = (argv, opts = {}) => sh(process.execPath, [cliPath, ...argv], opts);
 
   const cliJson = (argv, opts = {}) => {
-    const r = cli(argv, opts);
-    if (r.code !== 0) throw new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    const r = cli(argv, { ...opts, allowFail: true });
+    if (r.code !== 0)
+      throw Object.assign(new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`), {
+        preserveNativeState: true,
+      });
     const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
       return JSON.parse(line);
@@ -485,7 +488,36 @@ export function dumpDiagnostics(h, created) {
       continue;
     }
     h.log(`--- ${logPath} (tail) ---`);
-    process.stderr.write(lastLines(readFileSync(logPath, 'utf-8'), 60) + '\n');
+    const text = readFileSync(logPath, 'utf-8');
+    process.stderr.write(lastLines(text, 60) + '\n');
+    const launch = text
+      .split('\n')
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      })
+      .findLast((record) => record?.event === 'launch_attempt');
+    if (launch?.platform !== 'android' || typeof launch.deviceId !== 'string' || typeof launch.appId !== 'string')
+      continue;
+    const queries = [
+      ['get-state'],
+      ['shell', 'pm', 'path', launch.appId],
+      ['shell', 'cmd', 'package', 'resolve-activity', '--brief', launch.appId],
+      ['shell', 'pidof', launch.appId],
+      ['logcat', '-b', 'all', '-d', '-t', '2000'],
+    ];
+    const diagnostics = queries.map((query) => {
+      const argv = ['-s', launch.deviceId, ...query];
+      const started = Date.now();
+      const result = h.sh('adb', argv, { allowFail: true, timeout: 10_000 });
+      return { argv, elapsedMs: Date.now() - started, code: result.code, stdout: result.stdout, stderr: result.stderr };
+    });
+    const output = JSON.stringify({ launch, diagnostics }, null, 2);
+    writeFileSync(join(dirname(logPath), 'android-failure-diagnostics.json'), output + '\n');
+    h.log(output);
   }
 }
 

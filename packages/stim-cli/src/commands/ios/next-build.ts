@@ -7,11 +7,16 @@ import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } f
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {
   cacheProviderSettingError,
+  publicUrlSetting,
+  remoteEasFallbackSetting,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  tunnelModeSetting,
 } from '../../workspace/settings.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
+import { planHostedDevice } from '../../device-host/plan-placement.ts';
+import type { SimulatorArch } from '../../engine/agent-device.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { IosDeps } from './dependencies.ts';
 import {
@@ -24,6 +29,7 @@ import {
   simulatorBuildArch,
   iosProviderRunOptions,
 } from './support.ts';
+import { hostedIosSelectors } from './remote.ts';
 import type { FailArgs, IosCommandOptions } from './types.ts';
 
 type Refusal = { code: string; message: string; remedy: string };
@@ -119,11 +125,10 @@ export async function planIos(
     );
   }
 
-  const remoteBackend = remoteIosSetting(settings);
-  if (remoteBackend) {
+  if (iosRemote?.kind === 'backend') {
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `ios.remote routes this workspace's runs to a ${remoteBackend.kind === 'backend' ? remoteBackend.backend : remoteBackend.machine} device, whose architecture --plan cannot read without a session.`,
+      message: `ios.remote is ${iosRemote.backend}, whose simulator architecture --plan cannot read without a session.`,
       remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
     });
   }
@@ -150,12 +155,48 @@ export async function planIos(
       remedy: 'Check the project native inputs and the @expo/fingerprint error above, then retry.',
     });
   }
-  const arch = simulatorBuildArch({
-    physical: false,
-    remoteArch: null,
-    hostArch: d.hostSimulatorArch(),
-    configuration,
-  });
+  const keyArch = (remoteArch: SimulatorArch | null) =>
+    simulatorBuildArch({ physical: false, remoteArch, hostArch: d.hostSimulatorArch(), configuration });
+  let arch = keyArch(null);
+  let placement: string | undefined;
+  if (iosRemote?.kind === 'machine') {
+    const planned = await planHostedDevice({
+      root,
+      slot,
+      platform: 'ios',
+      machine: iosRemote.machine,
+      selectors: hostedIosSelectors(
+        resolveDeviceType(opts.deviceType, settings),
+        resolveRuntime(opts.runtime, settings),
+      ),
+      sameKey: (choice) => keyArch('runtime' in choice ? choice.architecture : null) === arch,
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              d.checkEasFallback({
+                root,
+                platform: 'ios',
+                slot,
+                release: isReleaseConfiguration(configuration),
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                deviceTypeFlag: opts.deviceType,
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
+              }),
+          }
+        : {}),
+    });
+    if (planned.kind === 'unknown') {
+      return refuse({
+        code: 'STIM_BAD_ARG',
+        message: `ios.remote is ${iosRemote.machine}, and its simulator architecture is unknown here: ${planned.reason}.`,
+        remedy: 'Run `stim ios` to build for the remote device, or unset ios.remote to plan the owned simulator.',
+      });
+    }
+    placement = planned.placement;
+    if (planned.kind === 'hosted' && 'runtime' in planned.choice) arch = keyArch(planned.choice.architecture);
+  }
   const cacheKey = buildCacheKey(PLATFORM, fingerprint.hash, {
     scheme: opts.scheme,
     ...(configuration ? { configuration } : {}),
@@ -186,5 +227,5 @@ export async function planIos(
       note,
     },
   );
-  printPlan(plan, json);
+  printPlan(placement ? { ...plan, placement } : plan, json);
 }

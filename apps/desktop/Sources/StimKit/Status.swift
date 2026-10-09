@@ -144,13 +144,14 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
       || physicalDevices?.isEmpty == false
   }
 
-  /// The workspace's default devices, its Stim-owned Chrome, each named slot's devices, then its leased physical
-  /// devices.
+  /// The workspace's default devices, its Stim-owned Chrome, its `stim macos` app, each named slot's devices, then its
+  /// leased physical devices.
   public var devices: [DeviceRef] {
     var out: [DeviceRef] = []
     if let ios { out.append(.ios(slot: DeviceRef.defaultSlot, ios)) }
     if let android { out.append(.android(slot: DeviceRef.defaultSlot, android)) }
     if let web { out.append(.web(web)) }
+    if let macos { out.append(.macos(macos)) }
     for slot in slots ?? [] {
       if let ios = slot.ios { out.append(.ios(slot: slot.slot, ios)) }
       if let android = slot.android { out.append(.android(slot: slot.slot, android)) }
@@ -160,7 +161,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     return out
   }
 
-  /// `devices` running first, then iOS, Android, Web, physical and remote devices, then by slot. The order never
+  /// `devices` running first, then iOS, Android, macOS, Web, physical and remote devices, then by slot. The order never
   /// depends on activity or drivers, so a device keeps its place while tools attach and detach.
   public var orderedDevices: [DeviceRef] {
     return devices.enumerated().sorted { a, b in
@@ -394,6 +395,9 @@ public struct IosDevice: Decodable, Hashable, Sendable {
 
   enum CodingKeys: String, CodingKey { case name, udid, owned, state, activity, app, appPresence, disk, host, devicePlacement }
 
+  /// The name of a record that carries none: a simulator that no longer exists, or a hosted one not yet created.
+  public static let unnamed = "Missing simulator"
+
   public init(name: String, udid: String, owned: Bool, state: String, activity: DeviceActivity? = nil) {
     self.name = name
     self.udid = udid
@@ -407,7 +411,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
     host = try c.decodeIfPresent(HostedIos.self, forKey: .host)
     devicePlacement = try c.decodeIfPresent(DevicePlacement.self, forKey: .devicePlacement)
     udid = try c.decode(String.self, forKey: .udid)
-    name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Missing simulator"
+    name = try c.decodeIfPresent(String.self, forKey: .name) ?? Self.unnamed
     owned = try c.decode(Bool.self, forKey: .owned)
     state = try c.decode(String.self, forKey: .state)
     activity = try c.decodeIfPresent(DeviceActivity.self, forKey: .activity)
@@ -564,7 +568,7 @@ extension DeviceRef {
     func rank(_ device: DeviceRef) -> Int {
       if case .remote = device { return 4 }
       if device.isPhysical { return 3 }
-      return ["ios": 0, "android": 1, "web": 2][device.platform] ?? 4
+      return ["ios": 0, "android": 1, "macos": 2, "web": 3][device.platform] ?? 4
     }
     if a.isRunning != b.isRunning { return a.isRunning }
     let (ra, rb) = (rank(a), rank(b))

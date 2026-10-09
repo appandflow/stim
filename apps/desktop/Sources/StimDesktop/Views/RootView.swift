@@ -12,6 +12,19 @@ enum SidebarItem: Hashable {
   case worktree(String)
   case notifications
   case machine
+
+  var logName: String {
+    switch self {
+    case .overview: "overview"
+    case .wall: "wall"
+    case .archived(let id): "archived \(id)"
+    case .project(let project): "project \(project.root)"
+    case .environment(let path): "workspace \(path)"
+    case .worktree(let path): "worktree \(path)"
+    case .notifications: "notifications"
+    case .machine: "machine"
+    }
+  }
 }
 
 struct RootView: View {
@@ -31,6 +44,8 @@ struct RootView: View {
   @StateObject private var tutorial = TutorialModel()
   @State private var selection: SidebarItem? = .overview
   @State private var previousSelection: SidebarItem? = .overview
+  @StateObject private var navigation = NavigationController()
+  @State private var replacesHistory = false
   @State private var restoredProject = false
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
@@ -85,9 +100,14 @@ struct RootView: View {
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
-        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs,
+        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
+        openLogs: showLogs,
         tips: tips
       )
+      .toolbar(removing: .sidebarToggle)
+      .toolbar {
+        if columnVisibility != .detailOnly { sidebarToggleToolbar }
+      }
       .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
@@ -123,6 +143,7 @@ struct RootView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
       .overlay(alignment: .bottom) { onboardingPopup }
+      .overlay(alignment: .topTrailing) { inspectorSideControls }
       .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
       .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
       .onGeometryChange(for: CGFloat.self) {
@@ -132,13 +153,26 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
+        if columnVisibility == .detailOnly { sidebarToggleToolbar }
+        let history = HistoryButtons(
+          navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        if #available(macOS 26.0, *) {
+          ToolbarItem(placement: .navigation) {
+            history.padding(.horizontal, Space.xs).frame(height: 40)
+              .glassEffect(.regular, in: Capsule())
+          }
+          .sharedBackgroundVisibility(.hidden)
+          ToolbarSpacer(.fixed, placement: .navigation)
+        } else {
+          ToolbarItem(placement: .navigation) { history }
+        }
         if columnVisibility == .detailOnly, !operations.runs.isEmpty {
           ToolbarItem(placement: .navigation) {
             OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
           }
         }
         let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
-          selection = .machine
+          navigate(.machine, .click("machine summary"))
         }
         if summary.hasContent {
           ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
@@ -148,24 +182,30 @@ struct RootView: View {
           }
         }
         ToolbarItem(placement: .primaryAction) { Spacer() }
-        if showsWorkspace {
-          ToolbarItem(placement: .primaryAction) {
-            LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
-              if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
-                logsWorkspace.wrappedValue = app.path
-              }
-              showsLogs.toggle()
-            }
+        if !controlsBesideInspector {
+          ToolbarItem(id: "notifications", placement: .primaryAction) {
+            notificationButton
           }
-          ToolbarItem(placement: .primaryAction) {
+          if showsWorkspace, #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+          }
+        }
+        if showsWorkspace {
+          let controls = HStack(spacing: Space.md) {
+            logsToggleButton
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
           }
-        }
-        if #available(macOS 26.0, *) {
-          ToolbarSpacer(.fixed, placement: .primaryAction)
-        }
-        ToolbarItem(id: "notifications", placement: .primaryAction) {
-          notificationButton
+          .padding(.horizontal, Space.md + Space.xxs)
+          .frame(height: 40)
+          .accessibilityElement(children: .contain)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) {
+              controls.glassEffect(.regular, in: Capsule()).padding(.trailing, Space.md)
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(placement: .primaryAction) { controls.padding(.trailing, Space.md) }
+          }
         }
       }
     }
@@ -176,7 +216,23 @@ struct RootView: View {
       showsWorkspace || tutorial.isOpen
         ? InspectorToggle(isShown: inspector != .hidden || tutorial.isOpen, toggle: toggleInspector) : nil
     )
-    .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
+    .focusedSceneValue(
+      \.sidebarNavigation, SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications or Machines")) }
+    )
+    .focusedSceneValue(
+      \.historyNavigation,
+      HistoryNavigation(
+        canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward, back: { navigation.goBack(via: .menu) },
+        forward: { navigation.goForward(via: .menu) })
+    )
+    .onChange(of: destination) { _, destination in
+      if replacesHistory {
+        replacesHistory = false
+        navigation.replaceCurrent(destination)
+      } else {
+        navigation.record(destination)
+      }
+    }
     .onChange(of: inspectorFits) { showsInspectorOverlay = false }
     .task(id: [windowSize.width, detailRoom]) { await settleInspectorFit() }
     .onGeometryChange(for: CGSize.self) {
@@ -186,7 +242,7 @@ struct RootView: View {
     }
     .environment(\.windowSize, windowSize)
     .toolbarBackground(.hidden, for: .windowToolbar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .environmentObject(actions)
@@ -201,11 +257,19 @@ struct RootView: View {
       NativeViewerPermissionsView(permissions: nativePermissions)
     }
     .onAppear {
+      navigation.resolves = resolves
+      navigation.apply = show
+      navigation.startMonitoring()
       store.start()
       tutorial.configure(cli: cli)
       openRequests.openMainWindow = { [openWindow] in openWindow(id: "main") }
     }
-    .onDisappear { notices.removeAll() }
+    .onDisappear {
+      notices.removeAll()
+      navigation.stopMonitoring()
+      navigation.resolves = { _ in true }
+      navigation.apply = { _ in }
+    }
     .onChange(of: onboarding.stimUpdate, initial: true) { _, latest in showStimUpdate(latest) }
     .onChange(of: onboarding.showsGuide || tutorial.isOpen, initial: true) { _, suppressed in tips.suppressed = suppressed }
     .onChange(of: openRequests.target, initial: true) { _, target in show(target, in: store.payload) }
@@ -241,7 +305,7 @@ struct RootView: View {
         let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
           .sorted().first
       {
-        selection = .environment(environment)
+        navigate(.environment(environment), .automatic("worktree now has a workspace"))
       }
       restoreLastProject()
     }
@@ -271,18 +335,27 @@ struct RootView: View {
     .onReceive(openRequests.$showsMachine) { shows in
       guard shows else { return }
       openRequests.showsMachine = false
-      selection = .machine
+      navigate(.machine, .request("show machine"))
     }
     .onReceive(openRequests.$workspacePath) { path in
       guard let path else { return }
       openRequests.workspacePath = nil
-      selection = .environment(path)
+      navigate(.environment(path), .request("workspace path"))
     }
     .onReceive(store.$payload) { payload in
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
       else { return }
-      selection = previousSelection ?? .overview
+      navigate(previousSelection ?? .overview, .automatic("archived workspace no longer listed"))
+    }
+    .onChange(of: selection, initial: true) { old, item in
+      let name = item?.logName ?? "none"
+      let cause = navigation.takeCause()
+      if old == item {
+        DebugLog.setDestination(name)
+      } else {
+        DebugLog.setDestination(name, from: old?.logName ?? "none", cause: cause)
+      }
     }
     .onChange(of: selection) { old, item in
       if case .archived = item {
@@ -318,7 +391,7 @@ struct RootView: View {
         if tutorial.snapshot?.isComplete == true {
           openTutorialArchive()
         } else if let path = tutorial.tourPath {
-          selection = .environment(path)
+          navigate(.environment(path), .click("tutorial Show me"))
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
         }
       })
@@ -353,7 +426,7 @@ struct RootView: View {
 
   private func openTutorialArchive() {
     if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
-      selection = .archived(archive.id)
+      navigate(.archived(archive.id), .click("tutorial Show me"))
     }
   }
 
@@ -435,10 +508,64 @@ struct RootView: View {
     }
   }
 
+  private var controlsBesideInspector: Bool { showsWorkspace && inspector == .column }
+
+  @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
+    if #available(macOS 26.0, *) {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.glassEffect(.regular.interactive(), in: Capsule())
+      }
+      .sharedBackgroundVisibility(.hidden)
+    } else {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.background(.regularMaterial, in: Capsule())
+      }
+    }
+  }
+
+  private var sidebarToggleButton: some View {
+    Button {
+      withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+    } label: {
+      Image(systemName: "sidebar.left")
+        .font(.system(size: 17))
+        .frame(width: 40, height: 40)
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(Palette.secondary)
+    .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
+  }
+
+  private var logsToggleButton: some View {
+    LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
+      if !showsLogs, let page = selectedPage, page.isUnified, let app = page.soleErrorApp {
+        logsWorkspace.wrappedValue = app.path
+      }
+      showsLogs.toggle()
+    }
+  }
+
+  @ViewBuilder private var inspectorSideControls: some View {
+    if controlsBesideInspector {
+      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: 40)
+      Group {
+        if #available(macOS 26.0, *) {
+          controls.glassEffect(.regular, in: Capsule())
+        } else {
+          controls.background(.regularMaterial, in: Capsule())
+        }
+      }
+      .padding(.top, 6)
+      .padding(.trailing, WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1 + Space.lg)
+      .ignoresSafeArea(edges: .top)
+    }
+  }
+
   private var notificationButton: some View {
     let unread = inbox.inbox.unreadCount
     return Button {
-      selection = .notifications
+      navigate(.notifications, .click("notifications button"))
     } label: {
       NotificationBell(selected: selection == .notifications)
         .padding(.trailing, 6)
@@ -467,10 +594,12 @@ struct RootView: View {
   }
 
   private static let bellWidth: CGFloat = 56
+  private static let historyButtonsWidth: CGFloat = 64
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
     detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
+      - Self.historyButtonsWidth
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
@@ -487,13 +616,51 @@ struct RootView: View {
     guard !restoredProject, selection == .overview else { return }
     if defaultView == .allDevices {
       restoredProject = true
-      selection = .wall
+      replacesHistory = true
+      navigate(.wall, .automatic("default view"))
       return
     }
     guard defaultView == .lastProject, !lastProjectPath.isEmpty else { return }
     guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
     restoredProject = true
-    selection = .project(entry.project)
+    replacesHistory = true
+    navigate(.project(entry.project), .automatic("default view"))
+  }
+
+  private var destination: NavigationDestination {
+    var showsAll = false
+    if case .project(let project) = selection { showsAll = showingAllWorktrees == project }
+    var focused: String?
+    if case .environment = selection { focused = focusedDeviceID }
+    return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focused)
+  }
+
+  private func navigate(_ item: SidebarItem?, _ cause: NavigationCause) {
+    navigation.setCause(cause)
+    selection = item
+  }
+
+  private func attributed(_ cause: NavigationCause) -> Binding<SidebarItem?> {
+    Binding(get: { selection }, set: { navigate($0, cause) })
+  }
+
+  private func show(_ destination: NavigationDestination) {
+    selection = destination.selection
+    showingAllWorktrees = nil
+    if destination.showsAllWorktrees, case .project(let project)? = destination.selection { showingAllWorktrees = project }
+    focusedDeviceID = destination.focusedDeviceID
+  }
+
+  /// Whether the destination's page still exists. Without a status payload nothing can be told yet.
+  private func resolves(_ destination: NavigationDestination) -> Bool {
+    guard let payload = store.payload else { return true }
+    switch destination.selection {
+    case .environment(let path): return WorktreePage(path: path, environments: payload.environments) != nil
+    case .worktree(let path): return payload.unprovisionedWorktrees?.contains { $0.path == path } == true
+    case .archived(let id): return payload.archived?.contains { $0.id == id } == true
+    case .project(let project): return store.projectList.contains { $0.project == project }
+    default: return true
+    }
   }
 
   /// `@Published` emits before the property changes, so both values arrive as arguments.
@@ -502,26 +669,14 @@ struct RootView: View {
     openRequests.device = nil
     let path = owner.workspace.path
     let deviceID = owner.device.id
-    let page: LaunchPage
-    switch selection {
-    case .overview, .wall: page = .allDevices
-    case .environment(let current): page = .workspace(current)
-    default: page = .other
-    }
-    switch launchResponse(page: page, mainWindowOpen: openRequests.deviceArrivedWithWindow, workspacePath: path) {
-    case .navigate:
-      selection = .environment(path)
-      focusedDeviceID = deviceID
-    case .notice:
-      notices.show(
-        Notice(
-          icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
-          detail: abbreviatingHome(path), actionTitle: "Show",
-          perform: {
-            selection = .environment(path)
-            focusedDeviceID = deviceID
-          }, key: "device-launch:\(deviceID)", workspacePath: path))
-    }
+    notices.show(
+      Notice(
+        icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
+        detail: abbreviatingHome(path), actionTitle: "Show",
+        perform: {
+          navigate(.environment(path), .click("device launch notice"))
+          focusedDeviceID = deviceID
+        }, key: "device-launch:\(deviceID)", workspacePath: path))
   }
 
   private func showStimUpdate(_ latest: SemanticVersion?) {
@@ -560,7 +715,7 @@ struct RootView: View {
     guard let target = payload.target(of: pending.request) else {
       if let archive = payload.archive(for: pending.request, waited: pending.waited) {
         pendingLink = nil
-        selection = .archived(archive.id)
+        navigate(.archived(archive.id), .request("workspace link"))
         return
       }
       guard !pending.expiring else { return }
@@ -571,7 +726,7 @@ struct RootView: View {
         pendingLink?.waited = true
         if let archive = store.payload?.archive(for: pending.request, waited: true) {
           pendingLink = nil
-          selection = .archived(archive.id)
+          navigate(.archived(archive.id), .request("workspace link"))
           return
         }
         showWorkspaceNotFound(
@@ -590,7 +745,7 @@ struct RootView: View {
         icon: "macwindow", tone: .accent, title: "\(target.workspace.names.title) \u{00B7} workspace started",
         body: abbreviatingHome(path),
         action: Toast.Action(title: "Open") {
-          selection = .environment(path)
+          navigate(.environment(path), .click("workspace started toast"))
           if let deviceID { focusedDeviceID = deviceID }
         },
         sticky: true, key: "workspace-link:\(path)", workspacePath: path))
@@ -607,14 +762,14 @@ struct RootView: View {
     if env == nil, let path = target.path,
       let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
     {
-      selection = .archived(archive.id)
+      navigate(.archived(archive.id), .request("oversight target"))
       return
     }
     switch target {
     case .machine:
-      selection = .machine
+      navigate(.machine, .request("oversight target"))
     case .device(let path, let platform, let slot):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
       if let device = env?.devices.first(where: { device in
         if case .remote = device { return false }
         return device.platform == platform && device.slot == slot
@@ -622,10 +777,10 @@ struct RootView: View {
         focusedDeviceID = device.id
       }
     case .build(let path, _):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
       if inspector == .hidden { toggleInspector() }
     case .workspace(let path), .url(let path, _):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
     case .buildRequest(let id):
       BuildRequestPrompt.present(id: id)
     }
@@ -633,14 +788,14 @@ struct RootView: View {
 
   private func openErrors(_ path: String) {
     logsWorkspace.wrappedValue = path
-    selection = .environment(path)
+    navigate(.environment(path), .click("open errors"))
     showsLogs = true
     logQuery.errorsOnly = true
   }
 
   private func showLogs(_ path: String) {
     logsWorkspace.wrappedValue = path
-    selection = .environment(path)
+    navigate(.environment(path), .click("open logs"))
     showsLogs = true
   }
 
@@ -652,7 +807,8 @@ struct RootView: View {
           statsReader: statsReader, cli: cli, page: page, selectedPath: path, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
-          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [], selection: $selection
+          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [],
+          selection: attributed(.click("workspace page"))
         )
         if page.isUnified {
           host.id(page.identity)
@@ -660,14 +816,14 @@ struct RootView: View {
           host
         }
       } else {
-        EmptyState(title: "Workspace gone", message: "stim status no longer reports this workspace.")
+        EmptyState(title: "Workspace Gone", message: "stim status no longer reports this workspace.")
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
         WorkspaceDetail.archived(
           archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
           inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
-          openReplacement: { selection = .environment($0) }
+          openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
         )
         .id(id)
       }
@@ -678,7 +834,7 @@ struct RootView: View {
           apps: notSetUpApps(for: worktree, environments: store.payload?.environments ?? [], project: store.project(ofPath:)),
           projectName: store.title(of: store.project(ofPath: worktree.path)))
       } else {
-        EmptyState(title: "Worktree gone", message: "stim status no longer reports this worktree.")
+        EmptyState(title: "Worktree Gone", message: "stim status no longer reports this worktree.")
       }
     case .notifications:
       InboxView(inbox: NotificationInbox.shared, openLogs: openErrors)
@@ -687,21 +843,26 @@ struct RootView: View {
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .overview:
       OverviewView(
-        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic, selection: $selection,
+        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic,
+        selection: attributed(.click("overview page")),
         openLogs: openErrors,
+        openDevice: { path, deviceID in
+          focusedDeviceID = deviceID
+          navigate(.environment(path), .click("overview page"))
+        },
         openIdleProject: { project in
           showingAllWorktrees = project
-          selection = .project(project)
+          navigate(.project(project), .click("overview page"))
         })
     default:
       WallView(
         store: store, metrics: metrics, project: projectFilter,
         scope: projectFilter.map { ProjectPage.scope(of: $0, showingAll: showingAllWorktrees) } ?? .active,
         setScope: { showingAllWorktrees = $0 == .all ? projectFilter : nil },
-        selection: $selection, openLogs: openErrors,
+        selection: attributed(.click("wall page")), openLogs: openErrors,
         openDevice: { path, deviceID in
           focusedDeviceID = deviceID
-          selection = .environment(path)
+          navigate(.environment(path), .click("wall page"))
         })
     }
   }
@@ -790,20 +951,16 @@ struct MachineSummary: View {
   var gc: GcReportStore
   var width: CGFloat
   var openMachine: () -> Void
-  private enum Resource: Hashable {
-    case cpu, memory, disk
-  }
+  @State private var expandedResource: ResourceKind?
 
-  @State private var expandedResource: Resource?
-
-  private func shows(_ resource: Resource) -> Binding<Bool> {
+  private func shows(_ resource: ResourceKind) -> Binding<Bool> {
     Binding(
       get: { expandedResource == resource },
       set: { if !$0, expandedResource == resource { expandedResource = nil } }
     )
   }
 
-  @ViewBuilder private func popover(_ resource: Resource) -> some View {
+  @ViewBuilder private func popover(_ resource: ResourceKind) -> some View {
     switch resource {
     case .cpu: cpuPopover
     case .memory: memoryPopover
@@ -843,91 +1000,23 @@ struct MachineSummary: View {
           .frame(maxWidth: 220)
           .help(abbreviatingHome(error))
       }
-      if let cap = store.payload?.capacity {
-        if let cpu = metrics.totalCpuFraction {
-          Button {
-            expandedResource = .cpu
-          } label: {
-            statItem(icon: "speedometer", label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu))
-              .padding(Space.sm)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.round))
-          .accessibilityLabel("CPU details")
-          .accessibilityValue(formatPercent(cpu * 100))
-          .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
-          .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
-          .onHover { hovering in
-            if hovering, expandedResource != nil {
-              var transaction = Transaction()
-              transaction.disablesAnimations = true
-              withTransaction(transaction) {
-                expandedResource = .cpu
-              }
-            }
-          }
-        }
-        if showsMemory, let memory = metrics.memory {
-          Button {
-            expandedResource = .memory
-          } label: {
-            HStack(spacing: Space.sm) {
-              statItem(
-                icon: "memorychip", label: "RAM",
-                value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
-                tone: UsageThresholds.memory(memory.pressure))
-              if showsBar {
-                ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-                  .tint(Color(UsageThresholds.memory(memory.pressure)))
-                  .frame(width: 50)
-              }
-            }
-            .padding(Space.sm)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.round))
-          .accessibilityLabel("Memory details")
-          .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
-          .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
-          .onHover { hovering in
-            if hovering, expandedResource != nil {
-              var transaction = Transaction()
-              transaction.disablesAnimations = true
-              withTransaction(transaction) {
-                expandedResource = .memory
-              }
-            }
-          }
-          .help(
-            "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
-          )
-        }
-      }
-      if let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes }) {
-        Button {
-          expandedResource = .disk
-        } label: {
-          HStack(spacing: Space.sm) {
-            statItem(
-              icon: "internaldrive", label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
-              tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
-            if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
-              Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
-            }
-          }
-          .padding(Space.sm)
-        }
-        .buttonStyle(.hoverRow(radius: Radius.round))
-        .accessibilityLabel("Disk details")
-        .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
-        .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
-        .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
-        .onHover { hovering in
-          if hovering, expandedResource != nil {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-              expandedResource = .disk
-            }
-          }
+      let cap = store.payload?.capacity
+      let cpu = cap == nil ? nil : metrics.totalCpuFraction
+      let memory = cap == nil || !showsMemory ? nil : metrics.memory
+      let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes })
+      ForEach(
+        Array(ResourceSummary.entries(cpu: cpu != nil, memory: memory != nil, disk: lowest != nil).enumerated()),
+        id: \.offset
+      ) { _, entry in
+        switch entry {
+        case .divider:
+          Rectangle().fill(Palette.secondary.opacity(0.3)).frame(width: 1, height: 16)
+        case .item(.cpu):
+          if let cpu { cpuItem(cpu) }
+        case .item(.memory):
+          if let memory, let cap { memoryItem(memory, cap: cap, showsBar: showsBar) }
+        case .item(.disk):
+          if let lowest { diskItem(lowest, showsReclaimable: showsReclaimable) }
         }
       }
       if !store.watching, let at = store.updatedAt {
@@ -941,7 +1030,96 @@ struct MachineSummary: View {
     }
     .padding(.horizontal, Space.lg)
     .padding(.vertical, Space.xs)
-    .background(Palette.surface, in: Capsule())
+  }
+
+  private func cpuItem(_ cpu: Double) -> some View {
+    Button {
+      expandedResource = .cpu
+    } label: {
+      statItem(
+        icon: ResourceKind.cpu.icon, label: "CPU", value: formatPercent(cpu * 100), tone: UsageThresholds.cpu(fraction: cpu)
+      )
+      .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("CPU details")
+    .accessibilityValue(formatPercent(cpu * 100))
+    .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+    .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .cpu
+        }
+      }
+    }
+  }
+
+  private func memoryItem(_ memory: MachineMemory, cap: Capacity, showsBar: Bool) -> some View {
+    Button {
+      expandedResource = .memory
+    } label: {
+      HStack(spacing: Space.sm) {
+        statItem(
+          icon: ResourceKind.memory.icon, label: "RAM",
+          value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
+          tone: UsageThresholds.memory(memory.pressure))
+        if showsBar {
+          ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
+            .tint(Color(UsageThresholds.memory(memory.pressure)))
+            .frame(width: 50)
+        }
+      }
+      .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("Memory details")
+    .accessibilityValue(Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes))
+    .popover(isPresented: shows(.memory), arrowEdge: .bottom) { popover(.memory) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .memory
+        }
+      }
+    }
+    .help(
+      "Memory used on this Mac, as Activity Monitor counts it. Stim's share: active workspaces \(store.payload?.machine?.memorySource == .footprint ? "use" : "commit") \(Format.gigabytes(mb: cap.committedMb)) of \(Format.gigabytes(mb: cap.totalMemoryMb))."
+    )
+  }
+
+  private func diskItem(_ lowest: DiskVolume, showsReclaimable: Bool) -> some View {
+    Button {
+      expandedResource = .disk
+    } label: {
+      HStack(spacing: Space.sm) {
+        statItem(
+          icon: ResourceKind.disk.icon, label: "Disk", value: "\(Format.fileSize(lowest.freeBytes)) free",
+          tone: UsageThresholds.disk(freeBytes: lowest.freeBytes))
+        if showsReclaimable, let reclaimable = gc.report?.reclaimable, reclaimable.bytes > 0 {
+          Text("\u{00B7} \(Format.fileSize(reclaimable.bytes)) reclaimable").foregroundStyle(Palette.secondary)
+        }
+      }
+      .padding(Space.sm)
+    }
+    .buttonStyle(.hoverRow(radius: Radius.round))
+    .accessibilityLabel("Disk details")
+    .accessibilityValue("\(Format.fileSize(lowest.freeBytes)) free")
+    .help("Free space on the fullest volume holding the repositories, Stim home or simulators, without purgeable space")
+    .popover(isPresented: shows(.disk), arrowEdge: .bottom) { popover(.disk) }
+    .onHover { hovering in
+      if hovering, expandedResource != nil {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+          expandedResource = .disk
+        }
+      }
+    }
   }
 
   private var cpuPopover: some View {
@@ -977,10 +1155,6 @@ struct MachineSummary: View {
 
   private func statItem(icon: String, label: String, value: String, tone: Tone) -> some View {
     HStack(spacing: Space.sm) {
-      Rectangle()
-        .fill(Palette.secondary.opacity(0.3))
-        .frame(width: 1, height: 16)
-
       Image(systemName: icon)
         .foregroundStyle(Palette.secondary)
 
@@ -1097,7 +1271,7 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
@@ -1114,7 +1288,7 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {

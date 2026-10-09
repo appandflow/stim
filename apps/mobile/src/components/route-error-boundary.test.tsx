@@ -40,11 +40,11 @@ it('shows the error in place of the crashing screen and retries it', async () =>
   jest.spyOn(console, 'error').mockImplementation(() => {});
   payload = undefined;
   await renderRouter(routes, { initialUrl: '/mac/m1' });
-  expect(screen.getByText('This screen could not be shown')).toBeTruthy();
-  expect(screen.getByText('Try again')).toBeTruthy();
+  expect(screen.getByText('This Screen Could Not Be Shown')).toBeTruthy();
+  expect(screen.getByText('Try Again')).toBeTruthy();
 
   payload = { name: 'ok' };
-  await fireEvent.press(screen.getByText('Try again'));
+  await fireEvent.press(screen.getByText('Try Again'));
   expect(screen.getByText('OK')).toBeTruthy();
 });
 
@@ -53,9 +53,9 @@ it('goes back to the previous route', async () => {
   payload = undefined;
   await renderRouter(routes, { initialUrl: '/' });
   await act(() => router.push('/mac/m1'));
-  expect(screen.getByText('This screen could not be shown')).toBeTruthy();
+  expect(screen.getByText('This Screen Could Not Be Shown')).toBeTruthy();
 
   await fireEvent.press(screen.getByText('Back'));
   expect(screen.getByText('home')).toBeTruthy();
-  expect(screen.queryByText('This screen could not be shown')).toBeNull();
+  expect(screen.queryByText('This Screen Could Not Be Shown')).toBeNull();
 });

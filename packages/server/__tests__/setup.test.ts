@@ -8,6 +8,7 @@ import type { PairedDevice } from '../src/registry.ts';
 import { writeSetupJournal, pruneSetupJournals } from '../src/setup-journal.ts';
 import {
   confirmSetup,
+  discardTypedAhead,
   parseSetupArgs,
   runSetup,
   selectGrants,
@@ -713,6 +714,57 @@ test.each(['SIGINT', 'close'] as const)(
     stream.destroy();
   },
 );
+
+test.each([
+  ['', true],
+  ['y', true],
+  ['YES', true],
+  ['n', false],
+  ['N', false],
+  ['no', false],
+  ['maybe', false],
+])('a terminal answer %j to the approval question is %s', async (answer, approved) => {
+  const stream = new PassThrough();
+  const input = createInterface({ input: stream, output: new PassThrough() });
+  const result = confirmSetup(input, 'Approve? [Y/n] ', 1000);
+  stream.write(`${answer}\n`);
+  await expect(result).resolves.toBe(approved);
+  stream.destroy();
+});
+
+test.each([
+  [false, 'Approve? [Y/n]'],
+  [true, 'on this Mac)? [Y/n]'],
+])(
+  'the approval question defaults to Yes and names that it runs project code here (concise=%s)',
+  async (concise, tail) => {
+    const questions: string[] = [];
+    const f = fixture({
+      tty: true,
+      confirm: async (question) => {
+        questions.push(question);
+        return false;
+      },
+    });
+    const extra = concise ? [] : ['--verbose'];
+    expect(await runSetup([...args, ...extra], '1.16.0', f.deps)).toBe(1);
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toContain(tail);
+    expect(questions[0]).not.toContain('[y/N]');
+    expect(concise ? questions[0] : f.stderr.concat(f.stdout).join('\n')).toContain('runs its');
+  },
+);
+
+test('an Enter pressed before the question is discarded on a terminal and left alone without one', async () => {
+  const tty = Object.assign(new PassThrough(), { isTTY: true });
+  tty.write('\n');
+  await discardTypedAhead(tty);
+  expect(tty.read()).toBeNull();
+  const pipe = new PassThrough();
+  pipe.write('y\n');
+  await discardTypedAhead(pipe);
+  expect(pipe.read()?.toString()).toBe('y\n');
+});
 
 test('a question timeout returns no answer rather than an interrupt refusal', async () => {
   const input = createInterface({ input: new PassThrough(), output: new PassThrough() });

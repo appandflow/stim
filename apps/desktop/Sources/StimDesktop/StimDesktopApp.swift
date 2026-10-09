@@ -16,7 +16,6 @@ enum TutorialEntry { case resume, begin }
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
-  var deviceArrivedWithWindow = false
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -82,8 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
     MainActor.assumeIsolated {
-      OpenRequests.shared.deviceArrivedWithWindow = MainWindow.isOpen
       OpenRequests.shared.device = request
+      if !MainWindow.isOpen { MainWindow.show() }
     }
   }
 
@@ -161,6 +160,11 @@ struct StimDesktopApp: App {
 
   init() {
     CrashReporter.start()
+    DebugLog.info(
+      .app,
+      "launch version=\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev") pid=\(ProcessInfo.processInfo.processIdentifier) verbose=\(DebugLog.isVerbose)"
+    )
+    MainThreadWatchdog.shared.start()
     BrandAssets.registerFonts()
     UserDefaults.standard.register(defaults: AppPreferences.defaults)
     AppPreferences.migrate(.standard)
@@ -228,12 +232,16 @@ struct StimDesktopApp: App {
       tips.start()
       metrics.start()
       autopilot.start()
+      buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
   }
 
+  private static let windowTitle =
+    (Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Stim"
+
   var body: some Scene {
-    Window("Stim", id: "main") {
+    Window(Self.windowTitle, id: "main") {
       RootView(
         cli: cli, store: store, actions: actions, autopilot: autopilot, onboarding: onboarding, gc: gc,
         buildMachines: buildMachines, metrics: metrics, storage: storage, planChecks: planChecks, statsReader: statsReader,
@@ -256,8 +264,11 @@ struct StimDesktopApp: App {
       CommandGroup(replacing: .help) {
         Button("Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }
         Button("Stim Tutorial\u{2026}") { OpenRequests.shared.showTutorial() }
+        Divider()
+        Button("Reveal Debug Log") { DebugLogActions.reveal() }
+        Button("Copy Diagnostics") { DebugLogActions.copyDiagnostics(cli: cli) }
         #if DEBUG
-          Button("Replay notification animation") {
+          Button("Replay Notification Animation") {
             NotificationInbox.shared.arrivals.send(nil)
           }
         #endif
@@ -265,6 +276,7 @@ struct StimDesktopApp: App {
       SidebarCommands()
       InspectorCommands()
       NavigationCommands()
+      GoCommands()
     }
 
     #if DEBUG
@@ -335,7 +347,7 @@ struct NavigationCommands: Commands {
       Button("Overview") { navigation?.go(.overview) }
         .keyboardShortcut("1", modifiers: .command)
         .disabled(navigation == nil)
-      Button("Active workspaces") { navigation?.go(.wall) }
+      Button("Active Workspaces") { navigation?.go(.wall) }
         .keyboardShortcut("2", modifiers: .command)
         .disabled(navigation == nil)
       Button("Notifications") { navigation?.go(.notifications) }

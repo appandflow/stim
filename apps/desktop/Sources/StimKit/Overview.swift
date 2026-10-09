@@ -13,13 +13,9 @@ public struct IdleProject: Hashable, Identifiable, Sendable {
 }
 
 public enum Overview {
-  public static let archivedShown = 5
-  public static let idleShown = 6
-
-  /// The idle projects to show: all of them when `expanded`, otherwise the first `idleShown`.
-  public static func visibleIdle(_ items: [IdleProject], expanded: Bool) -> (shown: [IdleProject], hidden: Int) {
-    guard !expanded, items.count > idleShown else { return (items, 0) }
-    return (Array(items.prefix(idleShown)), items.count - idleShown)
+  public static func visibleIdle(_ items: [IdleProject], expanded: Bool, limit: Int) -> (shown: [IdleProject], hidden: Int) {
+    guard !expanded, items.count > limit else { return (items, 0) }
+    return (Array(items.prefix(limit)), items.count - limit)
   }
 
   /// The projects without an active workspace, most recently used first, then by name.
@@ -56,9 +52,6 @@ public enum Overview {
     return dates.max()
   }
 
-  public static func recentlyArchived(_ archives: [ArchivedWorkspace]) -> [ArchivedWorkspace] {
-    Array(ArchivedWorkspace.newestFirst(archives).prefix(archivedShown))
-  }
 }
 
 /// A feature the Overview suggests trying, with a prompt the user can hand to an agent.
@@ -67,14 +60,14 @@ public enum TryThisTip: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .easProfile: "Run on an EAS development build"
-    case .easSimulator: "Use a simulator hosted by EAS"
-    case .remoteBuild: "Build on another Mac"
-    case .hostedSimulator: "Run the simulator on another Mac"
-    case .macos: "Run your Mac app with Stim"
-    case .physicalDevice: "Run on your phone"
-    case .web: "Open the web build with stim web"
-    case .logs: "Ask for just the errors"
+    case .easProfile: "Run on an EAS Development Build"
+    case .easSimulator: "Use a Simulator Hosted by EAS"
+    case .remoteBuild: "Build on Another Mac"
+    case .hostedSimulator: "Run the Simulator on Another Mac"
+    case .macos: "Run Your Mac App with Stim"
+    case .physicalDevice: "Run on Your Phone"
+    case .web: "Open the Web Build with stim web"
+    case .logs: "Ask for Just the Errors"
     }
   }
 

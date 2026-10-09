@@ -184,21 +184,49 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     public var maxBuilds: Int?
     public var diskFreeBytes: Double?
     public var maxLoadPerCore: Double?
+    /// Memory in use, as Activity Monitor counts it, and the Mac's total. Absent from an older stim-server.
+    public var memoryUsedBytes: Double?
+    public var memoryTotalBytes: Double?
 
-    /// The builds it runs and the free disk it reported, such as "0/2 builds \u{00B7} 825 GB free".
-    public var summary: String {
-      var parts: [String] = []
-      if let builds {
-        if let maxBuilds, maxBuilds > 0 {
-          parts.append("\(builds)/\(maxBuilds) builds")
-        } else {
-          parts.append("\(builds) \(builds == 1 ? "build" : "builds")")
-        }
-      } else if let running, let max {
-        parts.append("\(running)/\(max) offloaded builds")
+    /// What the Busy pill adds: the load when it is at its limit, else the builds it runs, else the load.
+    var busyDetail: String? {
+      let load = loadPerCore.map { "load \(formatLoad($0))/core" }
+      let atLimit = loadPerCore.map { load in maxLoadPerCore.map { load >= $0 } ?? false } ?? false
+      return (atLimit ? load : buildsText ?? load).map { " (\($0))" }
+    }
+
+    /// The builds it runs, such as "1/2 builds" or "3 builds"; nil when it reported no count.
+    public var buildsText: String? {
+      guard let builds else { return nil }
+      if let maxBuilds, maxBuilds > 0 { return "\(builds)/\(maxBuilds) builds" }
+      return "\(builds) \(builds == 1 ? "build" : "builds")"
+    }
+
+    /// A byte count from a remote Mac's JSON number; nil when it is not a whole number that fits.
+    private static func wholeBytes(_ value: Double) -> Int64? { Int64(exactly: value.rounded()) }
+
+    /// The load, memory and free disk it reported, with the icon and format the toolbar's resource summary uses.
+    /// The CPU entry is the 5-minute load per core, since the offer carries no CPU percentage.
+    public var resources: [MachineResource] {
+      var items: [MachineResource] = []
+      if let loadPerCore {
+        let fraction = maxLoadPerCore.map { loadPerCore / $0 }
+        items.append(
+          MachineResource(
+            kind: .cpu, label: "Load", value: "\(formatLoad(loadPerCore))/core",
+            tone: fraction.map(UsageThresholds.cpu(fraction:)) ?? .normal))
       }
-      if let diskFreeBytes { parts.append("\(Format.freeSpace(diskFreeBytes)) free") }
-      return parts.joined(separator: " \u{00B7} ")
+      if let used = memoryUsedBytes.flatMap(Self.wholeBytes), let total = memoryTotalBytes.flatMap(Self.wholeBytes) {
+        items.append(
+          MachineResource(
+            kind: .memory, label: "RAM", value: Format.memoryPair(usedBytes: used, totalBytes: total), tone: .normal))
+      }
+      if let free = diskFreeBytes.flatMap(Self.wholeBytes) {
+        items.append(
+          MachineResource(
+            kind: .disk, label: "Disk", value: "\(Format.fileSize(free)) free", tone: UsageThresholds.disk(freeBytes: free)))
+      }
+      return items
     }
 
     /// The load, cores, offloaded builds and free disk it reported, separated by middle dots.
@@ -259,8 +287,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     if offloadable { return MachineReadiness(title: "Ready", remedy: nil, tone: .success, reasons: nil) }
     let first = problems?.first
     if first?.code == "busy" {
-      let load = capacity?.loadPerCore.map { " (load \(formatLoad($0))/core)" } ?? ""
-      return MachineReadiness(title: "Busy\(load)", remedy: nil, tone: .warning, reasons: all)
+      return MachineReadiness(title: "Busy\(capacity?.busyDetail ?? "")", remedy: nil, tone: .warning, reasons: all)
     }
     if let first, let known = MachineReadiness.problems[first.code] {
       return MachineReadiness(
@@ -297,10 +324,11 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     public var fix: Fix?
   }
 
-  /// Each reason of an approved machine that is not offloadable, in doctor's order; empty otherwise.
+  /// Each reason of an approved machine that is not offloadable, in doctor's order, except Busy, which the pill
+  /// covers; empty otherwise.
   public var problemLines: [ProblemLine] {
     guard state == .approved, offloadable == false else { return [] }
-    return (problems ?? []).map { problem in
+    return (problems ?? []).filter { $0.code != "busy" }.map { problem in
       if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
         return ProblemLine(reason: problem.reason, fix: .command(command))
       }
@@ -318,11 +346,11 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return words[1] == "null" ? "brew install cocoapods" : "gem install cocoapods -v \(here)"
   }
 
-  /// The line under the machine's name: for an approved machine the builds it runs and its free disk, else `detail`.
-  /// Empty when the listed problems already say why builds stay on this Mac.
+  /// The text line under the machine's name when it has no resources to show: `detail`, empty for a request waiting
+  /// for approval and when the listed problems already say why builds stay on this Mac.
   public var rowDetail: String {
     guard state == .approved else { return state == .pending ? "" : detail }
-    if let summary = capacity?.summary, !summary.isEmpty { return summary }
+    if let capacity, !capacity.resources.isEmpty { return "" }
     return problemLines.isEmpty ? detail : ""
   }
 
@@ -376,6 +404,14 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     case .unknown: return "Update Stim Desktop to show this state."
     }
   }
+}
+
+/// One resource of a remote Mac, shown like the toolbar's resource summary item of the same kind.
+public struct MachineResource: Equatable, Sendable {
+  public var kind: ResourceKind
+  public var label: String
+  public var value: String
+  public var tone: Tone
 }
 
 /// The pill text and tone of a remote Mac in the list.

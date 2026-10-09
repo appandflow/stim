@@ -158,7 +158,7 @@ export function Settings() {
             />
           ) : null}
         </Section>
-        <Section colors={colors} title={t`Device view`} footer={videoQualityFooter()}>
+        <Section colors={colors} title={t`Device View`} footer={videoQualityFooter()}>
           <Choice
             colors={colors}
             title={t`Video quality`}
@@ -209,7 +209,7 @@ export function Settings() {
           <Row colors={colors} title={t`About Stim`} icon={ICONS.about} onPress={() => router.push('/about')} />
           <Row
             colors={colors}
-            title={t`Open source licenses`}
+            title={t`Open Source Licenses`}
             icon={ICONS.about}
             onPress={() => router.push('/licenses')}
           />

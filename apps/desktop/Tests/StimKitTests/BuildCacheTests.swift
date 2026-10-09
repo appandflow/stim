@@ -187,6 +187,25 @@ import Testing
     #expect(refused.refusal?.code == "STIM_EAS_BUILD_MISSING" && refused.outcome == nil)
   }
 
+  @Test func macosPlanDoesNotClaimAColdBuildOrCacheMiss() throws {
+    let plan = try decode(
+      BuildPlan.self,
+      """
+      {"platform":"macos","product":"Sample","buildMachine":"local","fingerprint":null,"cacheKey":null,
+       "cacheHit":false,"provider":null,"cacheSkipped":false,"prebuild":null,"outcome":null,"expectedMs":null,"basis":0}
+      """)
+    #expect(plan.fingerprint == nil && plan.outcome == nil && plan.expectedMs == nil)
+    #expect(plan.nextBuild == "SwiftPM Debug build")
+    #expect(plan.detail?.contains("incremental work") == true)
+    let last = try decode(
+      LastBuild.self,
+      """
+      {"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":1000,
+       "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":"2026-09-25T12:00:01.000Z"}
+      """)
+    #expect(last.summary.hasPrefix("Built") && !last.summary.contains("Cache"))
+  }
+
   @Test func hidesHistoricalOutcomesUntilTheRunKnowsItsCacheResult() throws {
     var build = try decode(
       Build.self,
@@ -335,6 +354,33 @@ import Testing
     #expect(planner.mostActive == 1)
   }
 
+  @Test func defersRecentBuildsThenReusesOneFreshCheckAcrossViews() async throws {
+    let planner = Planner()
+    var now = Date(timeIntervalSince1970: 100)
+    let checks = BuildPlanChecks(planner: planner.plan, now: { now })
+    let finished = ["macos": now]
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    #expect(planner.recorded.isEmpty)
+    now += 59
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.isEmpty)
+    now += 1
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded == ["/w macos"])
+    now += 30
+    checks.check(workspace: "/w", builds: ["macos": "a"], finishedAt: finished)
+    #expect(planner.recorded.count == 1)
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now])
+    #expect(checks.entry(workspace: "/w", platform: "macos") == nil)
+    now += 60
+    checks.check(workspace: "/w", builds: ["macos": "b"], finishedAt: ["macos": now - 60])
+    try await settled(checks, "/w", ["macos"])
+    #expect(planner.recorded.count == 2)
+  }
+
   @Test func cancellingOnePlatformPreservesTheOtherInFlightCheck() async throws {
     let started = AsyncStream<String>.makeStream()
     let gate = AsyncStream<Void>.makeStream()
@@ -385,5 +431,49 @@ import Testing
       return
     }
     #expect(planner.mostActive == 1)
+  }
+
+  private func macosRuns(_ entries: String) throws -> [BuildRun] {
+    let json = #"{"path":"/w","live":true,"warnings":[],"builds":{"macos":[\#(entries)]}}"#
+    let workspace = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    return BuildRun.runs(platform: "macos", running: nil, history: workspace.builds?.builds(for: "macos") ?? [], last: nil)
+  }
+
+  @Test func mapsASucceededMacosBuildToAPlainSuccessWithItsPhasesAndStepCount() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":38000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:38Z","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":29000,"install":8000,"launch":1000},"compileSteps":428}"#
+      ).first)
+    #expect(run.pillLabel == "Succeeded")
+    #expect(run.tone == .success)
+    #expect(run.outcome == "Succeeded")
+    #expect(run.summary == "Built in 0m 38s")
+    #expect(run.configurationLabel == "Swift Package Debug")
+    let steps = try #require(run.history?.finishedSteps)
+    #expect(steps.map(\.phase) == ["prepare", "compile", "install", "launch"])
+    #expect(steps.map(\.note) == [nil, "428 steps", nil, nil])
+    #expect(run.history?.failedPhase == nil)
+  }
+
+  @Test func mapsAFailedMacosBuildToTheLastPhaseItEntered() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"failed","cacheHit":false,"cacheSkipped":false,"durationMs":12000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:12Z","errorCode":"STIM_BUILD_FAILED","result":"failed","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":12000}}"#
+      ).first)
+    #expect(run.pillLabel == "Failed")
+    #expect(run.tone == .error)
+    #expect(run.summary == "Failed (STIM_BUILD_FAILED) in 0m 12s")
+    #expect(run.history?.failedPhase == "compile")
+  }
+
+  @Test func mapsAnOffloadedMacosBuildToItsWorker() throws {
+    let run = try #require(
+      macosRuns(
+        #"{"platform":"macos","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":50000,"startedAt":"2026-10-08T10:00:00Z","finishedAt":"2026-10-08T10:00:50Z","offloadedTo":"janics-mac-mini","result":"succeeded","slot":"default","configuration":"Debug","phases":{"prepare":0,"compile":45000,"install":5000}}"#
+      ).first)
+    #expect(run.offloadedTo == "janics-mac-mini")
+    #expect(run.summary.hasPrefix("Built on "))
+    #expect(run.outcome.hasPrefix("Built on "))
+    #expect(run.history?.compileSteps == nil)
   }
 }

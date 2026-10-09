@@ -140,13 +140,13 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
 
   public func archiveDetail(_ request: ArchiveDetailRequest) async throws -> ArchiveDetail {
     let result = try await retryArchiveRead { try await self.request("archive.detail", request.params) }
-    return try JSONDecoder().decode(ArchiveDetail.self, from: JSONEncoder().encode(result))
+    return try decodeReporting(ArchiveDetail.self, from: result, source: .server)
   }
 
   public func archivedLogs(_ request: ArchivedLogsRequest) async throws -> [LogRecord] {
     struct Result: Decodable { var records: [LogRecord] }
     let result = try await retryArchiveRead { try await self.request("logs.query", request.params) }
-    return try JSONDecoder().decode(Result.self, from: JSONEncoder().encode(result)).records
+    return try decodeReporting(Result.self, from: result, source: .server).records
   }
 
   /// Cancellation ends only this local await and ignores a late reply, keeping shared subscriptions connected.
@@ -208,7 +208,7 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
             "auth": auth.json,
           ])
         guard current == generation else { return }
-        let hello = try JSONDecoder().decode(HelloResult.self, from: JSONEncoder().encode(result))
+        let hello = try decodeReporting(HelloResult.self, from: result, source: .server)
         retry = Self.minimumRetry
         state = .open(hello)
         for sub in subscriptions.values { sendSubscribe(sub, on: transport) }

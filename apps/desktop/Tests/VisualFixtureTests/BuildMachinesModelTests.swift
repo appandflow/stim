@@ -69,6 +69,59 @@ final class BuildMachinesModelTests: XCTestCase {
     XCTAssertNil(model.approvedHostingMachines(in: "/w"))
   }
 
+  @MainActor func testAutomaticCheckSkipsDoctorWithoutMachinesOrSettingAndFollowsBuildAndListChanges() async {
+    let harness = Harness()
+    harness.machines = "[]"
+    let model = harness.make()
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    harness.machines = "[\"mini\"]"
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 0)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 1)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: nil)
+    await model.checkMachinesIfDue(checkout: nil, enabled: true, identity: "build-c")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, identity: "build-b")
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 3)
+
+    harness.machines = "[\"mini\", \"studio\"]"
+    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 4)
+
+    harness.now = harness.now.addingTimeInterval(15 * 60)
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 5)
+  }
+
+  @MainActor func testAutomaticCheckWaitsWhileAnotherRefreshIsRunning() async {
+    let harness = Harness()
+    harness.machines = "[\"mini\"]"
+    let model = harness.make()
+    await model.settings.refresh()
+    harness.block = true
+    let running = Task { await model.refreshStatuses(checkout: "/w", ask: false) }
+    await waitUntil { harness.waiting != nil }
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-a")
+    XCTAssertEqual(harness.calls.count, 1)
+    harness.block = false
+    harness.waiting?.resume()
+    await running.value
+  }
+
   @MainActor func testPickerRefreshesAreSharedPerWorkspaceAndWaitMoreThanFiveMinutesAfterCompletion() async {
     let harness = Harness()
     let model = harness.make()

@@ -33,8 +33,10 @@ import {
   metroPortSetting,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
+  remoteEasFallbackSetting,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
+import { checkEasFallback } from '../engine/eas-fallback.ts';
 import {
   waitFlagConflict,
   acquireRunLease,
@@ -56,6 +58,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild }
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
+import { setRemoteLogSink } from '../remote-log.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { pidExists, resolveProjectMetro } from '../metro.ts';
 import { warmMetro } from '../engine/metro-warmup.ts';
@@ -309,6 +312,7 @@ export function runAndroidOperation(
 
 interface RunAndroidOptions {
   automaticDevicePlacement?: typeof automaticDevicePlacement;
+  checkEasFallback?: typeof checkEasFallback;
   prepareHostedAndroid?: typeof prepareHostedAndroid;
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
@@ -755,6 +759,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     progress,
   );
 
+  setRemoteLogSink((entry) => writer.write(entry));
+
   const record: AndroidRecord = {
     fingerprint: null,
     cacheKey: null,
@@ -902,6 +908,24 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
     automatic: options.automaticDevicePlacement,
+    ...(remoteEasFallbackSetting(settings)
+      ? {
+          eas: () =>
+            (options.checkEasFallback ?? checkEasFallback)({
+              root,
+              platform: PLATFORM,
+              slot,
+              release,
+              isExpo,
+              tunnelMode: tunnelModeSetting(settings),
+              publicUrl: publicUrlSetting(settings),
+              localOnlyFlags: [
+                ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
+                ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
+              ],
+            }),
+        }
+      : {}),
     localSelectors: (target) =>
       androidDeviceSelectorRefusal(
         {
@@ -919,6 +943,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     checkBudget: options.checkBudget,
     note: out,
     phase,
+    log: (entry) => writer.write(entry),
+    fromFlag: commandRemoteBackend !== null,
   });
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;

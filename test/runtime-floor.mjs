@@ -59,7 +59,7 @@ try {
   const consumer = join(apiScratch, 'consumer.mts');
   writeFileSync(
     consumer,
-    `import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
+    `import { createStim, type StimPlatform, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
 const stim = createStim({ projectRoot: '.' });
 const ios = await stim.run({ platform: 'ios', scheme: 'App' });
 const udid: string = ios.facts.udid;
@@ -83,6 +83,10 @@ if (native.platform === 'ios') {
 }
 declare const options: StimRunOptions;
 const dynamic: StimRunResult = await stim.run(options);
+function runPlatform<P extends StimPlatform>(platform: P) {
+  return stim.run({ platform });
+}
+const generic: StimRunResult = await runPlatform('ios');
 const result: StimStopResult = await stim.stop();
 const ok: boolean = result.ok;
 const status: string = result.outcomes.supervisor.status;

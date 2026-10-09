@@ -91,6 +91,7 @@ export interface StimClient {
   run<P extends StimPlatform>(
     options: StimRunOptions & { platform: P },
   ): Promise<Extract<StimRunResult, { platform: P }>>;
+  run(options: StimRunOptions): Promise<StimRunResult>;
   /** Stops this workspace, including resources created before a failed run. Use a fresh signal for cleanup. */
   stop(options?: StimStopOptions): Promise<StimStopResult>;
   /** Reads the existing local timeline; available even when run failed before creating any logs. */

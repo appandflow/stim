@@ -31,7 +31,7 @@ struct NoEnvironmentDetail: View {
         ScrollView {
           VStack(spacing: Space.xl) {
             NoDeviceArt()
-            Text("Stim hasn't run here yet").font(.stim(.headline))
+            Text("Stim Hasn't Run Here Yet").font(.stim(.headline))
             Text(
               "Set up copies dependencies from \(projectName.map { $0 + "'s " } ?? "")main checkout, then runs the app with its own dev server and simulator."
             )
@@ -54,7 +54,7 @@ struct NoEnvironmentDetail: View {
                 .buttonStyle(.stim(index == 0 ? .primary : .secondary, .regular))
               }
               if app.platforms.contains("ios") || app.platforms.contains("android") {
-                Button("Start dev server") {
+                Button("Start Dev Server") {
                   actions.run(
                     "Start \(worktree.names.title)", steps: setUpSteps(["start"], app: app), key: app.path, present: false)
                 }
@@ -73,7 +73,7 @@ struct NoEnvironmentDetail: View {
     }
     .navigationTitle(worktree.names.title)
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -157,11 +157,11 @@ private struct NotSetUpRunStatus: View {
     if run.isRunning {
       ProgressView().controlSize(.small)
       Text(run.statusLine ?? run.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-      Button("Show output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
+      Button("Show Output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
     } else if run.needsAttention {
       Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.error)
       Text("\(run.title) failed").font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
-      Button("Show output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
+      Button("Show Output") { actions.presented = run }.buttonStyle(.stim(.plain)).fixedSize()
     }
   }
 }

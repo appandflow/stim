@@ -16,7 +16,7 @@ vi.mock('../src/environment.ts', () => ({
 }));
 vi.mock('../src/tailscale.ts', () => ({
   findTailscale: () => null,
-  tailscaleStatus: () => ({ state: 'unavailable', reason: 'fixture' }),
+  readTailscaleStatus: async () => ({ state: 'unavailable', reason: 'fixture' }),
 }));
 vi.mock('../src/tailscale-monitor.ts', () => ({
   watchTailscale: () => ({ stop: fixture.monitorStop, onChange: () => {} }),

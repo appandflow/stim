@@ -64,6 +64,7 @@ import {
 } from '../src/registry.ts';
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import type { TailscaleState } from '../src/tailscale.ts';
+import { createRequestLog } from '../src/request-log.ts';
 import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
@@ -317,6 +318,7 @@ async function start(
     startupRetryMs?: number;
     settle?: boolean;
     service?: ServerOptions['service'];
+    requestLog?: ServerOptions['requestLog'];
   } = {},
 ): Promise<number> {
   const stimCli = join(root, 'fake-stim.mjs');
@@ -366,6 +368,7 @@ async function start(
     pullRequests: async () => new Map(),
     buildLimits: overrides.buildLimits,
     hostedRelay: overrides.hostedRelay,
+    requestLog: overrides.requestLog,
     startupProbeMs: overrides.startupProbeMs,
     startupRetryMs: overrides.startupRetryMs,
   });
@@ -1882,7 +1885,16 @@ describe('offloaded builds', () => {
       const port = await start();
       const { client } = await buildClient(port);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { builds: 0, maxBuilds: 1, declined: null, cpus: expect.any(Number) } },
+        result: {
+          capacity: {
+            builds: 0,
+            maxBuilds: 1,
+            declined: null,
+            cpus: expect.any(Number),
+            memoryTotalBytes: expect.any(Number),
+            memoryUsedBytes: expect.toSatisfy((bytes: number) => bytes > 0),
+          },
+        },
       });
 
       writeActive('compile');
@@ -2249,6 +2261,42 @@ setTimeout(() => console.log(fs.readFileSync(${JSON.stringify(grants)}, 'utf8'))
       }
     },
   );
+
+  const slowProbe = (delayMs: number) => {
+    const executable = join(root, 'slow-host-probe');
+    writeFileSync(
+      executable,
+      `#!${process.execPath}
+setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibility: true })), ${delayMs});
+`,
+      { mode: 0o755 },
+    );
+    return executable;
+  };
+  const pairingHello = (client: Client) =>
+    client.request('hello', {
+      protocol: 1,
+      client: CLIENT,
+      auth: { pairingToken: createPairingToken().token, deviceName: 'phone' },
+    });
+
+  test.skipIf(!fakeTailscale)('runs the host permission probe beside whois instead of after it', async () => {
+    const port = await start({ whoisDelayMs: 1500, host: { executable: slowProbe(1500), name: 'Stim Host Dev' } });
+    const client = await connect(port, '100.64.0.2');
+    const startedAt = Date.now();
+    const reply = await pairingHello(client);
+    expect(reply).toMatchObject({ result: { host: { screenRecording: true, accessibility: true } } });
+    expect(Date.now() - startedAt).toBeLessThan(2900);
+  });
+
+  test.skipIf(!fakeTailscale)('refuses a peer whois cannot identify without sending host details', async () => {
+    const port = await start({ host: { executable: slowProbe(50), name: 'Stim Host Dev' } });
+    const client = await connect(port, '100.64.0.9');
+    const reply = await pairingHello(client);
+    expect(reply).toMatchObject({ error: { code: 'identity-unavailable' } });
+    expect(JSON.stringify(reply)).not.toContain('screenRecording');
+    expect(readDevices()).toEqual([]);
+  });
 
   it('reports unavailable grants when the host probe fails', async () => {
     const port = await start({ host: { executable: join(root, 'missing'), name: 'Stim Host Dev' } });
@@ -3604,8 +3652,12 @@ while (true) {}
       true,
     );
     try {
-      await until(() => existsSync(ready));
-      const pid = Number(readFileSync(ready, 'utf8'));
+      let pid = 0;
+      await until(() => {
+        if (!existsSync(ready)) return false;
+        pid = Number(readFileSync(ready, 'utf8'));
+        return Number.isSafeInteger(pid) && pid > 0;
+      });
       await run.cancel();
       expect(alive(pid)).toBe(false);
     } finally {
@@ -3793,7 +3845,7 @@ describe('build.plan', () => {
     const staying = await authed(port);
     void closing.request('build.plan', { workspace, platform: 'ios' });
     void closing.request('build.plan', { workspace, platform: 'android' });
-    await until(() => childPids().length === 1);
+    await until(() => childPids().length === 1 && stimCalls().length === 1);
     const plan = staying.request('build.plan', { workspace, platform: 'ios', slot: 'tablet' });
     closing.socket.close();
     await until(() => stimCalls().length === 2);
@@ -7198,3 +7250,47 @@ describe('frames.subscribe', () => {
     });
   });
 });
+
+describe('request log', () => {
+  it('writes a failed request to the service log with the client and its run id, and nothing else', async () => {
+    const lines: string[] = [];
+    const port = await start({ requestLog: createRequestLog({ service: (line) => lines.push(line), debug: off }) });
+    const { id, token } = await pair(port);
+    const client = await connect(port);
+    await client.request('hello', {
+      protocol: 1,
+      client: { ...CLIENT, runId: 'desktop-run.7' },
+      auth: { deviceToken: token },
+    });
+    await client.request('machine.get');
+    expect(await client.request('no.such.method', { token })).toMatchObject({ error: { code: 'unknown-method' } });
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(
+      new RegExp(
+        `^stim-server: request failed method=no.such.method client=${id} run=desktop-run.7 ms=\\d+ error=unknown-method$`,
+      ),
+    );
+    expect(lines.join('\n')).not.toContain(token);
+  });
+
+  test.skipIf(!fakeTailscale)(
+    'with debug on, times every request and splits the hello into its slow steps',
+    async () => {
+      const lines: string[] = [];
+      const port = await start({
+        whoisDelayMs: 20,
+        requestLog: createRequestLog({
+          service: (line) => lines.push(line),
+          debug: { enabled: () => true, log: () => {} },
+        }),
+      });
+      const { token } = await pair(port, '100.64.0.2');
+      lines.length = 0;
+      const client = await connect(port, '100.64.0.2');
+      await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
+      expect(lines.find((line) => line.includes('method=hello'))).toMatch(/debug request method=hello .*whois=\d+/);
+    },
+  );
+});
+
+const off = { enabled: () => false, log: () => {} };

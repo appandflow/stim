@@ -82,7 +82,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
           <ListRow title={t`Branch`} value={archive.worktree.branch ?? page?.title} />
           {archive.worktree.head ? (
             <ListRow
-              title={t`Final commit`}
+              title={t`Final Commit`}
               value={archive.worktree.head.slice(0, 8)}
               subtitle={archive.worktree.subject ?? undefined}
             />
@@ -111,7 +111,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
             accessory={canDiff ? 'chevron' : undefined}
             onPress={canDiff ? () => openDiff('untracked') : undefined}
           />
-          {git.mergedInto ? <ListRow title={t`Merged into`} value={git.mergedInto} valueTone="brand" /> : null}
+          {git.mergedInto ? <ListRow title={t`Merged Into`} value={git.mergedInto} valueTone="brand" /> : null}
         </ListSection>
       ) : (
         <Text variant="footnote" tone="secondary">
@@ -119,7 +119,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
         </Text>
       )}
       {pr ? (
-        <ListSection title={t`Pull request`}>
+        <ListSection title={t`Pull Request`}>
           <View style={styles.pr}>
             <Text variant="callout" weight="semibold">
               {`#${pr.number} ${pr.title}`}

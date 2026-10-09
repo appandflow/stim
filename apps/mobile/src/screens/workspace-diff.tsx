@@ -83,7 +83,7 @@ export function WorkspaceDiff({ path, file, group }: { path: string; file?: stri
     [patch.data],
   );
   const request = file === undefined ? files : patch;
-  const title = file ?? (group === 'untracked' ? t`New files` : t`Changed files`);
+  const title = file ?? (group === 'untracked' ? t`New Files` : t`Changed Files`);
   const note =
     state.kind !== 'open'
       ? t`Connect to the Mac to view changes.`

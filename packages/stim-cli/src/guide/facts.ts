@@ -550,7 +550,7 @@ leased until <time>" for each one.`,
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
-                  maxLoadPerCore?, declined? }; an older stim-server omits the
+                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
@@ -1298,7 +1298,8 @@ RULES
                    with detail), install (staging the bundle, or fetching
                    it from a build machine) and launch. It has no cache
                    lookup: outcome is null, plannedPhases is null, and
-                   builds.macos holds its finished runs and their phases.
+                   builds.macos holds its finished runs, their phases and
+                   compileSteps.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1626,7 +1627,7 @@ RULES
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
     cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
-    refusal? }
+    placement?, refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
                 --eas-profile, the one EAS CLI computes
@@ -1652,6 +1653,9 @@ RULES
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
                 baseline. rekeyedBy is empty.
+  placement     with ios.remote or android.remote set to auto or a Mac,
+                where the plan assumes the device runs: "on <machine>" or
+                "this Mac; auto may use <machines>"; absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -1790,8 +1794,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 DEVICE PLACEMENT (\`ios|android --remote auto\`)
   Auto runs include devicePlacement: { decision, reason, machine? } in the run
-  facts, lastBuilds and build history. decision is "local", "hosted" or
-  "waited-locally" (the local run actually waited for a device slot). The same
+  facts, lastBuilds and build history. decision is "local", "hosted",
+  "waited-locally" (the local run actually waited for a device slot) or "eas"
+  (remote.easFallback put it on an EAS Simulator, reported like --remote eas). The same
   optional devicePlacement appears on the status device entry for each slot.
   Hosted host facts include selected: "auto" or the named machine, and reason
   for automatic placement. Plain status prints (auto: <reason>) after the host.

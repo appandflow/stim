@@ -52,11 +52,11 @@ struct BuildSheet: View {
 
   private var app: Workspace { page?.apps.first { $0.path == selectedEntry.path } ?? env }
   private var platform: String { page == nil ? nativePlatform : selectedEntry.platform }
-  private var isMacos: Bool { page != nil && platform == "macos" }
+  private var isMacos: Bool { platform == "macos" }
 
   private var running: Build? { app.build.flatMap { $0.isRunning ? $0 : nil } }
   private var platforms: [String] {
-    ["ios", "android"].filter {
+    ["ios", "android", "macos"].filter {
       app.runPlatforms.contains($0) || running?.platform == $0 || !history($0).isEmpty || $0 == platform
     }
   }
@@ -66,40 +66,41 @@ struct BuildSheet: View {
   }
   private var run: BuildRun? { runs.first { $0.id == selectedRun } ?? runs.first }
   private var entry: BuildPlanChecks.Entry? { checks.entry(workspace: app.path, platform: platform) }
-  private var buildKey: String { app.lastBuilds?.build(for: platform)?.planKey ?? "" }
+  private var lastBuild: LastBuild? { app.lastBuilds?.build(for: platform) ?? history(platform).first?.build }
+  private var buildKey: String { lastBuild?.planKey ?? "" }
+  private var finishedAt: Date? { lastBuild.flatMap { $0.finishedAt == nil ? nil : $0.endedAt } }
+  private var lastFailed: Bool {
+    isMacos ? history("macos").first?.result == "failed" : app.lastBuilds?.build(for: platform)?.status == "failed"
+  }
   private var busy: Bool { running != nil || actions.active(for: app.path) != nil }
 
   var body: some View {
     VStack(spacing: 0) {
       header
       Divider()
-      if isMacos {
-        macosPanel
-      } else {
-        HStack(alignment: .top, spacing: 0) {
-          recentBuilds.frame(width: 250)
-          Divider()
-          ScrollView {
-            if let run {
-              BuildRunDetail(
-                cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
-                dismiss: { dismiss() }
-              )
-              .tutorialAnchor(.buildSection, workspace: app.path)
-              .id(page == nil ? run.id : "\(app.path)|\(run.id)")
-              .padding(Space.xxl)
-              if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
-            } else {
-              EmptyState(
-                title: "No \(platformName(platform)) build recorded",
-                message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
-              )
-              .padding(Space.xxl)
-              if archive == nil { nextBuild }
-            }
+      HStack(alignment: .top, spacing: 0) {
+        recentBuilds.frame(width: 250)
+        Divider()
+        ScrollView {
+          if let run {
+            BuildRunDetail(
+              cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
+              dismiss: { dismiss() }
+            )
+            .tutorialAnchor(.buildSection, workspace: app.path)
+            .id(page == nil ? run.id : "\(app.path)|\(run.id)")
+            .padding(Space.xxl)
+            if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
+          } else {
+            EmptyState(
+              title: "No \(platformName(platform)) Build Recorded",
+              message: archive == nil ? "Run the app to record a build." : "No build retained for this archive."
+            )
+            .padding(Space.xxl)
+            if archive == nil { nextBuild }
           }
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
     .tutorialHighlights(showFallback: false)
@@ -107,11 +108,16 @@ struct BuildSheet: View {
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
     .task(id: (page == nil ? "" : app.path + "|") + "\(platform)|\(buildKey)|\(running?.key ?? "idle")") {
-      guard archive == nil, !isMacos else { return }
-      if running == nil {
-        checks.check(workspace: app.path, builds: [platform: buildKey])
-      } else {
-        checks.cancel(workspace: app.path, platforms: page == nil ? ["ios", "android"] : [platform])
+      guard archive == nil else { return }
+      while !Task.isCancelled {
+        if running == nil, actions.active(for: app.path) == nil {
+          checks.check(
+            workspace: app.path, builds: [platform: buildKey],
+            finishedAt: finishedAt.map { [platform: $0] } ?? [:])
+        } else {
+          checks.cancel(workspace: app.path, platforms: page == nil ? ["ios", "android", "macos"] : [platform])
+        }
+        try? await Task.sleep(for: .seconds(30))
       }
     }
     .onAppear { selectedRun = run?.id }
@@ -126,49 +132,13 @@ struct BuildSheet: View {
     if let openAppLogs { openAppLogs(app, query) } else { openLogs(query) }
   }
 
-  private var macosPanel: some View {
-    ScrollView {
-      if let macos = app.macos {
-        VStack(alignment: .leading, spacing: Space.lg) {
-          Text("macOS \(macos.product)").font(.stim(.title, weight: .semibold))
-          Text("Swift Package Debug: \(macos.build.state)").foregroundStyle(Palette.secondary)
-          if let building = running, building.platform == "macos" { RunningBuildDetail(env: app, build: building) }
-          if let duration = macos.build.durationMs {
-            Text(Format.elapsed(ms: duration)).monospacedDigit().foregroundStyle(Palette.secondary)
-          }
-          if running?.platform != "macos", let line = history("macos").first?.phaseLine {
-            Text(line).foregroundStyle(Palette.secondary)
-          }
-          if let error = macos.build.error {
-            Text(error).foregroundStyle(Palette.error).textSelection(.enabled)
-          }
-          if let query = LogQuery.build(
-            platform: "macos", slot: "default", startedAt: macos.build.startedAt, finishedAt: macos.build.finishedAt)
-          {
-            Button("Build logs") {
-              dismiss()
-              revealLogs(query)
-            }.buttonStyle(.stim())
-          }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(Space.xxl)
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-  }
-
   private var nextBuild: some View {
     VStack(alignment: .leading, spacing: Space.md) {
-      HStack {
-        SectionLabel(title: "Next build")
-        Spacer()
-        checkButton
-      }
+      SectionLabel(title: "Next build")
       if running != nil {
         Text("Checked after the running build").foregroundStyle(Palette.tertiary)
       } else {
-        NextBuildView(entry: entry, inlineDetails: true)
+        NextBuildView(entry: entry, inlineDetails: true, recentBuildAt: finishedAt)
       }
     }
     .padding([.horizontal, .bottom], Space.xxl)
@@ -186,63 +156,70 @@ struct BuildSheet: View {
           platformName(entry.platform) + (page.subtitle(for: entry, among: entries).map { " \u{00B7} " + $0 } ?? "")
         }
         if !entries.isEmpty {
-          Picker("Platform", selection: $selectedEntry) {
-            ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in Text(title).tag(entry) }
+          HStack(spacing: Space.sm) {
+            ForEach(Array(zip(entries, titles)), id: \.0) { entry, title in
+              Button {
+                selectedEntry = entry
+              } label: {
+                Pill(tone: entry == selectedEntry ? .brand : .neutral, outlined: entry != selectedEntry) { Text(title) }
+              }
+              .buttonStyle(.hoverRow())
+              .accessibilityAddTraits(entry == selectedEntry ? .isSelected : [])
+            }
           }
-          .pickerStyle(.segmented)
-          .labelsHidden()
           .fixedSize()
         }
       } else if platforms.count > 1 {
-        Picker("Platform", selection: $nativePlatform) {
-          ForEach(platforms, id: \.self) { Text(platformName($0)).tag($0) }
+        HStack(spacing: Space.sm) {
+          ForEach(platforms, id: \.self) { platform in
+            Button {
+              nativePlatform = platform
+            } label: {
+              Pill(tone: platform == nativePlatform ? .brand : .neutral, outlined: platform != nativePlatform) {
+                Text(platformName(platform))
+              }
+            }
+            .buttonStyle(.hoverRow())
+            .accessibilityAddTraits(platform == nativePlatform ? .isSelected : [])
+          }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 180)
+        .fixedSize()
       }
       Spacer(minLength: Space.sm)
-      if !isMacos {
-        if archive == nil {
-          Button {
+      if archive == nil {
+        Button {
+          if let macos = app.macos, isMacos {
+            actions.run(
+              "Build \(macos.product)", steps: [StimCommand(macos.runArguments, cwd: app.path)], present: false)
+          } else {
             actions.runApp(app, platform: platform)
-          } label: {
-            Label(app.lastBuilds?.build(for: platform)?.status == "failed" ? "Rebuild" : "Run", systemImage: "play.fill")
           }
-          .buttonStyle(.stim(.primary, .regular))
-          .disabled(busy)
-          .help(
-            "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
-          )
-          checkButton
+        } label: {
+          Label(lastFailed ? "Rebuild" : "Run", systemImage: "play.fill")
         }
-        Button("Open in logs panel") {
-          if let query = run.flatMap({
-            LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
-          }) {
-            dismiss()
-            revealLogs(query)
-          }
-        }
-        .buttonStyle(.stim())
-        .disabled(logsExpired || !readsServer || run == nil || run?.startedDate == nil)
+        .buttonStyle(.stim(.primary))
+        .disabled(busy)
+        .help(
+          isMacos
+            ? "stim macos: builds the Swift package and launches the app"
+            : "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
+        )
       }
+      Button("Open in Logs Panel") {
+        if let query = run.flatMap({
+          LogQuery.build(platform: platform, slot: $0.slot, startedAt: $0.startedAt, finishedAt: $0.finishedAt)
+        }) {
+          dismiss()
+          revealLogs(query)
+        }
+      }
+      .buttonStyle(.stim())
+      .disabled(logsExpired || !readsServer || run == nil || run?.startedDate == nil)
       Button("Done") { dismiss() }
         .buttonStyle(.stim())
         .keyboardShortcut(.cancelAction)
     }
     .padding(Space.xxl)
-  }
-
-  private var checkButton: some View {
-    Button {
-      checks.check(workspace: app.path, builds: [platform: buildKey], force: true)
-    } label: {
-      Label("Check", systemImage: "magnifyingglass")
-    }
-    .buttonStyle(.stim())
-    .disabled(busy || entry?.state == .checking)
-    .help("stim \(platform) --plan: predict the next build from the fingerprint and caches, without building")
   }
 
   private var recentBuilds: some View {
@@ -353,7 +330,8 @@ private struct BuildRunDetail: View {
         }
       } else if let entry = run.history, !entry.finishedSteps.isEmpty {
         section("Phases") {
-          PhaseChecklist(steps: entry.finishedSteps, cacheOutcome: nil, stoppedPhase: entry.stoppedPhase)
+          PhaseChecklist(
+            steps: entry.finishedSteps, cacheOutcome: nil, stoppedPhase: entry.stoppedPhase, failedPhase: entry.failedPhase)
         }
       }
       if cacheLabel != nil || run.missReason != nil || run.running?.recheckNote != nil {
@@ -374,6 +352,9 @@ private struct BuildRunDetail: View {
         section("Failure") {
           if let code = run.errorCode {
             Text(code).font(.stim(.callout, mono: true)).foregroundStyle(Palette.error).textSelection(.enabled)
+          }
+          if run.isMacos, let build = env.macos?.build, build.startedAt == run.startedAt, let message = build.error {
+            Text(message).foregroundStyle(Palette.error).textSelection(.enabled)
           }
           if !run.diagnostics.isEmpty {
             BuildDiagnosticsView(diagnostics: run.diagnostics, workspace: env.path, initiallyExpanded: true)
@@ -401,7 +382,8 @@ private struct BuildRunDetail: View {
           } else {
             LogsView(
               cli: cli, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
-              moment: .constant(nil), archive: archive
+              moment: .constant(nil), archive: archive,
+              availableSources: LogSource.allCases.filter { !run.isMacos || $0 != .metro }
             )
             .id(run.id)
             .frame(height: 320)
@@ -418,7 +400,7 @@ private struct BuildRunDetail: View {
     if let build = run.running {
       return build.cacheLookupOutcome.map { $0 == "hit" ? "Cache hit" : "Cache miss" }
     }
-    guard let last = run.last, last.cacheSkipped != true else { return nil }
+    guard !run.isMacos, let last = run.last, last.cacheSkipped != true else { return nil }
     switch last.cacheHit {
     case .local: return "Cache hit (local)"
     case .remote: return "Cache hit (remote)"
@@ -440,14 +422,15 @@ private struct BuildRunDetail: View {
           Text([phase, counts].compactMap { $0 }.joined(separator: " "))
             .font(.stim(.headline)).foregroundStyle(Palette.primary)
         } else {
-          Text(run.last?.summary ?? run.outcome)
+          Text(run.summary)
             .font(.stim(.headline))
         }
       }
       if let build = run.running {
         TimelineView(.buildSeconds(build)) { context in
-          (Text(Format.clock(ms: build.progress(at: context.date).elapsedMs))
-            + Text(build.expectedMs.map { " / ~\(Format.clock(ms: $0))" } ?? "").foregroundStyle(Palette.tertiary))
+          let elapsedMs = build.progress(at: context.date).elapsedMs
+          (Text(Format.clock(ms: elapsedMs))
+            + Text(Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)).foregroundStyle(Palette.tertiary))
             .font(.stim(.title)).monospacedDigit()
         }
       }
@@ -463,7 +446,8 @@ private struct BuildRunDetail: View {
       parts.append("finished \(date.formatted(date: sameDay ? .omitted : .numeric, time: .standard))")
     }
     if run.slot != DeviceRef.defaultSlot { parts.append("slot \(run.slot)") }
-    if let configuration = run.configuration { parts.append(configuration) }
+    if let configuration = run.configurationLabel { parts.append(configuration) }
+    if run.isMacos, let product = env.macos?.product { parts.append(product) }
     if let fingerprint = run.last?.fingerprint { parts.append("fingerprint \(fingerprint.prefix(8))") }
     return parts.joined(separator: " \u{00B7} ")
   }

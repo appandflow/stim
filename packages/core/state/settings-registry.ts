@@ -707,6 +707,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'debug.logs',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_DEBUG',
+    description:
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+  },
+  {
     key: 'hosting.agentDriver',
     type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,
@@ -728,6 +737,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+  },
+  {
+    key: 'remote.easFallback',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description:
+      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
   },
   {
     key: 'remote.build',

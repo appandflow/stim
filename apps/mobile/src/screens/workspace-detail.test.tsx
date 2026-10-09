@@ -189,7 +189,7 @@ const archivedBody = () => (
 
 it('keeps live-only actions and devices absent from archived workspaces', async () => {
   const screen = await render(archivedBody());
-  for (const text of ['Stop', 'Reload', 'Allow control...', 'Devices']) expect(screen.queryByText(text)).toBeNull();
+  for (const text of ['Stop', 'Reload', 'Allow Control...', 'Devices']) expect(screen.queryByText(text)).toBeNull();
   expect(screen.getByText('#2600 Merged')).toBeTruthy();
   expect(screen.queryByText('Draft')).toBeNull();
 });

@@ -516,7 +516,7 @@ export function usageCharts(samples: UsageSample[], usage: MachineUsage | null):
       ? [
           {
             kind: 'disk' as const,
-            label: t`Disk free`,
+            label: t`Disk Free`,
             read: (s: UsageSample) => s.diskFreeBytes,
             fraction: (v: number) => v / diskTotal,
             tone: diskTone,
@@ -569,20 +569,20 @@ export interface BudgetRow {
 const budgets = (): { key: string; label: string; describe: (value: number | null) => string }[] => [
   {
     key: 'budget.minFreeDiskGb',
-    label: t`Reclaims disk`,
+    label: t`Reclaims Disk`,
     describe: (v) => (v ? t`below ${v} GB free` : t`only below the hard floor`),
   },
   {
     key: 'budget.hardFloorDiskGb',
-    label: t`Refuses to run`,
+    label: t`Refuses to Run`,
     describe: (v) => (v ? t`below ${v} GB free` : t`never`),
   },
   {
     key: 'budget.maxCommittedMemoryGb',
-    label: t`Memory budget`,
+    label: t`Memory Budget`,
     describe: (v) => (v === null ? t`60% of memory` : v === 0 ? t`off` : t`${v} GB`),
   },
-  { key: 'budget.maxLiveWorkspaces', label: t`Active workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
+  { key: 'budget.maxLiveWorkspaces', label: t`Active Workspaces`, describe: (v) => (v ? String(v) : t`no limit`) },
 ];
 
 function settingNumbers(settings: Record<string, unknown> | null): Map<string, number | null> {

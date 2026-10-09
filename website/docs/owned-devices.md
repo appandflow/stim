@@ -18,7 +18,7 @@ Stim creates and records its local simulators and emulators. Their names start
 with `stim-`. It never creates, boots, or deletes a simulator or emulator that
 another tool made.
 
-The Stim phone viewer's control toolbar offers **Shake** and **Slow animations**
+The Stim phone viewer's control toolbar offers **Shake** and **Slow Animations**
 for owned iOS simulators when the paired server supports them. Slow animations
 shows the confirmed simulator state. These options require control access and
 are hidden on older servers or devices that do not support them. They use
@@ -118,10 +118,9 @@ stay `"xcode"` and `"emulator"`, and a value you set always wins.
 `stim settings get iosSimulatorApp` prints the effective value and, on stderr,
 `(default: Stim Desktop installed)` when the default comes from the app.
 
-For owned simulators, Stim Desktop selects the workspace that owns the
-simulator and focuses that device, and no simulator window opens. If the app is
-showing another page, it keeps that page and shows a card with a **Show**
-button instead. It only displays the simulator; it never boots or shuts it
+For owned simulators, Stim Desktop keeps the current page and shows a launch
+card with a **Show** button. Clicking **Show** opens the workspace that owns the
+simulator and focuses that device, and no simulator window opens. It only displays the simulator; it never boots or shuts it
 down. Pass
 `--simulator-app stim-desktop` to use it for one launch.
 
@@ -133,7 +132,7 @@ home, so a simulator booted under another `STIM_HOME` does not appear in it.
 For owned Android emulators, Stim starts newly booted emulators on macOS with
 `-no-window -gpu host`, which keeps GPU acceleration, and opens
 `stim-desktop://open?serial=<serial>` in the background so Stim Desktop
-focuses that emulator, or offers it in a card when the app is on another page. An emulator that is already running keeps its current display
+shows a launch card. Clicking **Show** opens that emulator. An emulator that is already running keeps its current display
 until it next boots, and physical devices are unaffected.
 
 To keep the simulator and emulator windows with Stim Desktop installed:
@@ -147,13 +146,13 @@ An iPhone Duo simulator shows its active screen, with the frame fitted to
 that screen. Both screens appear side by side until the active screen is
 known. While **Control** is on, its tile has a **Fold / Unfold** button that sweeps the simulated hinge to the other posture. The
 button needs the bundled app, and because it uses private iOS interfaces, a
-new iOS runtime can break it. **Rotate left** and **Rotate right** work in
+new iOS runtime can break it. **Rotate Left** and **Rotate Right** work in
 folded, half-open and unfolded postures. Apps keep their supported
 orientations, and the Duo home screen stays portrait.
 When the Desktop viewer is open and the installed devicectl supports hinge
 observation, its preset selection follows changes made by other controllers.
 Arbitrary angles leave all presets unselected. Older tools retain the posture
-Desktop last requested. **Hinge angle** opens a slider from 0 to 180 degrees
+Desktop last requested. **Hinge Angle** opens a slider from 0 to 180 degrees
 while **Control** is on; release it to apply the selected angle. Selecting the
 current preset does nothing.
 When its observed angle is below 180 degrees, the Desktop viewer projects the
@@ -478,7 +477,7 @@ Tailscale refuses and Stim prints Tailscale's error message.
 A phone granted control can use the compact bottom toolbar for Keyboard,
 Home on iOS or Back on Android and web, and both rotation directions. **More** (the ellipsis button)
 opens a native menu for Lock, Android Home and Apps, supported foldable postures,
-and simulator options. **Device frame** appears in More when matching artwork is
+and simulator options. **Device Frame** appears in More when matching artwork is
 available and remains usable without a control lease. The bar stays below the screen in portrait and landscape
 and fits its common controls within the available width. The app in front still needs
 to support the requested orientation. Physical devices rotate only in hand.

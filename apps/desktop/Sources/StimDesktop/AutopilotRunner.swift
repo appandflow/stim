@@ -163,7 +163,7 @@ final class AutopilotRunner: ObservableObject {
   /// Booted devices of workspaces with no build running, which `gc --idle` skips.
   private var bootedDevices: [AutopilotSchedule.Device] {
     (status.payload?.environments ?? []).filter { $0.build?.isRunning != true }.flatMap { env in
-      env.devices.filter(\.isRunning)
+      env.devices.filter { $0.isRunning && $0.platform != "macos" }
     }
     .map {
       AutopilotSchedule.Device(activity: $0.activity, screenChangedAt: $0.activityKey.flatMap(ScreenActivity.shared.lastChange))
