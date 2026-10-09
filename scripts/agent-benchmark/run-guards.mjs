@@ -131,6 +131,7 @@ export function shellCommandSegments(command) {
 function literalShellArguments(command) {
   const words = [];
   let word = '';
+  let started = false;
   let quote = null;
   for (let index = 0; index < command.length; index++) {
     const char = command[index];
@@ -138,20 +139,44 @@ function literalShellArguments(command) {
       const next = command[++index];
       if (next == null) return null;
       if (quote === '"' && !['$', '`', '"', '\\', '\n'].includes(next)) word += '\\';
-      if (next !== '\n') word += next;
+      if (next !== '\n') {
+        word += next;
+        started = true;
+      }
     } else if (quote) {
+      if (quote === '"' && /[$`]/.test(char)) return null;
       if (char === quote) quote = null;
       else word += char;
-    } else if (char === "'" || char === '"') quote = char;
-    else if (/\s/.test(char)) {
-      if (word) words.push(word);
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+    } else if (char === ' ' || char === '\t') {
+      if (started) words.push(word);
       word = '';
-    } else if (/[<>*?[\]{}~()]/.test(char)) return null;
-    else word += char;
+      started = false;
+    } else if (/[\s;&|<>*?[\]{}~()$`#]/.test(char)) return null;
+    else {
+      word += char;
+      started = true;
+    }
   }
   if (quote) return null;
-  if (word) words.push(word);
+  if (started) words.push(word);
   return words;
+}
+
+export function sameLiteralShellCommand(command, expected) {
+  let actual = literalShellArguments(String(command ?? '').trim());
+  const required = literalShellArguments(expected);
+  if (actual?.length === 3 && /^\/bin\/(?:zsh|bash|sh)$/.test(actual[0]) && /^-l?c$/.test(actual[1])) {
+    actual = literalShellArguments(actual[2]);
+  }
+  return Boolean(
+    actual &&
+    required?.length &&
+    actual.length === required.length &&
+    actual.every((word, index) => word === required[index]),
+  );
 }
 
 export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
