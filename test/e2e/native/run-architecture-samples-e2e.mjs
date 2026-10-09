@@ -93,12 +93,15 @@ function verifyUi(label, facts, titleHint) {
   agent(`${label}-form-screenshot`, ['screenshot', join(evidence, `${label}-form.png`)]);
   const title = `Stim real ${label}`;
   agent(`${label}-fill`, ['fill', `label="${titleHint}"`, title, '--settle']);
+  agent(`${label}-description`, ['fill', 'label="Enter your task here."', `Native acceptance ${label}`, '--settle']);
   agent(`${label}-keyboard`, ['keyboard', 'dismiss']);
   agent(`${label}-save`, ['press', 'label="Save task"', '--settle']);
+  agent(`${label}-saved-form`, ['wait', 'absent', 'label="Save task"', '30000']);
   agent(`${label}-saved`, ['wait', `label="${title}"`, '30000']);
   agent(`${label}-details`, ['press', `label="${title}"`, '--settle']);
   agent(`${label}-details-title`, ['wait', 'label="Task Details"', '30000']);
   agent(`${label}-details-content`, ['wait', `label="${title}"`, '30000']);
+  agent(`${label}-details-description`, ['wait', `label="Native acceptance ${label}"`, '30000']);
   agent(`${label}-snapshot`, ['snapshot', '-i']);
   const screenshot = join(evidence, `${label}.png`);
   agent(`${label}-screenshot`, ['screenshot', screenshot]);
