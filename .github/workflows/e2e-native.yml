@@ -703,14 +703,20 @@ jobs:
         shell: bash
         run: pnpm run lint 2>&1 | tee "$QA_ROOT/evidence/lint.log"
       - name: Full macOS unit suite
+        id: unit
+        continue-on-error: true
         shell: bash
         run: |
           pnpm run test --reporter=default --reporter=json \
             --outputFile="$QA_ROOT/evidence/unit.json" 2>&1 | tee "$QA_ROOT/evidence/unit.log"
       - name: Full macOS E2E suite
+        id: e2e
+        continue-on-error: true
         shell: bash
         run: pnpm run test:e2e 2>&1 | tee "$QA_ROOT/evidence/e2e.log"
       - name: Real SwiftPM and configured browser CLI lifecycle
+        id: lifecycle
+        continue-on-error: true
         shell: bash
         run: node scripts/qa/platform-convergence.mjs run "$QA_ROOT" 2>&1 | tee "$QA_ROOT/evidence/lifecycle.log"
       - name: Scoped fixture cleanup
@@ -718,6 +724,7 @@ jobs:
         shell: bash
         run: node scripts/qa/platform-convergence.mjs cleanup "$QA_ROOT"
       - name: Real nonphysical compatibility tests
+        id: compat
         shell: bash
         run: |
           pnpm run test:compat \
@@ -744,6 +751,9 @@ jobs:
             }
             console.log("Passed compatibility tests:", report.numPassedTests);
           '
+      - name: Require all macOS QA stages to pass
+        if: always() && (steps.unit.outcome != 'success' || steps.e2e.outcome != 'success' || steps.lifecycle.outcome != 'success' || steps.compat.outcome != 'success')
+        run: exit 1
       - name: Upload results and runtime logs
         if: always()
         uses: actions/upload-artifact@v4

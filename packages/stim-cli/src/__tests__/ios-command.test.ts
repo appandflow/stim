@@ -554,6 +554,8 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('the Metro gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   afterEach(() => vi.unstubAllEnvs());
 
   test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
