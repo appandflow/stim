@@ -824,7 +824,7 @@ iPhone simulator on the target runtime. Its project-selected CocoaPods must matc
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
-the app's .ruby-version when installed, with pod install's UTF-8 locale defaults.
+the app's .ruby-version when installed, and otherwise the PATH, GEM_HOME and GEM_PATH of the Mac's login shell, with pod install's UTF-8 locale defaults. pod install uses the same environment.
 For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in

@@ -8,6 +8,7 @@ import {
   podsAreStale,
   readPodState,
   runPodInstall,
+  parseLoginRubyEnv,
   podEnv,
   readRubyVersion,
 } from '../engine/deps.ts';
@@ -114,13 +115,19 @@ function collectingWriter() {
 
 describe('podEnv (#43, #44)', () => {
   test('defaults a UTF-8 locale without touching one the caller set', () => {
-    const env = podEnv('/repo', { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    const env = podEnv('/repo', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: () => false,
+      loginEnv: () => null,
+    });
     expect(env.LANG).toBe('en_US.UTF-8');
     expect(env.LC_ALL).toBe('en_US.UTF-8');
     const kept = podEnv('/repo', {
       env: { PATH: '/usr/bin', LANG: 'fr_CA.UTF-8' },
       home: '/home/u',
       exists: () => false,
+      loginEnv: () => null,
     });
     expect(kept.LANG).toBe('fr_CA.UTF-8');
     expect(kept.LC_ALL).toBe('fr_CA.UTF-8');
@@ -135,12 +142,41 @@ describe('podEnv (#43, #44)', () => {
       env: { PATH: '/usr/bin' },
       home: '/home/u',
       exists: (p) => p === rvmBin || p === rvmGems,
+      loginEnv: () => {
+        throw new Error('login shell must not be read when .ruby-version matches');
+      },
     });
     expect(env.PATH).toBe(`${rvmBin}${delimiter}/usr/bin`);
     expect(env.GEM_HOME).toBe(rvmGems);
-    const none = podEnv(root, { env: { PATH: '/usr/bin' }, home: '/home/u', exists: () => false });
+    const none = podEnv(root, {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: () => false,
+      loginEnv: () => null,
+    });
     expect(none.PATH).toBe('/usr/bin');
     expect(none.GEM_HOME).toBeUndefined();
+  });
+
+  test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
+    const login = { PATH: '/login/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
+    const base = { env: { PATH: '/usr/bin:/agent/bin' }, home: '/home/u', exists: () => false, loginEnv: () => login };
+    const env = podEnv('/nonexistent', base);
+    expect(env.PATH).toBe(`/login/bin${delimiter}/usr/bin${delimiter}/agent/bin`);
+    expect(env.GEM_HOME).toBe('/gems');
+    expect(env.GEM_PATH).toBe('/gems:/more');
+    const kept = podEnv('/nonexistent', { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
+    expect(kept.GEM_HOME).toBe('/mine');
+    const failed = podEnv('/nonexistent', { ...base, loginEnv: () => null });
+    expect(failed.PATH).toBe('/usr/bin:/agent/bin');
+    expect(failed.GEM_HOME).toBeUndefined();
+  });
+
+  test('parseLoginRubyEnv ignores shell banners and empty values', () => {
+    const out = 'motd\n\n@@ruby-env-begin@@\nPATH=/a:/b\nGEM_HOME=\nGEM_PATH=/g\n@@ruby-env-end@@\n';
+    expect(parseLoginRubyEnv(out)).toEqual({ PATH: '/a:/b', GEM_PATH: '/g' });
+    expect(parseLoginRubyEnv('nothing here')).toBeNull();
+    expect(parseLoginRubyEnv('@@ruby-env-begin@@\nPATH=/a\n')).toBeNull();
   });
 
   test('readRubyVersion strips the ruby- prefix and returns null when unpinned', () => {

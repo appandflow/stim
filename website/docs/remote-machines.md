@@ -267,7 +267,10 @@ full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
 is installed, using the same UTF-8 locale defaults as `pod install`. Without
-an installed project Ruby, it uses each machine's default Ruby.
+an installed project Ruby, it uses the `PATH`, `GEM_HOME` and `GEM_PATH` of each
+machine's login shell, so Desktop, terminal and agent callers agree; `pod install`
+runs in the same environment. If the login shell cannot be read, it uses the
+caller's environment.
 
 ## Use the Desktop wizard
 
