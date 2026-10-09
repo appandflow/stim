@@ -245,7 +245,7 @@ struct WorkspaceDetail: View {
           .tutorialAnchor(.logsTab, workspace: workspace.path)
         }
       }
-      .padding(.horizontal, Space.xxl)
+      .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(
         archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
@@ -257,7 +257,7 @@ struct WorkspaceDetail: View {
               .buttonStyle(.link).help(archive.title)
           }
         }
-        .font(.stim(.footnote)).padding(.horizontal, Space.xxl).padding(.bottom, Space.md)
+        .font(.stim(.footnote)).padding(.horizontal, PageInset.horizontal).padding(.bottom, Space.md)
       }
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
@@ -411,7 +411,7 @@ struct WorkspaceDetail: View {
           }
         }
         if let archiveError { Text(archiveError).foregroundStyle(Palette.secondary) }
-      }.padding(Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
+      }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -421,7 +421,7 @@ struct WorkspaceDetail: View {
         if devices.isEmpty {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
         } else {
-          let availableWidth = max(0, geo.size.width - Space.xxl * 2)
+          let availableWidth = max(0, geo.size.width - PageInset.horizontal * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
           let cardHeight = max(0, geo.size.height - Space.xxl * 2)
           FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
@@ -429,7 +429,7 @@ struct WorkspaceDetail: View {
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
             }
           }
-          .padding(Space.xxl)
+          .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl)
         }
       }
     }
@@ -449,7 +449,7 @@ struct WorkspaceDetail: View {
               emptyCanvas(stage: page.lead(now: context.date).stage(now: context.date))
             }.frame(maxWidth: .infinity).padding(Space.xxxl)
           } else if !devices.isEmpty {
-            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - Space.xxl * 2))
+            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - PageInset.horizontal * 2))
             let cardHeight = max(0, geo.size.height - Space.xxl * 2)
             FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
               ForEach(devices) { entry in
@@ -458,7 +458,7 @@ struct WorkspaceDetail: View {
                   owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
                 ).id(entry.id)
               }
-            }.padding(Space.xxl).id("devices")
+            }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl).id("devices")
           }
         }
         .onChange(of: selectedPath, initial: true) {

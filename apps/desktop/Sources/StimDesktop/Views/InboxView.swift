@@ -58,7 +58,7 @@ struct InboxView: View {
             .frame(maxWidth: .infinity)
         }
       }
-      .padding(Space.xxxl)
+      .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onChange(of: filter) { _, _ in visibleCount = 50 }
