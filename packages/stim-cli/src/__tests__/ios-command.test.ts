@@ -7993,6 +7993,22 @@ describe('iOS placement on a hosting Mac', () => {
       expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'local' } });
     },
   );
+  test.each(['flag', 'setting'])('local overrides a machine ios.remote auto and asks no Mac: %s', async (via) => {
+    reserve();
+    writeConfigSetting({ scope: 'machine' }, 'ios.remote', 'auto');
+    if (via === 'setting') writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios.remote', 'local');
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const hosted = vi.fn<typeof prepareHostedIos>();
+    const { exitCode, calls } = await run(
+      { ...(via === 'flag' ? { remote: 'local' } : {}), json: true },
+      { automaticDevicePlacement: automatic, prepareHostedIos: hosted },
+    );
+    expect(exitCode).toBe(null);
+    expect(automatic).not.toHaveBeenCalled();
+    expect(hosted).not.toHaveBeenCalled();
+    expect(calls.order).toContain('ensureOwnedDevice');
+  });
+
   test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));

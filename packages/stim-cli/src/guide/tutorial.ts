@@ -6,6 +6,12 @@ const paths = `Use {base} = ~/stim-tutorial unless the user named another folder
 to the absolute home path when substituting inside quotes. Keep the tutorial
 outside the user's own projects.`;
 
+const local = `The tutorial runs on this Mac. Every time you run the tutorial app on iOS
+from a worktree of {base}, use stim ios --remote local --remote-build local,
+even when the user's settings would place the device or the build on another
+Mac. Only an explicit request to build on another Mac changes the build, with
+stim ios --remote local --remote-build "<machine>"; the device stays here.`;
+
 function commands(id: string): string {
   return TUTORIAL_STEPS.find((step) => step.id === id)!.commands.join('\n');
 }
@@ -23,6 +29,8 @@ first iOS build reuses the first one's native build. Only the clone, the
 optional share and the cleanup need this guide: the changes are ordinary
 requests, so follow stim guide agent for them, and check each change on the
 device.
+
+${local}
 
 "Follow stim guide tutorial run" means stim guide tutorial run.
 "Follow stim guide tutorial finish" means stim guide tutorial finish.
@@ -58,6 +66,8 @@ run the app: the clone is only the base for the user's changes and is never remo
 Report the findings of stim doctor and do not act on them: no SimSlim install, no
 --fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
 and stop.
+
+${local}
 
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
 making the title purple, in their own words. Each change runs in a new linked
@@ -155,7 +165,8 @@ Replace {base}, {tour} and {second} with absolute paths: {base} is the clone,
 {machine} with a machine you have already approved, or skip it. Clone with git
 clone https://github.com/${TUTORIAL_REPO}.git into a fresh folder outside any
 repository. Each change runs in its own worktree of that clone (stim guide
-agent); the clone itself is never run.
+agent); the clone itself is never run. Run each worktree on iOS with
+stim ios --remote local --remote-build local so it stays on this Mac.
 
 ${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.commands.length ? `\`\`\`sh\n${step.commands.join('\n')}\n\`\`\`` : 'Ask your agent in your own words, or observe this step in Stim Desktop.'}`).join('\n\n')}
 

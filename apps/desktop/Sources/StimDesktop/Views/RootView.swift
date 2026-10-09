@@ -130,7 +130,15 @@ struct RootView: View {
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
             restart: { tutorial.restart() },
-            runIOS: { if let workspace = tutorial.workspace { actions.runApp(workspace, platform: "ios") } },
+            runIOS: {
+              if let workspace = tutorial.workspace {
+                actions.run(
+                  "Run \(workspace.names.title) on iOS",
+                  steps: [
+                    StimCommand(["ios", "--remote", "local", "--remote-build", "local"], cwd: workspace.path)
+                  ], present: false)
+              }
+            },
             close: tutorial.close,
             openArchived: openTutorialArchive,
             pairPhone: { openRequests.pairsPhone = true },
