@@ -148,9 +148,17 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
-        ToolbarItem(placement: .navigation) {
-          HistoryButtons(
-            navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        let history = HistoryButtons(
+          navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
+        if #available(macOS 26.0, *) {
+          ToolbarItem(placement: .navigation) {
+            history.padding(.horizontal, Space.xs).frame(height: 40)
+              .glassEffect(.regular, in: Capsule())
+          }
+          .sharedBackgroundVisibility(.hidden)
+          ToolbarSpacer(.fixed, placement: .navigation)
+        } else {
+          ToolbarItem(placement: .navigation) { history }
         }
         if columnVisibility == .detailOnly, !operations.runs.isEmpty {
           ToolbarItem(placement: .navigation) {
