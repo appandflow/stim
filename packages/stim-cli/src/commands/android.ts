@@ -24,7 +24,7 @@ import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import { appProjectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
+import { projectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import {
   resolveCacheProviderConfig,
@@ -732,9 +732,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) {
-    const { message, remedy } = projectProblem;
+  const problem = projectProblem(root, 'android');
+  if (problem) {
+    const { message, remedy } = problem;
     out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
