@@ -560,7 +560,7 @@ describe('strict client routing', () => {
   it('automatic placement skips disabled remotes but an explicit name still connects', async () => {
     mkdirSync(join(root, 'home'), { recursive: true });
     writeFileSync(join(root, 'home', 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['mini'] } }));
-    const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue({ failure: 'offline' });
+    const open = vi.spyOn(BuildConnection, 'open').mockResolvedValue({ failure: 'offline', refused: false });
     await chooseBuildMachine({
       projectRoot: root,
       selected: 'auto',
