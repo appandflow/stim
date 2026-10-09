@@ -1,0 +1,30 @@
+name: Windows stop observer qualification
+on:
+  push:
+    branches: [ci/3086-stop-observer]
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools emulator
+      - name: Qualify the stop observer and real inventory tools
+        env:
+          STIM_STOP_QUALIFICATION: ${{ runner.temp }}/stim-stop-qualification
+        run: node test/e2e/native/qualify-stop-observer.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-stop-observer
+          path: |
+            ${{ runner.temp }}/stim-stop-qualification
+            !${{ runner.temp }}/stim-stop-qualification/**/*.exe
+          if-no-files-found: error
