@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -27,7 +28,16 @@ import {
   type WorktreeFacts,
   type WorktreePullRequest,
 } from '@stim-cli/core/state';
-import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
+import {
+  clearClaimChild,
+  markClaimChildPending,
+  releaseClaim,
+  setClaimChild,
+  tryAcquireClaim,
+  type ClaimHandle,
+} from '@stim-cli/core/ownership-claim';
+import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { debugLog } from './debug-log.ts';
 import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWorkspace } from './agent-sessions.ts';
 import { withDirLock } from './dir-lock.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
@@ -65,6 +75,7 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
       diskUsageCacheFile(join(root, 'node_modules')),
+      diskUsageFailureFile(join(root, 'node_modules')),
       diskUsageCacheFile(workspaceDir(root)),
       diskUsageFailureFile(workspaceDir(root)),
     ]),
@@ -285,7 +296,8 @@ function takeWalkClaim(): ClaimHandle | null {
     const attempt = tryAcquireClaim({ root: diskUsageWalkClaims(), mode: 'exclusive', label: 'disk usage walk' });
     if (attempt.pending) releaseClaim(attempt.pending);
     return attempt.acquired ?? null;
-  } catch {
+  } catch (error) {
+    debugLog.log('disk-walk-claim', { error: String((error as Error)?.message ?? error) });
     return null;
   }
 }
@@ -328,15 +340,27 @@ export function createStatusMeasurer({
   let discovering = false;
   let discoveredAt = -Infinity;
 
-  async function du(targets: string[]): Promise<number | null> {
+  async function du(targets: string[], claim: ClaimHandle): Promise<number | null> {
+    const hold = (child: ChildProcess): void => {
+      if (child.pid === undefined) return;
+      const captured = captureProcessIdentity(child.pid);
+      if (!captured.ok) throw new Error(`Cannot record the du process: ${captured.reason}`);
+      setClaimChild(claim, { pid: child.pid, processToken: captured.token });
+    };
     try {
+      markClaimChildPending(claim);
       return parseDuKilobytes(
-        await exec.runFileAsync('nice', ['-n', DU_NICENESS, 'du', '-sk', ...targets], { timeoutMs: DU_TIMEOUT_MS }),
+        await exec.runFileAsync('nice', ['-n', DU_NICENESS, 'du', '-sk', ...targets], {
+          timeoutMs: DU_TIMEOUT_MS,
+          onSpawn: hold,
+        }),
       );
     } catch (error) {
       const { code, status, stdout } = error as NodeJS.ErrnoException & { status?: number; stdout?: string };
       if (code === 'ENOENT') duMissing = true;
       return status === 1 && typeof stdout === 'string' ? parseDuKilobytes(stdout) : null;
+    } finally {
+      clearClaimChild(claim);
     }
   }
 
@@ -348,27 +372,28 @@ export function createStatusMeasurer({
   async function measure(folders: MeasuredFolder[]): Promise<void> {
     for (const { path, maxAgeMs, nested } of folders) {
       if (duMissing || !due(path, maxAgeMs)) continue;
-      let bytes = 0;
-      if (existsSync(path)) {
-        const claim = takeWalkClaim();
-        if (!claim) return;
-        try {
-          if (!due(path, maxAgeMs)) continue;
-          const targets = walkTargets(path, nested?.() ?? []);
-          const kb = targets.length ? await du(targets) : 0;
-          if (kb === null) {
-            writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
-            continue;
-          }
-          bytes = kb * 1024;
-        } finally {
-          releaseClaim(claim);
-        }
-      } else if (!basename(path).startsWith('node_modules')) {
+      const stamp = () => ({ path, measuredAt: new Date(now()).toISOString() });
+      if (!existsSync(path)) {
+        if (!basename(path).startsWith('node_modules')) continue;
+        writeCacheFile(diskUsageCacheFile(path), { ...stamp(), bytes: 0 });
+        updated();
         continue;
       }
-      writeCacheFile(diskUsageCacheFile(path), { path, bytes, measuredAt: new Date(now()).toISOString() });
-      updated();
+      const claim = takeWalkClaim();
+      if (!claim) return;
+      try {
+        if (!due(path, maxAgeMs)) continue;
+        const targets = walkTargets(path, nested?.() ?? []);
+        const kb = targets.length ? await du(targets, claim) : 0;
+        if (kb === null) {
+          writeCacheFile(diskUsageFailureFile(path), { path, failedAt: new Date(now()).toISOString() });
+          continue;
+        }
+        writeCacheFile(diskUsageCacheFile(path), { ...stamp(), bytes: kb * 1024 });
+        updated();
+      } finally {
+        releaseClaim(claim);
+      }
     }
   }
 

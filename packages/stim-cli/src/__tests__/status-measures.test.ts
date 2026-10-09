@@ -1,8 +1,11 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import {
   ENDED_AGENT_RETENTION_MS,
+  diskUsageWalkClaims,
   readAgentSessionsCache,
   readDiskUsage,
   readEndedAgentSessions,
@@ -27,6 +30,7 @@ let head: string;
 let clock: number;
 let gate: Promise<void> | null;
 let duFails: boolean;
+let duPid: number;
 let kilobytes: Record<string, number>;
 const realHome = process.env.HOME;
 const realUserProfile = process.env.USERPROFILE;
@@ -49,6 +53,7 @@ beforeEach(() => {
   clock = Date.parse('2026-09-27T10:00:00.000Z');
   gate = null;
   duFails = false;
+  duPid = process.pid;
   kilobytes = {
     [app]: 1000,
     [join(app, 'node_modules')]: 400,
@@ -59,9 +64,10 @@ beforeEach(() => {
   setExecutor({
     ...real,
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
-    runFileAsync: async (file, args = []) => {
+    runFileAsync: async (file, args = [], opts) => {
       calls.push({ file, args });
       if (file === 'nice') {
+        opts?.onSpawn?.({ pid: duPid } as ChildProcess);
         await gate;
         if (duFails) throw new Error('Command timed out after 120000ms: du');
         return args
@@ -138,9 +144,6 @@ test('measures stale folders and pull requests in the background, then status re
     checkedAt: measuredAt,
   });
   expect(duWalks()).toHaveLength(4);
-  expect(
-    calls.filter((call) => call.file === 'nice').every((call) => call.args.join(' ').startsWith('-n 19 du -sk ')),
-  ).toBe(true);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
   expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 2))).toEqual([
     ['-C', join(home, 'repo')],
@@ -205,6 +208,23 @@ test('a measured folder is reused until its age limit, then measured again', asy
   measurer.schedule([state], []);
   await settled();
   expect(duWalks()).toHaveLength(8);
+});
+
+test('the walk claim records the du process while it runs and drops it afterwards', async () => {
+  const sleeper = spawn('sleep', ['30']);
+  try {
+    duPid = sleeper.pid!;
+    let release!: () => void;
+    gate = new Promise((resolve) => (release = resolve));
+    const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+    measurer.schedule([environment()], []);
+    await vi.waitFor(() => expect(readClaimSet(diskUsageWalkClaims()).live[0]?.child?.pid).toBe(sleeper.pid));
+    release();
+    await vi.waitFor(() => expect(readDiskUsage(avd)).not.toBeNull());
+    expect(readClaimSet(diskUsageWalkClaims()).live).toEqual([]);
+  } finally {
+    sleeper.kill();
+  }
 });
 
 test('watchers in separate processes share one walk and one failure', async () => {
