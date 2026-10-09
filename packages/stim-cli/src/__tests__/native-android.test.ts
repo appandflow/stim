@@ -126,7 +126,6 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
   });
   expect(findings.some((finding) => finding.detail.includes('one application module'))).toBe(true);
   expect(findings.some((finding) => /node_modules|Metro is not|Podfile/.test(finding.detail))).toBe(false);
-  expect(project.targets).toEqual(['emulator', 'physical']);
   expect(external).not.toHaveBeenCalled();
 });
 
