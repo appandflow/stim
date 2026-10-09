@@ -1,13 +1,9 @@
-// The six packages share one version (RELEASE.md section 0) and declare their
-// edges to each other with pnpm's `workspace:` protocol, which pnpm substitutes
-// with the real version at pack time. So a release bumps six `version` fields
-// and nothing else.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const repositoryRoot = process.env.RELEASE_PREP_ROOT ?? join(import.meta.dirname, '..');
-const packageDirs = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'server'];
+const packageDirs = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
 const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
 const acceptedRanges = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
@@ -64,7 +60,7 @@ const audit = () => {
   const distinct = new Set(versions.values());
   if (distinct.size !== 1) {
     const listed = [...versions].map(([dir, version]) => `packages/${dir}=${version}`).join(' ');
-    problems.push(`the six versions are not in lockstep: ${listed}`);
+    problems.push(`the package versions are not in lockstep: ${listed}`);
   }
   return { problems, version: distinct.size === 1 ? [...distinct][0] : null, ranges };
 };
@@ -135,18 +131,15 @@ if (before.problems.length > 0) {
   fail('refusing to bump an inconsistent tree');
 }
 if (compareVersions(target, before.version) <= 0) {
-  fail(`${target} does not come after ${before.version}, which the six packages already carry`);
+  fail(`${target} does not come after ${before.version}, which the packages already carry`);
 }
 
-// Every manifest is validated and its new text computed before anything is
-// written, and the originals go back if the install or the re-audit fails, so a
-// refusal never leaves the six versions half-bumped.
 const rewrites = packageDirs.map((dir) => bumped(dir, before.version, target));
 for (const { dir, after } of rewrites) writeFileSync(manifestPath(dir), after);
 
 const restore = (message) => {
   for (const { dir, before: original } of rewrites) writeFileSync(manifestPath(dir), original);
-  fail(`${message}\nthe six manifests were restored to ${before.version}`);
+  fail(`${message}\nthe manifests were restored to ${before.version}`);
 };
 
 try {
