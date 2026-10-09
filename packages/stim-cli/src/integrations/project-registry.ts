@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
+import type { IosProject } from './ios-project.ts';
 import type { MacosProject } from './macos-project.ts';
 import type { WebProject } from './web-project.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
@@ -19,6 +20,7 @@ interface ProjectMatch {
   application: boolean;
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
+  ios?(): Promise<IosProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
   validate?(operation: ProjectOperation): ProjectProblem | null | undefined;
@@ -32,6 +34,7 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
+  selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
   isMobileProject(root: string): boolean;
@@ -158,6 +161,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     };
   }
 
+  function selectIos(root: string): ReturnType<ProjectRegistry['selectIos']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'ios');
+    if ('problem' in selected) return selected;
+    if (selected.match.ios) return { load: selected.match.ios };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide an iOS operation.`,
+        remedy: 'Use an integration with an iOS build and runtime recipe.',
+      },
+    };
+  }
+
   function isMobileProject(root: string): boolean {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -186,6 +206,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
   return {
     findProjectRoot,
     projectProblem,
+    selectIos,
     selectMacos,
     selectWeb,
     isMobileProject,
