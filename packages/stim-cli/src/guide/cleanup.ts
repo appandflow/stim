@@ -1,3 +1,4 @@
+import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import type { GuideTopic } from './types.ts';
 
 const cleanup: GuideTopic = {
@@ -670,7 +671,23 @@ THE ONE CASE GC WILL NOT REAP
 
   --older-than does not apply to these kinds and is refused with
   STIM_BAD_ARG. With STIM_HOME set, gc skips them: they are machine-global.
-  \`stim doctor\` notes a watchman footprint over 2 GiB.`,
+  \`stim doctor\` notes a watchman footprint over 2 GiB.
+
+  A checkout that holds its linked worktrees inside it, such as
+  .worktrees/<name>, makes a watchman root there crawl every worktree's files,
+  node_modules and build output. \`stim doctor\` reports each such checkout
+  whose .watchmanconfig ignore_dirs does not exclude them, as
+  ${WATCHMAN_NESTED_WORKTREES}, and says when watchman watches it now.
+  \`stim doctor --fix\` merges the worktrees' shared parent (.worktrees) when
+  git tracks nothing in it, otherwise each worktree path, into that
+  checkout's .watchmanconfig and keeps every other key; it refuses a file
+  that is not a JSON object or whose ignore_dirs is not an array. Watchman
+  matches entries literally: \`.worktrees/\` or \`./.worktrees\` ignores
+  nothing. Commit the file. Watchman reads ignore_dirs only from a root's
+  .watchmanconfig, never from a global config, and only when it adds the
+  root, so an existing root needs \`watchman watch-del <root>\` before the
+  ignore applies. Doctor never runs watch-del or shutdown-server; a watch-del
+  plus a watchman restart frees the memory now.`,
     },
     disk: {
       summary:
