@@ -4,6 +4,12 @@ import StimStores
 import SwiftUI
 
 struct MachineView: View {
+  private enum MachineTab: String, CaseIterable {
+    case overview = "Overview"
+    case builds = "Builds"
+    case storage = "Storage"
+  }
+
   var buildMachines: BuildMachinesModel
   @ObservedObject var status: StatusStore
   var metrics: MetricsStore
@@ -15,6 +21,7 @@ struct MachineView: View {
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
   @State private var selectedMachine: String?
+  @State private var selectedTab: MachineTab = .overview
   @State private var selection: Set<FreeAction>?
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
@@ -42,18 +49,12 @@ struct MachineView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: Space.xxxl) {
         header
-        HStack(spacing: Space.lg) {
-          machineChoices
-            .frame(maxWidth: .infinity, alignment: .leading)
-          Button("Link Machine", systemImage: "plus") {
-            settingsTab = "build-machines"
-            openSettings()
-          }
-          .buttonStyle(.stim())
-        }
-        if let variant = Tips.emptyState(
-          gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
-          selectedMachine: machine, macs: buildMachines.macs)
+        machineChoices
+        Divider()
+        if selectedTab == .overview,
+          let variant = Tips.emptyState(
+            gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
+            selectedMachine: machine, macs: buildMachines.macs)
         {
           BuildMachinesEmptyState(
             add: {
@@ -71,21 +72,37 @@ struct MachineView: View {
         if let machine {
           MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
         } else {
-          MachineHeading(icon: "laptopcomputer", title: "This Mac", subtitle: Host.current().localizedName) {
+          MachineHeading(icon: "laptopcomputer", title: Host.current().localizedName ?? "This Mac", subtitle: "This Mac") {
             EmptyView()
           }
-          NowBand(status: status, metrics: metrics, gc: gc)
+          tabs
           if let plan = autopilot.pressure { pressureBanner(plan) }
-          ThisMacPlacements(model: buildMachines)
-          MachineHeading(icon: "internaldrive", title: "Disk Usage", subtitle: "Workspace, device and tool storage on this Mac.")
-          { EmptyView() }
-          headline(report)
-          if let usage = status.payload?.archivedUsage { ArchivedStorageSection(usage: usage) }
-          safeToFree(report)
-          projects(report)
-          devices(report)
-          runtimes(report)
-          otherTools(report)
+          switch selectedTab {
+          case .overview:
+            MachineResourceSummary(
+              metrics: metrics, volume: lowestVolume, minimumFreeBytes: minimumFreeBytes, compact: width < 620)
+            if width >= 820 {
+              HStack(alignment: .top, spacing: Space.xl) {
+                NowBand(status: status, gc: gc).frame(maxWidth: .infinity)
+                cleanupSummary(report).frame(width: 240)
+              }
+            } else {
+              NowBand(status: status, gc: gc)
+              cleanupSummary(report)
+            }
+            ThisMacPlacements(model: buildMachines, limit: 3)
+          case .builds:
+            ThisMacPlacements(model: buildMachines, showsEmpty: true)
+          case .storage:
+            storageHeader
+            headline(report)
+            if let usage = status.payload?.archivedUsage { ArchivedStorageSection(usage: usage) }
+            safeToFree(report)
+            projects(report)
+            devices(report)
+            runtimes(report)
+            otherTools(report)
+          }
         }
       }
       .padding(compact ? Space.xxl : Space.xxxl)
@@ -135,25 +152,53 @@ struct MachineView: View {
     }
   }
 
-  // MARK: Header
+  private var lowestVolume: DiskVolume? {
+    metrics.volumes.min { $0.freeBytes < $1.freeBytes } ?? autopilot.lowestVolume
+  }
+
+  private var minimumFreeBytes: Int64? {
+    autopilot.budget.flatMap { $0.minFree > 0 ? Int64($0.minFree * 1_000_000_000) : nil }
+  }
+
+  #if DEBUG
+    private var previewMachineNames: [String] {
+      ["Mac mini", "Mac Studio"].filter { name in
+        !(buildMachines.entries ?? []).contains { machineName($0) == name }
+      }
+    }
+  #endif
 
   private var machineChoices: some View {
     ViewThatFits(in: .horizontal) {
-      HStack(spacing: Space.sm) {
+      HStack(spacing: Space.md) {
         Button {
           selectedMachine = nil
         } label: {
-          Label("This Mac", systemImage: "laptopcomputer")
+          machineLabel("This Mac", subtitle: "Local", tone: nil, selected: machine == nil)
         }
-        .buttonStyle(.stim(machine == nil ? .primary : .secondary, .regular))
+        .buttonStyle(.plain)
         .accessibilityAddTraits(machine == nil ? .isSelected : [])
+        #if DEBUG
+          ForEach(previewMachineNames, id: \.self) { name in
+            Button {
+            } label: {
+              machineLabel(name, subtitle: "Preview", tone: .tertiary, selected: false)
+            }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .help("Visual preview only. This machine is not connected.")
+          }
+        #endif
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
           Button {
             selectedMachine = entry
           } label: {
-            Label(machineName(entry), systemImage: "desktopcomputer")
+            let readiness = buildMachines.check(in: checkout)?.statuses.first { $0.machine == entry }?.readiness
+            machineLabel(
+              machineName(entry), subtitle: readiness?.title ?? "Not checked", tone: readiness?.tone ?? .neutral,
+              selected: machine == entry)
           }
-          .buttonStyle(.stim(machine == entry ? .primary : .secondary, .regular))
+          .buttonStyle(.plain)
           .accessibilityAddTraits(machine == entry ? .isSelected : [])
           .help(entry)
         }
@@ -161,6 +206,11 @@ struct MachineView: View {
       .fixedSize(horizontal: true, vertical: false)
       Picker("Machine", selection: Binding(get: { machine }, set: { selectedMachine = $0 })) {
         Text("This Mac").tag(String?.none)
+        #if DEBUG
+          ForEach(previewMachineNames, id: \.self) { name in
+            Text("\(name) (preview)").tag(Optional("preview:\(name)")).disabled(true)
+          }
+        #endif
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
           Text(verbatim: machineName(entry)).tag(Optional(entry))
         }
@@ -170,27 +220,113 @@ struct MachineView: View {
     }
   }
 
+  private func machineLabel(_ title: String, subtitle: String, tone: Tone?, selected: Bool) -> some View {
+    HStack(spacing: Space.lg) {
+      if let tone {
+        Circle().fill(Color(tone)).frame(width: 7, height: 7).accessibilityHidden(true)
+      } else {
+        Image(systemName: "laptopcomputer").accessibilityHidden(true)
+      }
+      VStack(alignment: .leading, spacing: Space.xxs) {
+        Text(verbatim: title).font(.stim(.callout, weight: .semibold))
+        Text(verbatim: subtitle).font(.stim(.caption))
+          .foregroundStyle(selected ? Palette.onBrand.opacity(0.85) : Palette.secondary)
+      }
+    }
+    .foregroundStyle(selected ? Palette.onBrand : Palette.text)
+    .padding(.horizontal, Space.xl)
+    .padding(.vertical, Space.lg)
+    .frame(minWidth: 120, alignment: .leading)
+    .background(RoundedRectangle(cornerRadius: Radius.control).fill(selected ? Palette.brand : Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(selected ? Color.clear : Palette.border))
+    .contentShape(RoundedRectangle(cornerRadius: Radius.control))
+  }
+
+  private var tabs: some View {
+    HStack(spacing: Space.xxl) {
+      ForEach(MachineTab.allCases, id: \.self) { tab in
+        Button {
+          selectedTab = tab
+        } label: {
+          Text(tab.rawValue)
+            .font(.stim(.callout, weight: selectedTab == tab ? .semibold : .regular))
+            .foregroundStyle(selectedTab == tab ? Palette.primary : Palette.secondary)
+            .padding(.horizontal, Space.sm)
+            .padding(.bottom, Space.lg)
+            .overlay(alignment: .bottom) {
+              Rectangle().fill(selectedTab == tab ? Palette.primary : Color.clear).frame(height: 2)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(tab.rawValue) tab")
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+      }
+      Spacer(minLength: 0)
+    }
+    .background(alignment: .bottom) { Rectangle().fill(Palette.border).frame(height: 1) }
+  }
+
   private var header: some View {
     HStack(alignment: .firstTextBaseline) {
       VStack(alignment: .leading, spacing: Space.xs) {
         Text("Machines").font(.stim(.title))
-        Text("View resource usage and disk space on this Mac, or build activity on a linked Mac.")
+        Text("Your computers, at a glance.")
           .foregroundStyle(Palette.secondary)
       }
       Spacer()
-      if machine == nil, let at = storage.measuredAt, !storage.measuring, !gc.running {
+      Button("Link Machine", systemImage: "plus") {
+        settingsTab = "build-machines"
+        openSettings()
+      }
+      .buttonStyle(.stim(.plain, .regular))
+      .environment(\.stimButtonAccent, Palette.secondary)
+    }
+  }
+
+  private var storageHeader: some View {
+    HStack(alignment: .firstTextBaseline, spacing: Space.lg) {
+      Text("Storage").font(.stim(.headline))
+      Spacer()
+      if let at = storage.measuredAt, !storage.measuring, !gc.running {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-          Text("Measured \(Format.age(context.date.timeIntervalSince(at)))").foregroundStyle(Palette.tertiary)
+          Text("Measured \(Format.age(context.date.timeIntervalSince(at)))")
+            .font(.stim(.caption)).foregroundStyle(Palette.tertiary)
         }
       }
-      if machine == nil {
-        Button("Refresh") {
-          storage.refresh(force: true)
-          gc.refresh()
-        }
-        .buttonStyle(.stim())
-        .disabled(storage.measuring || gc.running)
+      Button("Refresh", systemImage: "arrow.clockwise") {
+        storage.refresh(force: true)
+        gc.refresh()
       }
+      .buttonStyle(.stim(.plain))
+      .environment(\.stimButtonAccent, Palette.secondary)
+      .disabled(storage.measuring || gc.running)
+    }
+  }
+
+  private func cleanupSummary(_ report: StorageReport) -> some View {
+    let bytes = FreePlan.bytes(report.free, selected: Set(report.free.map(\.action)))
+    let incomplete = report.free.contains { $0.bytes == nil }
+    return Card {
+      VStack(alignment: .leading, spacing: Space.lg) {
+        Text("Storage to reclaim").font(.stim(.headline))
+        if gc.report == nil {
+          Text(gc.running ? "Measuring..." : "Unavailable").font(.stim(.title))
+        } else {
+          Text((incomplete ? "\u{2265} " : "") + Format.fileSize(bytes)).font(.stim(.title)).monospacedDigit()
+        }
+        Text(
+          gc.error != nil
+            ? "The cleanup report could not be refreshed. Review Storage for details."
+            : "Review unused devices, caches and build outputs."
+        )
+        .font(.stim(.callout)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        Button("Review cleanup") { selectedTab = .storage }
+          .buttonStyle(.stim(.primary, .regular))
+          .padding(.top, Space.md)
+      }
+      .padding(Space.xl)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -225,8 +361,8 @@ struct MachineView: View {
   }
 
   private func headline(_ report: StorageReport) -> some View {
-    let lowest = metrics.volumes.min { $0.freeBytes < $1.freeBytes } ?? autopilot.lowestVolume
-    let budget = autopilot.budget.flatMap { $0.minFree > 0 ? Int64($0.minFree * 1_000_000_000) : nil }
+    let lowest = lowestVolume
+    let budget = minimumFreeBytes
     let categories: [(DiskCategory, CategoryTotal)] = DiskCategory.allCases.map { ($0, report.total($0)) }
     let total = max(1, categories.map { $0.1.bytes }.reduce(0, +))
     let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
