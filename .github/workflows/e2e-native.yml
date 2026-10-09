@@ -121,6 +121,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  STIM_E2E_STRICT_QA: '1'
+
 jobs:
   plan:
     name: plan
@@ -169,6 +172,7 @@ jobs:
         exclude:
           - framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       # The registry stays throwaway per run (the driver makes its own temp home)
       # for deterministic device/project state; the SHARED build cache is
@@ -318,15 +322,18 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-pool-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-pool-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -349,6 +356,7 @@ jobs:
           - suite: smoke
             framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
       STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-android-${{ matrix.framework }}
@@ -480,14 +488,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -499,14 +509,6 @@ jobs:
   #
   # The SDK, system image and acceleration facts live in
   # .github/actions/windows-android-sdk, shared with windows-debug.yml.
-  #
-  # The loop suite's driver step is still allowed to fail while the APK
-  # assertion below it is not: the named-slots phase exits 1 after the loop has
-  # passed, because a repeated slot loses device.systemImage (#892) and the
-  # resulting all-ABI build overruns the NDK object-path limit (#893). Until
-  # those land the assertion is that suite's gate; then the driver step becomes
-  # it and the assertion goes. The smoke suite never reaches that phase, so its
-  # driver step is the gate.
   windows:
     name: android bare (${{ matrix.suite }}, windows)
     needs: plan
@@ -518,6 +520,7 @@ jobs:
       matrix:
         suite: ${{ fromJSON(needs.plan.outputs.windows) }}
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
       # under it. It is D:\e rather than a path inside the workspace because
       # every CMake object path is built from the fixture root and Windows caps
@@ -570,25 +573,11 @@ jobs:
         continue-on-error: true
         run: node packages/stim-cli/dist/cli.mjs doctor --platform android
 
-      # --keep leaves the fixture and its worktrees on this ephemeral runner so
-      # the assertion and the upload below can read them.
       - name: Android ${{ matrix.suite }} e2e (bare)
-        continue-on-error: ${{ matrix.suite == 'loop' }}
         run: >-
           node test/e2e/native/run-native-e2e.mjs
           --framework bare --platform android --keep --home "D:\e\stim-home"
           ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
-
-      # The step that decides the loop suite's colour until #892 and #893 land:
-      # the driver step above passes the build, install and launch, then exits 1
-      # in the named-slots phase, so the artifact is the part this job can hold.
-      - name: Assert Stim produced an APK
-        if: matrix.suite == 'loop'
-        run: |
-          $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
-          "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
 
       - name: Trim the cross-run build cache to its newest entries
         if: github.ref == 'refs/heads/main'
@@ -616,11 +605,12 @@ jobs:
 
       - name: Upload build and device logs
         if: always()
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: windows-android-${{ matrix.suite }}-logs
-          path: D:\e\stim-home\workspaces\**\logs\*
+          path: |
+            D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\archive\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

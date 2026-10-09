@@ -64,9 +64,9 @@ struct OverviewView: View {
           if !archived.isEmpty { archivedSection(archived) }
           if let tip { tipSection(tip) }
         }
-        .padding(Space.xxxl)
+        .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - Space.xxxl * 2) }) { contentWidth = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - PageInset.horizontal * 2) }) { contentWidth = $0 }
       }
       .task(id: projects.map(\.project.root)) {
         let roots = projects.map(\.project.root)

@@ -11,7 +11,7 @@
   ],
   "workspaces": {
     ".": {
-      "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs"]
+      "entry": ["apps/desktop/scripts/*.mjs", "packaging/store/assemble.mjs", "scripts/ci/app-smoke.mjs"]
     },
     "packages/server": {
       "ignoreBinaries": ["plutil", "ditto", "mkfifo"]

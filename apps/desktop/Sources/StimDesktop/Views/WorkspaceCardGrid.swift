@@ -85,7 +85,7 @@ struct WorkspaceCardView: View {
           }
           if options.count > 1 { switcher(options, selected: selected) }
         }
-        .padding(Space.xl)
+        .padding(CardMetrics.headerPadding)
         Spacer(minLength: 0)
         media(selected)
           .frame(maxWidth: .infinity)

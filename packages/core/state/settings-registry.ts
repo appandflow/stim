@@ -150,11 +150,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'ios.simslimProfile',
@@ -232,11 +232,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'metro.tunnel',
