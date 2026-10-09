@@ -124,6 +124,7 @@ struct MacosLocalScreen: View {
   private struct Frame: @unchecked Sendable {
     var buffer: CVPixelBuffer
     var surface: IOSurfaceRef
+    var source: SCStream
   }
 
   override init() {
@@ -199,7 +200,7 @@ struct MacosLocalScreen: View {
     let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
     guard self.app?.launchId == app.launchId else { return }
     guard matches(app) else {
-      if stream != nil {
+      if stream != nil || hasFrame {
         error = "The owned app process changed or exited."
         await stop()
       }
@@ -254,6 +255,7 @@ struct MacosLocalScreen: View {
       }
       self.filter = filter
       self.plan = plan
+      retryAt = nil
       window = next
       current = selection.current
       error = nil
@@ -284,8 +286,8 @@ struct MacosLocalScreen: View {
 
   private func updatePlan() async {
     guard let stream, let filter, let next = plan(for: filter), next != plan else { return }
+    guard (try? await stream.updateConfiguration(Self.configuration(next))) != nil, self.stream === stream else { return }
     plan = next
-    try? await stream.updateConfiguration(Self.configuration(next))
   }
 
   private func pause() async {
@@ -364,10 +366,9 @@ struct MacosLocalScreen: View {
     guard type == .screen, Self.isComplete(sampleBuffer), let buffer = sampleBuffer.imageBuffer,
       let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue()
     else { return }
-    let frame = Frame(buffer: buffer, surface: surface)
-    let source = ObjectIdentifier(stream)
+    let frame = Frame(buffer: buffer, surface: surface, source: stream)
     DispatchQueue.main.async {
-      MainActor.assumeIsolated { self.display(frame, from: source) }
+      MainActor.assumeIsolated { self.display(frame) }
     }
   }
 
@@ -381,8 +382,8 @@ struct MacosLocalScreen: View {
     return SCFrameStatus(rawValue: raw) == .complete
   }
 
-  private func display(_ frame: Frame, from source: ObjectIdentifier) {
-    guard let stream, ObjectIdentifier(stream) == source else { return }
+  private func display(_ frame: Frame) {
+    guard stream === frame.source else { return }
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     layer.contents = frame.surface
