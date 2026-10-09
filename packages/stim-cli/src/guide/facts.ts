@@ -974,8 +974,9 @@ RULES
       body: () => `  stim status --json
 
   logs        { dir, errorsSinceMarker }, or null without a log directory
-  agentDevice { stateDir }: absolute workspace agent-device state path on
-              every environment, shared by its slots. Reporting it creates
+  agentDevice { stateDir, installed }: absolute workspace agent-device state
+              path on every environment, shared by its slots, and whether
+              the agent-device executable is on PATH. Reporting it creates
               no directory; agent-device creates it when used.
 
   Each environment carries phase, where the workspace is in its lifecycle:

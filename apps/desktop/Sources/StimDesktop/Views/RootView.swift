@@ -123,11 +123,15 @@ struct RootView: View {
         if tutorial.isOpen, let snapshot = tutorial.snapshot {
           Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           TutorialPanel(
-            snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message, prompt: tutorial.prompt,
+            snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
-            commands: tutorial.commands,
+            canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
+            agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
+            asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
-            restart: { tutorial.restart() }, setManual: tutorial.setManual, close: tutorial.close,
+            restart: { tutorial.restart() },
+            runIOS: { if let workspace = tutorial.workspace { actions.runApp(workspace, platform: "ios") } },
+            close: tutorial.close,
             openArchived: openTutorialArchive,
             pairPhone: { openRequests.pairsPhone = true },
             addMachine: {
