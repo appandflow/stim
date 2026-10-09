@@ -1,5 +1,6 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import * as chromeLookup from '../web/chrome.ts';
+import * as browserCdp from '../web/cdp.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -21,12 +22,12 @@ import { teardownOwnedBrowser } from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { environmentState, withWebFacts } from '../status.ts';
-import { runWeb, resolveWebUrl } from '../commands/web.ts';
+import { runWeb } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
-import type { NdjsonRecord } from '../ndjson.ts';
-import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
+import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
+import { resolveWebUrl, webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
 import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import {
   latestPageLoad,
@@ -34,6 +35,7 @@ import {
   readWebRecord,
   webFacts,
   webProfileDir,
+  webLogFile,
   writeWebRecord,
   type WebRecord,
 } from '../web/state.ts';
@@ -143,6 +145,31 @@ describe('web Metro pin', () => {
     expect(launch).not.toHaveBeenCalled();
     expect(getProject(root)?.metroPort).toBe(null);
     expect(getProject(join(home, 'other'))?.metroPort).toBe(25062);
+  });
+});
+
+describe('selected web runtime preparation', () => {
+  afterEach(() => {
+    resetExecutor();
+    vi.restoreAllMocks();
+  });
+
+  test.each([
+    { manifest: { name: 'tools' }, expo: false, code: 'STIM_WEB_NO_URL' },
+    { manifest: { dependencies: { expo: '*' } }, expo: true, code: 'STIM_WEB_DEPS_MISSING' },
+  ])('keeps the $code refusal before browser launch', async ({ manifest, expo, code }) => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify(manifest));
+    if (expo) writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture', slug: 'fixture' } }));
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/chrome');
+    const launch = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: launch }));
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code } });
+    expect(launch).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(readWebRecord(root)).toBeNull();
   });
 });
 
@@ -540,6 +567,72 @@ async function ownedBrowser(): Promise<WebRecord> {
   writeWebRecord(realpathSync(root), record);
   return record;
 }
+
+describe.skipIf(process.platform === 'win32')('selected configured-URL runtime', () => {
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  test.each([
+    { kind: 'tooling', expo: false, manifest: JSON.stringify({ name: 'tools' }) },
+    { kind: 'Expo without web dependencies', expo: true, manifest: JSON.stringify({ dependencies: { expo: '*' } }) },
+    { kind: 'unreadable package manifest', expo: false, manifest: '{' },
+  ])('uses the configured page at a $kind root and verifies each owned navigation', async ({ manifest, expo }) => {
+    writeFileSync(join(root, 'package.json'), manifest);
+    if (expo) writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture', slug: 'fixture' } }));
+    const owned = { ...(await ownedBrowser()), targetId: 'owned-page' };
+    writeWebRecord(root, owned);
+    const url = 'http://localhost:8901/selected-page/';
+    upsertProject(root, { settings: { web: { url } } });
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue(owned.chrome);
+    const spawnBrowser = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: spawnBrowser }));
+    let status = 200;
+    const navigations: unknown[] = [];
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method, params) {
+        if (method === 'Target.getTargetInfo') return { targetInfo: { url: owned.url } };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Page.navigate') {
+          navigations.push(params?.url);
+          const writer = createNdjsonWriter(webLogFile(root));
+          if (status === 200) {
+            writer.write({ event: 'web_document_response', status });
+            writer.write({ event: 'web_page_loaded' });
+          } else {
+            writer.write({ event: 'web_document_failed', msg: `failed: HTTP ${status}` });
+          }
+          writer.close();
+        }
+        return {};
+      },
+      onEvent: () => {},
+      onClose: () => {},
+      close: () => {},
+    });
+
+    const loaded = await runWeb({ root, headed: false, note: () => {} });
+    expect(loaded).toMatchObject({
+      ok: true,
+      remedy: null,
+      facts: { url, launched: true, running: true, reused: true, metroPort: null, pid: owned.chromeProcess?.pid },
+    });
+    status = 503;
+    const failed = await runWeb({ root, headed: false, note: () => {} });
+    expect(failed).toMatchObject({
+      ok: true,
+      remedy: expect.stringContaining('The dev server failed to serve'),
+      facts: { url, launched: 'unverified', running: true, reused: true, metroPort: null },
+    });
+    expect(navigations).toEqual([url, url]);
+    expect(spawnBrowser).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(readWebRecord(root)).toMatchObject({ url, pid: owned.pid, chromeProcess: owned.chromeProcess });
+  });
+});
 
 describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process groups; skipped on win32)', () => {
   test('stop closes the verified supervisor and Chrome group, clears lock files and keeps the profile', async () => {

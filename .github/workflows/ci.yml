@@ -149,6 +149,23 @@ jobs:
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.test.ts
 
+  native-process-inspection:
+    name: native process inspection (${{ matrix.os }})
+    if: github.event_name != 'schedule'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify recorded process inspection and exit
+        run: node --test test/e2e/native-processes.e2e.js
+
   windows-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/windows-full.yml

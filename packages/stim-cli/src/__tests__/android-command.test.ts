@@ -1,4 +1,5 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { androidProcessRuntime } from '../commands/android/launch.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
@@ -4252,6 +4253,55 @@ describe('variant resolution', () => {
     expect(isReleaseVariant(null)).toBe(false);
     expect(isReleaseVariant('')).toBe(false);
   });
+});
+
+test('a runtime preparation refusal returns a structured error before device or artifact work', async () => {
+  const error = {
+    code: 'STIM_BAD_ARG',
+    message: 'The selected runtime cannot prepare this endpoint.',
+    remedy: 'Select an available endpoint.',
+    lines: ['The requested endpoint is unavailable.'],
+  };
+  const h = harness({
+    json: true,
+    runtimePlan: androidProcessRuntime(async () => ({ ok: false, error })),
+  });
+  const result = await h.run();
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: error.code, message: error.message, remedy: error.remedy },
+  });
+  expect(h.stdout).toHaveLength(1);
+  expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: error.code, message: error.message, remedy: error.remedy });
+  expect(h.stderr.join('\n')).toContain(error.lines[0]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.booted).toEqual([]);
+  expect(h.calls.fingerprint).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(h.calls.install).toEqual([]);
+  expect(h.calls.launch).toEqual([]);
+  expect(h.calls.launchRelease).toEqual([]);
+});
+
+test('a process runtime preserves Debug compilation, cache identity and signer policy without Metro', async () => {
+  const h = harness({
+    json: true,
+    variant: 'productionDebug',
+    runtimePlan: androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    resolveMetro: never('the Metro probe'),
+    startServer: never('the dev server start'),
+    warmMetro: never('Metro warmup'),
+    verifyLaunched: never('bundle readiness'),
+    launch: never('Metro launch routing'),
+  });
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.build[0]?.variant).toBe('productionDebug');
+  expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productiondebug-sim`);
+  expect(h.calls.install[0]?.allowUninstall).toBe(false);
+  expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
+  expect(h.calls.verifyRelease).toHaveLength(1);
+  expect(result.facts).toMatchObject({ variant: 'productionDebug', metroPort: null, launched: true });
 });
 
 describe('release skips Metro entirely', () => {

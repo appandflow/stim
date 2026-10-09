@@ -78,7 +78,8 @@ const reactNativeProject: ProjectIntegration = {
       application: problem === null,
       ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
       platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
-      validate: () => problem,
+      validate: (operation) =>
+        operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
     };
   },
 };
@@ -92,22 +93,26 @@ const swiftPackage: ProjectIntegration = {
       application: true,
       platforms: (settings) =>
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
+      validate: (operation) => (operation === 'macos' ? null : undefined),
+      macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
     };
   },
 };
 
-const configuredWeb: ProjectIntegration = {
-  id: 'configured-web',
-  inspect() {
+const browserWeb: ProjectIntegration = {
+  id: 'browser-web',
+  inspect(root) {
     return {
       root: false,
       application: false,
       platforms: (settings) => (webSettings(settings).url !== null ? ['web'] : []),
+      validate: (operation) => (operation === 'web' ? null : undefined),
+      web: async () => (await import('./browser-web.ts')).browserWebProject(root),
     };
   },
 };
 
-export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, configuredWeb];
+export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 

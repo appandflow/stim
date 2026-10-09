@@ -1,4 +1,5 @@
 import * as portProbes from '../ports.ts';
+import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -128,6 +129,7 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
+  runFileAsync(): Promise<string>;
   runQuiet(cmd: string): string;
   runFileQuiet(file: string): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
@@ -152,6 +154,9 @@ function metroExecutor({
       return '';
     },
     runFile() {
+      return '';
+    },
+    async runFileAsync() {
       return '';
     },
     runQuiet(cmd) {
@@ -2179,6 +2184,24 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
       message: expect.stringContaining('held by something else'),
     });
     expect(getProject(root)?.metroPort).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
+  test('an unpinned first use refuses with the inspection code when no listener check can answer', async () => {
+    vi.spyOn(listeningPorts, 'readListeningPorts').mockRejectedValue(new Error('netstat printed no TCP listen table.'));
+    vi.spyOn(listeningPorts, 'readLsofListeningPorts').mockResolvedValue(null);
+    vi.spyOn(listeningPorts, 'probeLoopback').mockResolvedValue('unknown');
+    const exec = metroExecutor();
+    setExecutor(exec);
+
+    const result = await runAction({ json: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({
+      code: 'STIM_PORT_INSPECTION_FAILED',
+      message: expect.stringContaining('netstat printed no TCP listen table.'),
+    });
+    expect(getProject(root)?.metroPort ?? null).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
   });
 

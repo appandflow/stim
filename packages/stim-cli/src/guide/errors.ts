@@ -1074,6 +1074,17 @@ captured"  (in metro.ndjson, bare RN)
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
     },
+    STIM_PORT_INSPECTION_FAILED: {
+      summary: 'no free Metro port could be confirmed: netstat, lsof and loopback connects all failed',
+      body: () => `STIM_PORT_INSPECTION_FAILED
+  Stim reads the native TCP listener table (netstat on macOS and Windows,
+  /proc/net on Linux) to find a free Metro port. When that table is denied,
+  empty or unreadable, it checks each candidate with an lsof listener scan and
+  connects to 127.0.0.1 and ::1. This refusal means none of them could answer,
+  usually because a sandbox denies them. Allow Stim to run netstat or lsof, or
+  to connect to loopback, then retry. A metro.port pin skips the scan for
+  Metro. \`stim ports get\` prints the same message.`,
+    },
     STIM_SUPERVISOR_EXITED: {
       summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',
       body: () => `STIM_SUPERVISOR_EXITED

@@ -125,12 +125,20 @@ shuts down owned devices; it does not delete them.
 
 ## Disposable and shared runners
 
-`CI=true` changes no coordination or ownership guarantees. The default keeps
-normal Stim configuration, including configured build/device caps. Use it for
-persistent runners and local reproduction.
+GitHub-hosted jobs need no home or cache configuration. When `GITHUB_ACTIONS=true`,
+`RUNNER_ENVIRONMENT=github-hosted` and `RUNNER_TEMP` is set, the package defaults to
+`$RUNNER_TEMP/stim-ci/home` and `$RUNNER_TEMP/stim-ci/build-cache`. Repeated steps
+in the same job reuse these paths. The public API and test command receive the
+same paths without changing the caller's environment.
 
-For a disposable runner dedicated to one job, explicitly provide a fresh job
-home and a job-local artifact cache:
+An explicit `home` / `--home` or `STIM_HOME` retains the caller's home and normal
+cache configuration. An explicit `buildCache` / `--build-cache` or
+`STIM_BUILD_CACHE` overrides the automatic cache path. Self-hosted runners,
+other providers and local runs keep normal Stim configuration and configured
+build/device caps. `CI=true` alone changes no defaults or coordination guarantees.
+
+For another disposable runner dedicated to one job, explicitly provide a fresh
+job home and a job-local artifact cache:
 
 ```sh
 stim-ci run --platform ios --project ./app \

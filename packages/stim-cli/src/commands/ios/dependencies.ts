@@ -1,3 +1,4 @@
+import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
@@ -69,6 +70,7 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
