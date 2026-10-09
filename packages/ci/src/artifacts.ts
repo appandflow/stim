@@ -1,9 +1,10 @@
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, readdir } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, readdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 
-async function regularFiles(directory: string): Promise<string[]> {
+async function regularFiles(directory: string, resolveDirectory = false): Promise<string[]> {
   try {
+    if (resolveDirectory) directory = await realpath(directory);
     if (!(await lstat(directory)).isDirectory()) return [];
     const entries = await readdir(directory, { withFileTypes: true });
     return entries
@@ -38,10 +39,10 @@ export async function copyDiagnosticLogs(directory: string, artifactsDir: string
   return files;
 }
 
-/** Lists only CI result, test and diagnostic evidence; never follows links or includes app binaries. */
+/** Lists CI result, test and diagnostic evidence from an explicit root, excluding linked entries and app binaries. */
 export async function diagnosticArtifactFiles(artifactsDir: string): Promise<string[]> {
   const reports = new Set(['result.json', 'run.json', 'diagnostics.json', 'test.stdout.log', 'test.stderr.log']);
-  const files = (await regularFiles(artifactsDir))
+  const files = (await regularFiles(artifactsDir, true))
     .filter((name) => reports.has(name))
     .map((name) => join(artifactsDir, name));
   const logs = join(artifactsDir, 'logs');

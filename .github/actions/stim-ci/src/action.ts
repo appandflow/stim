@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
@@ -109,10 +109,11 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
 export async function runAction(): Promise<number> {
   const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
   const options = readInputs((name) => core.getInput(name, { trimWhitespace: name !== 'command' }), root);
+  mkdirSync(options.artifacts, { recursive: true });
+  options.artifacts = realpathSync(options.artifacts);
   const resultPath = join(options.artifacts, 'result.json');
   core.setOutput('result', resultPath);
   core.setOutput('artifacts', options.artifacts);
-  mkdirSync(options.artifacts, { recursive: true });
   if (readdirSync(options.artifacts).length) {
     throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
   }

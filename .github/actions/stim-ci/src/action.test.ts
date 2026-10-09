@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readInputs, runAction } from './action.ts';
@@ -206,5 +215,20 @@ writeFileSync(join(dir, 'ready'), 'ready');
     expect(await running).toBe(130);
     expect(JSON.parse(readFileSync(join(root, 'results/result.json'), 'utf8')).exitCode).toBe(130);
     expect(github.upload).toHaveBeenCalled();
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'uses the same canonical artifacts root for the child, outputs and upload',
+  async () => {
+    fixture(0);
+    const target = join(root, 'actual-results');
+    mkdirSync(target);
+    symlinkSync(target, join(root, 'results'), 'junction');
+    expect(await runAction()).toBe(0);
+    expect(github.output).toHaveBeenCalledWith('result', join(target, 'result.json'));
+    expect(github.output).toHaveBeenCalledWith('artifacts', target);
+    expect(github.upload.mock.calls[0]![1]).toEqual([join(target, 'result.json'), join(target, 'test.stderr.log')]);
+    expect(github.upload.mock.calls[0]![2]).toBe(target);
   },
 );

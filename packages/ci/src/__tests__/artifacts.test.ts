@@ -79,3 +79,21 @@ it('refuses destination links and existing files without overwriting their conte
   await expect(copyDiagnosticLogs(source, artifacts)).rejects.toThrow(/EEXIST/);
   expect(readFileSync(join(artifacts, 'logs', 'compiler.log'), 'utf8')).toBe('earlier test evidence');
 });
+
+it('selects reports and logs consistently through an explicit symlink root while excluding linked entries', async () => {
+  const target = join(root, 'actual-results');
+  const artifacts = join(root, 'linked-results');
+  mkdirSync(join(target, 'logs'), { recursive: true });
+  writeFileSync(join(target, 'result.json'), '{}');
+  writeFileSync(join(target, 'test.stdout.log'), 'test output');
+  writeFileSync(join(target, 'logs', 'native.log'), 'native output');
+  writeFileSync(join(root, 'private.log'), 'private');
+  symlinkSync(join(root, 'private.log'), join(target, 'test.stderr.log'));
+  symlinkSync(join(root, 'private.log'), join(target, 'logs', 'linked.log'));
+  symlinkSync(target, artifacts, 'junction');
+  expect((await diagnosticArtifactFiles(artifacts)).map((file) => relative(artifacts, file))).toEqual([
+    'result.json',
+    'test.stdout.log',
+    join('logs', 'native.log'),
+  ]);
+});
