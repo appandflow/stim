@@ -19,7 +19,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import "child_process";
 import "timers";
 import { spawn } from "node:child_process";
-import fs, { lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, rmSync } from "node:fs";
+import fs, { lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
 import { join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
@@ -28,7 +28,7 @@ import * as stream$2 from "stream";
 import { Readable as Readable$1 } from "stream";
 import { Buffer as Buffer$1 } from "buffer";
 import fs$1, { realpath } from "fs/promises";
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, readdir, realpath as realpath$1 } from "node:fs/promises";
 //#region \0rolldown/runtime.js
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -97522,8 +97522,9 @@ If the error persists, please check whether Actions and API requests are operati
 new DefaultArtifactClient();
 //#endregion
 //#region ../../../packages/ci/dist/artifacts.mjs
-async function regularFiles(directory) {
+async function regularFiles(directory, resolveDirectory = false) {
 	try {
+		if (resolveDirectory) directory = await realpath$1(directory);
 		if (!(await lstat(directory)).isDirectory()) return [];
 		return (await readdir(directory, { withFileTypes: true })).filter((entry) => entry.isFile()).map((entry) => entry.name).toSorted();
 	} catch (error) {
@@ -97534,7 +97535,7 @@ async function regularFiles(directory) {
 function isLog(name) {
 	return /\.(?:log|ndjson)(?:\.1)?$/.test(name);
 }
-/** Lists only CI result, test and diagnostic evidence; never follows links or includes app binaries. */
+/** Lists CI result, test and diagnostic evidence from an explicit root, excluding linked entries and app binaries. */
 async function diagnosticArtifactFiles(artifactsDir) {
 	const reports = /* @__PURE__ */ new Set([
 		"result.json",
@@ -97543,7 +97544,7 @@ async function diagnosticArtifactFiles(artifactsDir) {
 		"test.stdout.log",
 		"test.stderr.log"
 	]);
-	const files = (await regularFiles(artifactsDir)).filter((name) => reports.has(name)).map((name) => join(artifactsDir, name));
+	const files = (await regularFiles(artifactsDir, true)).filter((name) => reports.has(name)).map((name) => join(artifactsDir, name));
 	const logs = join(artifactsDir, "logs");
 	return [...files, ...(await regularFiles(logs)).filter(isLog).map((name) => join(logs, name))];
 }
@@ -97616,10 +97617,11 @@ function currentResult(path, options, started) {
 async function runAction() {
 	const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
 	const options = readInputs((name) => getInput(name, { trimWhitespace: name !== "command" }), root);
+	mkdirSync(options.artifacts, { recursive: true });
+	options.artifacts = realpathSync(options.artifacts);
 	const resultPath = join(options.artifacts, "result.json");
 	setOutput("result", resultPath);
 	setOutput("artifacts", options.artifacts);
-	mkdirSync(options.artifacts, { recursive: true });
 	if (readdirSync(options.artifacts).length) throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
 	let installation;
 	try {
