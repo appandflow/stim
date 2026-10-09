@@ -523,6 +523,8 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('the Metro gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   afterEach(() => vi.unstubAllEnvs());
 
   test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
@@ -713,6 +715,8 @@ function tick() {
 }
 
 describe('the simulator boot gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('the fingerprint starts with the boot, and each line reports its own wall time', async () => {
     reserve();
     let clock = 1_000_000;
@@ -793,6 +797,8 @@ describe('the simulator boot gate', () => {
 });
 
 describe('parked simulator adoption', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
     reserve();
     const events: string[] = [];
@@ -1081,6 +1087,8 @@ describe('the boot this run performed', () => {
 });
 
 describe('Metro prefetch', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([null, '/custom.bundle?platform=ios&dev=true'])(
     'starts before native work without waiting for the bundle: %s',
     async (bundleUrl) => {
