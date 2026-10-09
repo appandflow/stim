@@ -96,7 +96,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.qa_scope && inputs.qa_scope != 'all' && format('-{0}', inputs.qa_scope) || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.qa_scope && inputs.qa_scope != 'all' && format('-{0}-{1}', inputs.qa_scope, inputs.suite) || '' }}
   cancel-in-progress: true
 
 permissions:
