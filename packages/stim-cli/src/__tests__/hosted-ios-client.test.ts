@@ -21,7 +21,7 @@ import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
-import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
+import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
@@ -192,7 +192,11 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false, slot = 'default') {
+async function deliver(
+  release = false,
+  slot = 'default',
+  enterPhase?: (phase: 'device' | 'install' | 'launch') => void,
+) {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
@@ -209,6 +213,7 @@ async function deliver(release = false, slot = 'default') {
       devClientScheme: 'exp+fixture',
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
+      enterPhase,
       metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
     });
   } finally {
@@ -238,6 +243,21 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
   expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
+});
+
+test('placement moves the build to device before reserving, install before delivery and launch before launching', async () => {
+  await deliver(false, 'default', (phase) => methods.push({ method: `phase:${phase}`, params: {} }));
+  const order = methods.map((entry) => entry.method);
+  expect(order.filter((method) => method.startsWith('phase:'))).toEqual([
+    'phase:device',
+    'phase:install',
+    'phase:launch',
+  ]);
+  expect(order.indexOf('phase:device')).toBeLessThan(order.indexOf('device-host.reserve'));
+  expect(order.indexOf('phase:install')).toBeGreaterThan(order.lastIndexOf('device-host.metro.open'));
+  expect(order.indexOf('phase:install')).toBeLessThan(order.indexOf('device-host.app.offer'));
+  expect(order.indexOf('phase:launch')).toBeGreaterThan(order.lastIndexOf('device-host.app.chunk'));
+  expect(order.indexOf('phase:launch')).toBeLessThan(order.indexOf('device-host.app.launch'));
 });
 
 test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
@@ -1091,6 +1111,12 @@ test('remote.easFallback asks EAS only when this Mac is full and no host admits'
     placement: { decision: 'eas', machine: 'eas', reason: expect.stringContaining('no host admits') },
   });
   expect(eas).toHaveBeenCalledOnce();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['local']);
+  eas.mockClear();
+  await expect(place(1)).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(eas).not.toHaveBeenCalled();
+  expect((await place(3)).placement).toMatchObject({ decision: 'eas' });
+  expect(eas).toHaveBeenCalledOnce();
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
   writeFileSync(getConfigPath(), JSON.stringify({}));
   expect((await place(3)).placement).toMatchObject({
@@ -1215,3 +1241,26 @@ test.each([undefined, 'mini', 'local'])(
     expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
   },
 );
+
+test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
+  const selected = await autoPlacement();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['mini']);
+  methods = [];
+  expect((await autoPlacement()).placement.decision).toBe('local');
+  expect(methods).toEqual([]);
+  await expect(
+    placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      note: () => {},
+      reserved: () => {},
+    }),
+  ).rejects.toThrow('disabled');
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  writeHostedIos(root, 'default', placement());
+  expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+});

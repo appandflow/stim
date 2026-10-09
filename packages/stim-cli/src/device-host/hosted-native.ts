@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
 import {
+  requireAutomaticMachine,
   parseHostedChoice,
   parseHostedAndroidDevice,
   parseHostedNativeOffer,
@@ -166,6 +167,7 @@ async function reserveHostedNative(
   platform: 'ios' | 'android',
 ): Promise<HostedSession> {
   try {
+    if (target.selection?.selected === 'auto') requireAutomaticMachine('device', host.machine);
     return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
   } catch (error) {
     if (target.selection?.selected !== 'auto') throw error;
@@ -191,6 +193,7 @@ export async function placeHostedNative(
     devClientScheme,
     reserved,
     note,
+    enterPhase = () => {},
     metro = requestHostedMetro,
     metroPort,
     platform = 'ios',
@@ -207,12 +210,14 @@ export async function placeHostedNative(
     devClientScheme?: string;
     reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
     note: (line: string) => void;
+    enterPhase?: (phase: 'device' | 'install' | 'launch') => void;
     metro?: typeof requestHostedMetro;
   },
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
   try {
     if (!release && metro === requestHostedMetro) requireHostedMetro(root);
+    enterPhase('device');
     host = await connectHost(host.machine, undefined, true);
     target.host = host;
     let session =
@@ -291,6 +296,7 @@ export async function placeHostedNative(
       ...(!release && devClientScheme ? { devClientScheme } : {}),
       manifest: { sha256: sha256(manifest), size: manifest.length },
     };
+    enterPhase('install');
     note(
       `Delivering ${files.length} files to ${host.machine} (${'runtime' in device ? device.runtime : device.systemImage}, ${device.architecture})`,
     );
@@ -335,6 +341,7 @@ export async function placeHostedNative(
       }
     }
     await upload(host, ids, missing, content);
+    enterPhase('launch');
     note(`Launching on ${host.machine}`);
     let delivery = await call(host, 'device-host.app.launch', ids);
     const deadline = Date.now() + INSTALL_TIMEOUT_MS;

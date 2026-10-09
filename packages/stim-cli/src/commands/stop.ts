@@ -10,6 +10,7 @@ import {
   hostedAndroidDeviceName,
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
+import { macosAppPresent } from '../macos/state.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
@@ -393,10 +394,9 @@ async function stopWorkspaceMacos(
   failed: (reason: string) => void,
   enabled: boolean | undefined,
 ): Promise<StopOutcomes['macos']> {
-  if (enabled === false || readWorkspaceState(root)?.macos === undefined) return undefined;
+  if (enabled === false || !macosAppPresent(root)) return undefined;
   try {
-    await stopMacosApp(root);
-    return { status: 'stopped' };
+    return (await stopMacosApp(root)) ? { status: 'stopped' } : undefined;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     failed(reason);

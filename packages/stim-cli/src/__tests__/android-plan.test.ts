@@ -8,11 +8,12 @@ import {
   type AndroidPlanDependencies,
 } from '../commands/android/plan.ts';
 import { androidAvdConfigSettingError } from '../workspace/settings.ts';
-import { readProductFlavors } from '../engine/gradle.ts';
+
 import { planAndroid, type AndroidPlanDeps, type AndroidPlanOptions } from '../commands/android/next-build.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
+import { readProductFlavors } from '../integrations/react-native-build.ts';
 
 let root: string;
 
@@ -168,7 +169,8 @@ const REFUSALS: Array<{
   {
     name: 'a malformed remote target refuses at shape validation',
     inputs: { settings: { unused: true, android: { remote: 'bad name' } } },
-    message: /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, or a tailnet machine name\.$/,
+    message:
+      /^Invalid android\.remote setting "bad name"\. Expected eas, proxy, auto, local, or a tailnet machine name\.$/,
     events: ['pool'],
   },
   {

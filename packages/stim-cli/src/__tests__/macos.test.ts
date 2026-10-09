@@ -1,8 +1,10 @@
-import { writeConfigSetting } from '../workspace/config.ts';
+import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
+  constants,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -26,6 +28,7 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
@@ -33,7 +36,9 @@ import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { macosDir, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { bundleCandidates, lsofNamesBundleExecutable } from '../macos/instances.ts';
+import { reclaimProject } from '../devices/reclaim.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
@@ -177,12 +182,89 @@ test('a device-slot stop preserves the recorded macOS app and supervisor', async
   expect(readMacosRecord(root)?.app).toEqual(app);
 });
 
+test('bundle instances are the executables of app bundles directly in the workspace macos directory', () => {
+  const dirs = ['/home/workspaces/app--1/macos', '/private/home/workspaces/app--1/macos'];
+  const ps = [
+    '  101 /home/workspaces/app--1/macos/Sample.app/Contents/MacOS/Sample',
+    '  102 /private/home/workspaces/app--1/macos/My App.app/Contents/MacOS/My App',
+    '  103 /home/workspaces/app--2/macos/Sample.app/Contents/MacOS/Sample',
+    '  104 /home/workspaces/app--1/macos/build/debug/Sample',
+    '  105 /home/workspaces/app--1/macos/Sample.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper',
+    '  106 /home/workspaces/app--1/mac',
+    '  107 /Applications/Sample.app/Contents/MacOS/Sample',
+  ].join('\n');
+  expect(bundleCandidates(ps, dirs)).toEqual([101, 102]);
+  const lsof = (executable: string) => `p101\nftxt\nn${executable}\nftxt\nn/usr/lib/dyld\n`;
+  expect(lsofNamesBundleExecutable(lsof(`${dirs[1]}/Sample.app/Contents/MacOS/Sample`), dirs)).toBe(true);
+  expect(lsofNamesBundleExecutable(lsof('/bin/sleep'), dirs)).toBe(false);
+});
+
+describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned bundle', () => {
+  function bundleCopy(script: string): ChildProcess {
+    const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
+    mkdirSync(join(executable, '..'), { recursive: true });
+    if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
+    const child = getExecutor().spawn(executable, ['-e', `${script}; setInterval(() => {}, 1000)`], {
+      stdio: 'ignore',
+    });
+    children.push(child);
+    return child;
+  }
+
+  async function started(child: ChildProcess): Promise<MacosProcess> {
+    await new Promise<void>((done, reject) => {
+      child.once('spawn', done);
+      child.once('error', reject);
+    });
+    return { pid: child.pid!, processToken: captureProcessToken(child.pid!)!, startedAtMicros: 1 };
+  }
+
+  test('stop terminates every copy, escalating to SIGKILL, and only then reports success', async () => {
+    const cooperative = await started(bundleCopy(''));
+    const stubborn = await started(bundleCopy("process.on('SIGTERM', () => {})"));
+    const bystander = await ownedProcess();
+    writeWorkspaceState(root, { macos: record() });
+    const inUse = workspaceInUse(root).join('\n');
+    expect(inUse).toContain(`${cooperative.pid}`);
+    expect(inUse).toContain(`${stubborn.pid}`);
+    expect(await stopMacosApp(root)).toBe(true);
+    expect(inspectProcessIdentity(cooperative)).toBe('gone');
+    expect(inspectProcessIdentity(stubborn)).toBe('gone');
+    expect(inspectProcessIdentity(bystander)).toBe('same');
+    expect(workspaceInUse(root)).toEqual([]);
+  }, 20_000);
+
+  test('workspace removal stops an unrecorded copy before emptying the workspace', async () => {
+    const copy = await started(bundleCopy(''));
+    writeWorkspaceState(root, { macos: record() });
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(false);
+    expect(inspectProcessIdentity(copy)).toBe('gone');
+    expect(existsSync(macosDir(root))).toBe(false);
+  });
+
+  test('workspace removal keeps the workspace when its macOS app cannot be stopped', async () => {
+    mkdirSync(macosDir(root), { recursive: true });
+    const bystander = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app: { ...bystander, processToken: 'invalid' } }) });
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(true);
+    expect(result.failedDevices[0]).toMatchObject({
+      name: 'macOS app',
+      reason: expect.stringContaining('Cannot verify'),
+    });
+    expect(inspectProcessIdentity(bystander)).toBe('same');
+    expect(existsSync(macosDir(root))).toBe(true);
+  });
+});
+
 describe('macOS build placement and promotion', () => {
   let bundle: string;
   let bin: string;
   let writer: ReturnType<typeof createNdjsonWriter>;
   let localBuilds: number;
   let previousDuringBuild: string[];
+  let compilerCalls: Array<{ file: string; args: string[]; cwd: string | undefined }>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
   const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
@@ -196,9 +278,11 @@ describe('macOS build placement and promotion', () => {
     mkdirSync(bin);
     writeFileSync(join(bin, 'Sample'), 'local');
     writeFileSync(join(root, 'Info.plist'), '{}');
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
     writer = createNdjsonWriter(join(dir, 'build.ndjson'));
     localBuilds = 0;
     previousDuringBuild = [];
+    compilerCalls = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
     writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
@@ -225,7 +309,8 @@ describe('macOS build placement and promotion', () => {
         if (file === 'otool') return '@executable_path/../Frameworks';
         return '';
       },
-      spawn: (_file: string, args: string[]) => {
+      spawn: (file, args, options) => {
+        compilerCalls.push({ file, args, cwd: options?.cwd as string | undefined });
         const child = Object.assign(new EventEmitter(), {
           stdout: new PassThrough(),
           stderr: new PassThrough(),
@@ -250,22 +335,32 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = (
+  const build = async (
     extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown; displayName?: string } = {},
-  ) =>
-    buildMacosBundle({
+  ) => {
+    const selected = projectRegistry.selectMacos(root);
+    if ('problem' in selected) throw new Error(selected.problem.message);
+    const recipe = (await selected.load()).prepare({
+      macos: {
+        product: 'Sample',
+        infoPlist: 'Info.plist',
+        resources: extras.resources,
+        assetCatalog: extras.assetCatalog,
+      },
+    });
+    return buildMacosBundle({
       root,
-      product: 'Sample',
-      infoPlist: 'Info.plist',
+      recipe,
       bundle,
       bundleId,
       scratch: join(dir, 'scratch'),
       writer,
       note: () => {},
       record: buildRecord,
-      buildMachine: 'auto',
-      ...extras,
+      buildMachine: extras.buildMachine ?? 'auto',
+      displayName: extras.displayName,
     });
+  };
   function remoteBundle(valid = true): string {
     const fetched = join(dir, 'fetched', 'Sample.app');
     mkdirSync(join(fetched, 'Contents', 'MacOS'), { recursive: true });
@@ -318,6 +413,17 @@ describe('macOS build placement and promotion', () => {
     expect(calls).toContainEqual(['plutil', ['-replace', 'CFBundleName', '-string', 'Sample \u00b7 wt', infoPlist]]);
     expect(order.indexOf('codesign --force')).toBeGreaterThan(order.lastIndexOf('plutil -replace'));
     expect(order.indexOf('codesign --verify')).toBeGreaterThan(order.indexOf('codesign --force'));
+  });
+
+  it('automatic placement never falls back to Swift when local is excluded', async () => {
+    const config = loadConfig()!;
+    config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
+    saveConfig(config);
+    vi.mocked(offload.chooseBuildMachine).mockResolvedValue('mini: offline');
+    await expect(build()).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
   it.each(['no-machine', 'worker-failed', 'bad-bundle', 'verification-failed'])(
@@ -401,6 +507,18 @@ describe('macOS build placement and promotion', () => {
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
     expect(buildRecord).toMatchObject({ buildMachine: 'local', builtOn: 'here' });
+    expect(compilerCalls).toEqual([
+      {
+        file: 'swift',
+        args: ['build', '-c', 'debug', '--product', 'Sample', '--scratch-path', join(dir, 'scratch'), '--jobs', '2'],
+        cwd: root,
+      },
+      {
+        file: 'swift',
+        args: ['build', '-c', 'debug', '--scratch-path', join(dir, 'scratch'), '--show-bin-path'],
+        cwd: root,
+      },
+    ]);
   });
 
   test.each(['invalid', 'not listed', 'not paired'])(
@@ -430,6 +548,35 @@ describe('macOS build placement and promotion', () => {
       expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     },
   );
+  test.each(['missing product', 'malformed settings', 'invalid plist', 'missing resource'])(
+    'the selected SwiftPM operation refuses %s before stopping the previous app',
+    async (reason) => {
+      if (process.platform !== 'darwin') return;
+      const macos = {
+        product: reason === 'missing product' ? undefined : reason === 'malformed settings' ? 42 : 'Sample',
+        infoPlist: 'Info.plist',
+        ...(reason === 'missing resource' ? { resources: { 'icon.icns': 'missing' } } : {}),
+      };
+      writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos }));
+      if (reason === 'invalid plist') plist.SUFeedURL = 'feed';
+      writeWorkspaceState(root, { macos: record() });
+      const before = readMacosRecord(root);
+      const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
+      await expect(runMacos(root, () => {})).rejects.toThrow(
+        reason === 'missing product' || reason === 'malformed settings'
+          ? 'macos.product'
+          : reason === 'invalid plist'
+            ? 'development Info.plist'
+            : 'source does not exist',
+      );
+      expect(readMacosRecord(root)).toEqual(before);
+      expect(stop).not.toHaveBeenCalled();
+      expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(localBuilds).toBe(0);
+    },
+  );
+
   it.each(['icon.icns', 'Assets.car'])('falls back when an older worker omits declared %s', async (missing) => {
     writeFileSync(join(root, 'icon'), 'icon bytes');
     mkdirSync(join(root, 'Assets.xcassets'));
@@ -755,7 +902,11 @@ test.skipIf(process.platform !== 'darwin')(
   async () => {
     writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
     writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }));
-    setExecutor({ runFileQuiet: () => null });
+    writeFileSync(join(root, 'Info.plist'), '{}');
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile: () => JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' }),
+    });
     const launch = vi.spyOn(nativeRun, 'withNativeBuildRun');
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});

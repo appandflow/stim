@@ -14,7 +14,7 @@ import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } fr
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
-import { appProjectProblem, findProjectRoot } from '../workspace/project.ts';
+import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
@@ -180,14 +180,14 @@ function mainCheckoutAppDir(root: string, target: string): string {
  */
 export function warmedWorkspace(root: string, target: string, cwd: string): string | null {
   const nearest = findProjectRoot(cwd);
-  const app = nearest && isPathPrefix(target, nearest) && appProjectProblem(nearest) === null ? nearest : null;
+  const app = nearest && isPathPrefix(target, nearest) && isMobileProject(nearest) ? nearest : null;
   if (app && app !== target) return app;
   const apps = new Set<string>();
   for (const path of Object.keys(loadConfig()?.projects ?? {})) {
     const rel = relative(root, path);
     if (rel.startsWith('..') || isAbsolute(rel)) continue;
     const mapped = resolve(target, rel);
-    if (appProjectProblem(mapped) === null) apps.add(mapped);
+    if (isMobileProject(mapped)) apps.add(mapped);
   }
   return apps.size === 1 ? [...apps][0]! : app;
 }

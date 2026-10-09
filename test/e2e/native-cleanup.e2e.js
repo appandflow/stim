@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
+import { cleanupTmp, createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
 
 function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
   const home = mkdtempSync(join(tmpdir(), 'stim-native-cleanup-'));
@@ -26,6 +26,8 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
     gc: '',
     failure: null,
     processReads: 0,
+    harnessVisible: true,
+    crlf: false,
   };
   const h = {
     env: { STIM_HOME: home },
@@ -42,6 +44,8 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
       else if (file === 'ps') {
         output.processReads++;
         stdout = output.processes;
+        if (output.harnessVisible) stdout += `\n${process.pid} Sat Sep 5 00:00:00 2026 node native-cleanup`;
+        if (output.crlf) stdout = stdout.replaceAll('\n', '\r\n') + '\r\n';
       } else if (file === 'git' && argv.includes('status')) stdout = output.porcelain;
       else if (file === 'git' && argv.includes('worktree')) stdout = output.worktrees;
       else assert.fail(`unexpected command: ${file} ${argv.join(' ')}`);
@@ -106,7 +110,10 @@ for (const platform of ['ios', 'android']) {
         },
       }),
     );
+    f.writeState({});
+    f.output.failure = 'ps';
     f.cleanup.recordWorkspace(f.cwd);
+    f.output.failure = null;
     rmSync(f.configFile);
     f.cleanup.recordWorkspace(f.cwd);
     f.output.devices = [{ udid: 'RUN', name: 'stim-parked' }];
@@ -193,8 +200,9 @@ test('native cleanup does not hide unreadable workspace state', async (t) => {
   assert.throws(() => f.cleanup.recordWorkspace(f.cwd), SyntaxError);
 });
 
-test('native cleanup retains replaced collectors and ignores a reused PID', async (t) => {
+test('native cleanup retains replaced collectors and ignores a reused PID with CRLF process rows', async (t) => {
   const f = fixture(t);
+  f.output.crlf = true;
   const first = ` 123 Sat Sep 5 01:00:00 2026 node collector --root ${f.cwd}`;
   const second = ` 456 Sat Sep 5 01:01:00 2026 node collector --root ${f.cwd}`;
   f.writeState({ collectors: { android: { pid: 123 } } });
@@ -264,6 +272,12 @@ for (const [platform, tool] of [
   });
 }
 
+test('native cleanup refuses empty successful process inspection', async (t) => {
+  const f = fixture(t);
+  f.output.harnessVisible = false;
+  await assert.rejects(() => f.verify(), /process inspection did not include the live harness/);
+});
+
 for (const setting of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
   test(`native cleanup finds the emulator through ${setting} without PATH`, (t) => {
     const home = mkdtempSync(join(tmpdir(), 'stim-native-sdk-'));
@@ -311,4 +325,33 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
     f.output[field] = '';
   }
   await f.verify();
+});
+
+test('a failed JSON command keeps native ownership and diagnostics available to failure cleanup', (t) => {
+  const base = mkdtempSync(join(tmpdir(), 'stim-native-failure-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const home = join(base, 'home');
+  const worktree = join(base, 'worktree');
+  mkdirSync(home);
+  mkdirSync(worktree);
+  const files = [
+    [join(home, 'created-devices.json'), 'ownership'],
+    [join(home, 'android-failure-diagnostics.json'), 'diagnostics'],
+    [join(worktree, 'package.json'), 'fixture'],
+  ];
+  for (const [path, content] of files) writeFileSync(path, content);
+  const cliPath = join(home, 'failing-cli.mjs');
+  writeFileSync(cliPath, "process.stderr.write('STIM_LAUNCH_FAILED: fixture launch failed'); process.exit(23);");
+  const h = createHarness({ env: { ...process.env, STIM_HOME: home }, cliPath, label: 'failure' });
+  let failure;
+  assert.throws(
+    () => h.cliJson(['android', '--json']),
+    (error) => {
+      assert.match(error.message, /failed \(exit 23\).*STIM_LAUNCH_FAILED/s);
+      failure = error;
+      return true;
+    },
+  );
+  cleanupTmp([worktree, home], failure);
+  for (const [path, content] of files) assert.equal(readFileSync(path, 'utf-8'), content);
 });

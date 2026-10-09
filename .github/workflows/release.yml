@@ -1,4 +1,4 @@
-# Publishes the six packages to npm via OIDC trusted publishing when a
+# Publishes the packages to npm via OIDC trusted publishing when a
 # version tag is pushed. There is NO token: npm trusts a short-lived OIDC
 # credential minted for exactly this repo + workflow + environment, and the
 # `release` environment requires a manual approval, which replaces the OTP.
@@ -33,7 +33,7 @@ jobs:
     outputs:
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli server
+      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli ci server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -162,6 +162,14 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/stim-cli.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
+      - name: Publish @stim-cli/ci
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if npm view "@stim-cli/ci@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/ci@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/ci.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
       - name: Publish @stim-cli/server
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/server.package.json').version")
@@ -183,7 +191,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli server
+      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli ci server
       DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
       npm_config_prefer_online: 'true'
     steps:
@@ -242,6 +250,11 @@ jobs:
             [ "$(printf '%s\n' "$out" | tail -1)" = "$version" ]
           }
 
+          ci_runs() {
+            (cd "$scratch" && npx --yes -p "@stim-cli/ci@$version" stim-ci --version) > "$scratch/ci-version.txt" 2>&1 || { cat "$scratch/ci-version.txt"; return 1; }
+            tail -1 "$scratch/ci-version.txt" | VERSION="$version" node --input-type=module -e 'let output = ""; for await (const chunk of process.stdin) output += chunk; process.exitCode = output.trim() === process.env.VERSION ? 0 : 1;'
+          }
+
           for d in $PACKAGE_DIRS; do
             p=$(node -p "require('./packages/$d/package.json').name")
             wait_for "$p@$version version" version_visible "$p"
@@ -249,4 +262,5 @@ jobs:
             wait_for "$p dist-tag $DIST_TAG -> $version" dist_tag_set "$p"
           done
           wait_for "npx stim@$version --version" cli_runs
+          wait_for "npx -p @stim-cli/ci@$version stim-ci --version" ci_runs
           wait_for "npx -p @stim-cli/server@$version stim-server --version" server_runs

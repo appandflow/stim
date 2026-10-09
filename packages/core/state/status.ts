@@ -620,7 +620,7 @@ export interface AndroidDeviceState {
 }
 
 /** The tutorial format version the installed Stim writes into the tutorial app. */
-export const TUTORIAL_VERSION = 1;
+export const TUTORIAL_VERSION = 2;
 
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
@@ -667,7 +667,8 @@ export interface EnvironmentState {
   macos?: MacosAppState | null;
   supervisor?: { pid: number | null; mode: string | null; startedAt: string | null; healthy: boolean } | null;
   logs?: { dir: string; errorsSinceMarker: number } | null;
-  agentDevice?: { stateDir: string };
+  /** `installed` is whether the agent-device executable is on the PATH of the process that ran status. */
+  agentDevice?: { stateDir: string; installed?: boolean };
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */

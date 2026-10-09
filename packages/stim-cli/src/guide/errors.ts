@@ -331,8 +331,13 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected remote Mac cannot build this app',
+      summary: 'the selected remote Mac or automatic build pool cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
+
+Automatic placement also refuses when local is excluded in remote.buildPoolDisabled
+and no enabled remote can finish this build, or when the build requires a local
+compiler. Enable local or choose an explicit --remote-build placement. Existing
+builds are not interrupted and a cache hit needs no compiler.
 
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
@@ -1068,6 +1073,17 @@ captured"  (in metro.ndjson, bare RN)
   printed the last lines of the global workspace logs/supervisor.log above this -- read
   them. A cold Metro on a large graph can genuinely need more than the default
   60s: re-run with \`--wait 180\`. Otherwise \`stim stop\`, then \`start\`.`,
+    },
+    STIM_PORT_INSPECTION_FAILED: {
+      summary: 'no free Metro port could be confirmed: netstat, lsof and loopback connects all failed',
+      body: () => `STIM_PORT_INSPECTION_FAILED
+  Stim reads the native TCP listener table (netstat on macOS and Windows,
+  /proc/net on Linux) to find a free Metro port. When that table is denied,
+  empty or unreadable, it checks each candidate with an lsof listener scan and
+  connects to 127.0.0.1 and ::1. This refusal means none of them could answer,
+  usually because a sandbox denies them. Allow Stim to run netstat or lsof, or
+  to connect to loopback, then retry. A metro.port pin skips the scan for
+  Metro. \`stim ports get\` prints the same message.`,
     },
     STIM_SUPERVISOR_EXITED: {
       summary: 'the dev server failed outright; the quoted supervisor.log tail is the real error',

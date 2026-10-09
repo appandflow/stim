@@ -37,6 +37,8 @@ struct BuildMachinesView: View {
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
       showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
+      poolDisabled: model.poolDisabled,
+      setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
       showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
       thisMac: ThisMacAccessSections(
         clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
@@ -188,13 +190,16 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var update: (String) -> Void
   var showDetails: (String) -> Void
   var remove: (String) -> Void
+  var poolDisabled: [String: [String]]? = nil
+  var setPool: (String, String, Bool) -> Void = { _, _, _ in }
   var showsThisMac = false
   var thisMac: ThisMac
 
   var body: some View {
     if let entries {
-      if entries.isEmpty, showsThisMac {
+      if entries.isEmpty, showsThisMac || poolDisabled != nil {
         Form {
+          localPool
           Section {
             notices
             BuildMachinesEmptyState(
@@ -236,20 +241,57 @@ struct BuildMachinesContent<ThisMac: View>: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
+  @ViewBuilder private var localPool: some View {
+    if poolDisabled != nil {
+      Section {
+        Text("This Mac").font(.stim(.body, weight: .semibold))
+        poolToggles("local")
+      } header: {
+        Text("Automatic machine pools")
+      } footer: {
+        Text(
+          "Applies to new automatic work requested by this Mac. Explicit placement, running sessions and approvals stay unchanged. Keep at least one approved member enabled in each pool."
+        )
+      }
+    }
+  }
+
+  @ViewBuilder private func poolToggles(_ machine: String) -> some View {
+    if let poolDisabled {
+      HStack(spacing: Space.lg) {
+        ForEach(["build", "device"], id: \.self) { role in
+          Toggle(
+            role == "build" ? "Automatic builds" : "Automatic simulators",
+            isOn: Binding(
+              get: { !(poolDisabled[role] ?? []).contains(machine) },
+              set: { setPool(role, machine, $0) })
+          )
+          .toggleStyle(.switch)
+          .controlSize(.small)
+          .disabled(refreshing)
+        }
+      }
+    }
+  }
+
   private func list(_ entries: [String]) -> some View {
     Form {
+      localPool
       if failure != nil { Section { notices } }
       Section {
         ForEach(entries, id: \.self) { entry in
           let status = statuses?.first { $0.machine == entry }
-          BuildMachineRow(
-            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
-            failed: canAsk && failure != nil && status == nil,
-            refreshing: canAsk && refreshing && status != nil && working != entry,
-            capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
-            progress: working == entry ? progress : nil,
-            canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
-            showDetails: { showDetails(entry) }, remove: { remove(entry) })
+          VStack(alignment: .leading, spacing: Space.md) {
+            BuildMachineRow(
+              entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+              failed: canAsk && failure != nil && status == nil,
+              refreshing: canAsk && refreshing && status != nil && working != entry,
+              capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
+              progress: working == entry ? progress : nil,
+              canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
+              showDetails: { showDetails(entry) }, remove: { remove(entry) })
+            poolToggles(entry)
+          }
         }
       } header: {
         HStack {

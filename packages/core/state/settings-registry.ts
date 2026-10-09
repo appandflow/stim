@@ -39,7 +39,7 @@ export interface SettingDefinition {
   type: SettingType;
   scopes: readonly SettingScope[];
   description: string;
-  default?: string | number | boolean;
+  default?: string | number | boolean | readonly string[];
   env?: string;
   sensitive?: boolean;
   committedAt?: 'repository';
@@ -150,11 +150,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'ios.simslimProfile',
@@ -225,11 +225,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'metro.tunnel',
@@ -739,6 +739,22 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
+    key: 'remote.buildPoolDisabled',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "Members excluded from this requester's automatic build placement: local or exact remote.machines entries. Explicit placement and running builds are unaffected; at least one local or configured, approved remote member must stay enabled",
+  },
+  {
+    key: 'remote.devicePoolDisabled',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "Members excluded from this requester's automatic simulator and emulator placement: local or exact remote.machines entries. Explicit placement and existing sessions are unaffected; at least one local or configured, approved remote member must stay enabled",
+  },
+  {
     key: 'remote.easFallback',
     type: BOOLEAN,
     scopes: EVERY,
@@ -757,7 +773,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Build placement: auto follows remote.buildMode with local fallback; local always builds here; a name in remote.machines requires that remote Mac without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
+      'Build placement: auto follows remote.buildMode within enabled automatic pool members; local always builds here; a name in remote.machines requires that remote Mac without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'remote.buildMode',
@@ -766,7 +782,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD_MODE',
     description:
-      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on a remote Mac whenever one can take the build; off always builds here',
+      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on an enabled remote Mac whenever one can take the build; off builds here when local is enabled in remote.buildPoolDisabled',
   },
   {
     key: 'server.maxLoadPerCore',

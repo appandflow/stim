@@ -63,6 +63,7 @@ import {
   ccacheMeasurements,
   runnerToolOutput,
   topLevelShellCommand,
+  sameLiteralShellCommand,
 } from './run-guards.mjs';
 
 const launchCrashVariant = 'launch-crash';
@@ -189,6 +190,10 @@ function agentDeviceCommand(meta, command) {
   const stateDir = meta.agentDevice?.stateDir ?? agentDeviceState;
   const session = meta.agentDevice?.session ?? meta.runId;
   return `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device ${command}`;
+}
+
+function agentDeviceSessionState(meta) {
+  return `${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${meta.agentDevice?.session ?? meta.runId}`;
 }
 
 function isJavascriptVariant(variant) {
@@ -990,7 +995,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
     '\n' +
     prefix +
     '\n' +
-    `The common evidence protocol below records the same endpoint for both arms. Run each proof command separately; navigate to Settings between recording start and the text check.\n\n` +
+    `The common evidence protocol below records the same endpoint for both arms. Copy the full run-scoped prefix unchanged and use the assigned device. Run each proof command as a separate complete shell command, without chaining, pipelines or redirection; literal quoting may differ without changing arguments. Navigate to Settings between recording start and the text check.\n\n` +
     [
       `${prefix} open com.appandflow.trailhead --foreground --platform ${platform} ${target}`,
       `${prefix} record start ${recording} --scope device --quality high --hide-touches`,
@@ -1734,7 +1739,7 @@ function agentDeviceOpenCommand(meta, appAlive) {
 function nativeMarkerObserved(items, openCommand, expected) {
   let opened = false;
   for (const item of items) {
-    if (item.exit_code === 0 && topLevelShellCommand(item.command) === openCommand) {
+    if (item.exit_code === 0 && sameLiteralShellCommand(item.command, openCommand)) {
       opened = true;
     }
     if (
@@ -1823,7 +1828,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   const indexes = [];
   let after = -1;
   const openIndex = commands.findIndex(
-    (command) => command.exitCode === 0 && topLevelShellCommand(command.command) === openCommand,
+    (command) => command.exitCode === 0 && sameLiteralShellCommand(command.command, openCommand),
   );
   if (openIndex === -1) {
     return {
@@ -1833,8 +1838,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
       target,
     };
   }
-  const session = meta.agentDevice?.session ?? meta.runId;
-  const expectedSessionState = `Session state: ${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${session}`;
+  const expectedSessionState = `Session state: ${agentDeviceSessionState(meta)}`;
   if (!commands[openIndex].output.includes(expectedSessionState)) {
     return {
       valid: false,
@@ -1847,7 +1851,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   after = openIndex;
   for (const needle of required) {
     const index = commands.findIndex(
-      (command, offset) => offset > after && command.exitCode === 0 && topLevelShellCommand(command.command) === needle,
+      (command, offset) => offset > after && command.exitCode === 0 && sameLiteralShellCommand(command.command, needle),
     );
     if (index === -1) {
       return {
@@ -2230,6 +2234,11 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
+          agentDeviceLaunch: {
+            command: agentDeviceOpenCommand(meta, appAlive),
+            appId: 'com.appandflow.trailhead',
+            sessionState: agentDeviceSessionState(meta),
+          },
           setup: {
             worktree,
             avdConfig: meta.expectedControlAvdConfig,

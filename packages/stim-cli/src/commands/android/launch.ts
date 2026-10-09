@@ -72,7 +72,8 @@ import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { detectAndroidPackage } from '../../workspace/app-id.ts';
-import { launchOutcomeRecord } from '../native-runtime.ts';
+import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
+import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
 import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
@@ -80,8 +81,6 @@ import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
 interface VerifyAndroidRunArgs {
   root: string;
   slot?: string;
-  release: boolean;
-  remoteRelease: boolean;
   remoteDevice: boolean;
   verifyReleaseLaunched: typeof verifyAndroidReleaseLaunch;
   verifyLaunched: typeof verifyLaunch;
@@ -100,17 +99,123 @@ interface VerifyAndroidRunArgs {
   phase: (label: unknown, text: string) => void;
 }
 
-async function verifyAndroidRun({
+interface AndroidRuntimeLaunchContext {
+  serial: string;
+  androidPackage: string;
+  scheme?: string | null;
+  physical: boolean;
+  remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
+  launch: typeof launchAndroidApp;
+  launchRelease: typeof launchAndroidReleaseApp;
+}
+
+export interface AndroidRuntimePlan extends RuntimePlan<
+  MobileRuntimePreparation,
+  AndroidRuntimeLaunchContext,
+  LaunchResultLike,
+  VerifyAndroidRunArgs,
+  RuntimeReadiness
+> {
+  scheme(root: string, apkPath: string | null, resolve: typeof androidDevClientScheme): string | null | undefined;
+  verificationWaitMs: number;
+}
+
+export function androidProcessRuntime(prepare: AndroidRuntimePlan['prepare']): AndroidRuntimePlan {
+  return {
+    prepare,
+    scheme: () => undefined,
+    verificationWaitMs: RELEASE_VERIFY_WAIT_MS,
+    launch: async (_prepared, { serial, androidPackage, remoteDevice, launchRelease }) =>
+      remoteDevice
+        ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
+        : launchRelease({ serial, packageName: androidPackage }),
+    verify: async (_prepared, context) => verifyAndroidProcessRun(context),
+  };
+}
+
+export function androidMetroRuntime(prepare: AndroidRuntimePlan['prepare']): AndroidRuntimePlan {
+  return {
+    prepare,
+    scheme: (root, apkPath, resolve) => resolve(root, apkPath),
+    verificationWaitMs: DEBUG_VERIFY_STEP_MS,
+    launch: async ({ metroPort }, { serial, androidPackage, scheme, physical, launch }) =>
+      launch({
+        serial,
+        packageName: androidPackage,
+        metroPort: metroPort ?? DEFAULT_METRO_PORT,
+        devClientScheme: scheme,
+        physical,
+      }),
+    verify: async ({ metroPort }, context) => verifyAndroidMetroRun({ ...context, metroPort }),
+  };
+}
+
+async function verifyAndroidProcessRun({
   root,
   slot,
-  release,
-  remoteRelease,
   remoteDevice,
   verifyReleaseLaunched,
-  verifyLaunched,
   serial,
   androidPackage,
   variant,
+  logsDir,
+  launchedAt,
+  phase,
+}: VerifyAndroidRunArgs): Promise<RuntimeReadiness> {
+  const readNativeCrashes = () =>
+    remoteDevice
+      ? []
+      : captureNativeCrashes(
+          { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
+          logsDir,
+        );
+  if (remoteDevice) {
+    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
+    return { state: LAUNCH_UNVERIFIED };
+  }
+  const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
+  const crashes = readNativeCrashes();
+  if (processCheck?.verified && !crashes.length) {
+    phase(
+      'verify',
+      `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
+    );
+    return { state: true };
+  }
+  if (processCheck?.reason === 'probe-failed' && !crashes.length) {
+    phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
+    return { state: LAUNCH_UNVERIFIED };
+  }
+  for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
+  if (!crashes.length)
+    phase(
+      'logs',
+      'Process missing; no attributable native crash report captured. Read `stim logs --source device` for available output.',
+    );
+  phase(
+    'verify',
+    chalk.yellow(
+      crashes.length
+        ? 'FATAL: the app reported a native crash'
+        : `FATAL: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
+    ),
+  );
+  phase(
+    '',
+    chalk.yellow(
+      'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
+    ),
+  );
+  return { state: LAUNCH_FATAL };
+}
+
+async function verifyAndroidMetroRun({
+  root,
+  slot,
+  remoteDevice,
+  verifyLaunched,
+  serial,
+  androidPackage,
   metroCheck,
   logsDir,
   launchedAt,
@@ -130,46 +235,6 @@ async function verifyAndroidRun({
           { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
           logsDir,
         );
-  if (remoteRelease) {
-    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
-    return { state: LAUNCH_UNVERIFIED };
-  }
-  if (release) {
-    const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
-    const crashes = readNativeCrashes();
-    if (processCheck?.verified && !crashes.length) {
-      phase(
-        'verify',
-        `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
-      );
-      return { state: true };
-    }
-    if (processCheck?.reason === 'probe-failed' && !crashes.length) {
-      phase('verify', chalk.yellow('UNVERIFIED: the app process check failed'));
-      return { state: LAUNCH_UNVERIFIED };
-    }
-    for (const line of launchErrorPreview(crashes, root)) phase('launch', chalk.red(line));
-    if (!crashes.length)
-      phase(
-        'logs',
-        'Process missing; no attributable native crash report captured. Read `stim logs --source device` for available output.',
-      );
-    phase(
-      'verify',
-      chalk.yellow(
-        crashes.length
-          ? 'FATAL: the app reported a native crash'
-          : `FATAL: no ${androidPackage} process on ${serial} ${formatDuration(processCheck?.waitedMs ?? 0)} after launch`,
-      ),
-    );
-    phase(
-      '',
-      chalk.yellow(
-        'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
-      ),
-    );
-    return { state: LAUNCH_FATAL };
-  }
 
   const freshEmulator = Boolean((device.created || device.adoptionPending) && device.owned && !remoteDevice);
   const timeoutMs = freshEmulator ? 60000 : VERIFY_TIMEOUT_MS;
@@ -319,6 +384,8 @@ async function verifyAndroidRun({
 }
 
 interface FinishAndroidRunArgs {
+  runtime: AndroidRuntimePlan;
+  runtimePreparation: MobileRuntimePreparation;
   lease: RunLease | null;
   releaseLease: () => void;
   root: string;
@@ -503,6 +570,8 @@ async function resolveInstallSerial({
 }
 
 export async function finishAndroidRun({
+  runtime,
+  runtimePreparation,
   lease,
   releaseLease,
   root,
@@ -732,7 +801,7 @@ export async function finishAndroidRun({
   }
 
   if (physical) raiseLeaseFor(0, false);
-  const scheme = release ? undefined : resolveDevClientScheme(root, apkPath);
+  const scheme = runtime.scheme(root, apkPath, resolveDevClientScheme);
   enterPhase('launch');
   const launchTimer = stepTimer(now);
   const launchedAt = now();
@@ -749,17 +818,15 @@ export async function finishAndroidRun({
     physical,
     msg: `launching ${androidPackage} on ${serial}`,
   });
-  const launched: LaunchResultLike = release
-    ? remoteDevice
-      ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
-      : launchRelease({ serial, packageName: androidPackage })
-    : launch({
-        serial,
-        packageName: androidPackage,
-        metroPort: metroPort ?? DEFAULT_METRO_PORT,
-        devClientScheme: scheme,
-        physical,
-      });
+  const launched = await runtime.launch(runtimePreparation, {
+    serial,
+    androidPackage,
+    scheme,
+    physical,
+    remoteDevice,
+    launch,
+    launchRelease,
+  });
   if (launched.failed) {
     printNativeCrashReport(
       { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
@@ -841,16 +908,14 @@ export async function finishAndroidRun({
     phase('logs', `${displayPath(root, logsDir)}${collectorPid ? ` (collector pid ${collectorPid})` : ''}`);
   }
 
-  if (physical) raiseLeaseFor(release ? RELEASE_VERIFY_WAIT_MS : DEBUG_VERIFY_STEP_MS, false);
+  if (physical) raiseLeaseFor(runtime.verificationWaitMs, false);
   const {
     state: launchState,
     warning: launchWarning,
     unattributed,
-  } = await verifyAndroidRun({
+  } = await runtime.verify(runtimePreparation, {
     root,
     slot,
-    release,
-    remoteRelease,
     remoteDevice: Boolean(remoteDevice),
     verifyReleaseLaunched,
     verifyLaunched,

@@ -115,6 +115,22 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+Doctor reports a checkout that holds linked worktrees inside it, such as
+`.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
+`ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started
+there registers, crawls every worktree's files, `node_modules`, and build output,
+which grows the shared Watchman daemon's memory and its recrawls. The finding
+says when Watchman watches the checkout now. `--fix` merges the worktrees' shared
+parent directory (such as `.worktrees`) when Git tracks nothing in it, otherwise
+each worktree path, into that `.watchmanconfig`, keeping every other key and
+entry. It refuses a file that is not a JSON object or whose `ignore_dirs` is not
+an array, and names the entries to add by hand. Watchman matches entries
+literally, so `.worktrees/` or `./.worktrees` ignores nothing. Commit
+the file: Watchman reads `ignore_dirs` only from a root's `.watchmanconfig`, with
+no global equivalent. It reads the file only when it adds a root, so for a root
+it already watches run `watchman watch-del <checkout>`, then restart Watchman to
+free its memory now. Doctor never runs either command.
+
 When [`remote.machines`](./settings.md#machine-settings) names remote Macs,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and
@@ -200,6 +216,11 @@ stim ports release [label]
 Reserves TCP ports 8900–8999 for web or API servers started by the
 project. `get` prints only the number and reuses an existing allocation.
 New allocations skip reserved and occupied ports; retry notices go to stderr.
+Allocation reads native TCP tables through `netstat` on macOS and Windows and
+`/proc/net` on Linux. When the table is denied, empty or unreadable, it checks
+each port with `lsof` and loopback connects instead, and refuses only when
+none of them can answer. Stopping listeners still requires `lsof` on macOS and
+Linux, or `netstat` on Windows.
 `ports` lists named allocations and Metro, marked managed.
 
 Labels start with a letter and contain up to 64 letters, digits, underscores,
@@ -256,7 +277,7 @@ same way when it is not running, so running `start` first is optional.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
-         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|machine>]
+         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 

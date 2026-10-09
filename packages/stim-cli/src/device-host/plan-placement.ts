@@ -1,4 +1,9 @@
-import type { HostedAndroidChoice, HostedDeviceSelectors, HostedIosChoice } from '@stim-cli/core/state';
+import {
+  automaticMachineEnabled,
+  type HostedAndroidChoice,
+  type HostedDeviceSelectors,
+  type HostedIosChoice,
+} from '@stim-cli/core/state';
 import type { EasFallbackCheck } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
 import { readHostedNative } from './ios-state.ts';
@@ -69,7 +74,7 @@ export async function planHostedDevice({
         choice: placed.target.choice,
         placement: `on ${placed.target.host.machine}, as auto would now`,
       };
-    const names = machines() ?? [];
+    const names = (machines() ?? []).filter((name) => automaticMachineEnabled('device', name));
     const offers = await Promise.all(names.map((name) => probe(name, platform, selectors)));
     const differs = offers.flatMap(({ probe: each }) =>
       'offer' in each && each.offer.choice && sameKey(each.offer.choice) === false ? [each.machine] : [],

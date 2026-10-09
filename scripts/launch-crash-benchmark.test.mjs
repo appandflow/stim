@@ -86,6 +86,91 @@ describe('launch crash benchmark', () => {
       });
     },
   );
+  it.each([
+    ['stim', 'ios', '--udid U1', 'stim logs --errors'],
+    ['stim', 'android', '--serial emulator-5554', 'stim logs --errors'],
+    ['control', 'ios', '--udid U1', 'tail -40 /tmp/metro.log'],
+    ['control', 'android', '--serial emulator-5554', 'adb -s emulator-5554 logcat -d'],
+  ])('recognizes only the exact successful agent-device launch for %s/%s', (arm, platform, target, logCommand) => {
+    const token = launchCrashToken('agent-device-launch');
+    const expected = {
+      command: `env AGENT_DEVICE_STATE_DIR=/state AGENT_DEVICE_SESSION=run-1 agent-device open com.app --foreground --platform ${platform} ${target}`,
+      appId: 'com.app',
+      sessionState: '/state/sessions/run-1',
+    };
+    const launch = {
+      id: 'open',
+      command: expected.command,
+      output: 'Opened: com.app\nSession state: /state/sessions/run-1',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:01Z',
+      endedAt: '2026-09-04T12:00:05Z',
+    };
+    const logs = {
+      id: 'logs',
+      command: logCommand,
+      output: `Error: ${token}\nRootLayout (app/_layout.tsx:27:18)`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:06Z',
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const options = {
+      dispatchAt: '2026-09-04T12:00:00Z',
+      token,
+      arm,
+      platform,
+      agentDeviceLaunch: expected,
+    };
+    for (const command of [expected.command, `/bin/zsh -lc '${expected.command.replace('com.app', '"com.app"')}'`]) {
+      expect(launchCrashDiagnosis([{ ...launch, command }, logs], options)).toMatchObject({
+        valid: true,
+        initialLaunchCommandId: 'open',
+        errorCaptureCommandId: 'logs',
+        dispatchToDiagnosisSeconds: 10,
+      });
+    }
+    for (const command of [
+      expected.command.replace('run-1', 'other'),
+      expected.command.replace('/state', '/other'),
+      expected.command.replace('com.app', 'com.other'),
+      expected.command.replace(target, `${target}-other`),
+      expected.command.replace('open com.app', 'snapshot'),
+      `${expected.command} --help`,
+      `echo '${expected.command}'`,
+      `${expected.command} && true`,
+      `${expected.command}; true`,
+      `${expected.command}\ntrue`,
+      `${expected.command}\rtrue`,
+      `${expected.command} > /tmp/open.log`,
+    ]) {
+      expect(launchCrashDiagnosis([{ ...launch, command }, logs], options)).toMatchObject({
+        valid: false,
+        reason: 'launch-crash-initial-launch-evidence-missing',
+      });
+    }
+    for (const output of [
+      'Opened: com.other\nSession state: /state/sessions/run-1',
+      'Opened: com.app\nSession state: /state/sessions/other',
+      'Opened: com.app\nSession state: /state/sessions/run-10',
+      'Opened: com.app',
+      '',
+    ]) {
+      expect(launchCrashDiagnosis([{ ...launch, output }, logs], options).valid).toBe(false);
+    }
+    for (const exitCode of [1, null, 137]) {
+      expect(launchCrashDiagnosis([{ ...launch, exitCode }, logs], options).valid).toBe(false);
+    }
+    expect(launchCrashDiagnosis([launch, logs], { ...options, agentDeviceLaunch: undefined }).valid).toBe(false);
+    expect(launchCrashDiagnosis([launch], options)).toMatchObject({
+      valid: false,
+      reason: 'launch-crash-error-capture-missing',
+    });
+    expect(launchCrashDiagnosis([launch, { ...logs, output: 'unrelated error' }], options).valid).toBe(false);
+    expect(launchCrashDiagnosis([launch, { ...logs, exitCode: 1 }], options).valid).toBe(false);
+    expect(
+      launchCrashDiagnosis([{ ...launch, id: 'source', command: 'cat app/_layout.tsx' }, launch, logs], options),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
+  });
   it('requires explicit coordinator review for diagnostics falsely flagged as source inspection', () => {
     const diagnostic = {
       id: 'diagnostic',
