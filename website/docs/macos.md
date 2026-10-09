@@ -75,7 +75,8 @@ stim logs --errors
 stim stop`}
 />
 
-Each `macos` run stops the previous owned app and rebuilds using that workspace's
+Each `macos` run validates the project settings, development plist and resource
+entries before stopping the previous owned app and rebuilding using that workspace's
 incremental outputs. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets
 `STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors, including for reopen events from `open -g`.

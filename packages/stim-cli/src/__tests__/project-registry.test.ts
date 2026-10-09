@@ -199,3 +199,42 @@ test('explicit operation validation does not substitute an enclosing RN app', ()
   expect(problem?.message).toContain(join(child, 'package.json'));
   expect(projectRegistry.projectProblem(join(dir, 'src'), 'android')?.kind).toBe('not-an-app');
 });
+
+test.each([JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }), JSON.stringify({ name: 'tools' }), '{'])(
+  'SwiftPM selection is independent of the same-root package manifest %s',
+  async (manifest) => {
+    write(join(dir, 'Package.swift'));
+    write(join(dir, 'package.json'), manifest);
+    const selected = projectRegistry.selectMacos(dir);
+    if ('problem' in selected) throw new Error(selected.problem.message);
+    const project = await selected.load();
+    expect(() => project.prepare({})).toThrow(expect.objectContaining({ code: 'STIM_BAD_ARG' }));
+  },
+);
+
+test('macOS selection uses the exact canonical package root and refuses multiple providers', () => {
+  write(join(dir, 'Package.swift'));
+  const alias = join(dir, 'alias');
+  symlinkSync(dir, alias, 'junction');
+  expect(projectRegistry.projectProblem(alias, 'macos')).toBeNull();
+  const nested = join(dir, 'Sources');
+  mkdirSync(nested);
+  expect(projectRegistry.selectMacos(nested)).toMatchObject({ problem: { kind: 'not-an-app' } });
+  const competing = createProjectRegistry([
+    ...projectIntegrations,
+    {
+      id: 'other-macos',
+      inspect: () => ({
+        root: false,
+        application: false,
+        platforms: () => ['macos'],
+        validate: (operation) => (operation === 'macos' ? null : undefined),
+      }),
+    },
+  ]);
+  const selected = competing.selectMacos(dir);
+  expect(selected).toMatchObject({ problem: { kind: 'ambiguous' } });
+  if (!('problem' in selected)) throw new Error('Competing macOS providers must refuse.');
+  expect(selected.problem.message).toContain('swift-package');
+  expect(selected.problem.message).toContain('other-macos');
+});
