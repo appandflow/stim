@@ -358,6 +358,7 @@ test('--older-than keeps devices parked more recently, or at an unknown time, ou
 });
 
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
+  installExecutor();
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
   const record = {
     udid: 'P1',
