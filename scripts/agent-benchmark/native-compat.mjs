@@ -159,7 +159,7 @@ export function prepareNativeCompatibility({
   return { path, sha256: fileHash(path), ...manifest };
 }
 
-export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDeviceBin) {
+export function verifyNativeCompatibilityTools(path, expectedSha256, agentDeviceBin) {
   if (!path) {
     if (expectedSha256) throw new Error('pinned native compatibility manifest is missing');
     return null;
@@ -181,11 +181,16 @@ export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDe
     !(wrapperMode & 0o100)
   )
     throw new Error('Xcode compatibility wrapper changed');
-  if (fileHash(join(fixture, jsiRelative)) !== manifest.jsiSha256)
-    throw new Error('ExpoModulesJSI compatibility patch missing or changed');
   if (realpathSync(agentDeviceBin) !== realpathSync(join(packagePath, 'bin/agent-device.mjs')))
     throw new Error('agent-device is not the compatibility package');
   return { ...manifest, manifestSha256: expectedSha256, directory };
+}
+
+export function verifyNativeCompatibility(path, expectedSha256, fixture, agentDeviceBin) {
+  const compatibility = verifyNativeCompatibilityTools(path, expectedSha256, agentDeviceBin);
+  if (compatibility && fileHash(join(fixture, jsiRelative)) !== compatibility.jsiSha256)
+    throw new Error('ExpoModulesJSI compatibility patch missing or changed');
+  return compatibility;
 }
 
 export function probeNativeCompatibility(compatibility, execute) {
@@ -230,4 +235,27 @@ export function collectedNativeCompatibility(meta, worktree) {
   } catch (error) {
     return { valid: false, reason: error.message };
   }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv[2] !== 'proof' || process.argv.length !== 4) throw new Error('expected proof and its JSON input');
+  const input = JSON.parse(process.argv[3]);
+  const compatibility = verifyNativeCompatibility(
+    input.manifest,
+    input.manifestSha256,
+    input.worktree,
+    input.agentDeviceBin,
+  );
+  if (!compatibility) throw new Error('proof requires pinned native compatibility');
+  process.stdout.write(
+    `${JSON.stringify({
+      schema: 1,
+      input,
+      worktree: realpathSync.native(input.worktree),
+      helperSha256: fileHash(fileURLToPath(import.meta.url)),
+      nodeSha256: fileHash(process.execPath),
+      screenshotSha256: fileHash(input.screenshot),
+      recordingSha256: fileHash(input.recording),
+    })}\n`,
+  );
 }
