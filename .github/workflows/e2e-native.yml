@@ -97,6 +97,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  STIM_E2E_STRICT_QA: '1'
+
 jobs:
   plan:
     name: plan
@@ -293,8 +296,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-ios-${{ matrix.framework }}-${{ matrix.suite }}
@@ -455,8 +458,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload build logs on failure
-        if: failure()
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-logs-android-${{ matrix.framework }}-${{ matrix.suite }}
@@ -475,13 +478,6 @@ jobs:
   # The SDK, system image and acceleration facts live in
   # .github/actions/windows-android-sdk, shared with windows-debug.yml.
   #
-  # The loop suite's driver step is still allowed to fail while the APK
-  # assertion below it is not: the named-slots phase exits 1 after the loop has
-  # passed, because a repeated slot loses device.systemImage (#892) and the
-  # resulting all-ABI build overruns the NDK object-path limit (#893). Until
-  # those land the assertion is that suite's gate; then the driver step becomes
-  # it and the assertion goes. The smoke suite never reaches that phase, so its
-  # driver step is the gate.
   windows:
     name: android bare (${{ matrix.suite }}, windows)
     needs: plan
@@ -546,24 +542,12 @@ jobs:
         run: node packages/stim-cli/dist/cli.mjs doctor --platform android
 
       # --keep leaves the fixture and its worktrees on this ephemeral runner so
-      # the assertion and the upload below can read them.
+      # the upload below can read their logs.
       - name: Android ${{ matrix.suite }} e2e (bare)
-        continue-on-error: ${{ matrix.suite == 'loop' }}
         run: >-
           node test/e2e/native/run-native-e2e.mjs
           --framework bare --platform android --keep --home "D:\e\stim-home"
           ${{ matrix.suite == 'smoke' && '--smoke' || '' }}
-
-      # The step that decides the loop suite's colour until #892 and #893 land:
-      # the driver step above passes the build, install and launch, then exits 1
-      # in the named-slots phase, so the artifact is the part this job can hold.
-      - name: Assert Stim produced an APK
-        if: matrix.suite == 'loop'
-        run: |
-          $apk = Get-ChildItem -Path "D:\e" -Recurse -Filter *.apk -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $apk) { throw "stim android produced no APK under the e2e temp root" }
-          "stim android produced $($apk.FullName) ($([math]::Round($apk.Length / 1MB, 1)) MB)"
 
       - name: Trim the cross-run build cache to its newest entries
         if: github.ref == 'refs/heads/main'
@@ -591,7 +575,6 @@ jobs:
 
       - name: Upload build and device logs
         if: always()
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: windows-android-${{ matrix.suite }}-logs
@@ -599,3 +582,201 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+
+  ios-bare-qa:
+    name: ios bare (${{ matrix.suite }}, Xcode 26.6)
+    needs: plan
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
+    runs-on: macos-26
+    timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [loop, caches]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      TMPDIR: ${{ github.workspace }}/.e2e-bare-ios-tmp
+      STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-bare-ios-cache
+      STIM_E2E_IOS_RUNTIME: '26.5'
+      STIM_E2E_IOS_DEVICE_TYPE: iPhone 17
+      STIM_E2E_EXPECT_RN: 0.88.0-rc.1
+      STIM_E2E_BARE_INIT: >-
+        npx --yes @react-native-community/cli@20.2.0 init StimE2E
+        --directory {dir} --skip-git-init --install-pods false --pm npm
+        --version 0.88.0-rc.1 --template @react-native-community/template@0.88.0-rc.1-76420c7
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir -p "$TMPDIR" "$STIM_BUILD_CACHE"
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: 22.18.0
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.4.10
+      - name: Install and verify fixture tooling
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/MobAI-App/simslim/releases/download/v0.12.0/simslim-v0.12.0-macos-arm64.tar.gz \
+            --output "$RUNNER_TEMP/simslim.tar.gz"
+          printf '%s  %s\n' 1b2f30af154dc19620631569ed39a486e79899b14243ee826742a26b458e6cdd "$RUNNER_TEMP/simslim.tar.gz" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/stim-qa-tools"
+          tar -xzf "$RUNNER_TEMP/simslim.tar.gz" -C "$RUNNER_TEMP/stim-qa-tools" simslim
+          echo "$RUNNER_TEMP/stim-qa-tools" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/stim-qa-tools:$PATH"
+          xcodebuild -version | tee xcode-bare-ios.txt
+          grep -Fx 'Xcode 26.6' xcode-bare-ios.txt
+          grep -Fx 'Build version 17F113' xcode-bare-ios.txt
+          simslim --version | tee simslim-bare-ios.txt
+          grep -E '(^|[^0-9])0\.12\.0([^0-9]|$)' simslim-bare-ios.txt
+          xcrun simctl list runtimes --json > runtimes-bare-ios.json
+          node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("runtimes-bare-ios.json", "utf8")).runtimes; if (!r.some(x => x.version === process.env.STIM_E2E_IOS_RUNTIME && x.isAvailable)) throw new Error("Pinned iOS 26.5 runtime unavailable");'
+          node --version
+          ruby --version
+          bundle --version
+      - name: Strict bare iOS loop
+        if: matrix.suite == 'loop'
+        run: >-
+          node test/e2e/native/run-native-e2e.mjs
+          --framework bare --platform ios --keep --home "$TMPDIR/stim-cli-home"
+      - name: Strict bare iOS caches
+        if: matrix.suite == 'caches'
+        run: >-
+          node test/e2e/native/run-cache-e2e.mjs
+          --framework bare --platform ios --keep --home "$TMPDIR/stim-cli-cache-home"
+          --summary "$GITHUB_WORKSPACE/cache-summary-bare-ios.json"
+      - name: Preserve bare iOS evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bare-ios-${{ matrix.suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            xcode-bare-ios.txt
+            simslim-bare-ios.txt
+            runtimes-bare-ios.json
+            cache-summary-bare-ios.json
+            ${{ env.TMPDIR }}/**/logs/*
+            ${{ env.TMPDIR }}/**/app/package.json
+            ${{ env.TMPDIR }}/**/app/package-lock.json
+            ${{ env.TMPDIR }}/**/app/Gemfile.lock
+            ${{ env.TMPDIR }}/**/app/.stim.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+  macos-runtime-and-tools:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
+    runs-on: macos-26
+    timeout-minutes: 35
+    env:
+      QA_ROOT: ${{ runner.temp }}/stim-convergence-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Record toolchain and require installed Chrome
+        shell: bash
+        run: |
+          mkdir -p "$QA_ROOT/evidence"
+          {
+            git rev-parse HEAD
+            node --version
+            sw_vers
+            xcodebuild -version
+            xcrun swift --version
+            xcrun --sdk iphoneos --show-sdk-version
+            xcrun --sdk iphonesimulator --show-sdk-version
+            test -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --version
+          } > "$QA_ROOT/evidence/toolchain.txt" 2>&1
+      - name: Check formatting including task-only QA files
+        shell: bash
+        run: pnpm run format:check 2>&1 | tee "$QA_ROOT/evidence/format.log"
+      - name: Lint including task-only QA files
+        shell: bash
+        run: pnpm run lint 2>&1 | tee "$QA_ROOT/evidence/lint.log"
+      - name: Full macOS unit suite
+        shell: bash
+        run: |
+          pnpm test --reporter=default --reporter=json \
+            --outputFile="$QA_ROOT/evidence/unit.json" 2>&1 | tee "$QA_ROOT/evidence/unit.log"
+      - name: Full macOS E2E suite
+        shell: bash
+        run: pnpm run test:e2e 2>&1 | tee "$QA_ROOT/evidence/e2e.log"
+      - name: Real SwiftPM and configured browser CLI lifecycle
+        shell: bash
+        run: node scripts/qa/platform-convergence.mjs run "$QA_ROOT" 2>&1 | tee "$QA_ROOT/evidence/lifecycle.log"
+      - name: Scoped fixture cleanup
+        if: always()
+        shell: bash
+        run: node scripts/qa/platform-convergence.mjs cleanup "$QA_ROOT"
+      - name: Real nonphysical compatibility tests
+        shell: bash
+        run: |
+          pnpm run test:compat \
+            packages/stim-cli/src/__tests__/engine-xcode.compat.test.ts \
+            packages/stim-cli/src/__tests__/engine-ios-signing.compat.test.ts \
+            packages/stim-cli/src/__tests__/web-chrome.compat.test.ts \
+            --maxWorkers=1 --reporter=default --reporter=json \
+            --outputFile="$QA_ROOT/evidence/compat.json" 2>&1 | tee "$QA_ROOT/evidence/compat.log"
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const report = JSON.parse(readFileSync(process.env.QA_ROOT + "/evidence/compat.json", "utf8"));
+            assert.equal(report.success, true);
+            assert.equal(report.numFailedTests, 0);
+            assert.equal(report.numPendingTests, 0);
+            const expected = ["engine-xcode.compat.test.ts", "engine-ios-signing.compat.test.ts", "web-chrome.compat.test.ts"];
+            assert.equal(report.testResults.length, expected.length);
+            for (const file of expected) {
+              const result = report.testResults.find((entry) => entry.name.endsWith("/" + file));
+              assert(result, "Missing compatibility file: " + file);
+              assert.equal(result.status, "passed");
+              assert(result.assertionResults.length > 0);
+              assert(result.assertionResults.every((test) => test.status === "passed"));
+            }
+            console.log("Passed compatibility tests:", report.numPassedTests);
+          '
+      - name: Upload results and runtime logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-convergence-macos-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.QA_ROOT }}/evidence
+            ${{ env.QA_ROOT }}/manifest.json
+            ${{ env.QA_ROOT }}/stim-home/workspaces/**/logs/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+  task-expo-web:
+    name: task Expo web and public API regression
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/platform-convergence-local'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXPO_WEB_QA_OUT: ${{ runner.temp }}/stim-platform-qa-expo-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '24'
+      - name: Record installed Chrome
+        run: google-chrome --version
+      - name: Real Expo web regression
+        run: node test/e2e/native/task-expo-web.mjs run "$EXPO_WEB_QA_OUT"
+      - name: Retry scoped cleanup
+        if: always()
+        run: node test/e2e/native/task-expo-web.mjs cleanup "$EXPO_WEB_QA_OUT"
+      - name: Upload Expo web evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task-expo-web-${{ github.sha }}
+          path: |
+            ${{ env.EXPO_WEB_QA_OUT }}/manifest.json
+            ${{ env.EXPO_WEB_QA_OUT }}/evidence/**
+            ${{ env.EXPO_WEB_QA_OUT }}/stim-home/workspaces/**/logs/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

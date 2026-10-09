@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { launchEvidenceMessage } from './assertions.mjs';
 import {
   appendFileSync,
   copyFileSync,
@@ -66,6 +67,31 @@ export function createHarness({ env, cliPath, label }) {
   };
 
   return { env, cliPath, label, log, banner, die, sh, cli, cliJson, requireTool };
+}
+
+export function assertVerifiedLaunch({ h, facts, cwd, label, expectUnattributedAndroidSlot = false }) {
+  const strict = h.env.STIM_E2E_STRICT_QA === '1';
+  if (strict) {
+    assert([true, 'bundling', 'unverified'].includes(facts.launched), `${label} did not establish launch evidence`);
+    h.log(`${label}: checking this launch's delivery, live process and readiness (QA deadline 180s)`);
+    const helper = fileURLToPath(new URL('./await-launch.mjs', import.meta.url));
+    const argv = ['--experimental-strip-types', helper, cwd, JSON.stringify(facts)];
+    if (expectUnattributedAndroidSlot) argv.push('expect-unattributed-android-slot');
+    const result = h.sh(process.execPath, argv, {
+      cwd,
+      timeout: 180_000,
+      allowFail: true,
+    });
+    if (result.stdout) h.log(result.stdout.trim());
+    assert(result.code === 0, `${label} launch did not establish strict readiness: ${result.stderr}`);
+    h.log(
+      expectUnattributedAndroidSlot
+        ? `${label}: delivery UNAVAILABLE (same-platform Android slot attribution); exact app process checked, slot/cache/cleanup checks remain required.`
+        : `${label} completed bundle delivery and stayed alive.`,
+    );
+    return;
+  }
+  h.log(launchEvidenceMessage(facts.launched, label));
 }
 
 export function preflight(h, platform) {
@@ -149,6 +175,16 @@ export function createFixture({ framework, platform, workDir, h }) {
     if (r2.status !== 0) h.die('installing the expo fixture dependencies failed');
   }
 
+  if (h.env.STIM_E2E_EXPECT_RN) {
+    const version = JSON.parse(
+      readFileSync(join(appDir, 'node_modules', 'react-native', 'package.json'), 'utf8'),
+    ).version;
+    assert(
+      version === h.env.STIM_E2E_EXPECT_RN,
+      `fixture React Native ${version} differs from pinned ${h.env.STIM_E2E_EXPECT_RN}`,
+    );
+  }
+
   if (framework === 'bare' && platform === 'ios') {
     // The Gemfile pins cocoapods/activesupport, and installing the fixture's
     // pods outside bundler both dodges those pins and trips RubyGems'
@@ -208,6 +244,8 @@ export function createFixture({ framework, platform, workDir, h }) {
     const settingsPath = join(appDir, '.stim.json');
     const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
     settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
+    if (h.env.STIM_E2E_IOS_RUNTIME) settings.ios.runtime = h.env.STIM_E2E_IOS_RUNTIME;
+    if (h.env.STIM_E2E_IOS_DEVICE_TYPE) settings.ios.deviceType = h.env.STIM_E2E_IOS_DEVICE_TYPE;
     copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
     writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
     h.log('generated iOS fixture uses the native QA SimSlim profile');
@@ -432,8 +470,9 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   await cleanup.verifyProcesses();
   h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
-  const status = h.cli(['status'], { allowFail: true }).stdout;
-  assert(!created.some((p) => status.includes(p)), 'status still lists a removed workspace');
+  const status = h.cli(['status'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(status.code === 0, `cleanup status failed: ${status.stderr}`);
+  assert(!created.some((p) => status.stdout.includes(p)), 'status still lists a removed workspace');
   h.log('(3) status is clean of our workspaces');
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
@@ -449,6 +488,7 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   h.log('(4) source checkout byte-clean, no worktrees linger');
 
   const gc = h.cli(['gc'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
   assert(!created.some((p) => gc.stdout.includes(p)), 'gc reports one of our workspaces as orphaned');
   h.log('(5) gc reports nothing of ours orphaned');
 }

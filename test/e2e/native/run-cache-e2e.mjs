@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { removeGradleHome } from './gradle-home.mjs';
 import {
   FIXTURE_COMMANDS,
+  assertVerifiedLaunch,
   assert,
   assertMatchingPods,
   buildLog,
@@ -455,6 +456,7 @@ async function main() {
       const forced = cliJson([PLATFORM, '--json', '--no-build-cache'], { cwd: wt2, timeout: 40 * 60 * 1000 });
       cleanup.recordBuild(forced);
       cleanup.recordWorkspace(wt2);
+      if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: forced, label: 'wt2 forced run', cwd: wt2 });
       c.ev(`wt2 forced run: cacheSkipped=${JSON.stringify(forced.cacheSkipped)} durationMs=${forced.durationMs}`);
       const lines = readNdjson(buildLog(wt2))
         .map((r) => String(r.msg || ''))
@@ -610,6 +612,7 @@ async function main() {
       ['wt4', r4],
     ]) {
       assert(r.code === 0, `${label} exited ${r.code}:\n${lastLines(r.stderr, 25)}`);
+      if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts: r.facts, label, cwd: r.cwd });
       c.ev(
         `${label}: cacheHit=${JSON.stringify(r.facts.cacheHit)} waitedForBuild=${JSON.stringify(r.facts.waitedForBuild)} durationMs=${r.facts.durationMs}`,
       );
@@ -777,6 +780,7 @@ function build(cwd, label) {
   const facts = cliJson([PLATFORM, '--json'], { cwd, timeout: 40 * 60 * 1000 });
   cleanup.recordBuild(facts);
   cleanup.recordWorkspace(cwd);
+  if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts, label, cwd });
   log(
     `${label}: cacheHit=${JSON.stringify(facts.cacheHit)} key=${facts.cacheKey} launched=${JSON.stringify(facts.launched)} ` +
       `waitedForBuild=${JSON.stringify(facts.waitedForBuild)} durationMs=${facts.durationMs}`,
@@ -795,7 +799,8 @@ function assertArtifact(appPath) {
 function stopWorkspace(cwd) {
   if (!existsSync(cwd)) return;
   cleanup.recordWorkspace(cwd);
-  cli(['stop'], { cwd, allowFail: true });
+  const stopped = cli(['stop'], { cwd, allowFail: true });
+  if (ENV.STIM_E2E_STRICT_QA === '1') assert(stopped.code === 0, `stop failed in ${cwd}: ${stopped.stderr}`);
 }
 
 function worktreeRemove(path) {
