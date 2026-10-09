@@ -1,8 +1,16 @@
 import { request } from 'http';
-import { connect } from 'net';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, releaseMetroPort, claimMetroPort } from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
+import { readListeningPorts } from './listening-ports.ts';
+
+/**
+ * Creates one lazy listener snapshot for an allocation attempt; discard the probe before retrying.
+ */
+export function createPortProbe(): (port: number) => Promise<boolean> {
+  let snapshot: Promise<ReadonlySet<number>> | undefined;
+  return async (port) => !(await (snapshot ??= readListeningPorts())).has(port);
+}
 
 export function isMetroRunning(port: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
@@ -22,25 +30,10 @@ export function isMetroRunning(port: number): Promise<boolean> {
   });
 }
 
-export function isPortFree(port: number, { timeoutMs = 400 }: { timeoutMs?: number } = {}): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    const sock = connect({ port, host: '127.0.0.1' });
-    const done = (free: boolean) => {
-      sock.removeAllListeners();
-      sock.destroy();
-      resolve(free);
-    };
-    sock.setTimeout(timeoutMs);
-    sock.once('connect', () => done(false));
-    sock.once('error', () => done(true));
-    sock.once('timeout', () => done(false));
-  });
-}
-
 const FIRST_PORT = 8082;
 const PORT_SCAN_LIMIT = 200;
 
-export async function computeNextPort(isFree: (port: number) => Promise<boolean> = isPortFree): Promise<number> {
+export async function computeNextPort(isFree: (port: number) => Promise<boolean> = createPortProbe()): Promise<number> {
   const taken = new Set(allMetroPorts());
   for (let port = FIRST_PORT; port < FIRST_PORT + PORT_SCAN_LIMIT; port++) {
     if (taken.has(port)) continue;
@@ -88,7 +81,7 @@ export async function findReclaimablePort(
 export async function allocatePort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
-  isFree: (port: number) => Promise<boolean> = isPortFree,
+  isFree: (port: number) => Promise<boolean> = createPortProbe(),
 ): Promise<number> {
   const reclaim = await findReclaimablePort(projectPath, probe);
   if (reclaim && (await isFree(reclaim.port))) {
@@ -103,7 +96,7 @@ const RESERVE_ATTEMPTS = 5;
 export async function reserveMetroPort(
   projectPath: string,
   probe: (port: number) => Promise<boolean> = isMetroRunning,
-  isFree: (port: number) => Promise<boolean> = isPortFree,
+  isFree?: (port: number) => Promise<boolean>,
   pinned: number | null = null,
 ): Promise<number> {
   if (pinned !== null) {

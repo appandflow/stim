@@ -128,6 +128,7 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
+  runFileAsync(): Promise<string>;
   runQuiet(cmd: string): string;
   runFileQuiet(file: string): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
@@ -152,6 +153,9 @@ function metroExecutor({
       return '';
     },
     runFile() {
+      return '';
+    },
+    async runFileAsync() {
       return '';
     },
     runQuiet(cmd) {

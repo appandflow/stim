@@ -25,7 +25,8 @@ then 8081, without probing or reserving; an invalid pin still refuses.
 
 New allocations scan TCP ports 8900-8999. They skip registry reservations
 and existing listeners, announcing occupied ports and upward retries on
-stderr. Listener checks require lsof, or netstat on Windows. All 100 ports
+stderr. Allocation reads the native TCP tables: netstat on macOS and Windows,
+and /proc/net on Linux. Failed inspection refuses allocation. All 100 ports
 occupied or reserved is a refusal; stop or release unused allocations in
 their owning workspaces.
 
@@ -50,6 +51,7 @@ ports lists named labels and ports, plus Metro marked managed.
 ports stop [label] kills TCP listeners on those named ports and releases
 the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
 on Windows it terminates the listener's process tree with taskkill.
+Stopping listeners requires lsof on macOS and Linux, or netstat on Windows.
 It prints the PID and command (the image name on Windows) for each stopped
 process. The listener's cwd can be anywhere: the named reservation is
 permission to stop that listener.

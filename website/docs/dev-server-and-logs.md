@@ -445,8 +445,9 @@ stim ports stop web`}
 
 Stim keeps allocations in its machine registry and never starts or supervises these
 servers. It checks new allocations for existing listeners and skips busy
-ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
-your system does not provide it; Windows uses `netstat` instead.
+ports in the 8900–8999 band, announcing retries on stderr. Allocation reads
+native TCP tables (`netstat` on macOS and Windows, `/proc/net/tcp*` on Linux)
+and refuses if inspection fails.
 
 A repeated `get` returns the same number even while the server is listening.
 The reservation does not hold a socket open: another process can bind it
@@ -454,7 +455,8 @@ between allocation and launch. Use the server's strict-port option when
 available, and check that it actually bound the supplied port.
 
 `ports stop` kills the TCP listener regardless of its working directory and
-prints its PID and command. Reserve a port only for a service this workspace
+prints its PID and command. Stopping listeners requires `lsof` on macOS and
+Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
 server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
 listeners before releasing their named allocations.

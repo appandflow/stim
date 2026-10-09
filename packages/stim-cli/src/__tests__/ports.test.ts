@@ -3,9 +3,11 @@ import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { fileURLToPath } from 'node:url';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
 import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
+import * as listeners from '../listening-ports.ts';
 
 const allFree = async () => true;
 
@@ -17,6 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   resetExecutor();
@@ -126,25 +129,34 @@ test('computeNextPort reuses a gap left by a released project when it is genuine
 test('computeNextPort throws rather than returning an occupied port when the range is exhausted', async () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   await expect(() => computeNextPort(async () => false)).rejects.toThrow(/no free Metro port/i);
+
+  saveConfig({
+    version: 2,
+    projects: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`/reserved/${i}`, { metroPort: 8082 + i }])),
+    repos: {},
+  });
+  const read = vi
+    .spyOn(listeners, 'readListeningPorts')
+    .mockRejectedValue(new Error('must not inspect reserved ports'));
+  await expect(computeNextPort()).rejects.toThrow(/no free Metro port/i);
+  expect(read).not.toHaveBeenCalled();
 });
 
-test('isPortFree detects a listener held by ANOTHER process', async () => {
-  const { isPortFree } = await import('../ports.ts');
+test('listener snapshots observe a foreign process and refresh after it exits', async (t) => {
   const child = getExecutor().spawn(
     process.execPath,
-    [
-      '-e',
-      `const server = require('http').createServer((q,r)=>r.end('x'));
-      server.listen(0, '127.0.0.1', () => process.send(server.address().port));`,
-    ],
+    [fileURLToPath(new URL('./fixtures/ipv6-listener.mts', import.meta.url))],
     { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
   );
   const exited = once(child, 'exit', { signal: AbortSignal.timeout(20_000) });
   try {
     const [port] = await once(child, 'message', { signal: AbortSignal.timeout(15_000) });
+    if (port === null) t.skip('IPv6 loopback is unavailable');
     expect(typeof port).toBe('number');
-    expect(await isPortFree(port)).toBe(false);
-    expect(await isPortFree(0)).toBe(true);
+    expect(await listeners.readListeningPorts()).toContain(port);
+    child.kill();
+    await exited;
+    expect(await listeners.readListeningPorts()).not.toContain(port);
   } finally {
     child.kill('SIGKILL');
     await exited;
@@ -183,18 +195,19 @@ test('reserveMetroPort moves on when another project claims the port first', asy
   mkdirSync(dirB, { recursive: true });
   upsertProject(dirA, { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject(dirB, { bundleId: 'b', androidPackage: 'b', isExpo: false });
-  let probes = 0;
-  const isFree = async () => {
-    if (probes++ === 0) claimMetroPort(dirA, 8082);
-    return true;
-  };
-  const port = await reserveMetroPort(dirB, async () => false, isFree);
-  expect(port).toBe(8083);
+  vi.spyOn(listeners, 'readListeningPorts')
+    .mockImplementationOnce(async () => {
+      claimMetroPort(dirA, 8082);
+      return new Set<number>();
+    })
+    .mockResolvedValueOnce(new Set([8083]));
+  const port = await reserveMetroPort(dirB, async () => false);
+  expect(port).toBe(8084);
   const recB = getProject(dirB);
   const recA = getProject(dirA);
   assert(recB);
   assert(recA);
-  expect(recB.metroPort).toBe(8083);
+  expect(recB.metroPort).toBe(8084);
   expect(recA.metroPort).toBe(8082);
 });
 

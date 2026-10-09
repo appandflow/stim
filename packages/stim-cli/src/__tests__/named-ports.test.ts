@@ -6,6 +6,7 @@ import { clearNamedPorts, getNamedPort } from '../named-ports.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { findReclaimablePort } from '../ports.ts';
 import * as identity from '../process-identity.ts';
+import * as listeners from '../listening-ports.ts';
 
 let home: string;
 let root: string;
@@ -50,7 +51,9 @@ test('concurrent labels and workspaces get unique ports, while repeated and syml
 
 test('skips occupied ports and honors Metro reservations in the band', async () => {
   upsertProject(root, { metroPort: 8900 });
-  expect(await getNamedPort(root, 'web', { isFree: async (port) => port !== 8901 })).toBe(8902);
+  const read = vi.spyOn(listeners, 'readListeningPorts').mockResolvedValue(new Set([8901]));
+  expect(await getNamedPort(root, 'web')).toBe(8902);
+  expect(read).toHaveBeenCalledTimes(1);
   expect(claimMetroPort(root, 8902)).toBeNull();
 });
 
@@ -114,8 +117,10 @@ function win32Executor(listening: () => boolean): Argv[] {
     findExecutable: () => {
       throw new Error('win32 must not look for lsof');
     },
-    runFile: (file: string) => {
-      throw new Error(`win32 must not run ${file}`);
+    runFile: (file: string, args: string[] = []) => {
+      if (file !== 'netstat' || args.join(' ') !== '-ano') throw new Error(`unexpected win32 command ${file}`);
+      calls.push({ file, args });
+      return listening() ? NETSTAT : '';
     },
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
