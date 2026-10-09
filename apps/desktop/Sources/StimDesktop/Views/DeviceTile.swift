@@ -328,6 +328,8 @@ struct DeviceTile: View {
           Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
+            .lineLimit(1)
+            .fixedSize()
             .accessibilityHidden(true)
         }
         if case .remote = device {
@@ -503,6 +505,8 @@ struct DeviceTile: View {
   private var hasMenu: Bool {
     clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
   }
+
+  private var buildCovered: Bool { showsCovers && !interactive && build != nil }
 
   @ViewBuilder private var screenCover: some View {
     if !showsCovers || interactive {
@@ -998,7 +1002,7 @@ struct DeviceTile: View {
         }
       } else if let workspace {
         PhysicalDeviceScreen(
-          device: device, workspace: workspace, interactive: interactive,
+          device: device, workspace: workspace, interactive: interactive, covered: buildCovered,
           onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
         )
         .id([device.id, device.activityKey].compactMap { $0 }.joined(separator: "|"))

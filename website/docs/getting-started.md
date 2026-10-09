@@ -87,7 +87,9 @@ build-performance details when you want history across runs.
 Clone a tiny Expo app and watch two agents work on two changes at once, each
 in its own worktree with its own simulator and dev server, each checking its own
 work on the device. The first build can take a few minutes on a cold cache; the
-parallel one reuses it. Uncached dependencies need network access.
+parallel one reuses it. Uncached dependencies need network access. Both
+changes build and run on this Mac even when `ios.remote` or `remote.build` would
+pick another one; only the optional machine step builds elsewhere.
 
 <PromptBox
 title="Run the Stim tutorial"

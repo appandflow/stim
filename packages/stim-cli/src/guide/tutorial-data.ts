@@ -104,7 +104,7 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: TUTORIAL_ASKS.machine,
     section: null,
-    commands: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
+    commands: ['cd "{tour}"', 'stim ios --remote local --remote-build "{machine}" --no-build-cache'],
   },
   {
     id: 'share',

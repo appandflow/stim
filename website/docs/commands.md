@@ -277,7 +277,7 @@ same way when it is not running, so running `start` first is optional.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
-         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|machine>]
+         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 

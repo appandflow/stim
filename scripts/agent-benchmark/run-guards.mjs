@@ -314,7 +314,7 @@ function dependencyInstallCommand(command) {
   );
 }
 
-function commandCompletedBefore(first, second) {
+export function commandCompletedBefore(first, second) {
   if (first.parallelTimingAmbiguous || second.parallelTimingAmbiguous) return false;
   if (Number.isInteger(first.endEventOffset) && Number.isInteger(second.startEventOffset)) {
     return first.endEventOffset < second.startEventOffset;
@@ -470,7 +470,7 @@ function artifactCacheHit(entry) {
   );
 }
 
-const preBuildRefusalCodes = ['STIM_NO_METRO'];
+const preBuildRefusalCodes = ['STIM_NO_METRO', 'STIM_SUPERVISOR_EXITED'];
 
 function preBuildRefusal(entry) {
   return (

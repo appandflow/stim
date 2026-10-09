@@ -184,7 +184,10 @@ struct TutorialPanel: View {
                 Label("Run iOS", systemImage: "play.fill")
               }
               .buttonStyle(.stim(.primary)).disabled(!canRunIOS)
-              .help("stim ios: builds if needed, installs and launches in this workspace")
+              .help(
+                "stim ios --remote local --remote-build local: builds here if needed, installs and launches in this "
+                  + "workspace"
+              )
               .accessibilityLabel("Run the tutorial app on iOS")
             }
             if step.id == "phone", phoneState != .paired {

@@ -90,6 +90,8 @@ interface IosRuntimeLaunchContext {
   launch(route: IosRuntimeRoute): Promise<IosRuntimeLaunchResult>;
 }
 
+export type IosRuntimeKind = 'metro' | 'embedded-js' | 'process';
+
 export interface IosRuntimePlan extends RuntimePlan<
   MobileRuntimePreparation,
   IosRuntimeLaunchContext,
@@ -97,23 +99,33 @@ export interface IosRuntimePlan extends RuntimePlan<
   VerifyIosRunArgs,
   RuntimeReadiness
 > {
+  kind: IosRuntimeKind;
+  devMenuParams(root: string, d: IosDeps): boolean;
   scheme(root: string, appPath: string | null, d: IosDeps): string | undefined;
   verificationWaitMs: number;
 }
 
-export function iosProcessRuntime(prepare: IosRuntimePlan['prepare']): IosRuntimePlan {
+export function iosProcessRuntime(
+  prepare: IosRuntimePlan['prepare'],
+  kind: 'embedded-js' | 'process' = 'process',
+): IosRuntimePlan {
   return {
+    kind,
     prepare,
+    devMenuParams: () => false,
     scheme: () => undefined,
     verificationWaitMs: RELEASE_VERIFY_WAIT_MS,
     launch: async (_prepared, { launch }) => launch({ metroPort: null, devMenuParams: false, payloadUrl: null }),
-    verify: async (_prepared, context) => verifyIosProcessRun(context),
+    verify: async (_prepared, context) =>
+      verifyIosProcessRun({ ...context, embeddedJavaScript: kind === 'embedded-js' }),
   };
 }
 
 export function iosMetroRuntime(prepare: IosRuntimePlan['prepare']): IosRuntimePlan {
   return {
+    kind: 'metro',
     prepare,
+    devMenuParams: (root, d) => d.devClientTakesDevMenuParams(root),
     scheme: (root, appPath, d) => d.devClientScheme(root, appPath),
     verificationWaitMs: DEBUG_VERIFY_STEP_MS,
     launch: async ({ metroPort }, { launch, scheme, devMenuParams, lanAddress }) =>
@@ -157,7 +169,8 @@ async function verifyIosProcessRun({
   physical,
   appName,
   remoteDevice,
-}: VerifyIosRunArgs): Promise<RuntimeReadiness> {
+  embeddedJavaScript,
+}: VerifyIosRunArgs & { embeddedJavaScript: boolean }): Promise<RuntimeReadiness> {
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -204,7 +217,7 @@ async function verifyIosProcessRun({
     chalk.yellow(
       phaseLine(
         '',
-        'Release readiness was not established. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
+        `${embeddedJavaScript ? 'Release' : 'Process'} readiness was not established. Run \`stim logs --errors\` for captured crash reports, or \`stim logs --source device\` for the full device output.`,
       ),
     ),
   );
@@ -499,6 +512,7 @@ function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, n
 }
 
 interface FinishIosRunArgs {
+  projectBundleId(): string | null;
   runtime: IosRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
   devicePlacement?: ReportIosResultArgs['devicePlacement'];
@@ -582,9 +596,14 @@ function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefine
   return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
 
-function resolveRunBundleId(d: IosDeps, root: string, appPath: string | null, bundleId: string | null): string | null {
+function resolveRunBundleId(
+  d: IosDeps,
+  projectBundleId: () => string | null,
+  appPath: string | null,
+  bundleId: string | null,
+): string | null {
   if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || d.detectBundleId(root);
+  return d.readBundleId(appPath) || projectBundleId();
 }
 
 function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
@@ -608,6 +627,7 @@ function recordIosReloadTarget({
   udid,
   metroPort,
   release,
+  runtimeKind,
   launchedAt,
   note,
 }: {
@@ -620,6 +640,7 @@ function recordIosReloadTarget({
   udid: string;
   metroPort: number | null;
   release: boolean;
+  runtimeKind: IosRuntimeKind;
   launchedAt: number;
   note: (line: string) => void;
 }): void {
@@ -630,6 +651,7 @@ function recordIosReloadTarget({
       deviceId: udid,
       metroPort,
       release,
+      ...(runtimeKind === 'process' ? { runtime: 'process' as const } : {}),
       launchedAt: new Date(launchedAt).toISOString(),
     });
   } catch (error) {
@@ -655,6 +677,7 @@ function launchFailureRemedy(
 }
 
 export async function finishIosRun({
+  projectBundleId,
   runtime,
   runtimePreparation,
   devicePlacement,
@@ -726,7 +749,7 @@ export async function finishIosRun({
     return null;
   };
 
-  bundleId = resolveRunBundleId(d, root, appPath, bundleId);
+  bundleId = resolveRunBundleId(d, projectBundleId, appPath, bundleId);
   if (appPath && !bundleId) {
     return fail({
       code: 'STIM_INSTALL_FAILED',
@@ -751,7 +774,7 @@ export async function finishIosRun({
   phase('device', `${deviceLabel(device, udid)} ${deviceOutcome}`);
 
   const scheme = runtime.scheme(root, appPath, d);
-  const devMenuParams = d.devClientTakesDevMenuParams(root);
+  const devMenuParams = runtime.devMenuParams(root, d);
   const appName = appNameFromPath(appPath);
   const appExecutable = readRunExecutable(d, appPath, note);
   const dropSwapDir = artifact.release;
@@ -989,6 +1012,7 @@ export async function finishIosRun({
     udid,
     metroPort,
     release,
+    runtimeKind: runtime.kind,
     launchedAt,
     note,
   });
@@ -997,11 +1021,14 @@ export async function finishIosRun({
     src: 'build',
     level: 'info',
     event: 'launch',
-    msg: release
-      ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
-      : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
-        (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : '') +
-        restartedAppNote(launched.restartedPid, '; '),
+    msg:
+      runtime.kind === 'process'
+        ? `launched ${bundleId} on ${udid} (${configuration ?? 'Debug'}, native process, no Metro)`
+        : runtime.kind === 'embedded-js'
+          ? `launched ${bundleId} on ${udid} (${configuration}, embedded JS bundle, no Metro)`
+          : `launched ${bundleId} on ${udid} against Metro ${lanOriginUrl ?? `port ${metroPort}`}` +
+            (launched?.mode === 'openurl' || launched?.mode === 'payload-url' ? ' (expo-dev-client)' : '') +
+            restartedAppNote(launched.restartedPid, '; '),
   });
 
   if (remoteDevice) {
@@ -1051,7 +1078,26 @@ export async function finishIosRun({
       build: { ...buildFailure, appPath, bundleId },
     });
   }
-  logWriter().write(launchOutcomeRecord({ launchState, release, bundleId, configuration, metroPort, unattributed }));
+  logWriter().write(
+    runtime.kind === 'process'
+      ? {
+          src: 'build',
+          level: launchState === LAUNCH_UNVERIFIED ? 'warn' : 'info',
+          event: launchState === LAUNCH_UNVERIFIED ? 'launch_unverified' : 'launch_verified',
+          msg:
+            launchState === LAUNCH_UNVERIFIED
+              ? `${bundleId} could not be verified as running`
+              : `${bundleId} is running its native process`,
+        }
+      : launchOutcomeRecord({
+          launchState,
+          release: runtime.kind === 'embedded-js',
+          bundleId,
+          configuration,
+          metroPort,
+          unattributed,
+        }),
+  );
 
   const leaseFacts = lease?.facts() ?? null;
   releaseLease();
@@ -1063,6 +1109,7 @@ export async function finishIosRun({
     slot,
     json,
     release,
+    runtimeKind: runtime.kind,
     configuration,
     buildScheme,
     metroCheck,

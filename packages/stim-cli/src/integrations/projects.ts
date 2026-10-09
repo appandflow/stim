@@ -80,6 +80,7 @@ const reactNativeProject: ProjectIntegration = {
       platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
+      ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
     };
   },
 };
