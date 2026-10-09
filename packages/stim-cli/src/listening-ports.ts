@@ -7,7 +7,7 @@ import { getExecutor } from './exec.ts';
 export async function readListeningPorts(platform: NodeJS.Platform = process.platform): Promise<ReadonlySet<number>> {
   switch (platform) {
     case 'darwin':
-      return parseDarwinPorts(await readNetstat('netstat', ['-anL', '-p', 'tcp']));
+      return parseDarwinPorts(await readNetstat('/usr/sbin/netstat', ['-anL', '-p', 'tcp']));
     case 'linux': {
       const tables = await Promise.all([
         readFile('/proc/net/tcp', 'utf8'),
