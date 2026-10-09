@@ -74,7 +74,6 @@ export function stopMacosApp(root: string): Promise<boolean> {
     await stopHostedMacos(root, record.host);
     const { host: _host, hostLaunched: _launched, ...stopped } = record;
     writeWorkspaceState(root, { macos: { ...stopped, supervisor: undefined } });
-    await stopBundleInstances(root);
     return true;
   };
   return withWorkspaceProcessLock(workspaceDir(root), 'macos-launch', stop, {
