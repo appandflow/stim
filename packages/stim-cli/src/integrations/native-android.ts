@@ -117,6 +117,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
     variantProblem: () => null,
     targets: ['emulator', 'physical'],
     eas: false,
+    runtimeKind: () => 'process',
     plan: async () => ({
       refusal: {
         code: 'STIM_BAD_ARG',

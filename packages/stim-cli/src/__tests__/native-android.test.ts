@@ -1,6 +1,9 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import * as gradleEngine from '../engine/gradle.ts';
+import { buildAndroidOperation } from '../commands/android/build.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { nativeAndroidDoctor, nativeAndroidProject, selectNativeApk } from '../integrations/native-android.ts';
 import { makeExecutor } from './_factories.ts';
@@ -20,6 +23,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   resetExecutor();
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -122,4 +127,43 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
   expect(findings.some((finding) => /node_modules|Metro is not|Podfile/.test(finding.detail))).toBe(false);
   expect(project.targets).toEqual(['emulator', 'physical']);
   expect(external).not.toHaveBeenCalled();
+});
+
+test('the registered native Android provider retains build-only APKs without claiming artifact reuse or changing a runtime', async () => {
+  gradle(root);
+  vi.stubEnv('STIM_HOME', join(root, 'state'));
+  vi.stubEnv('STIM_BUILD_CACHE', join(root, 'cache'));
+  write(
+    join(root, '.stim.json'),
+    JSON.stringify({ optimizations: { releaseBundleSwap: false, android: { compilerCache: 'none' } } }),
+  );
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  setExecutor(makeExecutor());
+  const compiled = join(root, 'output.apk');
+  let generation = 0;
+  vi.spyOn(gradleEngine, 'buildGradle').mockImplementation(async ({ variant }) => {
+    generation++;
+    write(compiled, `${variant}:${generation}`);
+    return {
+      ok: true,
+      apkPath: compiled,
+      androidPackage: 'org.example.native',
+      apkNote: null,
+      durationMs: 1,
+      lastLines: [],
+    };
+  });
+  const existing = { serial: 'existing-device', devicePlacement: { machine: 'paired-host' } };
+  writeWorkspaceState(root, { android: existing });
+  const options = { variant: 'release', abi: 'x86_64', remoteBuild: 'local' } as const;
+  const first = await buildAndroidOperation(root, options);
+  const second = await buildAndroidOperation(root, options);
+  for (const result of [first, second])
+    expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: null });
+  expect(generation).toBe(2);
+  rmSync(compiled);
+  expect(readFileSync(first.apkPath, 'utf8')).toBe('release:1');
+  expect(readFileSync(second.apkPath, 'utf8')).toBe('release:2');
+  expect(readWorkspaceState(root)?.android).toEqual(existing);
+  expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
 });

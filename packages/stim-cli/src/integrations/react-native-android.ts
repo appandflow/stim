@@ -55,13 +55,16 @@ export interface ReactNativeAndroidDependencies {
   readState?: typeof readWorkspaceState;
 }
 
+const runtimeKind: AndroidProject['runtimeKind'] = ({ release }) => (release ? 'embedded-js' : 'metro');
+
 export function reactNativeAndroidProject(
   root: string,
   dependencies: ReactNativeAndroidDependencies = {},
 ): AndroidProject {
   const isExpo = detectIsExpo(root);
+
   return {
-    plan: (options) => planReactNativeAndroid(root, options, dependencies.plan),
+    plan: (options) => planReactNativeAndroid(root, options, runtimeKind, dependencies.plan),
     isExpo,
     appIds: () => detectAppIds(root),
     packageRemedy:
@@ -69,8 +72,9 @@ export function reactNativeAndroidProject(
     variantProblem: (variant) => productFlavorRefusal({ flavors: readProductFlavors(root), variant }),
     targets: ['emulator', 'physical', 'hosted', 'remote'],
     eas: true,
+    runtimeKind,
     runtime: ({ build, prepareMetro, phase }) =>
-      build.release
+      runtimeKind(build) === 'embedded-js'
         ? androidProcessRuntime(async () => {
             phase('metro', `skipped (${build.variant}: the JS bundle is embedded, no dev server is used)`);
             return { ok: true, prepared: { metroPort: null } };

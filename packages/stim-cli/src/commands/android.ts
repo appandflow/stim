@@ -816,6 +816,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     },
     {
       resolveCacheProvider,
+      runtimeKind: integration.runtimeKind,
       variantProblem: integration.variantProblem,
       detectExpo: () => integration.isExpo,
       listSystemImages,
@@ -848,9 +849,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
     },
   };
-  const { build: requestedBuildPlan, isExpo, cacheProviderConfig } = plan;
+  const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
-  const { variant, release } = requestedBuildPlan;
+  const { variant, release } = buildPlan;
   record.configuration = variant ?? 'debug';
   const hosting = await selectAndroidPlacement({
     root,
@@ -999,14 +1000,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: true, prepared: { metroPort } };
   }
 
-  const runtime = options.runtimePlan ?? integration.runtime({ build: requestedBuildPlan, prepareMetro, phase });
-  const buildPlan =
-    runtime.kind === 'process'
-      ? {
-          ...requestedBuildPlan,
-          cache: { ...requestedBuildPlan.cache, read: requestedBuildCache && requestedBuildPlan.cache.write },
-        }
-      : requestedBuildPlan;
+  const runtime = options.runtimePlan ?? integration.runtime({ build: buildPlan, prepareMetro, phase });
   const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
