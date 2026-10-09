@@ -1976,10 +1976,12 @@ Data Access permission (Accessibility on macOS 26 and earlier) for normal native
 the captured view is read-only. Background input relay is not included. No permission requests or custom packaging
 script is part of the build flow.
 
-On the first native viewer opening, one **Native App Viewer** setup screen explains
+On the first native viewer opening, the **Native App Viewer** setup sheet walks through
 Screen & System Audio Recording (Screen Recording on macOS 14) and Device Control and
 Data Access (Accessibility on macOS 26 and earlier), named for the Mac's macOS version,
-shows their status and offers **Request Permissions**, **Settings** and **Check Again**.
+one step at a time, then shows a done step. Each step offers a primary request button and
+**Open System Settings**; its status refreshes every two seconds while the sheet is open,
+with no manual check. **Skip** leaves a permission for later.
 You approve normal macOS requests; Stim never resets or automatically grants access.
 Use **Permissions** on the app card to reopen setup. A phone-first native viewer
 asks the running Desktop host to show the same setup on its next local health refresh.

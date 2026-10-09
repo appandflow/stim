@@ -291,7 +291,8 @@ struct RootView: View {
     .onQuitRequested { actions.presented = nil }
     .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
     .sheet(isPresented: $nativePermissions.showsSetup) {
-      NativeViewerPermissionsView(permissions: nativePermissions)
+      NativeViewerPermissionsView(
+        permissions: nativePermissions, relaunch: onboarding.canRelaunch ? { onboarding.relaunch() } : nil)
     }
     .onAppear {
       navigation.resolves = resolves
