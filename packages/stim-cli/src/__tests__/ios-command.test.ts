@@ -713,6 +713,8 @@ function tick() {
 }
 
 describe('the simulator boot gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('the fingerprint starts with the boot, and each line reports its own wall time', async () => {
     reserve();
     let clock = 1_000_000;
