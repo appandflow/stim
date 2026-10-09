@@ -193,6 +193,10 @@ function agentDeviceCommand(meta, command) {
   return `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device ${command}`;
 }
 
+function agentDeviceSessionState(meta) {
+  return `${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${meta.agentDevice?.session ?? meta.runId}`;
+}
+
 function isJavascriptVariant(variant) {
   return variant === 'javascript' || variant === launchCrashVariant;
 }
@@ -1848,8 +1852,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
       target,
     };
   }
-  const session = meta.agentDevice?.session ?? meta.runId;
-  const expectedSessionState = `Session state: ${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${session}`;
+  const expectedSessionState = `Session state: ${agentDeviceSessionState(meta)}`;
   if (!commands[openIndex].output.includes(expectedSessionState)) {
     return {
       valid: false,
@@ -2245,6 +2248,11 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
+          agentDeviceLaunch: {
+            command: agentDeviceOpenCommand(meta, appAlive),
+            appId: 'com.appandflow.trailhead',
+            sessionState: agentDeviceSessionState(meta),
+          },
           setup: {
             worktree,
             avdConfig: meta.expectedControlAvdConfig,
