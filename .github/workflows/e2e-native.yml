@@ -74,6 +74,11 @@ on:
         type: choice
         default: loop
         options: [smoke, loop, caches, pool, all]
+      qa_ios_runner:
+        description: 'Runner capacity for the iOS lifecycle loop'
+        type: choice
+        default: standard
+        options: [standard, larger]
       qa_scope:
         description: 'Task QA jobs to run; all runs the full regression'
         type: choice
@@ -134,7 +139,7 @@ jobs:
     name: ios ${{ matrix.framework }} (${{ matrix.suite }})
     needs: plan
     if: needs.plan.outputs.ios != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios' || inputs.qa_scope == 'ios-expo')
-    runs-on: ${{ matrix.suite == 'loop' && 'macos-26' || 'xcode-27' }}
+    runs-on: ${{ matrix.suite == 'loop' && (inputs.qa_ios_runner == 'larger' && 'macos-26-xlarge' || 'macos-26') || 'xcode-27' }}
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
