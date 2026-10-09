@@ -91,8 +91,8 @@ jobs:
           const deadline = Date.now() + 60 * 60_000;
           while (Date.now() < deadline && !existsSync('stim-ci-host/stop')) {
             console.log(new Date().toISOString());
-            for (const [file, args] of [['uptime', []], ['vm_stat', []], ['sysctl', ['hw.memsize', 'hw.ncpu']]]) {
-              try { console.log(execFileSync(file, args, { encoding: 'utf8', timeout: 5000 })); }
+            for (const [file, args] of [['uptime', []], ['vm_stat', []], ['sysctl', ['hw.memsize', 'hw.ncpu']], ['/bin/ps', ['-A', '-o', 'pid=,ppid=,state=,%cpu=,rss=,comm=']]]) {
+              try { console.log(execFileSync(file, args, { encoding: 'utf8', timeout: 5000, maxBuffer: 512 * 1024 })); }
               catch (error) { console.log(`${file}: ${error.message}`); }
             }
             await setTimeout(15000);
@@ -130,7 +130,7 @@ jobs:
         run: |
           mkdir -p stim-ci-host
           touch stim-ci-host/stop
-          for ((attempt = 0; attempt < 20; attempt++)); do
+          for ((attempt = 0; attempt < 40; attempt++)); do
             if test -f stim-ci-host/done; then break; fi
             sleep 1
           done
