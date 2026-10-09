@@ -1,7 +1,8 @@
 import Foundation
 
 public func tutorialCommands(
-  _ lines: [String], tourPath: String?, repository: String?, stateDir: String?, machine: String?, udid: String? = nil
+  _ lines: [String], tourPath: String?, repository: String?, stateDir: String?, machine: String?, udid: String? = nil,
+  second: String? = nil
 ) -> String {
   let base = repository ?? "~/stim-tutorial"
   return fillTutorial(
@@ -9,7 +10,7 @@ public func tutorialCommands(
     [
       "base": base, "tour": tourPath ?? "\(base)-tour",
       "stateDir": stateDir ?? "<agentDevice.stateDir>", "machine": machine ?? "<approved machine>",
-      "udid": udid ?? "<ios.udid>",
+      "udid": udid ?? "<ios.udid>", "second": second ?? "<second worktree>",
     ], shellDoubleQuotedValue)
 }
 
@@ -22,7 +23,7 @@ public func tutorialAsk(_ template: String, tourPath: String?, repository: Strin
 }
 
 private func fillTutorial(_ source: String, _ values: [String: String], _ format: (String) -> String) -> String {
-  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|stateDir|machine|udid)\}"#)
+  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|second|stateDir|machine|udid)\}"#)
   var result = source
   for match in pattern.matches(in: source, range: NSRange(source.startIndex..., in: source)).reversed() {
     let key = String(source[Range(match.range(at: 1), in: source)!])

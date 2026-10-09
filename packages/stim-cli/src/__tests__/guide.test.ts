@@ -553,42 +553,41 @@ test('the agent guide routes situations to valid sections before listing every t
 
 test('tutorial prompts route to rendered sections', () => {
   for (const step of TUTORIAL_STEPS) {
-    if (!step.prompt) continue;
-    assert(step.section, step.id);
+    if (!step.section) continue;
     expect(renderSection('tutorial', step.section)).toBeTruthy();
   }
 });
 
-test('the printed tutorial app is detected as the supported tutorial version', () => {
-  const app = renderSection('tutorial', 'app');
-  assert(app);
-  const json = app.match(/```json\n([\s\S]*?)\n```/)?.[1];
-  assert(json);
-  expect(detectTutorial(JSON.parse(json))).toEqual({ version: TUTORIAL_VERSION });
+test('the run section names the marker version the status payload reports', () => {
+  const run = renderSection('tutorial', 'run');
+  assert(run);
+  expect(run).toContain(`expo.extra.stimTutorial equal to\n${TUTORIAL_VERSION}`);
+  expect(detectTutorial({ expo: { extra: { stimTutorial: TUTORIAL_VERSION } } })).toEqual({
+    version: TUTORIAL_VERSION,
+  });
 });
 
 test('tutorial setup protects existing folders and the user repository', () => {
-  const run = renderSection('tutorial', 'run');
+  const run = renderSection('tutorial', 'run')?.replace(/\s+/g, ' ');
   assert(run);
-  expect(run).toMatch(/existing non-tutorial[\s\S]*?stop and ask the user for another folder/i);
-  expect(run).toMatch(/Never overwrite or delete it/i);
-  expect(run).toMatch(/inside another repository[\s\S]*?stop and ask the user for another folder/i);
+  expect(run).toMatch(/If \{base\} exists, stop and ask the user for another folder; never overwrite or delete it/i);
+  expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
-test('the manual tutorial checks for an enclosing repository before creating or initializing the app', () => {
-  const begin = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.manual;
-  const index = (needle: string) => begin.findIndex((line) => line.includes(needle));
-  expect(index('--is-inside-work-tree')).toBeGreaterThanOrEqual(0);
-  expect(index('--is-inside-work-tree')).toBeLessThan(index('create-expo-app'));
-  expect(index('create-expo-app')).toBeLessThan(index('git init'));
+test('the cloning tutorial step checks the repository before cloning, and its prompt states the rules', () => {
+  const run = renderSection('tutorial', 'run')!;
+  expect(run.indexOf('--is-inside-work-tree')).toBeLessThan(run.indexOf('git clone'));
+  const ask = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.ask!;
+  expect(ask).toMatch(/inside another git repository, stop and ask me/);
+  expect(ask).toMatch(/never git add in my own repo/);
 });
 
 test('tutorial finish removes the tour worktree without forcing removal', () => {
   const finish = renderSection('tutorial', 'finish');
   assert(finish);
-  expect(finish).toMatch(/stim worktree remove "\{tour\}"/);
-  expect(finish).toMatch(/authorizes removing this tour worktree only/i);
+  expect(finish).toMatch(/stim worktree remove "\{tour\}"\nstim worktree remove "\{second\}"/);
+  expect(finish).toMatch(/authorizes removing the worktrees made for the\ntutorial's changes, and nothing else/i);
   expect(finish).toMatch(/Never use --force/i);
   expect(finish).not.toMatch(/stim worktree remove[^\n]*--force/);
 });

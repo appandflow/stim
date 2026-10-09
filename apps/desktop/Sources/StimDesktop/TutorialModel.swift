@@ -67,7 +67,9 @@ final class TutorialModel: ObservableObject {
       return snapshot?.record.beginWaitTimedOut(now: now) == true
         ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
     }
-    if workspace == nil, tourPath != nil, snapshot?.isComplete == false {
+    if workspace == nil, tourPath != nil, snapshot?.isComplete == false,
+      !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
+    {
       return "Tutorial workspace gone: Restart"
     }
     if snapshot?.currentStep == "finish", removalRefused {
@@ -139,7 +141,8 @@ final class TutorialModel: ObservableObject {
       && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
     snapshot = progress.update(
       TutorialInput(
-        environment: workspace.flatMap(TutorialEnvironment.init), archivedProjectRoots: archivedRoots,
+        environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
+        archivedProjectRoots: archivedRoots,
         logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
         pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
         machineApproved: machineState == .approved, approvedMachine: approvedMachine, replayOff: workspace?.replayOff ?? false,
@@ -203,7 +206,7 @@ final class TutorialModel: ObservableObject {
     tutorialCommands(
       step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository,
       stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine,
-      udid: workspace?.ios?.udid)
+      udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
   private func refresh(now: Date = Date()) {

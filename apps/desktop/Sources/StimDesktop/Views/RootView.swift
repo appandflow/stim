@@ -125,6 +125,7 @@ struct RootView: View {
             snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
             canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
+            agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
             restart: { tutorial.restart() },

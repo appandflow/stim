@@ -13,6 +13,7 @@ struct TutorialPanel: View {
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   var machineState = TutorialMachineState.none
   var canRunIOS = false
+  var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
   var commands: (TutorialStep) -> String
   var copied: () -> Void = {}
@@ -139,6 +140,7 @@ struct TutorialPanel: View {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           copyBlock(step)
+          if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
           if step.id == "machine", machineState.showsPrompt {
             if snapshot.record.approvedMachine == nil {
               Text("Name the approved machine to your agent when you paste this prompt.")
@@ -149,7 +151,7 @@ struct TutorialPanel: View {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
           }
           let detail = current ? message ?? state.detail : state.detail
-          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "rebuild", "phone"].contains(step.id) {
+          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
             Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
           }
           if detail.contains("Update Stim Desktop") {
@@ -177,7 +179,7 @@ struct TutorialPanel: View {
               Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }
-            if ["build", "rebuild"].contains(step.id) {
+            if step.id == "build" {
               Button {
                 runIOS()
               } label: {
@@ -206,7 +208,7 @@ struct TutorialPanel: View {
           }
         }
         .padding(.leading, Space.xl)
-      } else if state.state == .done, ["build", "rebuild"].contains(step.id), !state.detail.isEmpty {
+      } else if state.state == .done, ["build", "parallel"].contains(step.id), !state.detail.isEmpty {
         Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
       }
     }
@@ -215,11 +217,11 @@ struct TutorialPanel: View {
   @ViewBuilder private func copyBlock(_ step: TutorialStep) -> some View {
     let ask = step.id == "machine" && !machineState.showsPrompt ? nil : asks(step)
     let hasCommands = !step.commands.isEmpty && (step.id != "machine" || machineState.showsPrompt)
-    let showsAsk = ask != nil && (!step.optional || step.id == "machine")
+    let showsAsk = ask != nil
     if let ask, showsAsk {
       TutorialPromptBox(prompt: ask, onCopy: copied)
     }
-    if hasCommands, showsAsk || !step.optional {
+    if hasCommands {
       DisclosureGroup(isExpanded: $commandsExpanded) {
         VStack(alignment: .leading, spacing: Space.sm) {
           Text(showsAsk ? "Your agent runs these. You can also run them yourself." : "Run these yourself.")
@@ -297,27 +299,30 @@ struct TutorialPanel: View {
 
   private func explanation(_ id: String) -> String {
     switch id {
-    case "begin": return "Tell your agent to create a small iOS app in an isolated tutorial worktree."
-    case "sidebar": return "The tutorial workspace appears beside your other projects. Select it to follow along."
-    case "build":
-      return "Watch the first iOS build: prebuild, pods, compile and launch. Open the build details for phase timings."
-    case "rebuild":
+    case "begin":
       return
-        "Your agent changes the title color and runs iOS again. Look at the cache badge in Build: it shows a hit, or explains why Stim rebuilt."
-    case "device": return "Open the live view, then tap Log an error."
-    case "logs": return "Open Logs to find the tagged error. Try Crash me and Slow request too."
+        "You will see two agents work on two changes at once, each in its own worktree with its own simulator and dev server, each checking its own work on the device. First, get the test app and run it."
+    case "build":
+      return
+        "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Watch the build in Desktop."
+    case "parallel":
+      return
+        "While that runs, ask for another change, for example: \"Try a dark background and check it on the simulator.\" Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap. Look at the cache badge and both simulators."
+    case "device": return "Optional. Open the live view of either simulator and tap around while your agents work."
     case "agent":
       return
-        "Your agent can drive the simulator. Paste this, then watch Agent actions. Replay shows the recorded screen beside the actions."
-    case "refresh":
-      return "Ask your agent to change the title to purple. Watch Fast Refresh update the app without a native build."
+        "Optional. Your agent verifies UI changes itself with screenshots, taps and logs. Desktop shows what it did and lets you replay it. Try a prompt like this, then watch Agent actions."
+    case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
     case "phone":
-      return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see this workspace. You can skip this step."
+      return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
     case "machine":
       return "Optional. An approved Mac can build the same app. Choose one in Settings > Remote Macs, or skip this step."
+    case "share":
+      return
+        "Optional and public. If you paste this, your agent opens a pull request on appandflow/stim-tutorial: your GitHub name and change appear on that repo. It needs GitHub access (gh) for your agent, and a bot will reply and close it. Nothing depends on this step."
     case "finish":
       return
-        "Your agent reverts the tutorial edit, stops the workspace and removes only its worktree. Open Archived to revisit its history."
+        "Your agent stops the apps and removes the two worktrees. Their builds, logs and agent actions stay under Archived."
     default: return ""
     }
   }
@@ -326,12 +331,7 @@ struct TutorialPanel: View {
     switch id {
     case "opened": return "Live view opened"
     case "input": return "Device controlled"
-    case "error": return "Log an error"
-    case "crash": return "Crash me"
-    case "slow": return "Slow request"
     case "action": return "Agent action received"
-    case "agent-replay": return "agent-device replay"
-    case "screen-recording": return "Screen recording replay"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
     case "approved": return "Remote Mac approved"
@@ -358,6 +358,25 @@ private struct TutorialPromptBox: View {
         }
         .padding(Space.lg)
       }
+    }
+  }
+}
+
+private struct AgentDeviceCard: View {
+  var copied: () -> Void
+
+  var body: some View {
+    Card {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text("Let your agent see and test the app").font(.stim(.callout, weight: .semibold))
+        Text(
+          "agent-device lets it take screenshots and tap through the app, and Desktop shows what it did. Without it your agent can only check the build and logs. The tutorial completes either way."
+        )
+        .foregroundStyle(Palette.secondary)
+        CommandBlock(commandText: "npm i -g agent-device")
+        TutorialPromptBox(prompt: "Install agent-device and use it to check your change.", onCopy: copied)
+      }
+      .padding(Space.lg)
     }
   }
 }

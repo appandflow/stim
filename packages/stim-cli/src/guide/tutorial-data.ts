@@ -1,141 +1,25 @@
-export const TUTORIAL_PINS = {
-  createExpoApp: '5.0.0',
-  template: 'expo-template-blank@58.0.15',
-};
+export const TUTORIAL_REPO = 'appandflow/stim-tutorial';
 
-export const TUTORIAL_FILES = {
-  'App.js': `import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
-import { TITLE_COLOR } from './theme';
+/** The test app's single color file and the names it exports; the repo owns them. */
+export const TUTORIAL_THEME = { file: 'theme.js', exports: ['titleColor', 'backgroundColor'] };
 
-const TAG = '[stim:tutorial]';
-
-function Button({ label, onPress }) {
-  return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={styles.button}>
-      <Text style={styles.buttonText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-export default function App() {
-  const [note, setNote] = useState('');
-
-  useEffect(() => {
-    console.log(\`\${TAG} title color=\${TITLE_COLOR}\`);
-  }, [TITLE_COLOR]);
-
-  const logError = () => {
-    console.error(\`\${TAG} error-button test error\`);
-    setNote('Logged an error.');
-  };
-
-  const crash = () => {
-    setTimeout(() => {
-      throw new Error(\`\${TAG} crash-button uncaught test error\`);
-    }, 0);
-  };
-
-  const slowRequest = async () => {
-    const started = Date.now();
-    setNote('Waiting 3 seconds...');
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-    const elapsed = Date.now() - started;
-    console.warn(\`\${TAG} slow-request \${elapsed}ms\`);
-    setNote(\`Slow request took \${elapsed}ms.\`);
-  };
-
-  return (
-    <View style={styles.container}>
-      <Text style={[styles.title, { color: TITLE_COLOR }]}>Stim Tutorial</Text>
-      <Text style={styles.body}>Tap a button, then look at Stim Desktop &gt; Logs.</Text>
-      <Button label="Log an error" onPress={logError} />
-      <Button label="Crash me" onPress={crash} />
-      <Button label="Slow request" onPress={slowRequest} />
-      <Text style={styles.note}>{note}</Text>
-      <StatusBar style="auto" />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontSize: 32, fontWeight: '700', marginBottom: 8 },
-  body: { fontSize: 16, color: '#4b5563', textAlign: 'center', marginBottom: 24 },
-  button: { backgroundColor: '#111827', borderRadius: 10, paddingVertical: 14, paddingHorizontal: 28, marginBottom: 12 },
-  buttonText: { color: '#fff', fontSize: 17, fontWeight: '600' },
-  note: { marginTop: 12, fontSize: 15, color: '#374151' },
-});
-`,
-  'theme.js': `export const TITLE_COLOR = '#1f2937';
-`,
-  'app.json': `{
-  "expo": {
-    "name": "Stim Tutorial",
-    "slug": "stim-tutorial",
-    "version": "1.0.0",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "ios": {
-      "supportsTablet": true,
-      "bundleIdentifier": "dev.stim.tutorial"
-    },
-    "android": {
-      "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
-      },
-      "package": "dev.stim.tutorial"
-    },
-    "web": {
-      "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "stimTutorial": 1
-    }
-  }
-}
-`,
-  '.gitignore': `/ios
-/android
-/tutorial*.ad
-/tutorial*.png
-`,
-};
-
-export const TUTORIAL_PROMPTS = {
-  begin: 'Run the Stim tutorial.',
-  rebuild: 'Continue the Stim tutorial: rebuild',
-  agent: 'Continue the Stim tutorial: agent',
-  refresh: 'Continue the Stim tutorial: refresh',
-  machine: 'Continue the Stim tutorial: machine',
-  finish: 'Continue the Stim tutorial: finish',
-};
+export const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
 /**
- * The requests Stim Desktop offers to copy, in plain words. {base}, {tour} and {machine} are filled in by Desktop.
- * Each one ends with the guide section the agent follows, which holds the pinned template, folder safety and cleanup.
+ * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour} and {machine} are
+ * filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
  */
 export const TUTORIAL_ASKS = {
-  begin:
-    'Set up a small Expo test app in {base} so I can try Stim, then run it on iOS with stim. If that folder is inside another git repository or already holds something else, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run for the template.',
-  rebuild:
-    "We're in {tour}. Change the title color in theme.js to blue, then run the app on iOS and check it looks right. See stim guide tutorial rebuild.",
+  begin: `Clone ${TUTORIAL_REPO} into {base} and run it on iOS with stim. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
   agent:
-    "We're in {tour}. Use agent-device to tap Log an error in the iOS app and take a screenshot, then replay the tap. See stim guide tutorial agent.",
-  refresh: "We're in {tour}. Make the app title purple and check it on iOS. See stim guide tutorial refresh.",
-  machine:
-    "We're in {tour}. Build the app for iOS on {machine} instead of this Mac. Don't approve or pair anything; see stim guide tutorial machine.",
+    'In {base}, use agent-device to open the app on the iOS simulator, take a screenshot and tap around, then tell me what you saw.',
+  machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
-    "I'm done with this branch in {tour}. Revert the tutorial edit, stop the app and remove that worktree, never with --force, and keep {base}. See stim guide tutorial finish.",
-  retry:
-    'The first iOS build in {base} failed. Run the app on iOS again with stim and tell me what went wrong if it fails. See stim guide tutorial run.',
+    "I'm done with these experiments in {base}. Clean them up: stop the apps and remove only the worktrees you made for them, never with --force, and keep the clone. Follow stim guide tutorial finish.",
+  share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
+  retry: 'The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again.',
 };
 
 export const TUTORIAL_STEPS: {
@@ -145,158 +29,68 @@ export const TUTORIAL_STEPS: {
   optional: boolean;
   ask: string | null;
   section: string | null;
-  manual: string[];
   commands: string[];
 }[] = [
   {
     id: 'begin',
-    title: 'Create the Tutorial',
+    title: 'Get the Test App',
     who: 'agent',
     optional: false,
     ask: TUTORIAL_ASKS.begin,
     section: 'run',
-    manual: [
-      'base="{base}"',
-      'mkdir -p "${base%/*}"',
-      'if [ ! -e "$base" ]; then',
-      'cd "${base%/*}"',
-      'if git -C "${base%/*}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo "Stop: inside another repository. Ask for another folder; never git add in the user repository."; exit 1; fi',
-      `npx --yes create-expo-app@${TUTORIAL_PINS.createExpoApp} stim-tutorial --template ${TUTORIAL_PINS.template} --no-install --no-agents-md --yes`,
-      'cd "$base"',
-      'stim guide tutorial app',
-      ...Object.entries(TUTORIAL_FILES).flatMap(([name, content]) =>
-        [`cat ${name === '.gitignore' ? '>>' : '>'} ${name} <<'STIM_TUTORIAL_EOF'`].concat(
-          content.trimEnd().split('\n'),
-          'STIM_TUTORIAL_EOF',
-        ),
-      ),
-      'npm install --prefer-offline',
-      'npm pkg set scripts.ios="expo run:ios" scripts.android="expo run:android"',
-      'git init',
-      'git add -A',
-      'git -c user.name=Stim -c user.email=stim@localhost -c commit.gpgsign=false commit -m "Stim tutorial"',
-      'else',
-      'cd "$base"',
-      `node -e 'const fs = require("node:fs"); const app = fs.existsSync("app.json") ? JSON.parse(fs.readFileSync("app.json", "utf8")) : null; if (app?.expo?.extra?.stimTutorial !== ${JSON.parse(TUTORIAL_FILES['app.json']).expo.extra.stimTutorial}) { console.error("Stop: existing non-tutorial folder or another version. Ask for another folder; never overwrite or delete it."); process.exit(1); }'`,
-      `git rev-parse --show-toplevel | node -e 'const fs = require("node:fs"); const root = fs.readFileSync(0, "utf8").trim(); if (fs.realpathSync(root) !== fs.realpathSync(process.cwd())) { console.error("Stop: inside another repository. Ask for another folder; never git add in the user repository."); process.exit(1); }'`,
-      'fi',
-    ],
-    commands: [],
-  },
-  {
-    id: 'sidebar',
-    title: 'Workspace in Sidebar',
-    who: 'you',
-    optional: false,
-    ask: null,
-    section: null,
-    manual: [],
     commands: [],
   },
   {
     id: 'build',
-    title: 'First iOS Build',
+    title: 'Make a Change',
     who: 'you',
     optional: false,
     ask: null,
     section: null,
-    manual: [
-      'cd "{base}"',
-      'git worktree add -B stim-tutorial/tour "{tour}" HEAD',
-      'cd "{tour}"',
-      'stim worktree warm',
-      'stim guide agent',
-      'stim doctor --platform ios',
-      'stim start',
-      'stim ios',
-    ],
-    commands: ['cd "{tour}"', 'stim start', 'stim ios'],
+    commands: [],
   },
   {
-    id: 'rebuild',
-    title: 'Rebuild from Cache',
-    who: 'agent',
+    id: 'parallel',
+    title: 'Change It Again in Parallel',
+    who: 'you',
     optional: false,
-    ask: TUTORIAL_ASKS.rebuild,
-    section: 'rebuild',
-    manual: ['cd "{tour}"', 'stim ios', 'stim status --json'],
-    commands: ['cd "{tour}"', `echo "export const TITLE_COLOR = '#2563eb';" > theme.js`, 'stim ios'],
+    ask: null,
+    section: null,
+    commands: [],
   },
   {
     id: 'device',
     title: 'Live View and Control',
     who: 'you',
-    optional: false,
+    optional: true,
     ask: null,
     section: null,
-    manual: ['stim status'],
     commands: ['stim status'],
-  },
-  {
-    id: 'logs',
-    title: 'App Logs',
-    who: 'you',
-    optional: false,
-    ask: null,
-    section: null,
-    manual: ['stim logs --errors', "stim logs --grep '\\[stim:tutorial\\]'"],
-    commands: ['stim logs --errors', 'stim logs --grep stim:tutorial'],
   },
   {
     id: 'agent',
     title: 'Agent Actions and Replay',
     who: 'agent',
-    optional: false,
+    optional: true,
     ask: TUTORIAL_ASKS.agent,
-    section: 'agent',
-    manual: [
-      'cd "{tour}"',
-      'export AGENT_DEVICE_STATE_DIR="{stateDir}"',
-      'stim status --json',
-      'read -r iosUdid',
-      'agent-device open dev.stim.tutorial --platform ios --udid "$iosUdid" --save-script=tutorial.ad',
-      'agent-device react-native dismiss-overlay || true',
-      `agent-device press 'label="Log an error"' --settle`,
-      'agent-device screenshot tutorial.png',
-      'agent-device close',
-      "grep -v -e 'target-v1' -e 'dismiss-overlay' tutorial.ad > tutorial-replay.ad",
-      'agent-device replay tutorial-replay.ad --platform ios --udid "$iosUdid"',
-      'stim logs --source agent --tail 10',
-    ],
+    section: null,
     commands: [
       'cd "{tour}"',
       'export AGENT_DEVICE_STATE_DIR="{stateDir}"',
-      'agent-device open dev.stim.tutorial --platform ios --udid {udid} --save-script=tutorial.ad',
-      `agent-device press 'label="Log an error"' --settle`,
+      `agent-device open ${TUTORIAL_BUNDLE_ID} --platform ios --udid {udid}`,
       'agent-device screenshot tutorial.png',
       'agent-device close',
-      'grep -v target-v1 tutorial.ad > tutorial-replay.ad',
-      'agent-device replay tutorial-replay.ad --platform ios --udid {udid}',
       'stim logs --source agent --tail 10',
     ],
   },
   {
-    id: 'refresh',
-    title: 'Fast Refresh',
-    who: 'agent',
-    optional: false,
-    ask: TUTORIAL_ASKS.refresh,
-    section: 'refresh',
-    manual: [
-      'cd "{tour}"',
-      "cat > theme.js <<'STIM_TUTORIAL_EOF'",
-      "export const TITLE_COLOR = '#7c3aed';",
-      'STIM_TUTORIAL_EOF',
-      'sleep 6',
-      'stim logs --errors',
-      "stim logs --grep 'title color'",
-    ],
-    commands: [
-      'cd "{tour}"',
-      `echo "export const TITLE_COLOR = '#7c3aed';" > theme.js`,
-      'stim logs --errors',
-      'stim logs --grep "title color"',
-    ],
+    id: 'logs',
+    title: 'App Logs',
+    who: 'you',
+    optional: true,
+    ask: null,
+    section: null,
+    commands: ['stim logs --errors', 'stim logs --grep stim:tutorial'],
   },
   {
     id: 'phone',
@@ -305,7 +99,6 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: null,
     section: null,
-    manual: [],
     commands: [],
   },
   {
@@ -314,8 +107,7 @@ export const TUTORIAL_STEPS: {
     who: 'both',
     optional: true,
     ask: TUTORIAL_ASKS.machine,
-    section: 'machine',
-    manual: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
+    section: null,
     commands: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
   },
   {
@@ -325,13 +117,26 @@ export const TUTORIAL_STEPS: {
     optional: false,
     ask: TUTORIAL_ASKS.finish,
     section: 'finish',
-    manual: [
-      'git -C "{tour}" checkout -- theme.js',
+    commands: [
       'cd "{tour}"',
+      'stim stop',
+      'cd "{second}"',
       'stim stop',
       'cd "{base}"',
       'stim worktree remove "{tour}"',
+      'stim worktree remove "{second}"',
     ],
-    commands: ['cd "{tour}"', 'git checkout -- theme.js', 'stim stop', 'cd "{base}"', 'stim worktree remove "{tour}"'],
+  },
+  {
+    id: 'share',
+    title: 'Share Your Finish',
+    who: 'you',
+    optional: true,
+    ask: TUTORIAL_ASKS.share,
+    section: 'share',
+    commands: [
+      'xcrun simctl io booted screenshot finish.png',
+      `gh pr create --repo ${TUTORIAL_REPO} --attach "finish.png#The change running in the simulator"`,
+    ],
   },
 ];

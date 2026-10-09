@@ -12,73 +12,51 @@ public struct TutorialStep: Sendable {
 }
 
 public enum TutorialSteps {
-  public static let supportedVersions: Set<Int> = [1]
+  public static let supportedVersions: Set<Int> = [2]
   public static let restartPrompt = "Restart the Stim tutorial."
-  public static let retryAsk = "The first iOS build in {base} failed. Run the app on iOS again with stim and tell me what went wrong if it fails. See stim guide tutorial run."
+  public static let retryAsk = "The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again."
   public static let all: [TutorialStep] = [
     TutorialStep(
-      id: "begin", title: "Create the Tutorial", who: "agent", optional: false,
-      ask: "Set up a small Expo test app in {base} so I can try Stim, then run it on iOS with stim. If that folder is inside another git repository or already holds something else, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run for the template.", section: "run",
+      id: "begin", title: "Get the Test App", who: "agent", optional: false,
+      ask: "Clone appandflow/stim-tutorial into {base} and run it on iOS with stim. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
       commands: [
 
       ]),
     TutorialStep(
-      id: "sidebar", title: "Workspace in Sidebar", who: "you", optional: false,
+      id: "build", title: "Make a Change", who: "you", optional: false,
       ask: nil, section: nil,
       commands: [
 
       ]),
     TutorialStep(
-      id: "build", title: "First iOS Build", who: "you", optional: false,
+      id: "parallel", title: "Change It Again in Parallel", who: "you", optional: false,
       ask: nil, section: nil,
       commands: [
-        "cd \"{tour}\"",
-        "stim start",
-        "stim ios",
+
       ]),
     TutorialStep(
-      id: "rebuild", title: "Rebuild from Cache", who: "agent", optional: false,
-      ask: "We're in {tour}. Change the title color in theme.js to blue, then run the app on iOS and check it looks right. See stim guide tutorial rebuild.", section: "rebuild",
-      commands: [
-        "cd \"{tour}\"",
-        "echo \"export const TITLE_COLOR = '#2563eb';\" > theme.js",
-        "stim ios",
-      ]),
-    TutorialStep(
-      id: "device", title: "Live View and Control", who: "you", optional: false,
+      id: "device", title: "Live View and Control", who: "you", optional: true,
       ask: nil, section: nil,
       commands: [
         "stim status"
       ]),
     TutorialStep(
-      id: "logs", title: "App Logs", who: "you", optional: false,
+      id: "agent", title: "Agent Actions and Replay", who: "agent", optional: true,
+      ask: "In {base}, use agent-device to open the app on the iOS simulator, take a screenshot and tap around, then tell me what you saw.", section: nil,
+      commands: [
+        "cd \"{tour}\"",
+        "export AGENT_DEVICE_STATE_DIR=\"{stateDir}\"",
+        "agent-device open dev.stim.tutorial --platform ios --udid {udid}",
+        "agent-device screenshot tutorial.png",
+        "agent-device close",
+        "stim logs --source agent --tail 10",
+      ]),
+    TutorialStep(
+      id: "logs", title: "App Logs", who: "you", optional: true,
       ask: nil, section: nil,
       commands: [
         "stim logs --errors",
         "stim logs --grep stim:tutorial",
-      ]),
-    TutorialStep(
-      id: "agent", title: "Agent Actions and Replay", who: "agent", optional: false,
-      ask: "We're in {tour}. Use agent-device to tap Log an error in the iOS app and take a screenshot, then replay the tap. See stim guide tutorial agent.", section: "agent",
-      commands: [
-        "cd \"{tour}\"",
-        "export AGENT_DEVICE_STATE_DIR=\"{stateDir}\"",
-        "agent-device open dev.stim.tutorial --platform ios --udid {udid} --save-script=tutorial.ad",
-        "agent-device press 'label=\"Log an error\"' --settle",
-        "agent-device screenshot tutorial.png",
-        "agent-device close",
-        "grep -v target-v1 tutorial.ad > tutorial-replay.ad",
-        "agent-device replay tutorial-replay.ad --platform ios --udid {udid}",
-        "stim logs --source agent --tail 10",
-      ]),
-    TutorialStep(
-      id: "refresh", title: "Fast Refresh", who: "agent", optional: false,
-      ask: "We're in {tour}. Make the app title purple and check it on iOS. See stim guide tutorial refresh.", section: "refresh",
-      commands: [
-        "cd \"{tour}\"",
-        "echo \"export const TITLE_COLOR = '#7c3aed';\" > theme.js",
-        "stim logs --errors",
-        "stim logs --grep \"title color\"",
       ]),
     TutorialStep(
       id: "phone", title: "Watch on Your Phone", who: "you", optional: true,
@@ -88,20 +66,29 @@ public enum TutorialSteps {
       ]),
     TutorialStep(
       id: "machine", title: "Build on Another Mac", who: "both", optional: true,
-      ask: "We're in {tour}. Build the app for iOS on {machine} instead of this Mac. Don't approve or pair anything; see stim guide tutorial machine.", section: "machine",
+      ask: "Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.", section: nil,
       commands: [
         "cd \"{tour}\"",
         "stim ios --remote-build \"{machine}\" --no-build-cache",
       ]),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
-      ask: "I'm done with this branch in {tour}. Revert the tutorial edit, stop the app and remove that worktree, never with --force, and keep {base}. See stim guide tutorial finish.", section: "finish",
+      ask: "I'm done with these experiments in {base}. Clean them up: stop the apps and remove only the worktrees you made for them, never with --force, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
       commands: [
         "cd \"{tour}\"",
-        "git checkout -- theme.js",
+        "stim stop",
+        "cd \"{second}\"",
         "stim stop",
         "cd \"{base}\"",
         "stim worktree remove \"{tour}\"",
+        "stim worktree remove \"{second}\"",
+      ]),
+    TutorialStep(
+      id: "share", title: "Share Your Finish", who: "you", optional: true,
+      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
+      commands: [
+        "xcrun simctl io booted screenshot finish.png",
+        "gh pr create --repo appandflow/stim-tutorial --attach \"finish.png#The change running in the simulator\"",
       ]),
   ]
 }

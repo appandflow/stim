@@ -24,6 +24,7 @@ import type {
   WorktreeGit,
 } from '@stim-cli/core/state';
 import { workspaceAgentDeviceDir } from './workspace/paths.ts';
+import { getExecutor } from './exec.ts';
 import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
 
 export type {
@@ -325,7 +326,7 @@ export function environmentState(
             healthy: Boolean(supervisor.healthy),
           }
         : null,
-    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path) },
+    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path), installed: agentDeviceInstalled() },
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
@@ -652,4 +653,12 @@ export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: numbe
     lines.push(`  ${device} -- ${state.holder} ${expiry}${state.mine ? ' [this workspace]' : ''}`);
   }
   return lines;
+}
+
+function agentDeviceInstalled(): boolean {
+  try {
+    return Boolean(getExecutor().findExecutable('agent-device'));
+  } catch {
+    return false;
+  }
 }

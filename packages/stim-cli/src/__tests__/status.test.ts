@@ -561,7 +561,10 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
-    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(payload.environments[0].agentDevice).toEqual({
+      stateDir: workspaceAgentDeviceDir(root),
+      installed: expect.any(Boolean),
+    });
     expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
