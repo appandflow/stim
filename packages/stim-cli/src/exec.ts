@@ -12,6 +12,8 @@ interface ExecOptions {
   omitEnv?: readonly string[];
   /** Text written to the child's stdin; `runFile` only. */
   input?: string;
+  /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
+  onSpawn?: (child: ChildProcess) => void;
   /** `runFile` only: return stdout as written, without trimming surrounding whitespace. */
   untrimmed?: boolean;
   /**
@@ -86,7 +88,7 @@ const defaultExecutor: Executor = {
     }
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
-  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr } = {}) {
+  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn } = {}) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
@@ -97,6 +99,13 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       const child = spawn(file, args, opts);
+      try {
+        onSpawn?.(child);
+      } catch (error) {
+        child.kill('SIGKILL');
+        reject(error);
+        return;
+      }
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let timedOut = false;
