@@ -14,6 +14,7 @@ struct WorkspaceDetail: View {
   var reportsBundles: Bool
   var history: OwnerHistory
   var inspector: InspectorPresentation
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
@@ -90,11 +91,14 @@ struct WorkspaceDetail: View {
       content(devices: devices, focused: focused)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if inspector == .column {
-        Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-          .overlay { resizeHandle }
-        inspectorPanel
-          .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
-          .background(Palette.sidebar)
+        HStack(spacing: 0) {
+          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+            .overlay { resizeHandle }
+          inspectorPanel
+            .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
+            .background(Palette.sidebar)
+        }
+        .transition(.move(edge: .trailing))
       }
     }
     .onGeometryChange(for: CGFloat.self) {
@@ -112,8 +116,10 @@ struct WorkspaceDetail: View {
           }
           .compositingGroup()
           .shadow(color: .black.opacity(0.25), radius: 16)
+          .transition(.move(edge: .trailing))
       }
     }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: inspector)
     .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
