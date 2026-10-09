@@ -122,7 +122,7 @@ struct RootView: View {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
         if tutorial.isOpen, let snapshot = tutorial.snapshot {
-          Divider()
+          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           TutorialPanel(
             snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message, prompt: tutorial.prompt,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
