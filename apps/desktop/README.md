@@ -1075,6 +1075,10 @@ and sets up a tailnet-only route through the authenticated loopback `route.setup
 request; it never enables Funnel. Tailscale and server checks update automatically.
 Cancelling before pairing turns serving back off only if the wizard turned it on.
 
+The installation step shows branded QR codes and App Store actions for Stim Mobile
+and Tailscale. Stim Mobile's destination uses its reserved Apple app ID; the public
+listing is not available yet.
+
 Codes come from `stim-server pair --json`, with `--control` for **View and
 control** (the default). Each single-use code expires after five minutes; the
 wizard replaces expired codes automatically up to three times, then offers
