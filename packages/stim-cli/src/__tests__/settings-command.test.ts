@@ -5,7 +5,7 @@ import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
-import { workspaceRecordingsDir } from '@stim-cli/core/state';
+import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
 let base: string;
 let home: string;
@@ -337,4 +337,71 @@ test('archive settings persist in their declared layers and scoped homes resolve
   expect(entry(overridden, 'archive.enabled')).toMatchObject({ value: true, origin: 'env' });
   const failure = await settings(['set', 'archive.maxCount', '1.5', '--json']);
   expect(JSON.parse(failure.out[0]!).code).toBe('STIM_BAD_ARG');
+});
+
+test.each(['build', 'device'] as const)(
+  'the %s pool retains an approved configured member and preserves pairing',
+  async (role) => {
+    const key = `remote.${role}PoolDisabled`;
+    await settings(['set', 'remote.machines', '["mini","pending"]']);
+    const credentials = JSON.stringify({
+      version: 1,
+      machines: ['mini', 'pending'].map((machine) => ({
+        machine,
+        nodeId: machine,
+        dnsName: `${machine}.tail.ts.net`,
+        deviceId: machine,
+        deviceToken: 'kept',
+        requestedAt: '2026-10-08T00:00:00.000Z',
+        state: machine === 'mini' ? 'approved' : 'pending',
+      })),
+    });
+    const file = role === 'build' ? buildMachinesFile() : deviceHostMachinesFile();
+    writeFileSync(file, credentials);
+    expect((await settings(['set', key, '["local"]'])).exitCode).toBe(0);
+    const saved = readFileSync(join(home, 'config.json'), 'utf8');
+    for (const args of [
+      ['set', key, '["local","mini"]'],
+      ['set', 'remote.machines', '["pending"]'],
+      ['unset', 'remote.machines'],
+    ]) {
+      const refused = await settings([...args, '--json']);
+      expect(refused.exitCode).toBe(1);
+      expect(JSON.parse(refused.out[0]!)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('at least one'),
+      });
+      expect(readFileSync(join(home, 'config.json'), 'utf8')).toBe(saved);
+    }
+    expect(readFileSync(file, 'utf8')).toBe(credentials);
+    expect((await settings(['unset', key])).exitCode).toBe(0);
+    expect((await settings(['unset', 'remote.machines'])).exitCode).toBe(0);
+  },
+);
+
+test('build and device approvals are independent and pending machines cannot replace local membership', async () => {
+  await settings(['set', 'remote.machines', '["mini"]']);
+  writeFileSync(
+    buildMachinesFile(),
+    JSON.stringify({
+      version: 1,
+      machines: [
+        {
+          machine: 'mini',
+          nodeId: 'mini',
+          dnsName: 'mini.tail.ts.net',
+          deviceId: 'id',
+          deviceToken: 'token',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'pending',
+        },
+      ],
+    }),
+  );
+  expect((await settings(['set', 'remote.buildPoolDisabled', '["local"]'])).exitCode).toBe(1);
+  writeFileSync(buildMachinesFile(), readFileSync(buildMachinesFile(), 'utf8').replace('pending', 'approved'));
+  expect((await settings(['set', 'remote.buildPoolDisabled', '["local"]'])).exitCode).toBe(0);
+  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+  expect(loadConfig()?.remote).toMatchObject({ buildPoolDisabled: ['local'] });
+  expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
 });

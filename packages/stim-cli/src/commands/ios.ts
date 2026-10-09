@@ -548,6 +548,7 @@ async function runIos(
   if ('failure' in wait) return fail(wait.failure);
   const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
   const deviceSlotWait = {
+    automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
@@ -590,6 +591,7 @@ async function runIos(
     log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  deviceSlotWait.automatic = Boolean(remoteSelection.auto);
   devicePlacement = remoteSelection.devicePlacement;
   writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import type { BuildHandoff } from '../offload/client.ts';
 import { pullHostedNativeLogs } from './hosted-logs.ts';
 import {
+  requireAutomaticMachine,
   parseHostedChoice,
   parseHostedAndroidDevice,
   parseHostedNativeOffer,
@@ -166,6 +167,7 @@ async function reserveHostedNative(
   platform: 'ios' | 'android',
 ): Promise<HostedSession> {
   try {
+    if (target.selection?.selected === 'auto') requireAutomaticMachine('device', host.machine);
     return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
   } catch (error) {
     if (target.selection?.selected !== 'auto') throw error;
