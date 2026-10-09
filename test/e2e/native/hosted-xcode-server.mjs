@@ -51,7 +51,11 @@ process.on('message', (message) => {
 if (!process.connected) abort.abort();
 async function start() {
   abort.signal.throwIfAborted();
-  const frameHelper = await buildFrameHelper(process.env, abort.signal);
+  const frameHelper = await buildFrameHelper(
+    process.env,
+    abort.signal,
+    fileURLToPath(new URL('../../../packages/server/dist/stim-frames/', import.meta.url)),
+  );
   abort.signal.throwIfAborted();
   const requestLog = createRequestLog({
     debug: {
