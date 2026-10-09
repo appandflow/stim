@@ -100,7 +100,8 @@ struct RootView: View {
   var body: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
-        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs,
+        store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
+        openLogs: showLogs,
         tips: tips
       )
       .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
@@ -158,7 +159,7 @@ struct RootView: View {
           }
         }
         let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
-          selection = .machine
+          navigate(.machine, .click("machine summary"))
         }
         if summary.hasContent {
           ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
@@ -191,12 +192,14 @@ struct RootView: View {
       showsWorkspace || tutorial.isOpen
         ? InspectorToggle(isShown: inspector != .hidden || tutorial.isOpen, toggle: toggleInspector) : nil
     )
-    .focusedSceneValue(\.sidebarNavigation, SidebarNavigation { selection = $0 })
+    .focusedSceneValue(
+      \.sidebarNavigation, SidebarNavigation { navigate($0, .command("Overview, Active Workspaces, Notifications or Machines")) }
+    )
     .focusedSceneValue(
       \.historyNavigation,
       HistoryNavigation(
-        canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward, back: navigation.goBack,
-        forward: navigation.goForward)
+        canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward, back: { navigation.goBack(via: .menu) },
+        forward: { navigation.goForward(via: .menu) })
     )
     .onChange(of: destination) { _, destination in
       if replacesHistory {
@@ -278,7 +281,7 @@ struct RootView: View {
         let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
           .sorted().first
       {
-        selection = .environment(environment)
+        navigate(.environment(environment), .automatic("worktree now has a workspace"))
       }
       restoreLastProject()
     }
@@ -308,20 +311,27 @@ struct RootView: View {
     .onReceive(openRequests.$showsMachine) { shows in
       guard shows else { return }
       openRequests.showsMachine = false
-      selection = .machine
+      navigate(.machine, .request("show machine"))
     }
     .onReceive(openRequests.$workspacePath) { path in
       guard let path else { return }
       openRequests.workspacePath = nil
-      selection = .environment(path)
+      navigate(.environment(path), .request("workspace path"))
     }
     .onReceive(store.$payload) { payload in
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
       else { return }
-      selection = previousSelection ?? .overview
+      navigate(previousSelection ?? .overview, .automatic("archived workspace no longer listed"))
     }
-    .onChange(of: selection, initial: true) { _, item in DebugLog.setDestination(item?.logName ?? "none") }
+    .onChange(of: selection, initial: true) { old, item in
+      let name = item?.logName ?? "none"
+      if old == item {
+        DebugLog.setDestination(name)
+      } else {
+        DebugLog.setDestination(name, from: old?.logName ?? "none", cause: navigation.takeCause())
+      }
+    }
     .onChange(of: selection) { old, item in
       if case .archived = item {
         archivedLogQuery = LogQuery()
@@ -356,7 +366,7 @@ struct RootView: View {
         if tutorial.snapshot?.isComplete == true {
           openTutorialArchive()
         } else if let path = tutorial.tourPath {
-          selection = .environment(path)
+          navigate(.environment(path), .click("tutorial Show me"))
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
         }
       })
@@ -391,7 +401,7 @@ struct RootView: View {
 
   private func openTutorialArchive() {
     if let archive = ArchivedWorkspace.newest(removedFrom: tutorial.tourPath ?? "", in: store.payload?.archived ?? []) {
-      selection = .archived(archive.id)
+      navigate(.archived(archive.id), .click("tutorial Show me"))
     }
   }
 
@@ -510,7 +520,7 @@ struct RootView: View {
   private var notificationButton: some View {
     let unread = inbox.inbox.unreadCount
     return Button {
-      selection = .notifications
+      navigate(.notifications, .click("notifications button"))
     } label: {
       NotificationBell(selected: selection == .notifications)
         .padding(.trailing, 6)
@@ -562,14 +572,14 @@ struct RootView: View {
     if defaultView == .allDevices {
       restoredProject = true
       replacesHistory = true
-      selection = .wall
+      navigate(.wall, .automatic("default view"))
       return
     }
     guard defaultView == .lastProject, !lastProjectPath.isEmpty else { return }
     guard let entry = store.projectList.first(where: { $0.project.root == lastProjectPath }) else { return }
     restoredProject = true
     replacesHistory = true
-    selection = .project(entry.project)
+    navigate(.project(entry.project), .automatic("default view"))
   }
 
   private var destination: NavigationDestination {
@@ -578,6 +588,15 @@ struct RootView: View {
     var focused: String?
     if case .environment = selection { focused = focusedDeviceID }
     return NavigationDestination(selection: selection, showsAllWorktrees: showsAll, focusedDeviceID: focused)
+  }
+
+  private func navigate(_ item: SidebarItem?, _ cause: NavigationCause) {
+    navigation.setCause(cause)
+    selection = item
+  }
+
+  private func attributed(_ cause: NavigationCause) -> Binding<SidebarItem?> {
+    Binding(get: { selection }, set: { navigate($0, cause) })
   }
 
   private func show(_ destination: NavigationDestination) {
@@ -610,7 +629,7 @@ struct RootView: View {
         icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
         detail: abbreviatingHome(path), actionTitle: "Show",
         perform: {
-          selection = .environment(path)
+          navigate(.environment(path), .click("device launch notice"))
           focusedDeviceID = deviceID
         }, key: "device-launch:\(deviceID)", workspacePath: path))
   }
@@ -651,7 +670,7 @@ struct RootView: View {
     guard let target = payload.target(of: pending.request) else {
       if let archive = payload.archive(for: pending.request, waited: pending.waited) {
         pendingLink = nil
-        selection = .archived(archive.id)
+        navigate(.archived(archive.id), .request("workspace link"))
         return
       }
       guard !pending.expiring else { return }
@@ -662,7 +681,7 @@ struct RootView: View {
         pendingLink?.waited = true
         if let archive = store.payload?.archive(for: pending.request, waited: true) {
           pendingLink = nil
-          selection = .archived(archive.id)
+          navigate(.archived(archive.id), .request("workspace link"))
           return
         }
         showWorkspaceNotFound(
@@ -681,7 +700,7 @@ struct RootView: View {
         icon: "macwindow", tone: .accent, title: "\(target.workspace.names.title) \u{00B7} workspace started",
         body: abbreviatingHome(path),
         action: Toast.Action(title: "Open") {
-          selection = .environment(path)
+          navigate(.environment(path), .click("workspace started toast"))
           if let deviceID { focusedDeviceID = deviceID }
         },
         sticky: true, key: "workspace-link:\(path)", workspacePath: path))
@@ -698,14 +717,14 @@ struct RootView: View {
     if env == nil, let path = target.path,
       let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
     {
-      selection = .archived(archive.id)
+      navigate(.archived(archive.id), .request("oversight target"))
       return
     }
     switch target {
     case .machine:
-      selection = .machine
+      navigate(.machine, .request("oversight target"))
     case .device(let path, let platform, let slot):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
       if let device = env?.devices.first(where: { device in
         if case .remote = device { return false }
         return device.platform == platform && device.slot == slot
@@ -713,10 +732,10 @@ struct RootView: View {
         focusedDeviceID = device.id
       }
     case .build(let path, _):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
       if inspector == .hidden { toggleInspector() }
     case .workspace(let path), .url(let path, _):
-      selection = .environment(path)
+      navigate(.environment(path), .request("oversight target"))
     case .buildRequest(let id):
       BuildRequestPrompt.present(id: id)
     }
@@ -724,14 +743,14 @@ struct RootView: View {
 
   private func openErrors(_ path: String) {
     logsWorkspace.wrappedValue = path
-    selection = .environment(path)
+    navigate(.environment(path), .click("open errors"))
     showsLogs = true
     logQuery.errorsOnly = true
   }
 
   private func showLogs(_ path: String) {
     logsWorkspace.wrappedValue = path
-    selection = .environment(path)
+    navigate(.environment(path), .click("open logs"))
     showsLogs = true
   }
 
@@ -743,7 +762,8 @@ struct RootView: View {
           statsReader: statsReader, cli: cli, page: page, selectedPath: path, metrics: metrics, machine: store.payload?.machine,
           reportsBundles: store.payload?.environments.contains { $0.metro?.bundle != nil } ?? false,
           inspector: inspector, inspectorWidth: $inspectorWidth, focusedID: $focusedDeviceID, logQuery: $logQuery,
-          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [], selection: $selection
+          logWorkspacePath: logsWorkspace, archived: store.payload?.archived ?? [],
+          selection: attributed(.click("workspace page"))
         )
         if page.isUnified {
           host.id(page.identity)
@@ -758,7 +778,7 @@ struct RootView: View {
         WorkspaceDetail.archived(
           archive, cli: cli, statsReader: statsReader, environments: store.payload?.environments ?? [],
           inspector: inspector, inspectorWidth: $inspectorWidth, logQuery: $archivedLogQuery,
-          openReplacement: { selection = .environment($0) }
+          openReplacement: { navigate(.environment($0), .click("archived workspace replacement")) }
         )
         .id(id)
       }
@@ -778,25 +798,26 @@ struct RootView: View {
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .overview:
       OverviewView(
-        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic, selection: $selection,
+        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic,
+        selection: attributed(.click("overview page")),
         openLogs: openErrors,
         openDevice: { path, deviceID in
           focusedDeviceID = deviceID
-          selection = .environment(path)
+          navigate(.environment(path), .click("overview page"))
         },
         openIdleProject: { project in
           showingAllWorktrees = project
-          selection = .project(project)
+          navigate(.project(project), .click("overview page"))
         })
     default:
       WallView(
         store: store, metrics: metrics, project: projectFilter,
         scope: projectFilter.map { ProjectPage.scope(of: $0, showingAll: showingAllWorktrees) } ?? .active,
         setScope: { showingAllWorktrees = $0 == .all ? projectFilter : nil },
-        selection: $selection, openLogs: openErrors,
+        selection: attributed(.click("wall page")), openLogs: openErrors,
         openDevice: { path, deviceID in
           focusedDeviceID = deviceID
-          selection = .environment(path)
+          navigate(.environment(path), .click("wall page"))
         })
     }
   }

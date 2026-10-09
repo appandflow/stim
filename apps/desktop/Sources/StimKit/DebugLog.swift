@@ -84,9 +84,14 @@ public enum DebugLog {
   }
   private static let context = LockedValue(Context())
 
-  public static func setDestination(_ destination: String) {
+  /// Logs a page change with the page it left and why. A change to the Overview that the person did not choose logs
+  /// as a warning, so the default log explains an unexpected jump.
+  public static func setDestination(_ destination: String, from previous: String? = nil, cause: NavigationCause? = nil) {
     context.withLock { $0.destination = destination }
-    debug(.navigation, "destination \(destination)")
+    let unchosenOverview = destination == "overview" && previous != nil && cause?.isDeliberate != true
+    let origin = previous.map { " from \($0)" } ?? ""
+    let reason = cause.map { " cause=\($0.logDescription)" } ?? ""
+    log(unchosenOverview ? .warning : .debug, .navigation, "destination \(destination)\(origin)\(reason)")
   }
 
   public static var destination: String { context.withLock { $0.destination } }

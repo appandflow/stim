@@ -85,3 +85,13 @@ struct NavigationHistoryTests {
     #expect(history.entries == ["overview", "other"])
   }
 }
+
+struct NavigationCauseTests {
+  @Test func aSwipeIsNotADeliberateChoice() {
+    #expect(NavigationCause.back(.swipe(deltaX: -1)).isDeliberate == false)
+    #expect(NavigationCause.back(.mouseButton(3)).isDeliberate)
+    #expect(NavigationCause.click("sidebar").isDeliberate)
+    #expect(NavigationCause.automatic("archived workspace no longer listed").isDeliberate == false)
+    #expect(NavigationCause.unattributed.isDeliberate == false)
+  }
+}
