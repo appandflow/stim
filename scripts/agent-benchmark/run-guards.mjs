@@ -314,7 +314,7 @@ function dependencyInstallCommand(command) {
   );
 }
 
-function commandCompletedBefore(first, second) {
+export function commandCompletedBefore(first, second) {
   if (first.parallelTimingAmbiguous || second.parallelTimingAmbiguous) return false;
   if (Number.isInteger(first.endEventOffset) && Number.isInteger(second.startEventOffset)) {
     return first.endEventOffset < second.startEventOffset;
