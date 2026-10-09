@@ -15,7 +15,7 @@ jobs:
       - uses: ./.github/actions/setup-stim
       - uses: android-actions/setup-android@v3
         with:
-          packages: platform-tools emulator
+          packages: platform-tools
       - name: Qualify the stop observer and real inventory tools
         env:
           STIM_STOP_QUALIFICATION: ${{ runner.temp }}/stim-stop-qualification
