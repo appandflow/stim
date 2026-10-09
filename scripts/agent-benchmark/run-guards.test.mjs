@@ -9,6 +9,7 @@ import {
   parseBenchmarkTargets,
   shellCommandSegments,
   topLevelShellCommand,
+  sameLiteralShellCommand,
   stimShellProvenanceInvalidReasons,
   benchmarkCcache,
   assertAndroidDoctorClean,
@@ -30,6 +31,75 @@ const targetConfig = parseBenchmarkTargets({
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
 const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim android', exitCode, output }];
+
+describe('standalone benchmark proof commands', () => {
+  const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+  const expected = `${prefix}wait text "Offline maps"`;
+
+  it.each(["'Offline maps'", 'Offline\\ maps', '"Offline "maps'])(
+    'accepts equivalent literal text %s without changing the run prefix',
+    (text) => {
+      const command = `${prefix}wait text ${text}`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(true);
+      for (const shell of ['zsh', 'bash', 'sh']) {
+        for (const option of ['-c', '-lc']) {
+          expect(sameLiteralShellCommand(`/bin/${shell} ${option} ${JSON.stringify(command)}`, expected)).toBe(true);
+        }
+      }
+    },
+  );
+
+  it.each([';', '&&', '|', '&', '\n', '\r', '\r\n'])(
+    'rejects unquoted command boundary %j even when the separated words otherwise match',
+    (boundary) => {
+      const command = `${prefix}wait text${boundary}"Offline maps"`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(false);
+      expect(sameLiteralShellCommand(`/bin/zsh -lc '${command}'`, expected)).toBe(false);
+    },
+  );
+
+  it.each([
+    '"$TEXT"',
+    '"${TEXT}"',
+    '"$(echo Offline maps)"',
+    '`echo Offline maps`',
+    "$'Offline maps'",
+    'Offline*',
+    '"Offline maps" > /tmp/proof',
+    '"Offline maps" 2>&1',
+    '"Offline maps" # ignored',
+    '"Offline maps" && echo done',
+    '"Offline maps"\nagent-device close',
+    '"Offline maps"\ragent-device close',
+    '"Offline maps" ""',
+    '"Offline maps" extra',
+    '"Different text"',
+    '"Offline maps',
+  ])('rejects expansion, shell syntax or changed argv: %s', (text) => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ${text}`, expected)).toBe(false);
+  });
+
+  it('retains empty arguments and literal metacharacters without evaluating either shell layer', () => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ''`, `${prefix}wait text ""`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text`, `${prefix}wait text ""`)).toBe(false);
+    expect(sameLiteralShellCommand(`${prefix}wait text '\\q'`, `${prefix}wait text "\\q"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "\\$TEXT"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "$TEXT"`)).toBe(false);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc "${prefix}wait text '$TEXT'"`, `${prefix}wait text '$TEXT'`)).toBe(
+      false,
+    );
+    expect(sameLiteralShellCommand(`${prefix}wait text 'a\nb'`, `${prefix}wait text "a\nb"`)).toBe(true);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc '${expected}'; echo extra`, expected)).toBe(false);
+  });
+
+  it('requires the exact session and target even when target arguments are quoted', () => {
+    const open = `${prefix}open app --platform android --serial emulator-5554`;
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', '"emulator-5554"'), open)).toBe(true);
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', 'emulator-5556'), open)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('SESSION=bench-run', 'SESSION=other'), expected)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('/tmp/bench-state', '/tmp/other-state'), expected)).toBe(false);
+  });
+});
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
