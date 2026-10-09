@@ -39,6 +39,279 @@ function fingerprint() {
   });
 }
 
+function configuredProject(projectBase: string, projectInline = '', targetBase = '', targetInline = '') {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8')
+      .replace(
+        'PROJECT = { isa = PBXProject; mainGroup = GROUP; buildConfigurationList = CONFIGURATIONS;',
+        'PROJECT = { isa = PBXProject; mainGroup = GROUP; buildConfigurationList = PROJECT_CONFIGURATIONS;',
+      )
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, CONFIG_GROUP, );')
+      .replaceAll('SDKROOT = iphoneos;', targetInline)
+      .replaceAll(
+        'isa = XCBuildConfiguration;',
+        'isa = XCBuildConfiguration; baseConfigurationReference = TARGET_CONFIG;',
+      )
+      .replace(
+        'objects = {',
+        `objects = {
+CONFIG_GROUP = { isa = PBXGroup; path = Configs; children = ( PROJECT_CONFIG, TARGET_CONFIG, ); sourceTree = "<group>"; };
+PROJECT_CONFIG = { isa = PBXFileReference; path = Project.xcconfig; sourceTree = "<group>"; };
+TARGET_CONFIG = { isa = PBXFileReference; path = Target.xcconfig; sourceTree = "<group>"; };
+PROJECT_CONFIGURATIONS = { isa = XCConfigurationList; buildConfigurations = ( PROJECT_DEBUG, PROJECT_RELEASE, PROJECT_CUSTOM, ); };
+${['Debug', 'Release', 'Staging'].map((name, index) => `${['PROJECT_DEBUG', 'PROJECT_RELEASE', 'PROJECT_CUSTOM'][index]} = { isa = XCBuildConfiguration; name = ${name}; baseConfigurationReference = PROJECT_CONFIG; buildSettings = { ${projectInline} }; };`).join('\n')}`,
+      ),
+  );
+  write(join(root, 'Configs', 'Project.xcconfig'), projectBase);
+  write(join(root, 'Configs', 'Target.xcconfig'), targetBase);
+  return file;
+}
+
+test.each([
+  'SDKROOT = "iphoneos"',
+  'SUPPORTED_PLATFORMS = iphoneos iphonesimulator',
+  'IPHONEOS_DEPLOYMENT_TARGET = 18.0',
+])('base xcconfig platform declaration %s admits the native app without executing tools', (platform) => {
+  configuredProject('#include "Shared.xcconfig"\n#include? "Optional.xcconfig"\nSWIFT_VERSION = 5.0\n');
+  write(join(root, 'Configs', 'Shared.xcconfig'), `${platform}\n`);
+  setExecutor(
+    makeExecutor({
+      runFile: () => {
+        throw new Error('Discovery cannot execute tools');
+      },
+    }),
+  );
+  expect(projectRegistry.findProjectRoot(root)).toBe(root);
+  expect(projectRegistry.detectPlatforms(root, {})).toEqual(['ios']);
+  for (const configuration of ['Debug', 'Release', 'Staging']) {
+    expect(selectNativeXcodeProject(root, undefined, configuration).platform).toBe('ios');
+  }
+  expect(fingerprint()).toHaveProperty('hash');
+});
+
+test.each([
+  ['SDKROOT = iphoneos', '', '', '', true],
+  ['SDKROOT = iphoneos', 'SDKROOT = macosx;', '', '', false],
+  ['SDKROOT = macosx', 'SDKROOT = macosx;', 'SDKROOT = iphoneos', '', true],
+  ['SDKROOT = iphoneos', '', 'SDKROOT = iphoneos', 'SDKROOT = macosx;', false],
+] as const)(
+  'platform selection follows project config, project inline, target config and target inline precedence (%s / %s / %s / %s)',
+  (projectBase, projectInline, targetBase, targetInline, ios) => {
+    configuredProject(projectBase, projectInline, targetBase, targetInline);
+    expect(projectRegistry.detectPlatforms(root, {})).toEqual(ios ? ['ios'] : []);
+  },
+);
+
+test.each([
+  'SDKROOT = $(APP_SDK)',
+  'SDKROOT[sdk=iphoneos*] = iphoneos\nSDKROOT = macosx',
+  '#include "$(CONFIG_DIR)/Base.xcconfig"',
+  '',
+])(
+  'unresolved platform configuration remains a candidate but cannot claim a cache key or plan (%s)',
+  async (configuration) => {
+    configuredProject(configuration);
+    expect(projectRegistry.findProjectRoot(root)).toBe(root);
+    expect(selectNativeXcodeProject(root).platform).toBe('unknown');
+    expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('application platform') });
+    setExecutor(
+      makeExecutor({
+        runFile: () => 'Tool identity',
+        spawn: () => {
+          throw new Error('Planning cannot spawn');
+        },
+      }),
+    );
+    expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({
+      refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('application platform') },
+    });
+  },
+);
+
+test.each([
+  'SWIFT_INCLUDE_PATHS',
+  'PRODUCT_TYPE_SWIFT_INCLUDE_PATHS',
+  'SWIFT_SYSTEM_INCLUDE_PATHS',
+  'SYSTEM_FRAMEWORK_SEARCH_PATHS',
+  'ADDITIONAL_SDKS',
+  'CC',
+  'CXX',
+  'LD',
+  'SWIFT_EXEC',
+  'SWIFT_DRIVER_SWIFT_FRONTEND_EXEC',
+  'CC[sdk=iphoneos*]',
+  'EXPORTED_SYMBOLS_FILE',
+  'UNEXPORTED_SYMBOLS_FILE',
+  'ORDER_FILE',
+])('literal xcconfig %s cannot reuse artifacts without a verified external input closure', (setting) => {
+  const external = join(home, 'external', setting === 'SWIFT_INCLUDE_PATHS' ? 'modules' : 'input');
+  const input = setting === 'SWIFT_INCLUDE_PATHS' ? join(external, 'External.swiftmodule') : external;
+  write(input, 'first external compiler/module bytes');
+  configuredProject(`SDKROOT = iphoneos\n${setting} = ${external}\n`, '', '', 'SDKROOT = iphoneos;');
+  expect(fingerprint()).toHaveProperty('cacheIneligible');
+  write(input, 'changed external compiler/module bytes');
+  expect(fingerprint()).toHaveProperty('cacheIneligible');
+});
+
+test.each(['EXPORTED_SYMBOLS_FILE', 'UNEXPORTED_SYMBOLS_FILE', 'ORDER_FILE'])(
+  'external %s bytes invalidate the native artifact identity',
+  (setting) => {
+    const project = writeNativeXcodeProject(root);
+    const file = join(project, 'project.pbxproj');
+    const symbols = join(home, 'external', 'Symbols.txt');
+    write(symbols, '_first\n');
+    writeFileSync(
+      file,
+      readFileSync(file, 'utf8').replace(
+        'SDKROOT = iphoneos;',
+        `SDKROOT = iphoneos; ${setting} = ${JSON.stringify(symbols)};`,
+      ),
+    );
+    const before = fingerprint();
+    expect(before).toHaveProperty('hash');
+    write(symbols, '_second\n');
+    expect(fingerprint()).not.toEqual(before);
+  },
+);
+
+test.each([
+  'SWIFT_INCLUDE_PATHS',
+  'PRODUCT_TYPE_SWIFT_INCLUDE_PATHS',
+  'SWIFT_SYSTEM_INCLUDE_PATHS',
+  'SYSTEM_FRAMEWORK_SEARCH_PATHS',
+  'ADDITIONAL_SDKS',
+])('every external directory in a commented %s array contributes to the artifact identity', (setting) => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const directories = [join(home, 'first-modules'), join(home, 'second-modules')];
+  for (const directory of directories) write(join(directory, 'External.swiftmodule'), 'first module bytes');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8').replace(
+      'SDKROOT = iphoneos;',
+      `SDKROOT = iphoneos; ${setting} = (${directories.map((directory) => `${JSON.stringify(directory)} /* external input */`).join(', ')},);`,
+    ),
+  );
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(directories[0]!, 'External.swiftmodule'), 'changed first directory module bytes');
+  const first = fingerprint();
+  expect(first).not.toEqual(before);
+  write(join(directories[1]!, 'External.swiftmodule'), 'changed second directory module bytes');
+  expect(fingerprint()).not.toEqual(first);
+});
+
+test('quoted conditional compiler keys and parser comment metadata cannot bypass tool identity', () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const compiler = join(home, 'external', 'swiftc');
+  write(compiler, 'first compiler bytes');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8').replace(
+      'SDKROOT = iphoneos;',
+      `SDKROOT = iphoneos; "SWIFT_EXEC[sdk=iphonesimulator*]" /* compiler override */ = ${JSON.stringify(compiler)};`,
+    ),
+  );
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
+  write(compiler, 'changed compiler bytes');
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
+});
+
+test('quoted conditional Swift module paths inventory external bytes despite parser comment metadata', () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const modules = join(home, 'external', 'modules');
+  write(join(modules, 'External.swiftmodule'), 'first module bytes');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8').replace(
+      'SDKROOT = iphoneos;',
+      `SDKROOT = iphoneos; "SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" /* external modules */ = ${JSON.stringify(modules)};`,
+    ),
+  );
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(modules, 'External.swiftmodule'), 'changed module bytes');
+  expect(fingerprint()).not.toEqual(before);
+});
+
+test('quoted conditional platform keys retain uncertainty instead of claiming an iOS cache identity', () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8').replace(
+      'SDKROOT = iphoneos;',
+      'SDKROOT = iphoneos; "SDKROOT[sdk=macosx*]" /* alternate platform */ = macosx;',
+    ),
+  );
+  expect(selectNativeXcodeProject(root).platform).toBe('unknown');
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('application platform') });
+});
+
+test('unparsed includes in a framework dependency configuration cannot authorize artifact reuse', () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const compiler = join(home, 'tool', 'swiftc');
+  const externalConfig = join(home, 'Compiler.xcconfig');
+  write(compiler, 'first compiler bytes');
+  write(externalConfig, `SWIFT_EXEC = ${compiler}\n`);
+  write(join(root, 'Framework.xcconfig'), `SWIFT_VERSION = 5.0\r# include "${externalConfig}"\r`);
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8')
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, FRAMEWORK_BASE, );')
+      .replace('targets = ( APP, );', 'targets = ( APP, FRAMEWORK, );')
+      .replace('name = Native; productType', 'name = Native; dependencies = ( FRAMEWORK_DEPENDENCY, ); productType')
+      .replace(
+        'objects = {',
+        `objects = {
+FRAMEWORK = { isa = PBXNativeTarget; name = Helper; productType = "com.apple.product-type.framework"; buildConfigurationList = FRAMEWORK_CONFIGURATIONS; };
+FRAMEWORK_DEPENDENCY = { isa = PBXTargetDependency; target = FRAMEWORK; };
+FRAMEWORK_CONFIGURATIONS = { isa = XCConfigurationList; buildConfigurations = ( FRAMEWORK_DEBUG, ); };
+FRAMEWORK_DEBUG = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = FRAMEWORK_BASE; buildSettings = { SDKROOT = iphoneos; }; };
+FRAMEWORK_BASE = { isa = PBXFileReference; path = Framework.xcconfig; sourceTree = "<group>"; };`,
+      ),
+  );
+  expect(selectNativeXcodeProject(root).platform).toBe('ios');
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('xcconfig') });
+  write(compiler, 'changed compiler bytes');
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('xcconfig') });
+});
+
+test('Metal includes outside the repository cannot reuse a stale native artifact', () => {
+  const external = join(home, 'shader-headers');
+  write(join(external, 'Tone.h'), '#define TONE 1\n');
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8')
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, SHADER, );')
+      .replaceAll('SDKROOT = iphoneos;', `SDKROOT = iphoneos; MTL_HEADER_SEARCH_PATHS = ${JSON.stringify(external)};`)
+      .replace('name = Native; productType', 'name = Native; buildPhases = ( SOURCES, ); productType')
+      .replace(
+        'objects = {',
+        `objects = {
+SHADER = { isa = PBXFileReference; path = Shader.metal; lastKnownFileType = sourcecode.metal; sourceTree = "<group>"; };
+SHADER_BUILD = { isa = PBXBuildFile; fileRef = SHADER; };
+SOURCES = { isa = PBXSourcesBuildPhase; files = ( SHADER_BUILD, ); };`,
+      ),
+  );
+  write(join(root, 'Shader.metal'), '#include "Tone.h"\nconstant int tone = TONE;\n');
+  expect(fingerprint()).toMatchObject({
+    cacheIneligible: expect.stringContaining('compiler include dependency graph'),
+  });
+  write(join(external, 'Tone.h'), '#define TONE 2\n');
+  expect(fingerprint()).toMatchObject({
+    cacheIneligible: expect.stringContaining('compiler include dependency graph'),
+  });
+});
+
 test('native discovery accepts compact OpenStep arrays and preserves quoted and variable parentheses', () => {
   const project = writeNativeXcodeProject(root);
   const file = join(project, 'project.pbxproj');
@@ -209,26 +482,29 @@ test('an unbounded build script is explicitly cache-ineligible rather than assig
   expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('undeclared inputs') });
 });
 
-test('synchronized source groups inventory their files and refuse unresolved C includes', () => {
-  const project = writeNativeXcodeProject(root);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(
-    pbx,
-    readFileSync(pbx, 'utf8').replace(
-      'GROUP = { isa = PBXGroup; children = ( SOURCE, ); sourceTree = "<group>"; };',
-      'GROUP = { isa = PBXFileSystemSynchronizedRootGroup; path = Sources; sourceTree = "<group>"; };',
-    ),
-  );
-  write(join(root, 'Sources', 'App.swift'), 'struct NativeApp {}');
-  const before = fingerprint();
-  expect(before).not.toHaveProperty('cacheIneligible');
-  write(join(root, 'Sources', 'App.swift'), 'struct UpdatedApp {}');
-  expect(fingerprint()).not.toEqual(before);
-  write(join(root, 'Sources', 'Native.m'), '#include "/external/input.h"\n');
-  expect(fingerprint()).toMatchObject({
-    cacheIneligible: expect.stringContaining('compiler include dependency graph'),
-  });
-});
+test.each(['m', 'metal'])(
+  'synchronized source groups inventory their files and refuse unresolved %s includes',
+  (extension) => {
+    const project = writeNativeXcodeProject(root);
+    const pbx = join(project, 'project.pbxproj');
+    writeFileSync(
+      pbx,
+      readFileSync(pbx, 'utf8').replace(
+        'GROUP = { isa = PBXGroup; children = ( SOURCE, ); sourceTree = "<group>"; };',
+        'GROUP = { isa = PBXFileSystemSynchronizedRootGroup; path = Sources; sourceTree = "<group>"; };',
+      ),
+    );
+    write(join(root, 'Sources', 'App.swift'), 'struct NativeApp {}');
+    const before = fingerprint();
+    expect(before).not.toHaveProperty('cacheIneligible');
+    write(join(root, 'Sources', 'App.swift'), 'struct UpdatedApp {}');
+    expect(fingerprint()).not.toEqual(before);
+    write(join(root, 'Sources', `Native.${extension}`), '#include "/external/input.h"\n');
+    expect(fingerprint()).toMatchObject({
+      cacheIneligible: expect.stringContaining('compiler include dependency graph'),
+    });
+  },
+);
 
 test('scheme execution actions cannot be skipped by an artifact cache hit', () => {
   const project = writeNativeXcodeProject(root);

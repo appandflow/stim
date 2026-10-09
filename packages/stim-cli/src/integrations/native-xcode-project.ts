@@ -24,6 +24,7 @@ export interface NativeXcodeSelection {
   targetProject: NativeXcodeModel;
   configuration: string;
   settings: Record<string, unknown>;
+  platform: 'ios' | 'unknown';
   schemePath: string | null;
   schemeBuildScripts: boolean;
 }
@@ -144,9 +145,121 @@ function configurations(project: NativeXcodeModel, owner: PbxObject): PbxObject[
 
 function buildSettings(project: NativeXcodeModel, target: PbxObject, configuration: string): Record<string, unknown> {
   const settings = (owner: PbxObject) =>
-    object(configurations(project, owner).find((config) => pbxString(config.name) === configuration)?.buildSettings) ??
-    {};
+    object(
+      configurations(project, owner).find((candidate) => pbxString(candidate.name) === configuration)?.buildSettings,
+    ) ?? {};
   return { ...settings(project.project), ...settings(target) };
+}
+
+type PlatformSettings = Partial<
+  Record<'SDKROOT' | 'SUPPORTED_PLATFORMS' | 'IPHONEOS_DEPLOYMENT_TARGET', string | null>
+> & { unresolved?: boolean };
+const PLATFORM_KEYS = ['SDKROOT', 'SUPPORTED_PLATFORMS', 'IPHONEOS_DEPLOYMENT_TARGET'] as const;
+const UNKNOWN_PLATFORM_SETTINGS: PlatformSettings = { unresolved: true };
+
+function configurationPath(project: NativeXcodeModel, reference: string): string | null {
+  const seen = new Set<string>();
+  const visit = (id: string, base: string): string | null => {
+    if (seen.has(id)) return null;
+    seen.add(id);
+    const entry = project.objects.get(id);
+    if (!entry) return null;
+    const value = pbxString(entry.path) ?? '';
+    if (value.includes('$')) return null;
+    const tree = pbxString(entry.sourceTree) ?? '<group>';
+    const path =
+      tree === '<group>'
+        ? resolve(base, value)
+        : tree === 'SOURCE_ROOT'
+          ? resolve(project.directory, value)
+          : tree === '<absolute>' && isAbsolute(value)
+            ? value
+            : null;
+    if (path === null || id === reference) return path;
+    for (const child of pbxReferences(entry.children)) {
+      const found = visit(child, path);
+      if (found !== null) return found;
+    }
+    return null;
+  };
+  return visit(pbxString(project.project.mainGroup) ?? '', project.directory);
+}
+
+function configurationPlatforms(path: string, active = new Set<string>()): PlatformSettings {
+  try {
+    path = realpathSync(path);
+  } catch {
+    return { ...UNKNOWN_PLATFORM_SETTINGS };
+  }
+  if (active.has(path)) return { ...UNKNOWN_PLATFORM_SETTINGS };
+  active.add(path);
+  const settings: PlatformSettings = {};
+  try {
+    for (const raw of readFileSync(path, 'utf8').split(/\r\n?|\n|\u2028|\u2029/)) {
+      const line = raw.replace(/\/\/.*$/, '').trim();
+      if (!line) continue;
+      const include = line.match(/^#include(\?)?\s+"([^"$]+)"\s*$/);
+      if (include) {
+        const child = resolve(dirname(path), include[2]!);
+        if (!include[1] || existsSync(child)) Object.assign(settings, configurationPlatforms(child, active));
+        continue;
+      }
+      const setting = line.match(/^([A-Za-z_][A-Za-z_0-9]*)(\[[^\]]+\])*\s*=\s*(.*)$/);
+      if (!setting || line.endsWith('\\') || /\/\*|\*\//.test(line)) {
+        Object.assign(settings, UNKNOWN_PLATFORM_SETTINGS);
+        continue;
+      }
+      const key = PLATFORM_KEYS.find((candidate) => candidate === setting[1]);
+      if (key) {
+        if (setting[2]) settings.unresolved = true;
+        const value = pbxString(setting[3]!);
+        settings[key] = value === null || /[$'\\]/.test(value) ? null : value;
+      }
+    }
+    return settings;
+  } catch {
+    return { ...UNKNOWN_PLATFORM_SETTINGS };
+  } finally {
+    active.delete(path);
+  }
+}
+
+function applicationPlatform(
+  project: NativeXcodeModel,
+  target: PbxObject,
+  configuration: string,
+): 'ios' | 'other' | 'unknown' {
+  const settings: PlatformSettings = {};
+  for (const owner of [project.project, target]) {
+    const config = configurations(project, owner).find((candidate) => pbxString(candidate.name) === configuration);
+    const base = pbxString(config?.baseConfigurationReference);
+    if (base) {
+      const path = configurationPath(project, base);
+      Object.assign(settings, path ? configurationPlatforms(path) : UNKNOWN_PLATFORM_SETTINGS);
+    }
+    for (const [rawKey, value] of Object.entries(object(config?.buildSettings) ?? {})) {
+      if (rawKey.endsWith('_comment')) continue;
+      const key = pbxString(rawKey)!;
+      const name = PLATFORM_KEYS.find((candidate) => key === candidate || key.startsWith(`${candidate}[`));
+      if (!name) continue;
+      const text = Array.isArray(value) ? pbxReferences(value).join(' ') : pbxString(value);
+      if (key !== name) settings.unresolved = true;
+      settings[name] = text?.includes('$') ? null : text;
+    }
+  }
+  if (settings.unresolved || Object.values(settings).some((value) => value === null)) return 'unknown';
+  const platforms = (settings.SUPPORTED_PLATFORMS || settings.SDKROOT || '').split(/\s+/).filter(Boolean);
+  if (
+    platforms.some(
+      (platform) =>
+        !/^(?:iphoneos|iphonesimulator|macosx|appletvos|appletvsimulator|watchos|watchsimulator|xros|xrsimulator|driverkit)(?:[0-9.]+)?$/.test(
+          platform,
+        ),
+    )
+  )
+    return 'unknown';
+  if (platforms.length) return platforms.some((platform) => /^iphone(?:os|simulator)/.test(platform)) ? 'ios' : 'other';
+  return settings.IPHONEOS_DEPLOYMENT_TARGET ? 'ios' : 'unknown';
 }
 
 function applicationTargets(project: NativeXcodeModel): [string, PbxObject][] {
@@ -154,14 +267,9 @@ function applicationTargets(project: NativeXcodeModel): [string, PbxObject][] {
     ([, target]) =>
       target.isa === 'PBXNativeTarget' &&
       pbxString(target.productType) === 'com.apple.product-type.application' &&
-      configurations(project, target).some((config) => {
-        const settings = buildSettings(project, target, pbxString(config.name) ?? '');
-        return (
-          /iphone(os|simulator)/.test(pbxString(settings.SDKROOT) ?? '') ||
-          /iphone(os|simulator)/.test(pbxString(settings.SUPPORTED_PLATFORMS) ?? '') ||
-          settings.IPHONEOS_DEPLOYMENT_TARGET !== undefined
-        );
-      }),
+      configurations(project, target).some(
+        (config) => applicationPlatform(project, target, pbxString(config.name) ?? '') !== 'other',
+      ),
   );
 }
 
@@ -258,6 +366,12 @@ export function selectNativeXcodeProject(root: string, scheme?: string, configur
       `Configuration ${JSON.stringify(configuration)} does not exist for ${candidate.name}.`,
       `Select --configuration or ios.configuration from: ${names.join(', ')}.`,
     );
+  const platform = applicationPlatform(candidate.project, target, configuration);
+  if (platform === 'other')
+    throw new NativeXcodeError(
+      `Configuration ${JSON.stringify(configuration)} does not target iOS for ${candidate.name}.`,
+      'Select an iOS application configuration in Xcode.',
+    );
   const workspace = container.path.endsWith('.xcworkspace');
   return {
     container: {
@@ -274,6 +388,7 @@ export function selectNativeXcodeProject(root: string, scheme?: string, configur
     targetProject: candidate.project,
     configuration,
     settings: buildSettings(candidate.project, target, configuration),
+    platform,
     schemePath: candidate.path,
     schemeBuildScripts: candidate.buildScripts,
   };
