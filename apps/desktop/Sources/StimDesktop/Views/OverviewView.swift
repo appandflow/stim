@@ -210,39 +210,37 @@ struct OverviewView: View {
   }
 
   private func tipSection(_ tip: TryThisTip) -> some View {
-    section("Try this") {
-      let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
-      let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
-      Card {
-        VStack(alignment: .leading, spacing: Space.md) {
-          HStack(alignment: .top) {
-            Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
-            Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
-              TryThisStore(defaults: .standard).dismiss(tip)
-              dismissedTips.insert(tip)
-            }
-          }
-          Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-          Text(prompt)
-            .font(.stim(.caption, mono: true))
-            .foregroundStyle(Palette.secondary)
-            .lineLimit(6)
-            .padding(Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
-          HStack {
-            if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
-            Spacer(minLength: 0)
-            CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+    let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
+    let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
+    return Card {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(alignment: .top) {
+          Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
+          Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+          IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
+            TryThisStore(defaults: .standard).dismiss(tip)
+            dismissedTips.insert(tip)
           }
         }
-        .padding(Space.xl)
+        Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(prompt)
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.secondary)
+          .lineLimit(6)
+          .padding(Space.md)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
+        HStack {
+          if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
+          Spacer(minLength: 0)
+          CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+        }
       }
-      .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
-      .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
+      .padding(Space.xl)
     }
+    .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
+    .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
   }
 }
