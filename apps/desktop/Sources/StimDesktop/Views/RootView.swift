@@ -596,8 +596,8 @@ struct RootView: View {
       navigate(.notifications, .click("notifications button"))
     } label: {
       NotificationBell(selected: selection == .notifications)
-        .padding(.trailing, 6)
-        .frame(width: 46, height: 36)
+        .padding(.trailing, unread > 0 ? 6 : 0)
+        .frame(width: Self.bellContentWidth(unread: unread), height: 36)
         .overlay(alignment: .topTrailing) {
           if unread > 0 {
             Text(unread > 99 ? "99+" : "\(unread)")
@@ -621,12 +621,20 @@ struct RootView: View {
     .help("Open notifications")
   }
 
-  private static let bellWidth: CGFloat = 72
+  private static func bellContentWidth(unread: Int) -> CGFloat {
+    unread == 0 ? 32 : unread < 10 ? 40 : 46
+  }
+
+  private var bellWidth: CGFloat {
+    Self.bellContentWidth(unread: inbox.inbox.unreadCount) + 2 * Space.xs + Self.toolbarItemSpacing
+  }
+
+  private static let toolbarItemSpacing: CGFloat = 16
   private static let historyButtonsWidth: CGFloat = 64
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - bellWidth
       - Self.historyButtonsWidth
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
