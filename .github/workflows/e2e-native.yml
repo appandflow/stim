@@ -69,6 +69,11 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      qa_scope:
+        description: Task macOS and web recipe acceptance
+        type: choice
+        options: [macos-web, native]
+        default: macos-web
       suite:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
@@ -97,8 +102,13 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  SOURCE_SHA: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+  HARNESS_SHA: 097917ef00c34b684b9fcf398b3f2bfefbe33d7c
+
 jobs:
   plan:
+    if: github.event_name != 'workflow_dispatch' || inputs.qa_scope != 'macos-web'
     name: plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -599,3 +609,131 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+  macos:
+    if: github.event_name == 'workflow_dispatch' && inputs.qa_scope == 'macos-web'
+    defaults:
+      run:
+        shell: bash
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+          persist-credentials: false
+      - name: Record exact source and load reviewed harness
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/stim-recipe-qa/evidence"
+          echo "QA_ROOT=$RUNNER_TEMP/stim-recipe-qa" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$RUNNER_TEMP/stim-recipe-qa/evidence/source.txt"
+          node -e 'const fs=require("node:fs"); if(fs.readFileSync(process.env.RUNNER_TEMP+"/stim-recipe-qa/evidence/source.txt","utf8").trim()!==process.env.SOURCE_SHA) throw Error("wrong source");'
+          git fetch --no-tags --depth=1 origin "$HARNESS_SHA"
+          git show "$HARNESS_SHA:scripts/qa/platform-convergence.mjs" > "$RUNNER_TEMP/platform-convergence.mjs"
+          shasum -a 256 "$RUNNER_TEMP/platform-convergence.mjs" > "$RUNNER_TEMP/stim-recipe-qa/evidence/harness.sha256"
+      - uses: ./.github/actions/setup-stim
+      - name: Record toolchain
+        shell: bash
+        run: |
+          {
+            node --version
+            sw_vers
+            xcodebuild -version
+            xcrun swift --version
+            test -x '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --version
+          } > "$QA_ROOT/evidence/toolchain.txt" 2>&1
+      - name: macOS and browser regression units
+        run: >-
+          pnpm test packages/stim-cli/src/__tests__/macos.test.ts
+          packages/stim-cli/src/__tests__/web.test.ts
+          packages/stim-cli/src/__tests__/project-registry.test.ts
+          --reporter=default --reporter=json --outputFile="$QA_ROOT/evidence/unit.json"
+      - name: Cross-platform CLI E2E
+        run: pnpm run test:e2e 2>&1 | tee "$QA_ROOT/evidence/e2e.log"
+      - name: Real SwiftPM and configured browser lifecycle
+        run: node "$RUNNER_TEMP/platform-convergence.mjs" run "$QA_ROOT" 2>&1 | tee "$QA_ROOT/evidence/lifecycle.log"
+      - name: Scoped cleanup
+        if: always()
+        run: node "$RUNNER_TEMP/platform-convergence.mjs" cleanup "$QA_ROOT"
+      - name: Native tool compatibility
+        run: >-
+          pnpm run test:compat
+          packages/stim-cli/src/__tests__/engine-xcode.compat.test.ts
+          packages/stim-cli/src/__tests__/engine-ios-signing.compat.test.ts
+          packages/stim-cli/src/__tests__/web-chrome.compat.test.ts
+          --maxWorkers=1 --reporter=default --reporter=json
+          --outputFile="$QA_ROOT/evidence/compat.json"
+      - name: Require every compatibility case to run and pass
+        run: |
+          node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import { readFileSync } from "node:fs";
+            const report = JSON.parse(readFileSync(process.env.QA_ROOT + "/evidence/compat.json", "utf8"));
+            assert.equal(report.success, true);
+            assert.equal(report.numFailedTests, 0);
+            assert.equal(report.numPendingTests, 0);
+            const expected = ["engine-xcode.compat.test.ts", "engine-ios-signing.compat.test.ts", "web-chrome.compat.test.ts"];
+            assert.equal(report.testResults.length, expected.length);
+            for (const file of expected) {
+              const result = report.testResults.find((entry) => entry.name.endsWith("/" + file));
+              assert(result);
+              assert.equal(result.status, "passed");
+              assert(result.assertionResults.length > 0);
+              assert(result.assertionResults.every((test) => test.status === "passed"));
+            }
+          '
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-recipes-${{ github.run_id }}
+          path: |
+            ${{ env.QA_ROOT }}/evidence
+            ${{ env.QA_ROOT }}/manifest.json
+            ${{ env.QA_ROOT }}/stim-home/workspaces/**/logs/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+  web:
+    if: github.event_name == 'workflow_dispatch' && inputs.qa_scope == 'macos-web'
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+          persist-credentials: false
+      - name: Record exact source and load reviewed harness
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/stim-recipe-web/evidence"
+          echo "EXPO_WEB_QA_OUT=$RUNNER_TEMP/stim-recipe-web" >> "$GITHUB_ENV"
+          git rev-parse HEAD > "$RUNNER_TEMP/stim-recipe-web/evidence/source.txt"
+          node -e 'const fs=require("node:fs"); if(fs.readFileSync(process.env.RUNNER_TEMP+"/stim-recipe-web/evidence/source.txt","utf8").trim()!==process.env.SOURCE_SHA) throw Error("wrong source");'
+          git fetch --no-tags --depth=1 origin "$HARNESS_SHA"
+          git show "$HARNESS_SHA:test/e2e/native/task-expo-web.mjs" > "$RUNNER_TEMP/task-expo-web.mjs"
+          sha256sum "$RUNNER_TEMP/task-expo-web.mjs" > "$RUNNER_TEMP/stim-recipe-web/evidence/harness.sha256"
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '24'
+      - name: Record installed Chrome
+        run: google-chrome --version
+      - name: Real Expo web regression
+        run: node "$RUNNER_TEMP/task-expo-web.mjs" run "$EXPO_WEB_QA_OUT"
+      - name: Scoped cleanup
+        if: always()
+        run: node "$RUNNER_TEMP/task-expo-web.mjs" cleanup "$EXPO_WEB_QA_OUT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-recipes-${{ github.run_id }}
+          path: |
+            ${{ env.EXPO_WEB_QA_OUT }}/manifest.json
+            ${{ env.EXPO_WEB_QA_OUT }}/evidence/**
+            ${{ env.EXPO_WEB_QA_OUT }}/stim-home/workspaces/**/logs/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
