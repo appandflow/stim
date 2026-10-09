@@ -72,7 +72,7 @@ import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
@@ -150,6 +150,12 @@ let tmpHome: string;
 let root: string;
 
 beforeEach(() => {
+  const realExecutor = getExecutor();
+  setExecutor(
+    makeExecutor({
+      runFile: (file, args, options) => (file === 'cp' ? realExecutor.runFile(file, args, options) : ''),
+    }),
+  );
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   recordCreatedDevice('ios', UDID);
