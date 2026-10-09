@@ -174,6 +174,7 @@ export interface LocateApkResult {
   apkPath?: string | null;
   note?: string | null;
   candidates?: string[];
+  androidPackage?: string;
 }
 
 export function locateApk(project: ApkLayout, transcript = '', variant: string | null = null): LocateApkResult {
@@ -358,7 +359,7 @@ export type BuildAndroidResult = {
   durationMs: number;
   ccache?: CcacheActivity;
 } & (
-  | { ok: true; apkPath: string; apkNote: string | null }
+  | { ok: true; apkPath: string; apkNote: string | null; androidPackage?: string }
   | {
       ok: false;
       code: string;
@@ -385,6 +386,7 @@ export async function buildGradle(
     task,
     projectArgs = [],
     preflightFailure = null,
+    locate,
   }: {
     root: string;
     logWriter?: NdjsonWriter | null;
@@ -393,6 +395,7 @@ export async function buildGradle(
     task: string;
     projectArgs?: string[];
     preflightFailure?: GradlePreflightFailure | null;
+    locate?: () => Promise<LocateApkResult | GradlePreflightFailure> | LocateApkResult | GradlePreflightFailure;
   },
   {
     spawnFn = null,
@@ -567,7 +570,17 @@ export async function buildGradle(
     };
   }
 
-  const located = locateApk(project, transcript, variant);
+  const located = locate ? await locate() : locateApk(project, transcript, variant);
+  if ('code' in located)
+    return {
+      ok: false,
+      ...located,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: tail.slice(),
+      durationMs,
+      ccache: ccacheActivity,
+    };
   if (!located.apkPath && located.candidates?.length) {
     return {
       ok: false,
@@ -604,6 +617,7 @@ export async function buildGradle(
     ok: true,
     apkPath,
     apkNote: located.note ?? null,
+    ...(located.androidPackage ? { androidPackage: located.androidPackage } : {}),
     durationMs,
     lastLines: tail.slice(),
     ccache: ccacheActivity,

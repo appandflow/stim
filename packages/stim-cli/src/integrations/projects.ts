@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MODE_BARE, MODE_EXPO } from '../supervisor/state.ts';
 import type { ServerStarter } from '../supervisor/types.ts';
+import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
   declaresAppDependency,
@@ -126,6 +127,7 @@ const browserWeb: ProjectIntegration = {
 
 export const projectIntegrations: readonly ProjectIntegration[] = [
   reactNativeProject,
+  nativeAndroidIntegration,
   swiftPackage,
   browserWeb,
   nativeXcodeProjectIntegration,

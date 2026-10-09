@@ -7593,6 +7593,116 @@ describe('registered Android project recipes', () => {
     return requests;
   }
 
+  test.each([
+    { variant: 'freeDebug', badSignature: false },
+    { variant: 'freeRelease', badSignature: false },
+    { variant: 'freeRelease', badSignature: true },
+  ])(
+    'production native provider verifies signing before install ($variant, bad signature: $badSignature)',
+    async ({ variant, badSignature }) => {
+      nativeProject();
+      writeFileSync(join(root, 'settings.gradle.kts'), 'include(":mobile")');
+      const sdk = join(root, 'native-sdk');
+      const tools = join(sdk, 'build-tools', '36.0.0');
+      mkdirSync(tools, { recursive: true });
+      const signer = join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
+      writeFileSync(signer, 'fixture signer');
+      const requests: string[][] = [];
+      const signatures: string[][] = [];
+      setExecutor(
+        makeExecutor({
+          async runFileAsync(file, args = []) {
+            expect(file).toBe(signer);
+            signatures.push([...args]);
+            if (badSignature) throw new Error('DOES NOT VERIFY');
+            return '';
+          },
+          spawn(file, args = [], options = {}) {
+            expect(file).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
+            expect(options.cwd).toBe(root);
+            requests.push([...args]);
+            const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+            child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            setImmediate(() => {
+              const modelFile = args
+                .find((arg) => arg.startsWith('-Pstim.native.model='))!
+                .slice('-Pstim.native.model='.length);
+              mkdirSync(join(workspaceDir(root), 'gradle-build'), { recursive: true });
+              const apk = join(root, 'native.apk');
+              writeFileSync(apk, 'signed APK');
+              writeFileSync(
+                modelFile,
+                JSON.stringify({
+                  schema: 1,
+                  module: ':mobile',
+                  variant,
+                  applicationId: 'org.example.variant',
+                  sdkDirectory: sdk,
+                  elements: [{ path: apk, filters: [] }],
+                }),
+              );
+              child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
+              child.emit('exit', 0, null);
+            });
+            return child as unknown as ChildProcess;
+          },
+        }),
+      );
+      const h = harness({
+        variant,
+        json: true,
+        resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'none' } } }),
+      });
+      const installed = expect.objectContaining({ packageName: 'org.example.variant' });
+      const launched = expect.objectContaining({
+        appId: 'org.example.variant',
+        runtime: 'process',
+        release: variant.endsWith('Release'),
+      });
+      for (let attempt = 1; attempt <= (badSignature ? 1 : 2); attempt++) {
+        const result = await run(h);
+        expect(requests).toHaveLength(attempt);
+        expect(requests.at(-1)![0]).toBe(':stimExportAndroidApk');
+        expect(requests.at(-1)).toContain(`-Pstim.native.variant=${variant}`);
+        expect(requests.at(-1)).toContain('--build-cache');
+        expect(requests.at(-1)!.some((arg) => /reactNative/.test(arg))).toBe(false);
+        expect(signatures.at(-1)).toEqual(['verify', join(root, 'native.apk')]);
+        expect(result).toMatchObject(
+          badSignature
+            ? { ok: false, error: { code: 'STIM_BUILD_FAILED' } }
+            : {
+                ok: true,
+                facts: {
+                  bundleId: 'org.example.variant',
+                  variant,
+                  metroPort: null,
+                  launched: true,
+                  cacheSkipped: true,
+                  cacheKey: null,
+                  fingerprint: null,
+                },
+              },
+        );
+        expect(result.error?.message?.includes('DOES NOT VERIFY')).toBe(badSignature ? true : undefined);
+        expect(h.calls.install).toHaveLength(badSignature ? 0 : attempt);
+        expect(h.calls.launchRelease).toHaveLength(badSignature ? 0 : attempt);
+        expect(h.calls.install.at(-1)).toEqual(badSignature ? undefined : installed);
+        expect(readWorkspaceLaunches(root).android).toEqual(badSignature ? undefined : launched);
+      }
+      for (const calls of [
+        h.calls.metro,
+        h.calls.fingerprint,
+        h.calls.prebuild,
+        h.calls.build,
+        h.calls.swapApk,
+        h.calls.loadProvider,
+        h.calls.launch,
+      ])
+        expect(calls).toEqual([]);
+    },
+  );
+
   test.each(['debug', 'release'])(
     'a native %s recipe reuses its APK with release bundle swaps disabled',
     async (variant) => {

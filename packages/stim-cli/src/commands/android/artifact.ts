@@ -756,6 +756,10 @@ export async function acquireAndroidArtifact(
       throw new ArtifactRefusal(phaseFailure);
     }
     apkPath = built.apkPath;
+    if (built.androidPackage) {
+      androidPackage = built.androidPackage;
+      record.bundleId = androidPackage;
+    }
     stats.setBuildMs(built.durationMs);
     phase('build', `ok (${formatDuration(built.durationMs)})`);
     if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
