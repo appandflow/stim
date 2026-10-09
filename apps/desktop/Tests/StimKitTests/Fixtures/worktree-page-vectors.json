@@ -28,7 +28,7 @@
         "projects": ["apps/mobile"],
         "lead": "/w/one/apps/mobile",
         "subtitles": [null, null],
-        "appLabels": ["iOS \u00b7 Android"],
+        "appLabels": ["React Native"],
         "buildEntries": [
           {
             "path": "/w/one/apps/mobile",
@@ -116,7 +116,7 @@
         "projects": ["apps/desktop", "apps/mobile"],
         "lead": "/w/wt/apps/mobile",
         "subtitles": [null, null, null],
-        "appLabels": ["macOS", "iOS \u00b7 Android \u00b7 Web"],
+        "appLabels": ["macOS", "React Native \u00b7 Web"],
         "buildEntries": [
           {
             "path": "/w/wt/apps/mobile",
@@ -176,7 +176,7 @@
         "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
         "subtitles": ["apps/a", "apps/b", null],
-        "appLabels": ["iOS \u00b7 Android", "iOS"],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
         "buildEntries": [
           {
             "path": "/w/wt/apps/a",
@@ -236,7 +236,7 @@
         "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
         "subtitles": ["apps/a", "apps/b"],
-        "appLabels": ["iOS \u00b7 apps/a", "iOS \u00b7 apps/b"],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
         "buildEntries": [
           {
             "path": "/w/wt/apps/a",
@@ -292,7 +292,7 @@
         "projects": ["apps/a", "apps/b"],
         "lead": "/w/wt/apps/a",
         "subtitles": [null],
-        "appLabels": ["apps/a", "Android"],
+        "appLabels": ["apps/a", "React Native"],
         "buildEntries": [
           {
             "path": "/w/wt/apps/b",
@@ -338,7 +338,7 @@
         "projects": ["mobile"],
         "lead": "/repo/apps/mobile",
         "subtitles": [null],
-        "appLabels": ["iOS"],
+        "appLabels": ["React Native"],
         "buildEntries": [
           {
             "path": "/repo/apps/mobile",
@@ -405,7 +405,7 @@
         "projects": ["root", "packages/app"],
         "lead": "/w/root",
         "subtitles": ["root", "packages/app"],
-        "appLabels": ["Android \u00b7 root", "Android \u00b7 packages/app"],
+        "appLabels": ["React Native \u00b7 root", "React Native \u00b7 packages/app"],
         "buildEntries": [
           {
             "path": "/w/root",
@@ -503,7 +503,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null, null],
-        "appLabels": ["iOS \u00b7 Android"],
+        "appLabels": ["React Native"],
         "buildEntries": [
           {
             "path": "/w/app",
@@ -558,7 +558,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null, null],
-        "appLabels": ["iOS \u00b7 Android \u00b7 Web"],
+        "appLabels": ["React Native \u00b7 Web"],
         "buildEntries": [
           {
             "path": "/w/app",
@@ -635,7 +635,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null],
-        "appLabels": ["Android"],
+        "appLabels": ["React Native"],
         "buildEntries": [
           {
             "path": "/w/app",
@@ -662,7 +662,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null, null],
-        "appLabels": ["iOS \u00b7 Android"],
+        "appLabels": ["React Native"],
         "buildEntries": [
           {
             "path": "/w/app",
@@ -723,7 +723,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null],
-        "appLabels": ["Android \u00b7 Web"],
+        "appLabels": ["React Native \u00b7 Web"],
         "buildEntries": [
           {
             "path": "/w/app",
@@ -795,7 +795,7 @@
         "projects": ["app"],
         "lead": "/w/app",
         "subtitles": [null],
-        "appLabels": ["iOS \u00b7 Web"],
+        "appLabels": ["React Native \u00b7 Web"],
         "buildEntries": [
           {
             "path": "/w/app",

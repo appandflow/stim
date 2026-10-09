@@ -105,10 +105,14 @@ public struct WorktreePage: Hashable, Sendable {
 
   public func appLabels(entries: [Entry]) -> [String] {
     let labels = apps.map { app in
-      Self.platforms.filter { platform in
+      let used = Self.platforms.filter { platform in
         app.supportedPlatforms.contains(platform) || entries.contains { $0.path == app.path && $0.platform == platform }
       }
-      .map(platformName).joined(separator: " \u{00B7} ")
+      let native = used.contains("ios") || used.contains("android")
+      return
+        ((native ? ["React Native"] : [])
+        + used.filter { native ? $0 != "ios" && $0 != "android" : true }
+        .map(platformName)).joined(separator: " \u{00B7} ")
     }
     return apps.indices.map { i in
       if labels[i].isEmpty { return Self.project(apps[i]) }
