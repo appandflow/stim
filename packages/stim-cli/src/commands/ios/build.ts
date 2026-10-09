@@ -8,6 +8,7 @@ import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/b
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
 import type { CompilationCacheActivity } from '../../engine/build-facts.ts';
+import { readBundleId } from '../../engine/xcode.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../../engine/native-run.ts';
 import { checkEasAuth, resolveRemote, uploadRemote } from '../../engine/remote-cache.ts';
 import { createRunRecorder, readRunEstimates, recordRunStats, statsProjectKey } from '../../engine/stats.ts';
@@ -214,7 +215,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
         if (!acquired.ok)
           throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
         artifact = acquired.artifact;
-        artifact.bundleId ??= integration.bundleId();
+        artifact.bundleId ??= readBundleId(artifact.path) ?? integration.bundleId();
         if (runCancellationSignal()?.aborted)
           throw Object.assign(new Error('The iOS build was cancelled.'), { code: 'STIM_CANCELLED' });
         const artifacts = join(workspaceDir(root), 'artifacts');
