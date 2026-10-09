@@ -645,6 +645,7 @@ export async function withDeviceBootAdmission<T>(
             }),
           );
         }
+        signal?.throwIfAborted();
         if (result.reclaim && now() - lastReclaim >= 15_000) {
           lastReclaim = now();
           try {

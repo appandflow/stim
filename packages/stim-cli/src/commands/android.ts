@@ -228,10 +228,10 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
-          throw new InvalidArgumentError('expected eas, proxy, auto, or a tailnet machine name');
+          throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');
         return value;
       },
     )
@@ -1281,6 +1281,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         record,
         fail,
         phase,
+        enterPhase: progress.step,
         out,
         json,
         useBuildCache,

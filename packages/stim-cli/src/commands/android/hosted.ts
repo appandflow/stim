@@ -8,6 +8,7 @@ import type { PreparedAndroidArtifact } from './artifact.ts';
 import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type ReportAndroidResultArgs } from './result.ts';
 import { androidDevClientScheme } from './support.ts';
 import type { RunAndroidResult, FailExtra } from './types.ts';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 
 export async function finishHostedAndroidRun({
   target,
@@ -30,6 +31,7 @@ export async function finishHostedAndroidRun({
   startedAt,
   fail,
   phase,
+  enterPhase,
   out,
   recordBuild,
   ...report
@@ -67,6 +69,7 @@ export async function finishHostedAndroidRun({
     extra?: FailExtra,
   ) => RunAndroidResult;
   phase: (label: unknown, text: string) => void;
+  enterPhase: (phase: BuildPhase) => void;
   out: (line: string) => void;
   recordBuild?: Parameters<typeof persistLastBuild>[0]['recordBuild'];
 }): Promise<RunAndroidResult> {
@@ -86,6 +89,7 @@ export async function finishHostedAndroidRun({
       ...(!release && isExpo ? { devClientScheme: resolveDevClientScheme(root, artifact.apkPath) ?? undefined } : {}),
       reserved: (placement) => writePlacement(root, slot, placement),
       note: out,
+      enterPhase,
     });
     writePlacement(root, slot, run.placement);
     writeLaunch(root, 'android', {

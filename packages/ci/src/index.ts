@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createStim, type StimOptions, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
 import { runCommand, type CommandResult } from './command.ts';
+import { copyDiagnosticLogs } from './artifacts.ts';
 
 type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 
@@ -38,7 +39,7 @@ export interface CIResult {
   test: CommandResult | null;
   failure?: CIFailure;
   reportingError?: CIFailure;
-  diagnostics: { path: string | null; error?: CIFailure };
+  diagnostics: { path: string | null; files?: string[]; error?: CIFailure };
   cleanup: { result: StimStopResult | null; error?: CIFailure };
 }
 
@@ -193,6 +194,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
         const path = join(artifactsDir, 'diagnostics.json');
         writeJson(path, diagnostics);
         result.diagnostics.path = path;
+        result.diagnostics.files = await copyDiagnosticLogs(diagnostics.directory, artifactsDir);
       } catch (error) {
         result.diagnostics.error = failure(error, 'STIM_CI_DIAGNOSTICS_FAILED');
       }

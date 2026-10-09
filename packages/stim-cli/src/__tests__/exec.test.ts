@@ -84,6 +84,20 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
+test('file commands can reject stderr on a successful exit without changing the default', async () => {
+  resetExecutor();
+  const args = [fileURLToPath(new URL('./fixtures/stderr-success.mts', import.meta.url))];
+  const executor = getExecutor();
+  expect(executor.runFile(process.execPath, args)).toBe('partial output');
+  expect(() => executor.runFile(process.execPath, args, { rejectStderr: true })).toThrow('inspection failed');
+  expect(await executor.runFileAsync(process.execPath, args)).toBe('partial output');
+  await expect(executor.runFileAsync(process.execPath, args, { rejectStderr: true })).rejects.toMatchObject({
+    status: 0,
+    stdout: 'partial output',
+    stderr: 'inspection failed',
+  });
+});
+
 test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windows', () => {
   resetExecutor();
   expect(getExecutor().findExecutable('npm')).toMatch(/\.cmd$/i);
