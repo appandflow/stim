@@ -621,6 +621,10 @@ jobs:
         with:
           gradle-version: '8.13'
           cache-disabled: true
+      - name: Install pinned agent-device for native UI assertions
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/native-agent-device" agent-device@0.21.22
+          echo "$RUNNER_TEMP/native-agent-device/bin" >> "$GITHUB_PATH"
       - name: Prepare pinned native Kotlin and Compose fixture
         run: node test/e2e/native/run-gradle-e2e.mjs prepare "$RUNNER_TEMP/native-gradle"
       - name: Enable KVM

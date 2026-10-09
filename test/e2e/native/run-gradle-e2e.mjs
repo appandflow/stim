@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { workspaceAgentDeviceDir } from '../../../packages/core/dist/state.mjs';
 
 const [mode, supplied] = process.argv.slice(2);
 assert(['prepare', 'run'].includes(mode) && supplied, 'usage: run-gradle-e2e.mjs prepare|run <owned-output>');
@@ -13,7 +14,15 @@ const logs = join(output, 'evidence');
 const home = join(output, 'stim-home');
 const cli = resolve('packages/stim-cli/dist/cli.mjs');
 const shim = resolve('packages/stim-cli/shim/native-android.gradle');
-const env = { ...process.env, STIM_HOME: home, GRADLE_USER_HOME: join(output, 'gradle-home') };
+process.env.STIM_HOME = home;
+const env = {
+  ...process.env,
+  GRADLE_USER_HOME: join(output, 'gradle-home'),
+  AGENT_DEVICE_HOME: join(output, 'agent-device'),
+  AGENT_DEVICE_CLAIMS_DIR: join(output, 'agent-claims'),
+  AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(fixture),
+};
+let activeAgentSerial;
 mkdirSync(logs, { recursive: true });
 function write(path, contents) {
   mkdirSync(dirname(path), { recursive: true });
@@ -29,6 +38,8 @@ function command(label, file, args, { cwd = fixture, allowFailure = false, timeo
   });
   const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
   write(join(logs, `${label}.log`), text);
+  write(join(logs, `${label}.stdout`), result.stdout ?? '');
+  write(join(logs, `${label}.stderr`), result.stderr ?? '');
   if (result.error) throw result.error;
   if (!allowFailure) assert.equal(result.status, 0, `${label}: ${text.slice(-12000)}`);
   return { ...result, text };
@@ -36,14 +47,75 @@ function command(label, file, args, { cwd = fixture, allowFailure = false, timeo
 function stim(label, args, options) {
   return command(label, process.execPath, [cli, ...args], options);
 }
+function agent(label, args) {
+  return command(
+    label,
+    'agent-device',
+    [...args, '--platform', 'android', '--serial', activeAgentSerial, '--session', 'native-gradle-ui'],
+    { timeout: 5 * 60_000 },
+  );
+}
+function closeAgent(label) {
+  if (!activeAgentSerial) return;
+  agent(label, ['close']);
+  activeAgentSerial = undefined;
+}
+function verifyUi(label, facts, beforePid, revision) {
+  assert.equal(facts.agentDevice?.stateDir, env.AGENT_DEVICE_STATE_DIR);
+  activeAgentSerial = facts.serial;
+  agent(`${label}-ui-open`, ['open', facts.bundleId, '--foreground']);
+  const afterOpen = command(
+    `${label}-pid-after-ui-open`,
+    'adb',
+    ['-s', facts.serial, 'shell', 'pidof', facts.bundleId],
+    { timeout: 10_000 },
+  );
+  assert.equal(afterOpen.stdout.trim(), beforePid, 'UI attachment replaced the Stim-launched app process.');
+  agent(`${label}-ui-revision`, ['wait', 'text', `Native QA ${revision}`, '10000']);
+  agent(`${label}-ui-counter-zero`, ['wait', 'text', 'Taps: 0', '10000']);
+  agent(`${label}-ui-press`, ['press', 'label="Increment native counter"', '--settle']);
+  agent(`${label}-ui-counter-one`, ['wait', 'text', 'Taps: 1', '10000']);
+  const screenshot = join(logs, `${label}-counter.png`);
+  agent(`${label}-ui-screenshot`, ['screenshot', screenshot]);
+  assert(statSync(screenshot).size > 0, 'The UI screenshot artifact is empty.');
+  const afterInteraction = command(
+    `${label}-pid-after-ui-interaction`,
+    'adb',
+    ['-s', facts.serial, 'shell', 'pidof', facts.bundleId],
+    { timeout: 10_000 },
+  );
+  assert.equal(afterInteraction.stdout.trim(), beforePid, 'UI interaction replaced the Stim-launched app process.');
+  closeAgent(`${label}-ui-close`);
+  write(
+    join(logs, `${label}-ui.json`),
+    JSON.stringify({ label, revision, serial: facts.serial, pid: beforePid, screenshot }, null, 2),
+  );
+}
 const sourceFile = join(fixture, 'mobile/src/main/java/org/example/stim/MainActivity.kt');
 const source = `package org.example.stim
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 class MainActivity : ComponentActivity() {
-  override fun onCreate(state: Bundle?) { super.onCreate(state); setContent { BasicText("Native QA initial") } }
+  override fun onCreate(state: Bundle?) {
+    super.onCreate(state)
+    setContent {
+      val taps = remember { mutableStateOf(0) }
+      Column(Modifier.padding(24.dp)) {
+        BasicText("Native QA initial")
+        BasicText("Taps: " + taps.value)
+        BasicText("Increment native counter", Modifier.clickable { taps.value += 1 }.padding(16.dp))
+      }
+    }
+  }
 }
 `;
 if (mode === 'prepare') {
@@ -144,6 +216,7 @@ dependencies {
         activityCompose: '1.10.1',
         compileSdk: 36,
         emulatorApi: 34,
+        agentDevice: '0.21.22',
       },
       null,
       2,
@@ -154,6 +227,8 @@ dependencies {
   let attemptedRun = false;
   let failure;
   try {
+    const agentVersion = command('agent-device-version', 'agent-device', ['--version'], { timeout: 10_000 });
+    assert.match(agentVersion.stdout, /\b0\.21\.22\b/);
     for (const setting of ['iosSimulatorApp', 'androidEmulatorApp'])
       stim(`setting-${setting}`, ['settings', 'set', setting, 'stim-desktop']);
     const plan = stim('plan', ['android', '--plan', '--json'], { allowFailure: true });
@@ -186,7 +261,12 @@ dependencies {
     assert.equal(exported.applicationId, 'org.example.stim.free.debug');
     assert.equal(exported.module, ':mobile');
     let originalDigest;
-    for (const label of ['stim-cold', 'stim-warm', 'stim-edited', 'stim-recovered']) {
+    for (const [label, revision] of [
+      ['stim-cold', 'initial'],
+      ['stim-warm', 'initial'],
+      ['stim-edited', 'edited'],
+      ['stim-recovered', 'recovered'],
+    ]) {
       if (label === 'stim-edited') write(sourceFile, source.replace('initial', 'edited'));
       if (label === 'stim-recovered') {
         write(sourceFile, 'not valid Kotlin!');
@@ -209,6 +289,7 @@ dependencies {
       serial = facts.serial;
       const pid = command(`${label}-pid`, 'adb', ['-s', serial, 'shell', 'pidof', facts.bundleId]);
       assert.match(pid.stdout.trim(), /^[1-9]\d*$/);
+      verifyUi(label, facts, pid.stdout.trim(), revision);
       const digest = createHash('sha256').update(readFileSync(facts.appPath)).digest('hex');
       if (label === 'stim-cold') originalDigest = digest;
       if (label === 'stim-warm') assert.equal(digest, originalDigest);
@@ -235,10 +316,10 @@ dependencies {
         {
           configurationCache: 'reused',
           warmGradleTasks: 'up-to-date',
-          currentSource: 'APK digest changed',
+          currentSource: 'APK digest changed and visible source revision matched',
           launch: 'positive app PID',
           recovery: true,
-          uiRendering: 'not asserted',
+          uiRendering: 'visible counter 0 -> 1 at unchanged Stim-launched PID in all four runs',
           cancellation: 'not exercised',
           physicalDevice: 'not exercised',
           remoteAndArtifactCache: 'unsupported',
@@ -248,6 +329,21 @@ dependencies {
       ),
     );
   } catch (error) {
+    failure = error;
+  }
+  try {
+    closeAgent('cleanup-agent-close');
+  } catch (error) {
+    if (failure) console.error(failure);
+    failure = error;
+  }
+  try {
+    if (existsSync(env.AGENT_DEVICE_STATE_DIR))
+      command('cleanup-agent-daemon', 'agent-device', ['daemon', 'stop', '--state-dir', env.AGENT_DEVICE_STATE_DIR], {
+        timeout: 30_000,
+      });
+  } catch (error) {
+    if (failure) console.error(failure);
     failure = error;
   }
   try {
