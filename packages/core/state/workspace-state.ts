@@ -259,7 +259,10 @@ function devicePlacement(value: unknown): DevicePlacement | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
-    (record.decision !== 'local' && record.decision !== 'hosted' && record.decision !== 'waited-locally') ||
+    (record.decision !== 'local' &&
+      record.decision !== 'hosted' &&
+      record.decision !== 'waited-locally' &&
+      record.decision !== 'eas') ||
     typeof record.reason !== 'string'
   )
     return null;
@@ -354,6 +357,9 @@ function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntr
     configuration: typeof record.configuration === 'string' ? record.configuration : null,
     cacheKey: typeof record.cacheKey === 'string' ? record.cacheKey : null,
     phases: historyPhases(record.phases),
+    ...(typeof record.compileSteps === 'number' && Number.isInteger(record.compileSteps) && record.compileSteps >= 0
+      ? { compileSteps: record.compileSteps }
+      : {}),
   };
 }
 

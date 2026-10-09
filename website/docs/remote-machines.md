@@ -514,6 +514,19 @@ a process already running as the worker user can forge that header.
   reused server older than 1.16.0, generate a new command after expiry, and
   check Tailscale and the private route when the live mirror cannot connect.
 
+### Find out why a remote Mac was slow or refused
+
+Every placement decision is a record: `stim logs --source placement` lists the
+Macs checked with a reason code each, and a failed request to a Mac (for
+example one that did not answer hello in time) is a `remote_connect_failed` or
+`remote_request_failed` record in `stim logs --source build`. On the Mac that
+serves the request, stim-server writes request errors to its service log
+(`~/Library/Logs/Stim/<label>.log`) with the client's device id and the run id
+of the `stim` command that sent it. To see every request with its duration and
+slow steps, run `stim settings set debug.logs true --scope machine` on that Mac,
+or set `STIM_DEBUG=1` for its stim-server. Nothing is sent anywhere, and no
+token or ticket is logged.
+
 ## Ask your agent
 
 These responses are illustrative. Placement comes from `stim status --json`
@@ -577,11 +590,35 @@ then `remote.build`. A named preference ranks first, followed by lowest load,
 most free memory and configuration order. Automatic
 build offload resolves later, using the device's offered architecture.
 
-If none admits, the run stays local and may wait in the FIFO device slot queue.
+If none admits and this Mac is at its `concurrency.maxDevices` cap (or runs are
+queued ahead), the opt-in `remote.easFallback` setting runs the device on an EAS
+Simulator, exactly as `--remote eas` would. EAS Simulator is billed, so the
+setting defaults to `false`; set it per machine or per project:
+
+```sh
+stim settings set remote.easFallback true --scope machine
+```
+
+The build still runs here and Stim never starts an EAS cloud build. `stim stop`
+ends the session, and `stim status` reports it like any `--remote eas` session.
+A Mac that is busy but has a free device slot never uses EAS. Before choosing
+it, Stim checks without starting a session that eas-cli has the simulator
+commands, `eas simulator:availability` accepts this project's account,
+agent-device is on PATH, the run uses the default slot and no `--runtime`,
+`--system-image` or `--device-profile` flag, no EAS Simulator session of this
+workspace runs another platform or model, and a Debug run's Metro can be
+reached (not `metro.tunnel` `off`; with an Expo tunnel, run
+`stim start --remote` first). A recorded EAS session is not sticky: once this
+Mac has room, auto runs locally and the session bills until `stim stop`. When a check
+fails, the run continues as below and the placement record says why.
+
+If none admits and EAS is off or unusable, the run stays local and may wait in
+the FIFO device slot queue.
 `--no-wait` or `--wait 0` refuses with `STIM_AT_CAPACITY`; an admitted host can
 still take those runs. The `placement:` line reports the decision and skipped
 hosts; JSON mode sends it to stderr. Run facts and each status slot include
-`devicePlacement: { decision, reason, machine? }`. Hosted status also preserves
+`devicePlacement: { decision, reason, machine? }`, where `decision` is `local`,
+`hosted`, `waited-locally` or `eas`. Hosted status also preserves
 `host.selected: "auto"` and `host.reason`.
 
 A reservation can be refused after a successful offer because another run
@@ -600,4 +637,12 @@ Run this workspace's iOS app with stim ios --remote auto using the approved
 remote.machines. Report the placement reason and verify the launched app on
 the reported device. Keep using any recorded session, then stop this workspace
 when finished.
+```
+
+```text
+This Mac is often at its simulator cap. Explain what remote.easFallback costs
+and give me the stim settings command to enable it; I will run it myself. Once
+it is on, run stim ios --remote auto, report
+the placement line from stim logs --source placement, and stop this workspace
+when finished so the EAS Simulator session ends.
 ```

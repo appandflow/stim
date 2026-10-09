@@ -650,6 +650,10 @@ export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | nu
 
 export { parseIosRemote as parseAndroidRemote };
 
+export function remoteEasFallbackSetting(settings: SettingsObject): boolean {
+  return settingValueAt(settings, 'remote.easFallback') === true;
+}
+
 export function remoteAndroidSetting(settings: SettingsObject): IosRemoteTarget | null {
   const android = settings.android;
   return isPlainObject(android) && typeof android.remote === 'string' ? parseIosRemote(android.remote) : null;

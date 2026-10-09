@@ -44,8 +44,30 @@ describe('scrubBreadcrumb', () => {
   });
 });
 
+describe('scrubEvent tags', () => {
+  it('scrubs tag values a failure report could carry and keeps schema locations and update ids', () => {
+    const event = {
+      type: undefined,
+      tags: {
+        error_class: 'refused:unauthorized',
+        schema_path: '#/properties/sessions/items/required',
+        name: 'hosted.status',
+        leaked: `wss://mac.tail1a2b3.ts.net:7433 ${DEVICE_TOKEN} /Users/janic/app`,
+        'expo.updates.update_id': UPDATE_ID,
+      },
+    } as ErrorEvent;
+    expect(scrubEvent(event).tags).toEqual({
+      error_class: 'refused:unauthorized',
+      schema_path: '#/properties/sessions/items/required',
+      name: 'hosted.status',
+      leaked: '[url] [token] ~/app',
+      'expo.updates.update_id': UPDATE_ID,
+    });
+  });
+});
+
 describe('scrubEvent', () => {
-  it('scrubs messages, exception values, breadcrumbs, extra and the route context, and leaves tags alone', () => {
+  it('scrubs messages, exception values, breadcrumbs, extra and the route context, and the tags', () => {
     const event: ErrorEvent = {
       type: undefined,
       message: `pairing ${DEVICE_TOKEN}`,

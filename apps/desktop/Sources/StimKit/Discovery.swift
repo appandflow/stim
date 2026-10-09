@@ -2,7 +2,6 @@ import CryptoKit
 import Foundation
 
 public enum DiscoveryType: String, CaseIterable, Sendable {
-  case slowCold = "offload.slowCold"
   case newMac = "tailnet.newMac"
   case slotWait = "builds.slotWait"
   case lowWithCaches = "disk.lowWithCaches"
@@ -50,8 +49,6 @@ public struct DiscoveryPrompt: Hashable, Sendable {
   public var actionTitle: String
   public var action: DiscoveryAction
   public var surface: Surface
-
-  public var secondaryAction: DiscoveryAction? { type == .lowWithCaches ? .reviewCaches : nil }
 }
 
 public enum Discovery {
@@ -96,21 +93,6 @@ public enum Discovery {
     return nil
   }
 
-  public static func slowCold(
-    placements: [BuildPlacements.Placement], machines: [String], macs: [TailnetMac], now: Date
-  ) -> DiscoveryPrompt? {
-    guard machines.isEmpty, let mac = firstMac(macs) else { return nil }
-    let cold = placements.filter {
-      $0.decision == .here && $0.failed != true && ($0.buildMs ?? 0) > 0 && recent($0.at, now: now)
-    }
-    guard cold.count >= 3 else { return nil }
-    let average = cold.reduce(0) { $0 + ($1.buildMs ?? 0) } / Double(cold.count)
-    guard average > 180_000 else { return nil }
-    return banner(
-      .slowCold, title: "Cold builds take ~\(Int((average / 60_000).rounded())) min. Build on \(mac.machine) instead?",
-      mac: mac)
-  }
-
   public struct NewMacResult: Sendable {
     public var seen: Set<String>
     public var prompt: DiscoveryPrompt?
@@ -120,7 +102,7 @@ public enum Discovery {
     macs: [TailnetMac], seen: Set<String>?, machines: [String], hosting: [String], now: Date
   ) -> NewMacResult {
     let updated = (seen ?? []).union(macs.map(\.id))
-    guard let seen,
+    guard let seen, machines.isEmpty, hosting.isEmpty,
       let mac = macs.sorted(by: { $0.dnsName < $1.dnsName }).first(where: { mac in
         !seen.contains(mac.id) && !(machines + hosting).contains { OffloadMachines.names($0, mac) }
       })
@@ -128,20 +110,36 @@ public enum Discovery {
     return NewMacResult(seen: updated, prompt: banner(.newMac, title: "\(mac.hostName) joined your tailnet", mac: mac))
   }
 
+  /// The first build that waited for a build slot, which means `concurrency.maxBuilds` was reached. `paired` is every
+  /// `remote.machines` and hosting entry; nil when they are not known, which shows nothing.
   public static func slotWait(
-    placements: [BuildPlacements.Placement], macs: [TailnetMac], now: Date
+    placements: [BuildPlacements.Placement], macs: [TailnetMac], paired: [String]?, now: Date
   ) -> DiscoveryPrompt? {
-    let count = placements.filter { ($0.slotWaitMs ?? 0) > 60_000 && recent($0.at, now: now) }.count
-    guard count >= 3 else { return nil }
-    return banner(
-      .slotWait, title: "Builds waited more than a minute for a build slot", detail: "\(count) builds this week",
-      mac: firstMac(macs))
+    guard paired?.isEmpty == true, placements.contains(where: { ($0.slotWaitMs ?? 0) > 0 && recent($0.at, now: now) })
+    else { return nil }
+    return banner(.slotWait, title: "A build waited for a build slot", mac: firstMac(macs))
   }
 
-  public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?, mac: TailnetMac?) -> DiscoveryPrompt? {
+  public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?) -> DiscoveryPrompt? {
     guard plan != nil, let cacheBytes, cacheBytes > 20 * 1_073_741_824 else { return nil }
     let gb = Int((Double(cacheBytes) / 1_073_741_824).rounded())
-    return banner(.lowWithCaches, title: "Native caches use \(gb) GB. Build on another Mac?", mac: mac)
+    return DiscoveryPrompt(
+      type: .lowWithCaches, title: "Disk is low. Native caches use \(gb) GB.", actionTitle: "Review Caches",
+      action: .reviewCaches, surface: .banner)
+  }
+
+  /// Whether `prompt` suggests adding a Mac because a concurrency cap was hit. The device-limit Use Auto prompt does not.
+  public static func suggestsMac(_ prompt: DiscoveryPrompt) -> Bool {
+    switch (prompt.type, prompt.action) {
+    case (.slotWait, _): return true
+    case (.capHit, .addMachine): return true
+    default: return false
+    }
+  }
+
+  /// Drops the cap prompts that suggest adding a Mac once one has been suggested, ever.
+  public static func suppressedByMacSuggestion(_ candidates: [DiscoveryPrompt], macSuggested: Bool) -> [DiscoveryPrompt] {
+    macSuggested ? candidates.filter { !suggestsMac($0) } : candidates
   }
 
   public static func refusedForCapacity(lines: [String], exitStatus: Int32) -> Bool {
@@ -177,13 +175,16 @@ public enum Discovery {
   }
 
   /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
-  /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved.
+  /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved and
+  /// no Mac is `paired` (nil when that is not known).
   /// `isRemote` says whether the workspace's devices for the platform already run on another Mac.
   public static func capHit(
-    source: CapHitSource, mac: TailnetMac?, hosts: [String]?, isRemote: (String, String?) -> Bool = { _, _ in false }
+    source: CapHitSource, mac: TailnetMac?, hosts: [String]?, paired: [String]?,
+    isRemote: (String, String?) -> Bool = { _, _ in false }
   ) -> DiscoveryPrompt? {
     guard let hosts else { return nil }
     if hosts.isEmpty {
+      guard paired?.isEmpty == true else { return nil }
       return banner(
         .capHit, title: "Device limit reached. Run simulators on \(mac?.machine ?? "another Mac")?", mac: mac,
         hostedSimulators: true)
@@ -265,6 +266,12 @@ public struct DiscoveryStore {
   public var seenPeers: Set<String>? {
     get { defaults.stringArray(forKey: AppPreferences.Key.discoverySeenPeers).map(Set.init) }
     nonmutating set { defaults.set(newValue.map { $0.sorted() }, forKey: AppPreferences.Key.discoverySeenPeers) }
+  }
+
+  /// Whether a build-slot-wait or device-limit prompt has already suggested adding a Mac; it is suggested once, ever.
+  public var macSuggested: Bool {
+    get { defaults.bool(forKey: AppPreferences.Key.discoveryMacSuggested) }
+    nonmutating set { defaults.set(newValue, forKey: AppPreferences.Key.discoveryMacSuggested) }
   }
 
   public var setupCompleted: Bool { defaults.bool(forKey: SetupGuideProgress.completedKey) }

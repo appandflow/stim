@@ -7,7 +7,7 @@ and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
 the CLI; reading stats never starts the server. An RPC failure is shown without
@@ -66,8 +66,7 @@ The bell at the top right opens **Notifications** and shows the unread count.
 the sidebar; only the list below them scrolls.
 
 **Overview** is the default launch page. The **Active** section comes first, as
-cards with a live preview of one device each; **Show more (N)** counts the other
-running devices and worktrees, and clicking a card opens the project. With nothing
+the same grid of workspace cards the Active workspaces page uses (see below). With nothing
 running it says where active projects will appear. **Idle projects** follow as
 compact cards in an adaptive grid, newest activity first, with the pull request
 that is open, a failed last build and the errors since the last marker. The grid
@@ -76,21 +75,22 @@ the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show All**. A **Recently archived** row lists the last five
 archives, and **Try this** suggests one feature a day with a copyable agent
-prompt. **Next Tip** shows another one, and the x dismisses a tip for good. A single running project gets one centered card.
+prompt. **Next Tip** shows another one, and the x dismisses a tip for good.
 
 **Active Workspaces** shows every worktree with something running, building or
-warming as one full-width card. A worktree with several apps (for example
-`apps/mobile` and `apps/desktop`) gets one card with the worktree's name and
-project in the header; each app is a labelled group inside it with its Metro port,
-errors, CPU and memory, followed by its device tiles, and clicking the app's label
-opens that app's workspace.
-
-For a worktree with one app, the header shows its name and project, the
-Metro port, who drives its devices, CPU, memory and its errors (a card with no running device shows only Metro and errors); the device tiles
-sit under it at the device tile size and wrap onto more rows when they do not
-fit. Clicking a card or its header opens the project (on a project page it opens the
-workspace); clicking a tile opens its workspace with that device focused. An
-app with no running device shows a **No Running Devices** line instead.
+warming as a card in a grid: two columns at typical widths, one when the window is
+narrow and three when it is very wide. The Overview's **Active** section uses the same
+cards. A card's header has the worktree's name and project, the app path, and chips
+for Metro, who drives the devices, CPU, memory and errors. Its body streams the
+worktree's first device live through the same frame pipeline as the device tiles,
+at the device tile size and the live frame rate from Preferences; a workspace with a
+Mac app, a browser or devices from several apps shows a row of buttons that switches
+which one streams, labelled by app when the worktree has several. The choice is
+remembered until Desktop quits. A workspace with no running device shows its build
+progress, setup state or Metro status in the same area. Clicking the card or its header
+opens the workspace (on the Active Workspaces page, the project); clicking the stream
+opens the workspace with that device focused. Cards that scroll out of view stop
+streaming and reconnect when they return.
 
 The sidebar lists projects as a
 tree. Each project expands to its workspaces,
@@ -261,13 +261,15 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by `stim <platform> --plan --json`. **Check** refreshes the next plan;
-  **Run** starts the app. The next-build prediction keeps **Cache miss details**.
+  predicted by `stim <platform> --plan --json`. Plans check automatically while
+  visible, reusing a completed build or check for 60 seconds and skipping running
+  builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
-  history and logs use the selected app. Its macOS panel shows the product,
-  build state, duration, error and build logs. The sheet shows every phase with
+  history and logs use the selected app. macOS uses the same card layout and Run
+  action; its next plan validates packaging settings and reports a SwiftPM Debug
+  build without predicting incremental compile work, worker availability or duration. The sheet shows every phase with
   its timing, the wait holder, full cache miss reason,
   changed sources and baseline, remote Mac and offload fallback reason,
   compiler diagnostics, retained output, and the next-build plan. **Open in logs
@@ -385,11 +387,10 @@ the list, and the app remembers it; a sheet too narrow for the list and a
 
 Escape releases a device that is taken over, and otherwise closes the viewer;
 closing it releases the device too. While the viewer is open, the device's
-tile stops streaming and says "Open in the viewer". Tiles on the Active Workspaces
-wall are previews too; clicking one opens its workspace with that device focused. The wall pauses previews after they leave the
-scrolling area. Returning to a tile reconnects its preview. Active workspaces without
-running or building devices show a No running devices line under their header, with Metro status, warnings and
-positive-error log links; CPU and RAM stay on the workspace page.
+tile stops streaming and says "Open in the viewer". The stream on a workspace card of the Active Workspaces wall or the
+Overview is a preview too; clicking it opens its workspace with that device focused. The grid pauses previews after
+they leave the scrolling area. Returning to a card reconnects its preview. Active workspaces without
+running or building devices show their Metro, build or setup state in the card's media area.
 
 On macOS 26 and later, sidebar controls and device viewer buttons use native
 Liquid Glass when built with Xcode 26 or later, and Settings uses grouped native
@@ -667,7 +668,7 @@ status under **Autopilot Activity**.
   the nightly cleanup still removes worktrees git shows as merged.
 
 **Stim's automatic maintenance.** When `stim status --json` reports
-`maintenance.mode` `on` (the default from stim 1.17.3) with valid settings and
+`maintenance.mode` `on` (the default from stim 1.18.0) with valid settings and
 no unresolved claim, the CLI clears build outputs, trims caches and removes
 finished worktrees on its own. The app then skips two of the options above: the
 disk-pressure `stim gc --delete` run, and `stim worktree remove` for finished
@@ -675,7 +676,7 @@ pull requests (it still polls `gh` and notifies in **Needs you** about the
 finished worktrees `stim gc` keeps). Idle shutdown and the nightly cleanup keep
 running, because the CLI does not do them: the nightly run is also what deletes
 unused and parked devices and removes clean idle worktrees by age. With a `stim`
-older than 1.17.3, or `maintenance.mode` set to `report` or `off`, or while the
+older than 1.18.0, or `maintenance.mode` set to `report` or `off`, or while the
 status payload has not loaded, the app runs everything as before. It also
 removes finished worktrees itself when the CLI's worktree check has not run in
 the last hour (sustained load, or `maintenance.removeFinishedWorktrees false`),
@@ -1076,6 +1077,10 @@ and sets up a tailnet-only route through the authenticated loopback `route.setup
 request; it never enables Funnel. Tailscale and server checks update automatically.
 Cancelling before pairing turns serving back off only if the wizard turned it on.
 
+The installation step shows branded QR codes and App Store actions for Stim Mobile
+and Tailscale. Stim Mobile's destination uses its reserved Apple app ID; the public
+listing is not available yet.
+
 Codes come from `stim-server pair --json`, with `--control` for **View and
 control** (the default). Each single-use code expires after five minutes; the
 wizard replaces expired codes automatically up to three times, then offers
@@ -1469,9 +1474,8 @@ card stays until it is acted on or dismissed, with or without VoiceOver. Several
 cards stack, newest first, with a counter and previous and next buttons.
 Two things use them. When `stim ios` or `stim android` launches on a device
 Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop navigates straight to the device only when nothing would be replaced: no
-main window was open, or the window already shows that workspace or All
-devices. Another page keeps its selection. A newer `stim` shows a card with
+Desktop keeps the current page and opens the launched device only when **Show**
+is clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
 
@@ -1561,8 +1565,11 @@ that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer remote Macs, hosted simulators, cache review, or phone
-pairing when recent activity makes them useful. The X snoozes a suggestion for
+Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+recent activity makes them useful. A low-disk banner points to the Machine page,
+where caches are reviewed and cleared. Suggestions to add a Mac appear only
+while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
@@ -1585,7 +1592,7 @@ until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Mac
 Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
 suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, slow cold builds, build slot waits, away
+matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
@@ -1674,6 +1681,15 @@ script with `--check` and fails when a committed file is stale. The color
 names match the phone's; `Palette` colors follow the system appearance and the
 app's Appearance setting.
 
+`scripts/ax-finite.swift` walks a running app's accessibility tree and prints
+every element whose position, size or frame is not finite, with its ancestors.
+agent-device cannot encode such an element, so its `snapshot` fails. Run
+`swift scripts/ax-finite.swift <pid>` against a `stim macos` copy, with the
+window small enough that the Overview's lower sections are scrolled out of
+view. SwiftUI reports a lazy container with no realized children at
+(inf, inf), so give every `LazyVGrid` and `LazyVStack` the
+`finiteAccessibilityFrame()` modifier. The terminal needs Accessibility access.
+
 ## SwiftUI playground
 
 Run the DEBUG playground without starting the normal app's CLI, server, notification service or updater:
@@ -1734,21 +1750,61 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 `scripts/release.sh <version>` builds the signed, notarized universal DMG and zip; see [RELEASING.md](./RELEASING.md).
 
+## Debug log
+
+Stim Desktop keeps a local debug log for finding out what happened when something goes wrong. It stays on this Mac: nothing is uploaded. Lines go to `~/Library/Logs/Stim/Desktop.log`, which rotates at 2 MB and keeps three older files (`Desktop.1.log` to `Desktop.3.log`, about 8 MB in all), and to `os.Logger` under the subsystem `dev.stim.desktop` with the categories `app`, `cli`, `server`, `decode`, `navigation`, `stall`, `sampler` and `stream`, so Console.app can filter them. Each line is `<time> <pid> <level> <category> <message>`. Only the released app (bundle id `dev.stim.desktop`) writes `Desktop.log`. Any other bundle id, such as a `stim macos` test copy, writes `Desktop-<suffix>.log` instead, where the suffix is the bundle id without its `dev.stim.desktop.` prefix (for example `Desktop-dev.log`), so copies do not add lines to the installed app's log; copies with one bundle id append to the same file and are told apart by pid.
+
+By default it records warnings and errors only: `stim` and `stim-server` runs that fail (exit status, `STIM_*` error code, last stderr lines), main-thread stalls, sampler gaps (why CPU, RAM or disk could not be measured), JSON decode failures (the type and coding path, never the payload), and device stream errors. A stall is a main-thread block of 250 ms or more; the line names the sidebar destination and the last CLI command. The watchdog is one utility-queue timer, four wakeups a second, and one empty block on the main queue per tick.
+
+Debug level adds every CLI run with its arguments and working directory, each `STIM_RUN_ID`, navigation, stim-server state changes and stream start and stop. Turn it on with a defaults key, then relaunch:
+
+```sh
+defaults write dev.stim.desktop debugLogging -bool YES
+defaults delete dev.stim.desktop debugLogging   # back to the default level
+```
+
+A Stim Dev or `stim macos` copy has another bundle id; pass `-debugLogging YES` as a launch argument instead.
+
+Every `stim` and `stim-server` process Desktop starts gets `STIM_RUN_ID=desktop-<12 hex digits>`, the same id the log line carries. The id is in the child environment so the CLI and server can adopt it to follow a Desktop action end to end. Desktop never logs environment values. Before a line is written, `DebugLogRedaction` replaces token, ticket, secret, password, authorization and DSN values, `--token`-style flag values, bearer values, URL credentials, JWTs and long opaque strings. Help > Reveal Debug Log shows the file in Finder. Help > Copy Diagnostics copies the log path, the Desktop, macOS, `stim` and `stim-server` versions and the output of `stim doctor --json` for the selected workspace, redacted the same way.
+
 ## Crash reports
 
 Stim Desktop reports crashes and uncaught exceptions to Sentry with sentry-cocoa, linked statically from its `Sentry` product. It starts Sentry only when the bundle's Info.plist carries a DSN in `StimSentryDSN`. The DSN is not in the repository: `scripts/bundle.sh --release` writes it from the environment, so `swift run`, `swift test`, Stim Dev, a bundle built without it, forks and CI report nothing and send nothing.
 
-| Variable                  | Used by     | Effect                                                                                             |
-| ------------------------- | ----------- | -------------------------------------------------------------------------------------------------- |
-| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | With `--release`, written into `StimSentryDSN`. Empty or unset turns crash reporting off.          |
-| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With `--release`, the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling. |
-| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                                  |
-| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                                       |
-| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException and `crash` traps, 3 seconds after launch.              |
+| Variable                  | Used by     | Effect                                                                                                                             |
+| ------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_DESKTOP_SENTRY_DSN` | `bundle.sh` | With `--release`, written into `StimSentryDSN`. Empty or unset turns crash reporting off.                                          |
+| `SENTRY_AUTH_TOKEN`       | `bundle.sh` | With `--release`, the two below and `sentry-cli` on `PATH`, uploads the app's dSYM after bundling.                                 |
+| `SENTRY_ORG`              | `bundle.sh` | The Sentry organization slug for the dSYM upload.                                                                                  |
+| `SENTRY_PROJECT`          | `bundle.sh` | The Sentry project slug for the dSYM upload.                                                                                       |
+| `STIM_DESKTOP_CRASH_TEST` | the app     | `exception` raises an uncaught NSException, `crash` traps and `hang` blocks the main thread for 5 seconds, 3 seconds after launch. |
 
 Without all three upload variables or `sentry-cli`, `bundle.sh --release` prints one line to stderr and skips the upload; a failed upload never fails the bundle. The dSYM is made with `dsymutil` from the bundled executable, so its UUIDs match the binary that `scripts/release.sh` later signs.
 
-An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off, tracing, session tracking, app hang tracking, network breadcrumbs and failed-request capture off, so it sends nothing but crash and exception events; macOS has no screenshot or view hierarchy capture. Before it records a breadcrumb or sends an event, the app replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
+An event carries the release `stim-desktop@<CFBundleShortVersionString>+<CFBundleVersion>` and the dist `<CFBundleVersion>`, read at launch. Sentry runs with `sendDefaultPii` off and tracing, session tracking, network breadcrumbs, failed-request capture, stack traces on handled events and MetricKit off; macOS has no screenshot or view hierarchy capture. Every event's text, tags, extra data, stack frames and breadcrumbs pass through the scrubber before they leave the app (the grouping fingerprint repeats the tag values and is not scrubbed): it replaces file paths outside system locations and `/Applications` with `<path>`, keeping the part from `Stim.app` on, and removes the Mac's host names, `.local` and tailnet hosts, IPv4 addresses other than `127.x` and Tailscale IPv6 addresses, URL hosts other than `localhost`, URL paths and query strings, and tokens, keys, passwords and other credentials. A path stops at whitespace, so after a space only a `/Users/<name>` folder is removed. A crash is sent on the next launch.
+
+### What is sent
+
+Besides the standard Sentry fields (SDK and release, the OS version and kernel, the Mac model, architecture, memory, locale and time zone, the app's bundle identifier, version and memory use, and a random per-install user id), Desktop sends these events and no others:
+
+| Event                      | When                                                             | Fields                                                                                                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Crash or uncaught error    | The app crashes or raises an uncaught `NSException`.             | The exception type and message, the stack trace and loaded images, scrubbed.                                                                                                                                              |
+| App hang                   | The main thread is blocked for 2 seconds or more.                | `App hanging for at least 2000 ms.`, the stack traces of all threads, scrubbed.                                                                                                                                           |
+| `stim command failed`      | A one-shot `stim` call (`status`, `stats`, `doctor`, ...) fails. | Tags `command` (a command of the CLI's command surface, else `other`), `outcome` (`exited`, `timed-out` or `not-found`), `exit_code`, and `stim_code` when the output names a bare `STIM_*` code. No arguments or output. |
+| `payload decode failed`    | JSON from `stim` or `stim-server` does not decode.               | Tags `source` (`cli` or `server`), `type` (the Swift type), `coding_path` (field names the type declares, with `<key>` for a dictionary key and `[]` for an array index) and `reason`. No values.                         |
+| `stim-server start failed` | Desktop cannot start or adopt `stim-server`.                     | Tag `kind`: `adoption-home-mismatch`, `launch-failed`, `no-answer`, `exited` or `too-old`. No message, path, port or output.                                                                                              |
+
+The three handled events are warnings with a fixed message. Each distinct failure is sent once per launch, and a launch sends at most 20. A command that streams output, such as `stim ios`, and a failed `stim-server` command send no event, because a failing build is not a Desktop fault.
+
+Once set, each event carries three tags that name where the app was: `page` (the kind of the last page: `overview`, `wall`, `project`, `workspace`, `archived-workspace`, `worktree`, `notifications`, `machine` or `none`, never a name) and `last_cli_command` (the last `stim` command started) and `server_state` (`off`, `starting`, `running`, `not-ready` or `failed`). Breadcrumbs hold the last 150 of:
+
+- `navigation`: the page kind.
+- `cli`: `start <command>` and `finish <command>` with `duration_ms` and `exit_code`.
+- `server`: `state <state>`.
+- Sentry's own `started` (`Breadcrumb Tracking`), `app.lifecycle` (active or inactive) and `device.connectivity` (the connection type).
+
+No event or breadcrumb carries a project, workspace, branch, machine or host name, a path, an argument, an output line, a payload value or a token. `Tests/StimKitTests/DiagnosticsTests.swift` and `CrashScrubberTests.swift` check this.
 
 To check a bundle, point the DSN at a local listener, such as `http://<key>@127.0.0.1:<port>/1`, and launch it with `STIM_DESKTOP_CRASH_TEST=crash`, then again without it; the listener receives a gzipped envelope at `/api/1/envelope/`.
 

@@ -66,7 +66,7 @@ export function ViewerKeyboard({
     ['right', t`Right`, '\u2192'],
   ];
   const shortcuts: [InputKey, string, string][] = [
-    ['a', t`Select all`, 'selection.pin.in.out'],
+    ['a', t`Select All`, 'selection.pin.in.out'],
     ['z', t`Undo`, 'arrow.uturn.backward'],
     ['s', t`Save`, 'square.and.arrow.down'],
     ['c', t`Copy`, 'document.on.document'],

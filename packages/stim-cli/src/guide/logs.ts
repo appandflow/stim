@@ -68,7 +68,7 @@ FLAGS
   --slot <name>   only this slot's records plus, once it has launched, the
                   shared untagged Metro and app client records (not the web
                   page's); default also includes untagged legacy records
-  --source <s...>  metro, client, device, build, agent, maintenance (one or more), or all.
+  --source <s...>  metro, client, device, build, agent, maintenance, placement (one or more), or all.
                    An unknown value is REJECTED rather than quietly matching
                    nothing.
   --level <l>      minimum level: debug, info, warn, error, fatal
@@ -205,6 +205,12 @@ THE RECORD
     event    the producer's own event name (bundle_build_done, client_log, ...)
     stack    frames of { file, line, column, fn }, passed through as reported
     marker   true on the records that close an error window
+    runId    the id of the stim invocation that wrote the record: STIM_RUN_ID
+             when set to a valid id (letters, digits, . _ -, at most 64),
+             else generated per run. Processes a command starts, such as the
+             Metro supervisor and the collectors, keep the id of the command
+             that started them. Debug records and the hello to stim-server
+             carry it too, and stim-server puts it on its log lines.
     deviceTs Android logcat's original epoch milliseconds; ts is aligned to
              host time using a bounded clock query at each collector attachment
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
@@ -221,6 +227,63 @@ Maintenance records use src: maintenance and appear in the plain timeline.
 Add --errors to --source maintenance to show only maintenance_failure events;
 failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
+
+REMOTE REQUEST RECORDS
+A request to another Mac that fails is a warn record with src: build in the
+run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
+code } (could not connect or say hello, e.g. "no reply in time" when the Mac
+did not answer hello) and remote_request_failed { method, ms, code, msg }.
+Timings of requests that succeed are debug records (below).
+stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
+no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
+ms=<n> error=<code>" for an error reply (once a minute per client, method and
+code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
+Mac fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
+slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
+whois and probe are the hello's Tailscale identity lookup and its wait for
+the host permission probe; a method name that is not a plain dotted lowercase
+name is logged as unknown)
+and "debug host_connect host=<mac> ms=<n> connectMs=<n> helloMs=<n>" (reused=true instead of the two
+timings when an open connection was shared), also as
+records in STIM_HOME/logs/debug/server.ndjson. Search the run id in both logs.
+
+DEBUG LOGS
+With debug.logs on or STIM_DEBUG=1 (stim guide settings), the CLI also appends
+debug records to STIM_HOME/logs/debug/cli.ndjson, outside any workspace, so
+stim logs does not show them. Read them with jq:
+  jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
+Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
+remote_connect and remote_request { ms, ok, code? } for requests to another
+Mac. They carry no arguments, tokens or tickets.
+
+Placement records use src: placement and sit in the run's build log
+(build-*.ndjson), so a new run replaces the previous run's. A run writes one
+record per decision it makes (a build that compiles and has a remote Mac to
+consider, or ios/android --remote auto), with event build_placement,
+device_placement or placement_fallback. A cache hit, a project with no paired
+remote Mac and a named --remote target write none:
+  stim logs --source placement
+  stim logs --source placement --json
+Fields: kind (build or device), platform, settings [{ key, value, from }] with
+from flag, env, setting or default (remote.build and remote.buildMode for a
+build, ios.remote or android.remote, plus remote.easFallback when it is on, for
+a device), candidates [{ machine, code,
+msg, detail? }], choice { machine, code, msg } with machine local when the run
+stays on this Mac, and fallback { code, msg, machine? } when a remote Mac that
+was meant to take the run did not (level warn). The msg is the same text the
+placement: and build: phase lines print.
+Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
+(detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
+declined, memory, no-capacity; with machine eas, why an EAS Simulator was not
+used: eas-named-slot, eas-local-flags, eas-no-agent-device, eas-no-cli,
+eas-cli-too-old, eas-session-busy, eas-metro-unreachable, eas-logged-out, eas-not-enabled,
+eas-unavailable. Choice codes for a build: placed, named,
+forced, this-mac-busy, this-mac-free, mode-off, local-selected, no-remote-mac,
+unsupported; fallback codes: no-remote-mac-took-it, offload-failed, fallback.
+Choice codes for a device: placed, sticky, this-mac-free, no-remote-mac,
+device-count-unknown, no-host-admits, eas-fallback (machine eas). Machine names appear in these records;
+they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips

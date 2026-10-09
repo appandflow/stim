@@ -86,11 +86,24 @@ final class MetricsStore {
     let base = sampler
     let disks = disks
     Task.detached {
-      let processes = (try? ProcessTable.snapshot()) ?? []
+      var processes: [ProcessEntry] = []
+      do {
+        processes = try ProcessTable.snapshot()
+        DebugLog.gap("process table", processes.isEmpty ? "ps listed no parsable processes" : nil)
+      } catch {
+        DebugLog.gap("process table", "ps could not run: \(error)")
+      }
       var sampler = base
       let result = processes.isEmpty ? [:] : sampler.sample(workspaces, processes: processes, at: Date())
       let volumes = await disks.volumes(maxAge: 1)
       let memory = MachineMemory.read()
+      DebugLog.gap("memory", memory == nil ? "host_statistics64 or hw.memsize failed" : nil)
+      DebugLog.gap("disk volumes", volumes.isEmpty ? "no volume with Stim locations could be measured" : nil)
+      let unmatched = workspaces.filter { $0.live && result[$0.path] == nil }.map(\.path).sorted()
+      DebugLog.gap(
+        "workspace cpu",
+        processes.isEmpty || unmatched.isEmpty
+          ? nil : "no process matched the roots of live workspaces \(unmatched.joined(separator: ", "))")
       let updated = processes.isEmpty ? nil : sampler
       await MainActor.run {
         self.sampling = false
@@ -110,6 +123,7 @@ final class MetricsStore {
         self.memory = memory
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
         self.owners.append(self.status.payload?.machine, at: Date())
+        DebugLog.gap("machine cpu", self.status.payload?.machine == nil ? "stim status reported no machine usage" : nil)
         if let machine = self.status.payload?.machine {
           let share = 100 * UsageThresholds.cpuFraction(percentOfOneCore: machine.cpuPercent, cores: Self.cores)
           self.ownersCpu = Array((self.ownersCpu + [share]).suffix(UsageHistory.limit))

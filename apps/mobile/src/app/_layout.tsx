@@ -3,7 +3,7 @@ import { t } from '@lingui/core/macro';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +15,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
 import { SplashOverlay } from '@/components/splash-overlay';
+import { addNavigationBreadcrumb } from '@/lib/diagnostics';
 import { useForegroundUpdateCheck } from '@/hooks/app-update';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
@@ -37,8 +38,8 @@ function RootErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   useEffect(() => SplashScreen.hide(), []);
   return (
     <View style={styles.error}>
-      <EmptyState title={t`Something went wrong`} message={error.message}>
-        <Button title={t`Try again`} onPress={() => void retry()} />
+      <EmptyState title={t`Something Went Wrong`} message={error.message}>
+        <Button title={t`Try Again`} onPress={() => void retry()} />
       </EmptyState>
     </View>
   );
@@ -62,6 +63,8 @@ export default function RootLayout() {
 
 function RootLayoutContent() {
   useForegroundUpdateCheck();
+  const route = useSegments().join('/');
+  useEffect(() => addNavigationBreadcrumb(route), [route]);
   const { theme: current, rt } = useUnistyles();
   const scheme = rt.themeName === 'dark' ? 'dark' : 'light';
   const colors = current.colors;
@@ -129,15 +132,15 @@ function RootLayoutContent() {
                         : null),
                     }}
                   />
-                  <Stack.Screen name="licenses" options={{ title: t`Open source licenses` }} />
+                  <Stack.Screen name="licenses" options={{ title: t`Open Source Licenses` }} />
                   <Stack.Screen name="license" options={{ title: '' }} />
                   <Stack.Screen
                     name="pair"
-                    options={{ title: t`Pair a machine`, presentation: 'modal', ...opaqueHeader }}
+                    options={{ title: t`Pair a Machine`, presentation: 'modal', ...opaqueHeader }}
                   />
                   <Stack.Screen
                     name="rename"
-                    options={{ title: t`Rename machine`, presentation: 'modal', ...opaqueHeader }}
+                    options={{ title: t`Rename Machine`, presentation: 'modal', ...opaqueHeader }}
                   />
                   <Stack.Screen name="mac/[id]/index" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/workspace" options={{ title: t`Workspace` }} />
@@ -153,11 +156,11 @@ function RootLayoutContent() {
                       contentStyle: { backgroundColor: 'transparent' },
                     }}
                   />
-                  <Stack.Screen name="mac/[id]/archived" options={{ title: t`Archived workspace` }} />
+                  <Stack.Screen name="mac/[id]/archived" options={{ title: t`Archived Workspace` }} />
                   <Stack.Screen name="mac/[id]/archived-build" options={sheet([0.75, 1])} />
                   <Stack.Screen
                     name="mac/[id]/archived-replay"
-                    options={{ title: t`Archived replay`, ...opaqueHeader }}
+                    options={{ title: t`Archived Replay`, ...opaqueHeader }}
                   />
                   <Stack.Screen name="mac/[id]/build" options={sheet([0.75, 1])} />
                   <Stack.Screen name="mac/[id]/resources" options={sheet([0.75, 1])} />

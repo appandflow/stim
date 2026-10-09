@@ -64,7 +64,7 @@ struct AddMachineSheet: View {
       }
     }
     .frame(width: 740, height: 640)
-    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
+    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .task { await model.start() }
     .onDisappear { model.stop() }
@@ -496,6 +496,7 @@ struct AddMachineSheet: View {
   private func forward(_ title: String, disabled: Bool, action: @escaping () -> Void) -> some View {
     Button(title, action: action)
       .buttonStyle(.borderedProminent)
+      .tint(Palette.brand)
       .keyboardShortcut(.defaultAction)
       .disabled(disabled)
   }

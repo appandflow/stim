@@ -269,7 +269,8 @@ export interface DeviceHostRequestAuth {
 
 export interface HelloParams {
   protocol: number;
-  client: { name: string; version: string };
+  /** `runId` is the CLI invocation's id: letters, digits, `.`, `_`, `-`, at most 64. The server puts it on its log lines for the connection. */
+  client: { name: string; version: string; runId?: string };
   auth: PairingAuth | DeviceAuth | BuildRequestAuth | DeviceHostRequestAuth;
 }
 
@@ -302,7 +303,7 @@ export interface UnsubscribeParams {
   subscription: string;
 }
 
-export const LOG_SOURCES = ['metro', 'client', 'device', 'build', 'agent', 'maintenance'] as const;
+export const LOG_SOURCES = ['metro', 'client', 'device', 'build', 'agent', 'maintenance', 'placement'] as const;
 
 export type LogSource = (typeof LOG_SOURCES)[number];
 

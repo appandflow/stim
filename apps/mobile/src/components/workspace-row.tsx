@@ -27,11 +27,27 @@ import {
   warmStepText,
   type HomeWorkspace,
 } from '@/lib/home-list';
+import { worktreeRowLabel, worktreeRowSummary, type PlatformState } from '@/lib/worktree-row';
 import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
-import { isSettingUp, isShownLive, runningBuild } from '@/lib/workspaces';
+import { isSettingUp, isShownLive, platformName, runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState, WorktreeFacts } from '@/protocol/types';
 
 const SEPARATOR = '\u00B7';
+
+const PLATFORM_TONE = {
+  building: 'brand',
+  failed: 'error',
+  running: 'success',
+  idle: 'tertiary',
+} as const;
+
+function platformDotStyle(theme: Parameters<typeof toneColor>[0], platform: PlatformState, offline: boolean) {
+  const color = toneColor(theme, offline ? 'tertiary' : PLATFORM_TONE[platform.kind]);
+  return {
+    borderColor: color,
+    backgroundColor: platform.kind === 'idle' || offline ? 'transparent' : color,
+  };
+}
 
 export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
   workspace,
@@ -43,44 +59,17 @@ export const WorkspaceGroupRow = memo(function WorkspaceGroupRow({
   showsMachine: boolean;
   onOpen: (item: HomeItem | HomeArchive, errors: boolean, checkout?: boolean) => void;
 }) {
-  const first = workspace.apps[0];
-  const branch = workspace.title;
-  const archive = 'archive' in first ? archivedPage(first.archive, null, props.now) : null;
-  const { online, cached } = useMachinePresence(first.macId);
-  if (workspace.apps.length === 1) return <WorkspaceRow item={first} {...props} />;
-  return (
-    <View>
-      <Touch
-        feedback="row"
-        accessibilityRole="button"
-        accessibilityLabel={[
-          branch,
-          props.showsMachine ? first.macName : null,
-          (archive?.git ?? gitChip(first.env.worktree))?.label,
-        ]
-          .filter(Boolean)
-          .join(', ')}
-        accessibilityHint={t`Opens every app in this checkout`}
-        onPress={() => props.onOpen(first, false, true)}
-        style={[styles.checkout, (!online || cached) && styles.dimmed]}
-      >
-        <Text variant="headline" weight="medium" accessibilityRole="header">
-          {workspace.title}
-        </Text>
-        {props.showsMachine ? (
-          <Text variant="footnote" tone="secondary">
-            {first.macName}
-          </Text>
-        ) : null}
-        <GitLine facts={first.env.worktree} archive={archive} />
-      </Touch>
-      <View style={styles.apps}>
+  if (workspace.apps.length === 1) return <WorkspaceRow item={workspace.apps[0]} {...props} />;
+  if ('archive' in workspace.apps[0]) {
+    return (
+      <>
         {workspace.apps.map((item) => (
-          <WorkspaceRow key={item.key} item={item} {...props} app showsMachine={false} />
+          <WorkspaceRow key={item.key} item={item} title={item.inCheckout ?? item.title} {...props} />
         ))}
-      </View>
-    </View>
-  );
+      </>
+    );
+  }
+  return <WorkspaceRow item={workspace.apps[0]} apps={workspace.apps} title={workspace.title} {...props} />;
 });
 
 const WorkspaceRow = memo(function WorkspaceRow({
@@ -89,16 +78,19 @@ const WorkspaceRow = memo(function WorkspaceRow({
   folder,
   showsMachine,
   onOpen,
-  app = false,
+  apps,
+  title: groupTitle,
 }: {
   item: HomeItem | HomeArchive;
-  app?: boolean;
+  /** Every app of a worktree with more than one, which the row summarizes. */
+  apps?: (HomeItem | HomeArchive)[];
+  title?: string;
   now: number;
   /** Whether to name the folder in the checkout, when the repo's workspaces sit in different ones. */
   folder: boolean;
   /** Whether to name the machine, when more than one is paired. */
   showsMachine: boolean;
-  onOpen: (item: HomeItem | HomeArchive, errors: boolean) => void;
+  onOpen: (item: HomeItem | HomeArchive, errors: boolean, checkout?: boolean) => void;
 }) {
   const { theme } = useUnistyles();
   const large = useLargeText();
@@ -106,7 +98,10 @@ const WorkspaceRow = memo(function WorkspaceRow({
   const { online, cached, lastSeenAt } = useMachinePresence(item.macId);
   const offline = !online || cached;
   const at = offline ? (lastSeenAt ?? now) : now;
-  const { env } = item;
+  const rowSummary = 'archive' in item ? null : worktreeRowSummary(apps ?? [item], at, offline ? { lastSeenAt } : null);
+  const summary = apps ? rowSummary : null;
+  const shown = summary?.lead ?? item;
+  const { env } = shown;
   const archive = 'archive' in item ? archivedPage(item.archive, null, now) : null;
   const expiry = archive?.retention.filter((part) => part.kind === 'logs' || part.kind === 'recordings');
   const expiryLabel = expiry?.some((part) => part.expired)
@@ -114,14 +109,15 @@ const WorkspaceRow = memo(function WorkspaceRow({
     : expiry?.some((part) => part.soon)
       ? t`Expires soon`
       : null;
-  const status = rowStatus(env, now, offline ? { lastSeenAt } : null);
-  const problems = rowProblems(env, at);
+  const status = summary?.status ?? rowStatus(env, now, offline ? { lastSeenAt } : null);
+  const problems = summary?.problems ?? rowProblems(env, at);
   const devices = rowDevices(env, at);
-  const sessions = workspaceAgentSessions(env);
+  const sessions = summary?.sessions ?? workspaceAgentSessions(env);
   const build = runningBuild(env);
-  const title = app ? (item.inCheckout ?? item.env.path.split('/').filter(Boolean).pop() ?? item.title) : item.title;
-  const live = isShownLive(env);
-  const errors = env.logs?.errorsSinceMarker ?? 0;
+  const title = groupTitle ?? item.title;
+  const live = apps ? apps.some((app) => isShownLive(app.env)) : isShownLive(env);
+  const errorApp = apps?.find((app) => (app.env.logs?.errorsSinceMarker ?? 0) > 0) ?? shown;
+  const errors = errorApp.env.logs?.errorsSinceMarker ?? 0;
   const color = toneColor(theme, offline ? 'tertiary' : status.tone);
 
   const context: ReactNode[] = [];
@@ -135,31 +131,40 @@ const WorkspaceRow = memo(function WorkspaceRow({
       </View>,
     );
   }
-  if (devices.names) {
+  if (rowSummary?.platforms.length) {
     context.push(
-      <Text key="devices" variant="footnote" tone="secondary">
-        {devices.names}
-      </Text>,
+      <View key="platforms" style={styles.platforms}>
+        {rowSummary.platforms.map((platform) => (
+          <View key={platform.platform} style={styles.inline}>
+            <View style={[styles.platformDot, platformDotStyle(theme, platform, offline)]} />
+            <Text variant="footnote" tone="secondary">
+              {platformName(platform.platform)}
+            </Text>
+          </View>
+        ))}
+      </View>,
     );
   }
-  if (devices.drivers) {
+  const drivers = summary ? summary.drivers.map((tool) => tool || t`unknown tool`).join(', ') : devices.drivers;
+  if (drivers) {
     context.push(
       <View key="drivers" style={styles.inline}>
         <Icon name="cursorarrow.rays" size={13} color={offline ? theme.colors.tertiary : theme.colors.primary} />
         <Text variant="footnote" weight="medium" tone={offline ? 'tertiary' : 'brand'}>
-          {devices.drivers}
+          {drivers}
         </Text>
       </View>,
     );
   }
-  if (devices.idle) {
+  if (devices.idle && !summary) {
     context.push(
       <Text key="idle" variant="footnote" tone="tertiary">
         {devices.idle.text}
       </Text>,
     );
   }
-  if (devices.remote) {
+  const remote = summary?.remote ?? devices.remote;
+  if (remote) {
     context.push(
       <Text key="remote" variant="footnote" tone={offline ? 'tertiary' : 'info'}>
         <Trans>EAS session</Trans>
@@ -170,31 +175,41 @@ const WorkspaceRow = memo(function WorkspaceRow({
   return (
     <Touch
       feedback="row"
-      onPress={() => onOpen(item, false)}
+      onPress={() => (apps ? onOpen(shown, false, true) : onOpen(shown, false))}
       accessibilityLabel={
-        archive
-          ? [title, archive.prLabel, archive.removed, archive.size, expiryLabel, showsMachine ? item.macName : null]
-              .filter(Boolean)
-              .join(', ')
-          : rowLabel({
-              item: { ...item, title },
-              now: at,
-              status,
-              problems,
-              sessions,
-              folder: !app && folder,
-              showsMachine,
-            })
+        summary
+          ? worktreeRowLabel(title, summary, showsMachine ? item.macName : null)
+          : archive
+            ? [title, archive.prLabel, archive.removed, archive.size, expiryLabel, showsMachine ? item.macName : null]
+                .filter(Boolean)
+                .join(', ')
+            : rowLabel({
+                item: { ...item, title },
+                now: at,
+                status,
+                problems,
+                sessions,
+                folder: !apps && folder,
+                showsMachine,
+              })
       }
-      accessibilityHint={t`Opens the workspace`}
-      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show errors` }] : undefined}
+      accessibilityHint={apps ? t`Opens every app in this checkout` : t`Opens the workspace`}
+      accessibilityActions={!archive && errors > 0 ? [{ name: 'errors', label: t`Show Errors` }] : undefined}
       onAccessibilityAction={(event) => {
-        if (event.nativeEvent.actionName === 'errors') onOpen(item, true);
+        if (event.nativeEvent.actionName === 'errors') onOpen(errorApp, true);
       }}
       style={styles.row}
     >
       <View style={[styles.lead, offline && styles.dimmed]}>
-        <View style={[styles.dot, { borderColor: color, backgroundColor: live && !offline ? color : 'transparent' }]} />
+        <View
+          style={[
+            styles.dot,
+            {
+              borderColor: color,
+              backgroundColor: live && !offline ? color : 'transparent',
+            },
+          ]}
+        />
       </View>
       <View style={[styles.body, offline && styles.dimmed]}>
         <View style={[styles.titleLine, large && styles.titleLineStacked]}>
@@ -231,7 +246,7 @@ const WorkspaceRow = memo(function WorkspaceRow({
               <Pill
                 key={`${problem.kind}:${problem.text}`}
                 tone={offline ? 'neutral' : problem.tone}
-                onPress={problem.kind === 'errors' ? () => onOpen(item, true) : undefined}
+                onPress={problem.kind === 'errors' ? () => onOpen(errorApp, true) : undefined}
               >
                 {problem.text}
               </Pill>
@@ -246,9 +261,11 @@ const WorkspaceRow = memo(function WorkspaceRow({
           </Text>
         ) : null}
         {context.length ? <Line parts={context} /> : null}
-        {!app ? (
-          <GitLine facts={item.env.worktree} archive={archive} folder={archive || folder ? item.inCheckout : null} />
-        ) : null}
+        <GitLine
+          facts={env.worktree}
+          archive={archive}
+          folder={!apps && (archive || folder) ? item.inCheckout : null}
+        />
       </View>
     </Touch>
   );
@@ -285,7 +302,15 @@ export const WorktreeRow = memo(function WorktreeRow({
       style={[styles.row, offline && styles.dimmed]}
     >
       <View style={styles.lead}>
-        <View style={[styles.dot, { borderColor: theme.colors.tertiary, backgroundColor: 'transparent' }]} />
+        <View
+          style={[
+            styles.dot,
+            {
+              borderColor: theme.colors.tertiary,
+              backgroundColor: 'transparent',
+            },
+          ]}
+        />
       </View>
       <View style={styles.body}>
         <View style={[styles.titleLine, large && styles.titleLineStacked]}>
@@ -432,8 +457,6 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
 }
 
 const styles = StyleSheet.create((theme) => ({
-  checkout: { gap: theme.space.sm, paddingHorizontal: theme.space.xxl, paddingTop: theme.space.xl },
-  apps: { marginLeft: theme.space.xxl },
   row: {
     flexDirection: 'row',
     gap: theme.space.lg,
@@ -441,17 +464,52 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.space.xl,
   },
   lead: { width: 12, alignItems: 'center', paddingTop: theme.space.sm },
-  dot: { width: 11, height: 11, borderRadius: theme.radius.round, borderWidth: 2 },
+  dot: {
+    width: 11,
+    height: 11,
+    borderRadius: theme.radius.round,
+    borderWidth: 2,
+  },
   body: { flex: 1, gap: theme.space.sm },
   dimmed: { opacity: 0.5 },
-  titleLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.md },
+  titleLine: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: theme.space.md,
+  },
   title: { flex: 1 },
   pills: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.sm },
   build: { gap: theme.space.sm, paddingVertical: theme.space.xxs },
-  titleLineStacked: { flexDirection: 'column', alignItems: 'flex-start', gap: theme.space.xs },
-  buildLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.xs },
+  titleLineStacked: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: theme.space.xs,
+  },
+  buildLine: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: theme.space.xs,
+  },
+  platforms: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: theme.space.md,
+  },
+  platformDot: {
+    width: 8,
+    height: 8,
+    borderRadius: theme.radius.round,
+    borderWidth: 1.5,
+  },
   inline: { flexDirection: 'row', alignItems: 'center', gap: theme.space.xs },
-  line: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.sm, rowGap: 2 },
+  line: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: theme.space.sm,
+    rowGap: 2,
+  },
   shrink: { flexShrink: 1 },
   spacer: { flex: 1 },
   outcome: { marginRight: theme.space.sm },

@@ -100,10 +100,10 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     if (!permission.granted && permission.canAskAgain) permission = await Notifications.requestPermissionsAsync();
     if (!permission.granted) {
       Alert.alert(
-        t`Notifications are off for Stim`,
+        t`Notifications Are Off for Stim`,
         t`Allow them in Settings to get notified when something needs attention.`,
         [
-          { text: t`Not now`, style: 'cancel' },
+          { text: t`Not Now`, style: 'cancel' },
           { text: t`Open Settings`, onPress: () => void Linking.openSettings() },
         ],
       );

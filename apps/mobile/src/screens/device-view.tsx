@@ -99,7 +99,7 @@ function postureLabel(posture: DevicePosture): string {
     case 'folded':
       return t`Fold`;
     case 'half-open':
-      return t`Half open`;
+      return t`Half Open`;
     case 'unfolded':
       return t`Unfold`;
   }
@@ -413,7 +413,7 @@ export function DeviceView({
     setMoving(posture);
     control
       .posture(posture)
-      .catch((cause: Error) => Alert.alert(t`Posture not changed`, cause.message))
+      .catch((cause: Error) => Alert.alert(t`Posture Not Changed`, cause.message))
       .finally(() => setMoving(null));
   };
   const simulator = control.state.kind === 'on' ? control.state.simulator : null;
@@ -421,7 +421,7 @@ export function DeviceView({
     setChangingOption(true);
     control
       .simulator(command)
-      .catch((cause: Error) => Alert.alert(t`Simulator option not changed`, cause.message))
+      .catch((cause: Error) => Alert.alert(t`Simulator Option Not Changed`, cause.message))
       .finally(() => setChangingOption(false));
   };
   const readOnlyBanner = readOnly ? (
@@ -434,7 +434,7 @@ export function DeviceView({
           {allowControlSteps(mac?.name, deviceId)}
         </Text>
         <View style={styles.bannerActions}>
-          {deviceId ? <CopyButton text={grantCommand(deviceId)} title={t`Copy command`} filled={false} /> : null}
+          {deviceId ? <CopyButton text={grantCommand(deviceId)} title={t`Copy Command`} filled={false} /> : null}
           <Button title={t`Reconnect`} variant="plain" size="small" onPress={() => connection?.reconnect()} />
         </View>
       </View>
@@ -488,14 +488,14 @@ export function DeviceView({
               {
                 id: 'follow',
                 icon: 'macwindow.on.rectangle',
-                label: t`Follow front window`,
+                label: t`Follow Front Window`,
                 selected: !windows.pinned,
                 onPress: () => control.selectWindow(null),
               },
               ...windows.windows.map((window): ViewerAction => ({
                 id: String(window.id),
                 icon: 'macwindow.on.rectangle',
-                label: window.title || t`Untitled window`,
+                label: window.title || t`Untitled Window`,
                 selected: windows.pinned && window.id === windows.current?.id,
                 onPress: () => control.selectWindow(window.id),
               })),
@@ -509,7 +509,7 @@ export function DeviceView({
           {
             id: 'keyboard',
             icon: 'keyboard',
-            label: typing ? t`Hide keyboard` : t`Keyboard`,
+            label: typing ? t`Hide Keyboard` : t`Keyboard`,
             selected: typing,
             disabled: readOnly,
             onPress: () => (typing ? keyboard.current?.blur() : keyboard.current?.focus()),
@@ -554,14 +554,14 @@ export function DeviceView({
                 {
                   id: 'rotate-left',
                   icon: 'arrow.counterclockwise' as const,
-                  label: t`Rotate left`,
+                  label: t`Rotate Left`,
                   disabled: readOnly,
                   onPress: () => rotate('left'),
                 },
                 {
                   id: 'rotate-right',
                   icon: 'arrow.clockwise' as const,
-                  label: t`Rotate right`,
+                  label: t`Rotate Right`,
                   disabled: readOnly,
                   onPress: () => rotate('right'),
                 },
@@ -592,7 +592,7 @@ export function DeviceView({
       secondary.push({
         id: 'slow-animations',
         icon: 'hourglass',
-        label: t`Slow animations`,
+        label: t`Slow Animations`,
         selected: simulator.slowAnimations,
         disabled: changingOption,
         onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
@@ -612,7 +612,7 @@ export function DeviceView({
     secondary.push({
       id: 'device-frame',
       icon: 'rectangle.portrait',
-      label: t`Device frame`,
+      label: t`Device Frame`,
       selected: showsFrame,
       onPress: () => setShowsFrame(!showsFrame),
     });
@@ -982,7 +982,7 @@ function Banner({
           style={styles.bannerButton}
         >
           <Text weight="semibold" tone="brand" style={readOnly && styles.mutedAction}>
-            <Trans>Take over</Trans>
+            <Trans>Take Over</Trans>
           </Text>
         </Touch>
       ) : null}

@@ -3549,6 +3549,34 @@ describe('--remote', () => {
     expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
 
+  test('auto on a full Mac with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
+    const remote = remoteStub();
+    reserve();
+    const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+    const { calls, exitCode } = await run(
+      { remote: 'auto' },
+      {
+        ...remote.deps,
+        resolveSettings: () => ({ remote: { easFallback: true } }),
+        checkEasFallback,
+        automaticDevicePlacement: (args) =>
+          automaticDevicePlacement(args, {
+            machines: () => [],
+            peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+            capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+            memory: () => 'normal',
+            budget: async () => null,
+          }),
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(checkEasFallback).toHaveBeenCalledOnce();
+    expect(remote.backends).toEqual(['eas']);
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
+  });
+
   test.each([false, true])('host-memory recovery is limited to local launch failures (remote=%s)', async (isRemote) => {
     reserve();
     const remote = remoteStub();

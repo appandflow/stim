@@ -51,14 +51,14 @@ function ArchiveResources({ archive: id }: { archive: string }) {
       </SheetScreen>
     );
   const page = archivedPage(archive, detail.data, now);
-  const labels = { logs: t`Logs`, recordings: t`Recordings`, agentActions: t`Agent actions`, record: t`Record` };
+  const labels = { logs: t`Logs`, recordings: t`Recordings`, agentActions: t`Agent Actions`, record: t`Record` };
   return (
     <SheetScreen title={t`Status`} subtitle={page.removedLabel}>
       <ListSection title={t`Removal`}>
         <ListRow title={t`Removed`} value={formatDateTime(archive.removedAt)} />
-        {archive.lastUsedAt ? <ListRow title={t`Last activity`} value={formatDateTime(archive.lastUsedAt)} /> : null}
+        {archive.lastUsedAt ? <ListRow title={t`Last Activity`} value={formatDateTime(archive.lastUsedAt)} /> : null}
       </ListSection>
-      <ListSection title={t`Retention and size`}>
+      <ListSection title={t`Retention and Size`}>
         {page.retention.map((part) => {
           const until = part.until ? formatDateTime(part.until) : null;
           return (
@@ -74,15 +74,15 @@ function ArchiveResources({ archive: id }: { archive: string }) {
         })}
         <ListRow title={t`Total`} value={page.size} />
       </ListSection>
-      <ListSection title={t`Activity totals`}>
+      <ListSection title={t`Activity Totals`}>
         <ListRow title={t`Builds`} value={String(page.totals.builds)} />
         {page.totals.cacheHits === null ? null : (
-          <ListRow title={t`Cache hits`} value={String(page.totals.cacheHits)} />
+          <ListRow title={t`Cache Hits`} value={String(page.totals.cacheHits)} />
         )}
         {page.totals.offloaded === null ? null : (
-          <ListRow title={t`On a build machine`} value={String(page.totals.offloaded)} />
+          <ListRow title={t`On a Build Machine`} value={String(page.totals.offloaded)} />
         )}
-        <ListRow title={t`Last error count`} value={String(page.totals.errors)} />
+        <ListRow title={t`Last Error Count`} value={String(page.totals.errors)} />
         {page.sessions.map(({ agent, durationMs }) => (
           <ListRow
             key={agent.sessionId}
@@ -92,7 +92,7 @@ function ArchiveResources({ archive: id }: { archive: string }) {
           />
         ))}
         <ListRow
-          title={t`Agent actions`}
+          title={t`Agent Actions`}
           value={formatSize(archive.bytes.agentActions)}
           accessory="chevron"
           onPress={() =>
