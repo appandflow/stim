@@ -44,7 +44,7 @@
 # on iOS 27 (see the matrix `exclude` below); Windows runs bare only, so an
 # `all` dispatch is three iOS jobs, four Linux Android jobs and one Windows job.
 #
-# THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
+# The iOS loop uses GA `macos-26`; other suites use `xcode-27`. Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
 # at Xcode 26.6, so on `macos-latest` that branch is unreachable and the `caches`
 # suite can only ever observe SWIFT_ENABLE_COMPILE_CACHE=NO. `xcode-27` is a
@@ -78,7 +78,7 @@ on:
         description: 'Task QA jobs to run; all runs the full regression'
         type: choice
         default: all
-        options: [all, supplement, ios, android, windows, macos, web]
+        options: [all, supplement, ios, ios-expo, android, windows, macos, web]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
@@ -133,8 +133,8 @@ jobs:
   ios:
     name: ios ${{ matrix.framework }} (${{ matrix.suite }})
     needs: plan
-    if: needs.plan.outputs.ios != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios')
-    runs-on: xcode-27
+    if: needs.plan.outputs.ios != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios' || inputs.qa_scope == 'ios-expo')
+    runs-on: ${{ matrix.suite == 'loop' && 'macos-26' || 'xcode-27' }}
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || matrix.suite == 'smoke' && 45 || 60 }}
@@ -154,6 +154,8 @@ jobs:
           - framework: bare
     env:
       STIM_E2E_SUITE: ${{ matrix.suite }}
+      STIM_E2E_IOS_RUNTIME: ${{ matrix.suite == 'loop' && '26.5' || '' }}
+      STIM_E2E_IOS_DEVICE_TYPE: ${{ matrix.suite == 'loop' && 'iPhone 17' || '' }}
       # The registry stays throwaway per run (the driver makes its own temp home)
       # for deterministic device/project state; the SHARED build cache is
       # persisted across runs here, so the cross-run cache path is itself
@@ -180,6 +182,7 @@ jobs:
           ruby-version: '3.4'
 
       - name: Pin Xcode 27 and prove its Swift 6.4 toolchain
+        if: matrix.suite != 'loop'
         # maxim-lobanov/setup-xcode cannot pin this image: it keeps only candidates
         # whose LicenseInfo.plist marks them stable, and the sole Xcode here is a
         # prerelease whose real bundle name moves between image revisions
@@ -196,6 +199,18 @@ jobs:
             echo "::error::runner reports Swift ${swift_version:-unknown}, below the 6.4 the Swift compilation-cache branch needs"
             exit 1
           fi
+
+      - name: Pin the GA loop toolchain and simulator runtime
+        if: matrix.suite == 'loop'
+        shell: bash
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          xcodebuild -version | tee xcode-ga-ios.txt
+          grep -Fx 'Xcode 26.6' xcode-ga-ios.txt
+          grep -Fx 'Build version 17F113' xcode-ga-ios.txt
+          xcrun swift --version
+          xcrun simctl list runtimes --json > runtimes-ga-ios.json
+          node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("runtimes-ga-ios.json", "utf8")).runtimes; if (!r.some(x => x.version === process.env.STIM_E2E_IOS_RUNTIME && x.isAvailable)) throw new Error("Pinned iOS 26.5 runtime unavailable");'
 
       - name: Install SimSlim for generated iOS fixtures
         run: brew install mobai-app/tap/simslim
@@ -311,6 +326,12 @@ jobs:
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-pool-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-*/app/package.json
+            ${{ env.TMPDIR }}/stim-*/app/package-lock.json
+            ${{ env.TMPDIR }}/stim-*/app/ios/Podfile.lock
+            ${{ env.TMPDIR }}/stim-*/app/.stim.json
+            xcode-ga-ios.txt
+            runtimes-ga-ios.json
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
