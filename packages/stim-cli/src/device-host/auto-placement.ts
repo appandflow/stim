@@ -1,4 +1,5 @@
 import {
+  automaticMachineEnabled,
   isJsonObject,
   machineCapacity,
   parseHostedChoice,
@@ -175,15 +176,18 @@ export async function automaticDevicePlacement(
   const devices = peek();
   if (devices.localLive)
     return { ...local('sticky', decideDevicePlacement({ sticky: { local: true } }).reason), sticky: true };
-  const entries = machines();
-  if (entries === null)
+  const configured = machines();
+  if (configured === null)
     throw Object.assign(new Error('remote.machines is invalid. Run stim guide settings and correct it.'), {
       code: 'STIM_HOSTING_REFUSED',
     });
-  const preference = resolveBuildMachine(buildMachine, process.env.STIM_REMOTE_BUILD, loadConfig()?.remote?.build);
+  const config = loadConfig();
+  const entries = configured.filter((machine) => automaticMachineEnabled('device', machine, config));
+  const preference = resolveBuildMachine(buildMachine, process.env.STIM_REMOTE_BUILD, config?.remote?.build);
   buildMachine = namedBuildMachine(preference) ? preference : undefined;
   const load = capacity();
   const here: PlacementHere = {
+    localEnabled: automaticMachineEnabled('device', 'local', config),
     loadPerCore: load.loadPerCore,
     maxLoadPerCore: load.maxLoadPerCore,
     memoryPressure: memory(),
@@ -199,8 +203,16 @@ export async function automaticDevicePlacement(
       : await Promise.all(entries.map((machine) => probe(machine, platform, selectors)));
   const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
   let decision = decideDevicePlacement(inputs(offers));
-  if (decision.kind === 'local' && decision.atCapacity && eas)
+  if ((decision.kind === 'local' || decision.kind === 'refused') && decision.atCapacity && eas)
     decision = decideDevicePlacement({ ...inputs(offers), eas: await eas() });
+  if (decision.kind === 'refused')
+    throw Object.assign(
+      new Error(devicePlacementLine({ decision: 'local', reason: decision.reason }, decision.skipped)),
+      {
+        code: 'STIM_HOSTING_REFUSED',
+        remedy: 'Enable an available member in remote.devicePoolDisabled or select a machine explicitly.',
+      },
+    );
   if (decision.kind === 'eas') return viaEas(decision.code, decision.reason, decision.skipped);
   if (decision.kind === 'local') return local(decision.code, decision.reason, decision.skipped);
   const target = probes.find((each) => each.probe.machine === decision.machines[0]!.machine)!.target!;

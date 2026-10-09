@@ -140,6 +140,8 @@ struct EmptyState: View {
   var message: String
   var showsHero = false
   var showsPrompts = false
+  var actionTitle: String?
+  var action: (() -> Void)?
   @Environment(\.colorScheme) private var colorScheme
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -154,6 +156,9 @@ struct EmptyState: View {
       }
       Text(title).font(.stim(.headline))
       Text(message).foregroundStyle(Palette.secondary).multilineTextAlignment(.center)
+      if let actionTitle, let action {
+        Button(actionTitle, action: action).buttonStyle(.borderedProminent)
+      }
       if showsPrompts {
         AgentPromptList().padding(.top, Space.xs)
       }

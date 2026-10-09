@@ -9,6 +9,7 @@ import {
   parseBenchmarkTargets,
   shellCommandSegments,
   topLevelShellCommand,
+  sameLiteralShellCommand,
   stimShellProvenanceInvalidReasons,
   benchmarkCcache,
   assertAndroidDoctorClean,
@@ -30,6 +31,75 @@ const targetConfig = parseBenchmarkTargets({
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
 const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim android', exitCode, output }];
+
+describe('standalone benchmark proof commands', () => {
+  const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+  const expected = `${prefix}wait text "Offline maps"`;
+
+  it.each(["'Offline maps'", 'Offline\\ maps', '"Offline "maps'])(
+    'accepts equivalent literal text %s without changing the run prefix',
+    (text) => {
+      const command = `${prefix}wait text ${text}`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(true);
+      for (const shell of ['zsh', 'bash', 'sh']) {
+        for (const option of ['-c', '-lc']) {
+          expect(sameLiteralShellCommand(`/bin/${shell} ${option} ${JSON.stringify(command)}`, expected)).toBe(true);
+        }
+      }
+    },
+  );
+
+  it.each([';', '&&', '|', '&', '\n', '\r', '\r\n'])(
+    'rejects unquoted command boundary %j even when the separated words otherwise match',
+    (boundary) => {
+      const command = `${prefix}wait text${boundary}"Offline maps"`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(false);
+      expect(sameLiteralShellCommand(`/bin/zsh -lc '${command}'`, expected)).toBe(false);
+    },
+  );
+
+  it.each([
+    '"$TEXT"',
+    '"${TEXT}"',
+    '"$(echo Offline maps)"',
+    '`echo Offline maps`',
+    "$'Offline maps'",
+    'Offline*',
+    '"Offline maps" > /tmp/proof',
+    '"Offline maps" 2>&1',
+    '"Offline maps" # ignored',
+    '"Offline maps" && echo done',
+    '"Offline maps"\nagent-device close',
+    '"Offline maps"\ragent-device close',
+    '"Offline maps" ""',
+    '"Offline maps" extra',
+    '"Different text"',
+    '"Offline maps',
+  ])('rejects expansion, shell syntax or changed argv: %s', (text) => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ${text}`, expected)).toBe(false);
+  });
+
+  it('retains empty arguments and literal metacharacters without evaluating either shell layer', () => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ''`, `${prefix}wait text ""`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text`, `${prefix}wait text ""`)).toBe(false);
+    expect(sameLiteralShellCommand(`${prefix}wait text '\\q'`, `${prefix}wait text "\\q"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "\\$TEXT"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "$TEXT"`)).toBe(false);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc "${prefix}wait text '$TEXT'"`, `${prefix}wait text '$TEXT'`)).toBe(
+      false,
+    );
+    expect(sameLiteralShellCommand(`${prefix}wait text 'a\nb'`, `${prefix}wait text "a\nb"`)).toBe(true);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc '${expected}'; echo extra`, expected)).toBe(false);
+  });
+
+  it('requires the exact session and target even when target arguments are quoted', () => {
+    const open = `${prefix}open app --platform android --serial emulator-5554`;
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', '"emulator-5554"'), open)).toBe(true);
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', 'emulator-5556'), open)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('SESSION=bench-run', 'SESSION=other'), expected)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('/tmp/bench-state', '/tmp/other-state'), expected)).toBe(false);
+  });
+});
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
@@ -486,6 +556,44 @@ describe('benchmark run guards', () => {
         },
       }),
     ).toThrow(/at least platformCommandSeconds/);
+  });
+
+  it.each([
+    'stim guide agent && git status --short --branch && git worktree list --porcelain',
+    'stim guide agent&&git status --short',
+    'stim guide agent && printf "%s" "literal && text"',
+  ])('accepts a completed guide-first AND chain without changing warm ordering: %s', (command) => {
+    const guide = { command: `/bin/zsh -lc '${command}'`, exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, endEventOffset: 2 };
+    const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, warm, start])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, start])).toEqual([
+      'stim-worktree-warm-missing-or-failed',
+    ]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
+  });
+
+  it.each([
+    ['stim guide agent && git status --short', 1],
+    ['stim guide agent && git status --short', null],
+    ['stim guide agent; git status --short', 0],
+    ['stim guide agent || git status --short', 0],
+    ['stim guide agent | cat', 0],
+    ['stim guide agent & git status --short', 0],
+    ['stim guide agent\ngit status --short', 0],
+    ['stim guide agent && git status --short; true', 0],
+    ['stim guide agent && git status --short || true', 0],
+    ['stim guide agent > /tmp/guide && git status --short', 0],
+    ['stim guide agent && eval "$NEXT"', 0],
+    ['echo "stim guide agent" && git status --short', 0],
+    ['exit 0 && stim guide agent && git status --short', 0],
+    ['exec true && stim guide agent && git status --short', 0],
+  ])('does not infer guide success from ambiguous or unsuccessful chain %s (%s)', (command, exitCode) => {
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [{ command, exitCode }])).toContain(
+      'stim-guide-agent-missing-or-failed',
+    );
   });
 
   it('finds commands in shell chains without splitting quoted operators', () => {

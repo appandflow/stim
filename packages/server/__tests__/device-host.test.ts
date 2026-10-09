@@ -29,6 +29,7 @@ import {
   readHostedSessions,
   readHostedMacosApp,
   readHostedDeviceLedger,
+  readNdjsonGenerations,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -1073,7 +1074,9 @@ test.each(['ios', 'android', 'macos'])(
     expect(installing).toHaveProperty('result.state', 'installing');
     expect(installing).not.toHaveProperty('result.agent');
     expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
-    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'), {
+      timeout: 5000,
+    });
     const installed = host.appAttach('client', params);
     for (const answer of [installed, host.appLaunch('client', params)]) {
       if ('error' in answer) throw new Error(answer.error.message);
@@ -1118,7 +1121,9 @@ async function installApp(platform: string, access?: AgentAccess) {
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   return { id: first.id, params: app.params };
 }
 
@@ -1605,6 +1610,8 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
   test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
     await host.close();
     hostEnv.LOCAL_COUNT = 'hang';
+    hostEnv.STIM_DEBUG = '1';
+    hostEnv.WORKER_TEST_SECRET = 'private-worker-environment';
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: hostEnv,
@@ -1623,6 +1630,26 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
     expect(readHostedSessions()).toEqual([]);
     await groupGone(pid);
+    const debugFile = join(home, 'logs', 'debug', 'server.ndjson');
+    const records = readNdjsonGenerations(debugFile).filter((record) => record.workerPid === pid);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'device-host.worker.start', mode: 'count' }),
+        expect.objectContaining({
+          event: 'device-host.worker.cancel',
+          reason: ending === 'deadline' ? 'deadline' : 'requested',
+        }),
+        expect.objectContaining({ event: 'device-host.worker.close', code: null, signal: 'SIGKILL' }),
+        expect.objectContaining({
+          event: 'device-host.worker.settled',
+          closed: true,
+          groupAlive: false,
+          settled: true,
+        }),
+      ]),
+    );
+    for (const record of records) expect(record.ms).toEqual(expect.any(Number));
+    expect(readFileSync(debugFile, 'utf8')).not.toContain(hostEnv.WORKER_TEST_SECRET);
   });
 });
 
@@ -3311,21 +3338,34 @@ test('revocation during inspection refuses adoption and retires the parked devic
 });
 
 test('an eviction snapshot cannot retire a device adopted and parked again while an older retirement runs', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents,
+    allowed: (client) => allowed.has(client),
+    limits: { prepareMs: 5000, logsMs: 1000, killGraceMs: 100 },
+  });
   parkingLimits('1');
   const oldest = seedHosted({ deviceType: 'delayed-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const reused = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const third = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } });
   const oldHome = join(deviceHostArea(oldest.id), 'home');
   const reconciliation = host.reconcileStopped();
-  await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
-  const adopted = await reserve({ attempt: 'new' });
-  expect(adopted.id).toBe(reused.id);
-  await state(reused.id, 'ready');
-  host.stop('client', { session: reused.id });
-  await state(reused.id, 'stopped');
-  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined());
-  writeFileSync(join(oldHome, 'release-stop'), 'continue');
-  await reconciliation;
+  try {
+    await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
+    const adopted = await reserve({ attempt: 'new' });
+    expect(adopted.id).toBe(reused.id);
+    await state(reused.id, 'ready');
+    host.stop('client', { session: reused.id });
+    await state(reused.id, 'stopped');
+    await vi.waitFor(() =>
+      expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined(),
+    );
+  } finally {
+    writeFileSync(join(oldHome, 'release-stop'), 'continue');
+    await reconciliation;
+  }
   expectRetired(oldest.id);
   expectRetired(third.id);
   expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();

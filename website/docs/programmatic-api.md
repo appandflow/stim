@@ -22,7 +22,7 @@ const stim = createStim({
 
 try {
   const result = await stim.run({ platform: 'ios' });
-  if (result.platform === 'ios') console.log(result.facts.udid);
+  console.log(result.facts.udid);
 } finally {
   try {
     const diagnostics = await stim.diagnostics({ errors: true });
@@ -67,8 +67,10 @@ The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
 and `remoteBuild`. Project configuration still supplies defaults. A web run
 requires a running server, as `stim web` does.
 
-Results are a discriminated union `{ platform, facts }`. Narrow `platform` to
-access that platform's facts. iOS includes `udid`, Android includes `serial`,
+Results are `{ platform, facts }`, inferred from the requested platform.
+For example, `run({ platform: 'ios' })` returns iOS facts directly. If the input
+platform is a union, narrow the result's `platform` to access platform-specific
+facts. iOS includes `udid`, Android includes `serial`,
 and both retain `appPath`, `bundleId`, `metroPort`, `cacheHit`, and `launched`.
 macOS includes `bundle`, `bundleId`, `executable`, `pid`, `build`, and `launched`.
 Web retains its browser/page launch facts.

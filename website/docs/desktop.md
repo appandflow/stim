@@ -556,6 +556,12 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a remote Mac
 
+**Settings > Remote Macs** also shows **Automatic builds** and **Automatic simulators**
+for **This Mac** and each remote. These switches control new automatic placement
+requested by this Mac without unpairing or stopping anything. Each pool retains at
+least one local or configured, approved remote member. Explicit placement is unchanged.
+See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
+
 **Settings > Remote Macs** lists your remote Macs with a status
 (**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
 a line with its running builds and free disk, any problem that keeps builds on

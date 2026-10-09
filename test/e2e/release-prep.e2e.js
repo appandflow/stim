@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
-const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'server'];
+const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
 const ACCEPTED_RANGES = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
@@ -56,11 +56,11 @@ const withWorkspace = (body) => {
 test('--check accepts the repository as it stands', () => {
   const result = spawnSync(process.execPath, [SCRIPT, '--check'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /6 packages at \d+\.\d+\.\d+/);
+  assert.match(result.stdout, /packages at \d+\.\d+\.\d+/);
   assert.match(result.stdout, /inter-package ranges, all workspace:/);
 });
 
-test('the six packages share one version and only bare workspace: ranges', () => {
+test('the published packages share one version and only bare workspace: ranges', () => {
   const versions = new Set(PACKAGE_DIRS.map((dir) => readManifest(REPO, dir).version));
   assert.equal(versions.size, 1, `versions are not in lockstep: ${[...versions].join(', ')}`);
 
@@ -87,7 +87,7 @@ test('--check refuses a versioned dependency on the renamed CLI', () => {
   });
 });
 
-test('a bump rewrites all six versions and leaves the lockfile alone', () => {
+test('a bump rewrites every published version and leaves the lockfile alone', () => {
   withWorkspace((root) => {
     const before = readManifest(root, 'core').version;
     const lockBefore = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8');
@@ -158,6 +158,24 @@ test('pnpm pack substitutes the workspace ranges the CLI ships with', () => {
     }
     assert.equal(shipped.devDependencies['@stim-cli/expo-build-cache'], version);
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false, 'a workspace: range reached the tarball');
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+});
+
+test('the packed CI runner depends on an installable matching Stim version', () => {
+  const out = mkdtempSync(join(tmpdir(), 'stim-ci-pack-'));
+  try {
+    const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
+      cwd: join(REPO, 'packages', 'ci'),
+      encoding: 'utf8',
+    })
+      .trim()
+      .split('\n')
+      .at(-1);
+    const shipped = JSON.parse(execFileSync('tar', ['-xzOf', packed, 'package/package.json'], { encoding: 'utf8' }));
+    assert.equal(shipped.dependencies.stim, `^${readManifest(REPO, 'stim-cli').version}`);
+    assert.equal(JSON.stringify(shipped).includes('workspace:'), false);
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

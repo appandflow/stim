@@ -2,11 +2,9 @@ import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import chalk from 'chalk';
-import { register } from '../cache/cache-manifest.ts';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { sharedCompilationCache, workspaceDerivedData } from '../workspace/paths.ts';
+import { workspaceDerivedData } from '../workspace/paths.ts';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { createLineReader } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
@@ -14,14 +12,8 @@ import { capDiagnostics, createXcodeDiagnosticCollector, describeDiagnostic, typ
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { resolvePackageJson } from '../workspace/project.ts';
 
-const IOS_DIR = 'ios';
-
-const PREBUILD_REMEDY =
-  'Generate it with `npx expo prebuild -p ios` (stim ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
-
-interface XcodeProject {
+export interface XcodeProject {
   kind?: string;
   flag?: string;
   file?: string;
@@ -35,10 +27,6 @@ interface SchemeResult {
   error?: { code: string; message: string; remedy: string };
   scheme?: string;
   schemes?: string[];
-}
-
-function buildFailure(message: string, remedy: string | null): XcodeProject {
-  return { error: { code: 'STIM_BUILD_FAILED', message, remedy } };
 }
 
 export function pickXcodeProject(entries: unknown): { kind: string; flag: string; file: string; name: string } | null {
@@ -59,21 +47,6 @@ export function pickXcodeProject(entries: unknown): { kind: string; flag: string
     return { kind: 'project', flag: '-project', file, name: basename(file, '.xcodeproj') };
   }
   return null;
-}
-
-export function discoverXcodeProject(root: string): XcodeProject {
-  const dir = join(root, IOS_DIR);
-  let entries;
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return buildFailure(`No ${IOS_DIR}/ directory in ${root}.`, PREBUILD_REMEDY);
-  }
-  const picked = pickXcodeProject(entries);
-  if (!picked) {
-    return buildFailure(`${dir} contains no .xcworkspace and no .xcodeproj.`, PREBUILD_REMEDY);
-  }
-  return { ...picked, dir, path: join(dir, picked.file) };
 }
 
 export function parseSchemeList(text: unknown): { name: string | null; schemes: string[] } {
@@ -202,20 +175,6 @@ function compilationPrefixMappings(workspaceRoot: string, derivedDataPath: strin
     .join(' ');
 }
 
-export function ccacheEnabled(podfileProperties: unknown): boolean {
-  if (!podfileProperties || typeof podfileProperties !== 'object') return false;
-  return (podfileProperties as Record<string, unknown>)['apple.ccacheEnabled'] === 'true';
-}
-
-export function readPodfileProperties(root: string): Record<string, unknown> | null {
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(join(root, IOS_DIR, 'Podfile.properties.json'), 'utf-8'));
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
-  } catch {
-    return null;
-  }
-}
-
 export interface SwiftVersion {
   major: number;
   minor: number;
@@ -223,46 +182,12 @@ export interface SwiftVersion {
 
 // swift-frontend crashed when a compile batch mixed prefix-mapped and unmapped
 // sources; swiftlang/swift#90700 fixed it on release/6.4.x (Xcode 27).
-const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
+export const SWIFT_PREFIX_MAPPING_MIN_SWIFT: SwiftVersion = { major: 6, minor: 4 };
 
-function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
+export function swiftPrefixMappingSupported(version: SwiftVersion | null): boolean {
   if (!version) return false;
   const min = SWIFT_PREFIX_MAPPING_MIN_SWIFT;
   return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
-}
-
-export interface ReactNativeVersion {
-  major: number;
-  minor: number;
-}
-
-// React Native 0.87 dropped the SWIFT_ENABLE_EXPLICIT_MODULES=NO override its
-// prebuilt core needed on Xcode 26 (react/react-native#53457); Xcode refuses
-// Swift caching for targets built without explicit modules.
-const SWIFT_CACHE_MIN_REACT_NATIVE: ReactNativeVersion = { major: 0, minor: 87 };
-
-function reactNativeSupportsSwiftCache(version: ReactNativeVersion | null): boolean {
-  if (!version) return false;
-  const min = SWIFT_CACHE_MIN_REACT_NATIVE;
-  return version.major > min.major || (version.major === min.major && version.minor >= min.minor);
-}
-
-export function parseReactNativeVersion(packageJson: unknown): ReactNativeVersion | null {
-  if (!packageJson || typeof packageJson !== 'object') return null;
-  const raw = (packageJson as { version?: unknown }).version;
-  const m = typeof raw === 'string' ? /^(\d+)\.(\d+)\./.exec(raw) : null;
-  if (!m || m[1] === undefined || m[2] === undefined) return null;
-  return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10) };
-}
-
-export function detectReactNativeVersion(root: string): ReactNativeVersion | null {
-  const file = resolvePackageJson(root, 'react-native');
-  if (!file) return null;
-  try {
-    return parseReactNativeVersion(JSON.parse(readFileSync(file, 'utf-8')));
-  } catch {
-    return null;
-  }
 }
 
 export function compilationCacheSettings({
@@ -271,7 +196,7 @@ export function compilationCacheSettings({
   casPath,
   xcodeMajor,
   swiftVersion = null,
-  reactNativeVersion = null,
+  swiftCacheCompatible = false,
   ccache = false,
   optimizations = resolveOptimizations({}, {}).ios,
 }: {
@@ -280,7 +205,7 @@ export function compilationCacheSettings({
   casPath: string;
   xcodeMajor: number | null;
   swiftVersion?: SwiftVersion | null;
-  reactNativeVersion?: ReactNativeVersion | null;
+  swiftCacheCompatible?: boolean;
   ccache?: boolean;
   optimizations?: Optimizations['ios'];
 }): string[] {
@@ -288,7 +213,7 @@ export function compilationCacheSettings({
   if (xcodeMajor < COMPILATION_CACHE_MIN_XCODE) return [];
   if (ccache) return [];
   const swiftMappable = swiftPrefixMappingSupported(swiftVersion);
-  const auto = swiftMappable && reactNativeSupportsSwiftCache(reactNativeVersion);
+  const auto = swiftMappable && swiftCacheCompatible;
   const swift = optimizations.compilationCache && (optimizations.swiftCompilationCache ?? auto);
   const mappings = optimizations.prefixMapping ? compilationPrefixMappings(workspaceRoot, derivedDataPath) : '';
   return [
@@ -326,62 +251,6 @@ export function parseXcodeMajor(output: unknown): number | null {
 
 export function detectXcodeMajor(exec: Executor | null = null): number | null {
   return parseXcodeMajor((exec || getExecutor()).runQuiet('xcodebuild -version', { timeoutMs: 10000 }));
-}
-
-function resolveCompilationCacheSettings({
-  root,
-  derivedDataPath,
-  exec = null,
-  casPath = sharedCompilationCache(),
-  optimizations = resolveOptimizations({}, {}).ios,
-  onNote = (line: string) => console.error(line),
-}: {
-  root: string;
-  derivedDataPath: string;
-  exec?: Executor | null;
-  casPath?: string;
-  optimizations?: Optimizations['ios'];
-  onNote?: (line: string) => void;
-}): string[] {
-  const xcodeMajor = detectXcodeMajor(exec);
-  const ccache = ccacheEnabled(readPodfileProperties(root));
-  const probe =
-    xcodeMajor !== null &&
-    xcodeMajor >= COMPILATION_CACHE_MIN_XCODE &&
-    !ccache &&
-    optimizations.compilationCache &&
-    optimizations.swiftCompilationCache !== false;
-  const swiftVersion = probe ? detectSwiftVersion(exec) : null;
-  const reactNativeVersion = probe ? detectReactNativeVersion(root) : null;
-  const settings = compilationCacheSettings({
-    workspaceRoot: root,
-    derivedDataPath,
-    casPath,
-    xcodeMajor,
-    swiftVersion,
-    reactNativeVersion,
-    ccache,
-    optimizations,
-  });
-  if (settings.length > 0 && optimizations.compilationCache) {
-    register({
-      dir: casPath,
-      name: 'Xcode compilation cache',
-      prune: 'atomic',
-      note: 'shared Xcode compilation cache',
-    });
-    const swift = settings.includes('SWIFT_ENABLE_COMPILE_CACHE=YES')
-      ? settings.includes('SWIFT_ENABLE_PREFIX_MAPPING=YES')
-        ? 'Swift on'
-        : 'Swift on, unmapped'
-      : swiftVersion && !swiftPrefixMappingSupported(swiftVersion)
-        ? `Swift off, ${swiftVersion.major}.${swiftVersion.minor} < ${SWIFT_PREFIX_MAPPING_MIN_SWIFT.major}.${SWIFT_PREFIX_MAPPING_MIN_SWIFT.minor}`
-        : swiftVersion && reactNativeVersion && !reactNativeSupportsSwiftCache(reactNativeVersion)
-          ? `Swift off, react-native ${reactNativeVersion.major}.${reactNativeVersion.minor} < ${SWIFT_CACHE_MIN_REACT_NATIVE.major}.${SWIFT_CACHE_MIN_REACT_NATIVE.minor}`
-          : 'Swift off';
-    onNote(chalk.dim(phaseLine('cache', `compilation cache on (CAS at ${casPath}, ${swift})`)));
-  }
-  return settings;
 }
 
 export function xcodebuildArgs({
@@ -677,11 +546,11 @@ export function compilationCacheActivityLine(activity: CompilationCacheActivity)
   return 'unavailable; Xcode did not report reliable statistics';
 }
 
-export async function buildIos({
+export async function buildXcode({
   root,
   udid = null,
   logWriter,
-  project = null,
+  project,
   scheme = null,
   configuration = 'Debug',
   sdk = 'iphonesimulator',
@@ -689,19 +558,18 @@ export async function buildIos({
   arch = null,
   derivedDataPath = null,
   extraArgs = [],
-  compilationCache = undefined,
-  optimizations = resolveOptimizations({}, {}).ios,
+  compilationCache,
+  startedAt: clockStart,
   now = () => Date.now(),
   exec = null,
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   estimateMs = null,
   onHeartbeat = (line: string) => console.error(line),
-  onNote = (line: string) => console.error(line),
 }: {
   root: string;
   udid?: string | null;
   logWriter: NdjsonWriter;
-  project?: XcodeProject | null;
+  project: XcodeProject;
   scheme?: string | null;
   configuration?: string;
   sdk?: string;
@@ -709,19 +577,18 @@ export async function buildIos({
   arch?: string | null;
   derivedDataPath?: string | null;
   extraArgs?: string[];
-  compilationCache?: string[] | null;
-  optimizations?: Optimizations['ios'];
+  compilationCache: string[] | null | ((context: { derivedDataPath: string; exec: Executor }) => string[]);
+  startedAt?: number;
   now?: () => number;
   exec?: Executor | null;
   heartbeatMs?: number;
   estimateMs?: number | null;
   onHeartbeat?: (line: string) => void;
-  onNote?: (line: string) => void;
 }): Promise<BuildIosResult> {
-  if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
+  if (!root || typeof root !== 'string') throw new TypeError('buildXcode requires {root}');
   if (!logWriter || typeof logWriter.write !== 'function')
-    throw new TypeError('buildIos requires {logWriter} with a write() method');
-  if (!udid && !destination) throw new TypeError('buildIos requires {udid} (or an explicit {destination})');
+    throw new TypeError('buildXcode requires {logWriter} with a write() method');
+  if (!udid && !destination) throw new TypeError('buildXcode requires {udid} (or an explicit {destination})');
 
   const executor = exec || getExecutor();
   const dd =
@@ -729,7 +596,7 @@ export async function buildIos({
     (scheme
       ? join(workspaceDerivedData(root), `scheme-${createHash('sha256').update(scheme).digest('hex')}`)
       : workspaceDerivedData(root));
-  const startedAt = now();
+  const startedAt = clockStart ?? now();
   const elapsed = () => now() - startedAt;
 
   const reportError = (message: string, remedy?: string | null) => {
@@ -742,20 +609,15 @@ export async function buildIos({
     });
   };
 
-  let target: XcodeProject | null = project;
-  if (!target) {
-    const discovered = discoverXcodeProject(root);
-    if (discovered.error) {
-      reportError(discovered.error.message, discovered.error.remedy);
-      return failedResult({
-        code: discovered.error.code,
-        diagnostics: [{ message: discovered.error.message, remedy: discovered.error.remedy ?? undefined }],
-        durationMs: elapsed(),
-      });
-    }
-    target = discovered;
+  if (project.error) {
+    reportError(project.error.message, project.error.remedy);
+    return failedResult({
+      code: project.error.code,
+      diagnostics: [{ message: project.error.message, remedy: project.error.remedy ?? undefined }],
+      durationMs: elapsed(),
+    });
   }
-  const resolvedTarget = target as XcodeProject;
+  const resolvedTarget = project;
 
   const selected = resolveScheme(resolvedTarget, { exec: executor, scheme });
   if (selected.error) {
@@ -769,8 +631,8 @@ export async function buildIos({
   const buildScheme = selected.scheme as string;
 
   const cacheSettings =
-    compilationCache === undefined
-      ? resolveCompilationCacheSettings({ root, derivedDataPath: dd, exec: executor, onNote, optimizations })
+    typeof compilationCache === 'function'
+      ? compilationCache({ derivedDataPath: dd, exec: executor })
       : compilationCache || [];
   // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
   const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;

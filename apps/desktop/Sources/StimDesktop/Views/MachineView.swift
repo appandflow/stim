@@ -105,7 +105,7 @@ struct MachineView: View {
           }
         }
       }
-      .padding(compact ? Space.xxl : Space.xxxl)
+      .padding(.horizontal, PageInset.horizontal).padding(.vertical, compact ? Space.xxl : Space.xxxl)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }

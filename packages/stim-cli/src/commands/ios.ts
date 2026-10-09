@@ -1,3 +1,4 @@
+import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
@@ -71,8 +72,8 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { ensureDevServer, isPhysicalDeviceRequest } from './native-runtime.ts';
+import { projectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
   PLATFORM,
   buildLogFile,
@@ -89,7 +90,7 @@ import {
   simulatorBuildArch,
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
-import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
+import { finishIosRun, iosMetroRuntime, iosProcessRuntime, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
 
 export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
@@ -348,8 +349,8 @@ async function runIos(
   };
   if (!projectRoot) return refuseProject(NO_PROJECT_REFUSAL);
   const root = projectRoot;
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) return refuseProject(projectProblem);
+  const problem = projectProblem(root, 'ios');
+  if (problem) return refuseProject(problem);
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -548,6 +549,7 @@ async function runIos(
   if ('failure' in wait) return fail(wait.failure);
   const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
   const deviceSlotWait = {
+    automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
@@ -590,6 +592,7 @@ async function runIos(
     log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  deviceSlotWait.automatic = Boolean(remoteSelection.auto);
   devicePlacement = remoteSelection.devicePlacement;
   writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
@@ -718,7 +721,11 @@ async function runIos(
     let lanAddress: string | null = null;
     let lanOriginUrl: string | null = null;
     let devServer: DevServerStart | null = null;
-    if (!(await resolveMetroPort())) return null;
+    const appRuntime = composeRuntime();
+    const preparation = await appRuntime.prepare();
+    if (!preparation.ok) return fail(preparation.error);
+    const runtimePreparation = preparation.prepared;
+    metroPort = runtimePreparation.metroPort;
 
     let device: Awaited<ReturnType<typeof ensureOwnedDevice>>;
     if (physicalDevice) {
@@ -758,11 +765,21 @@ async function runIos(
     let bootDuration = '';
     let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
     let udid = '';
-    async function resolveMetroPort(): Promise<boolean> {
-      if (release) {
-        metroPort = null;
-        phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-      } else if (metroCheck) {
+    function composeRuntime() {
+      return (
+        d.runtimePlan ??
+        (release
+          ? iosProcessRuntime(async () => {
+              phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+              hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
+              return { ok: true, prepared: { metroPort: null } };
+            })
+          : iosMetroRuntime(prepareMetro))
+      );
+    }
+
+    async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
+      if (metroCheck) {
         const gate = await ensureDevServer({
           root,
           port: metroPort,
@@ -775,23 +792,27 @@ async function runIos(
         });
         reclaimed = [...reclaimed, ...gate.reclaimed];
         if (!gate.ok) {
-          fail({ code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines });
-          return false;
+          return {
+            ok: false,
+            error: { code: gate.code, message: gate.message, remedy: gate.remedy, lines: gate.lines },
+          };
         }
         metroPort = gate.port;
         devServer = gate.devServer;
       } else {
         const pin = metroPortSetting(root);
         if (pin.error) {
-          fail({ code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY });
-          return false;
+          return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
         }
         if (pin.port === null && !metroPort)
           note(chalk.yellow(`No Metro port is reserved for this workspace; wiring the app to ${DEFAULT_METRO_PORT}.`));
         metroPort = pin.port ?? metroPort ?? DEFAULT_METRO_PORT;
       }
       hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
-      if (physical && metroPort !== null && !(await resolveLanOrigin())) return false;
+      if (physical && metroPort !== null) {
+        const error = await resolveLanOrigin();
+        if (error) return { ok: false, error };
+      }
       if (remoteDevice && metroPort !== null) {
         const reachable = await d.ensureMetroReachable({
           ctx: remoteDevice.ctx,
@@ -802,15 +823,17 @@ async function runIos(
           available: d.detectProviders(binOnPath, tunnelModeSetting(settings) ?? 'auto'),
         });
         if ('failed' in reachable) {
-          fail({
-            code: reachable.code ?? REMOTE_SESSION_ERROR,
-            message: reachable.failed,
-            remedy: reachable.remedy,
-          });
-          return false;
+          return {
+            ok: false,
+            error: {
+              code: reachable.code ?? REMOTE_SESSION_ERROR,
+              message: reachable.failed,
+              remedy: reachable.remedy,
+            },
+          };
         }
       }
-      if (!release && metroCheck && optimizations.metroWarmup)
+      if (metroCheck && optimizations.metroWarmup)
         void d.warmMetro({
           port: metroPort as number,
           platform: 'ios',
@@ -818,24 +841,23 @@ async function runIos(
           appId: proj?.bundleId,
           bundleUrl: metroWarmupUrlSetting(settings, 'ios'),
         });
-      return true;
+      return { ok: true, prepared: { metroPort } };
     }
 
-    async function resolveLanOrigin(): Promise<boolean> {
+    async function resolveLanOrigin(): Promise<RuntimePreparationError | null> {
       const port = metroPort as number;
       const pinned = iosLanHostSetting(settings);
       const candidates = d.hostLanCandidates();
       const chosen = chooseLanAddress({ pinned, candidates });
       if (!chosen) {
-        fail({
+        return {
           code: 'STIM_NO_LAN_ADDRESS',
           message:
             'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
           remedy:
             'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
             'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
-        });
-        return false;
+        };
       }
       lanAddress = chosen.address;
       lanOriginUrl = lanOriginUrlFor(chosen.address, port);
@@ -854,7 +876,7 @@ async function runIos(
           ),
         );
       }
-      if (!metroCheck) return true;
+      if (!metroCheck) return null;
       const reachable = await d.ensureLanReachable({
         origin: lanOriginUrl,
         metroPort: port,
@@ -863,11 +885,10 @@ async function runIos(
         logsDir,
       });
       if ('failed' in reachable) {
-        fail({ code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy });
-        return false;
+        return { code: 'STIM_LAN_METRO_UNREACHABLE', message: reachable.failed, remedy: reachable.remedy };
       }
       phase('lan', `gated: ${lanOriginUrl} answered as this workspace's Metro`);
-      return true;
+      return null;
     }
 
     let artifact: PreparedIosArtifact | null = null;
@@ -1045,6 +1066,8 @@ async function runIos(
 
       try {
         return await finishIosRun({
+          runtime: appRuntime,
+          runtimePreparation,
           slot,
           d,
           root,

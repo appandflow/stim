@@ -640,6 +640,32 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
+Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
+use Automatic builds and Automatic simulators for this Mac or a configured remote.
+The equivalent machine settings list the excluded members; both default to []:
+
+  stim settings set remote.buildPoolDisabled '["local"]'
+  stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
+  stim settings unset remote.buildPoolDisabled
+
+Use local for this Mac and exact remote.machines entries for remotes, including
+case and port. Names are not trimmed; unmatched entries exclude nothing. Copy the
+configured name or use Desktop's switches. Each pool
+must retain local or at least one configured remote already approved for that role.
+Offline approved members count as configured members, but placement still requires
+an available compatible host. Settings refuses removing the last member, including
+removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+
+These settings apply only to new automatic work requested by this Mac. They do not
+change which work other requesters send to a host. Named placement and --remote-build
+local bypass membership; the default device placement without --remote auto remains
+local. Existing local and hosted device sessions keep their owner. Cache hits remain
+usable without compiling. If local is excluded, automatic placement cannot fall back
+to a local compile or boot; unavailable hosts and unsupported offloads refuse. Excluding
+local alone does not trigger billed EAS fallback; an existing explicit EAS opt-in still
+requires the physical device cap or queue condition. Restore membership before retrying or choose
+an explicit placement. Build and simulator memberships are independent.
+
 A remote Mac is used for a capability only after it grants that approval. Build
 and device-host approvals are separate: a Mac in the list that never granted
 one is not an error, it is not used for that capability, and doctor reports
@@ -731,7 +757,7 @@ value is unset. Trimmed auto/local are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
-  auto   follows remote.buildMode and keeps its local fallback behavior
+  auto   follows remote.buildMode, considering only enabled automatic pool members
   local  builds only on this Mac for this invocation
   name   requires a matching entry in remote.machines, already paired and
          approved for builds; ignores remote.buildMode and this Mac's load/slot gating
@@ -770,7 +796,7 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
          Mac's. A Mac too old to report its load counts only while every
          slot here is busy.
   force  on a remote Mac whenever one accepts it
-  off    always here
+  off    here when local remains enabled in the automatic build pool
 
 Load per core is the 5-minute load average divided by the CPU count; a Mac's
 native builds are its Stim runs in prebuild, pods or compile on that Mac, not

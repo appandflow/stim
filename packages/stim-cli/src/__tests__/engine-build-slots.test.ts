@@ -267,3 +267,22 @@ async function waitForFile(path: string, timeoutMs = 8000) {
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+test('automatic build admission rechecks membership after waiting without releasing another build', async () => {
+  const held = tryAcquireBuildSlot({ max: 1 });
+  assert(held);
+  const sleeping = vi.fn<() => Promise<void>>(async () => {
+    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['local'] } }));
+  });
+  try {
+    await expect(acquireBuildSlot({ max: 1, automatic: true, sleep: sleeping })).rejects.toMatchObject({
+      code: 'STIM_OFFLOAD_REFUSED',
+    });
+    expect(sleeping).toHaveBeenCalledOnce();
+    expect(listBuildSlots().filter((slot) => slot.alive)).toHaveLength(1);
+    await expect(acquireBuildSlot({ max: 0, automatic: true })).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    await expect(acquireBuildSlot({ max: 0 })).resolves.toMatchObject({ unlimited: true });
+  } finally {
+    releaseBuildSlot(held);
+  }
+});

@@ -50,8 +50,10 @@ struct WorkspaceHeaderLine: View {
       }
       if let page {
         WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
+          .padding(.trailing, -PageInset.menuGlyphOverhang)
       } else {
         WorkspaceActionsButton(env: env, openLogs: openLogs)
+          .padding(.trailing, -PageInset.menuGlyphOverhang)
       }
     }
   }
@@ -110,6 +112,7 @@ struct ArchivedHeaderLine: View {
       .fixedSize()
       .help("Archive actions")
       .accessibilityLabel("Archive actions")
+      .padding(.trailing, -PageInset.menuGlyphOverhang)
     }
   }
 }

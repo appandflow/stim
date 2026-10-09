@@ -59,6 +59,7 @@ import {
   podAction,
   ensureWorkspaceStorageSafely,
   registerIos,
+  runIosOperation,
   replaceCollector,
   pickDevClientScheme,
   schemesFromInfoPlist,
@@ -76,6 +77,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
+import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import {
   DEVICECTL_INSTALL_TIMEOUT_MS,
   LAUNCH_PROBE_TIMEOUT_MS,
@@ -1145,6 +1147,8 @@ describe('Metro prefetch', () => {
 });
 
 describe('the device preparation step', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
     reserve();
     let clock = 1_000_000;
@@ -4201,6 +4205,61 @@ describe('configuration resolution', () => {
   });
 });
 
+test('a runtime preparation refusal reaches the failure callback before device or artifact work', async () => {
+  const error = {
+    code: 'STIM_BAD_ARG',
+    message: 'The selected runtime cannot prepare this endpoint.',
+    remedy: 'Select an available endpoint.',
+    lines: ['The requested endpoint is unavailable.'],
+  };
+  const { deps, calls } = harness({
+    runtimePlan: iosProcessRuntime(async () => ({ ok: false, error })),
+  });
+  const onFailure = vi.fn<NonNullable<Parameters<typeof runIosOperation>[3]>>();
+  const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    expect(await runIosOperation(root, { json: true }, deps as IosDeps, onFailure)).toBe(null);
+    expect(onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(error));
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+      code: error.code,
+      message: error.message,
+      remedy: error.remedy,
+    });
+    for (const operation of [
+      'ensureOwnedDevice',
+      'ensureBooted',
+      'fingerprintProject',
+      'buildIos',
+      'installIosApp',
+      'launchIosApp',
+    ])
+      expect(calls.order).not.toContain(operation);
+  } finally {
+    output.mockRestore();
+    diagnostic.mockRestore();
+  }
+});
+
+test('a process runtime preserves Debug compilation and cache identity without preparing Metro', async () => {
+  const { exitCode, calls, logs } = await run(
+    { configuration: 'Debug', json: true },
+    { runtimePlan: iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })) },
+  );
+  expect(exitCode).toBe(null);
+  expect(calls.args.buildIos.configuration).toBe('Debug');
+  expect(calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim-arm64`);
+  expect(calls.args.launchIosApp.metroPort).toBe(null);
+  expect(calls.args.launchIosApp.devClientScheme).toBeUndefined();
+  expect(calls.order).not.toContain('startDevServer');
+  expect(calls.order).not.toContain('resolveProjectMetro');
+  expect(calls.order).not.toContain('warmMetro');
+  expect(calls.order).not.toContain('verifyLaunch');
+  expect(calls.order).toContain('verifyReleaseLaunch');
+  expect(parseFirst(logs)).toMatchObject({ configuration: 'Debug', metroPort: null, launched: true });
+});
+
 describe('release skips Metro entirely', () => {
   test('an attributable native crash overrides a live release process probe', async () => {
     const read = vi
@@ -5941,10 +6000,28 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(retried.errs.join('\n')).toMatch(/its data went with it/);
   });
 
+  test('a runtime phone launch refusal cannot pass readiness from an already live process', async () => {
+    const { logs, exitCode, calls } = await run(
+      { device: true, configuration: 'Release', json: true },
+      {
+        ...connected(),
+        runtimePlan: {
+          ...iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+          launch: async () => ({ failed: true, code: 'STIM_LAUNCH_FAILED', reason: 'The runtime refused to launch.' }),
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_LAUNCH_FAILED', message: 'The runtime refused to launch.' });
+    expect(calls.order).not.toContain('verifyLaunch');
+    expect(calls.order).not.toContain('verifyIosDeviceReleaseLaunch');
+  });
+
   test('a launch the phone refuses fails with the trust remedy and the devicectl evidence', async () => {
     reserve();
-    const { errs, exitCode } = await run(
-      { device: true },
+    const { errs, exitCode, logs, calls } = await run(
+      { device: true, json: true },
       {
         ...connected(),
         awaitIosDeviceLaunch: async () => ({
@@ -5960,6 +6037,14 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     expect(errs.join('\n')).toMatch(/STIM_LAUNCH_FAILED/);
     expect(errs.join('\n')).toMatch(/VPN & Device Management/);
     expect(errs.join('\n')).toMatch(/FBSOpenApplicationErrorDomain error 3/);
+    expect(logs).toHaveLength(1);
+    expect(parseFirst(logs)).toMatchObject({
+      code: 'STIM_LAUNCH_FAILED',
+      message: 'devicectl could not keep com.example.app running on the phone.',
+      remedy: expect.stringContaining('VPN & Device Management'),
+    });
+    expect(calls.order).not.toContain('verifyLaunch');
+    expect(calls.order).not.toContain('verifyIosDeviceReleaseLaunch');
   });
 
   test('no LAN address refuses before the build, and names the shared network', async () => {
@@ -6560,6 +6645,8 @@ describe('--simulator-app', () => {
 });
 
 describe('the simulator model and runtime flags', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([
     { opts: { remote: 'eas', runtime: '18.6' }, settings: {}, given: '--runtime' },
     {
@@ -8269,6 +8356,24 @@ describe('strict remote Mac selection', () => {
         machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
       }),
     );
+  });
+
+  test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
+    reserve();
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: offline');
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await run({ remoteBuild: 'auto', json: true }, { buildIos: build, acquireBuildSlot: slot });
+    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    const path = join(root, 'cached.app');
+    mkdirSync(path, { recursive: true });
+    const cached = await run({ remoteBuild: 'auto' }, { resolveBuild: () => path, buildIos: build });
+    expect(cached.exitCode).toBeNull();
+    expect(build).not.toHaveBeenCalled();
   });
 
   test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {

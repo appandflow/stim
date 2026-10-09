@@ -8,11 +8,12 @@ import {
   type AndroidPlanDependencies,
 } from '../commands/android/plan.ts';
 import { androidAvdConfigSettingError } from '../workspace/settings.ts';
-import { readProductFlavors } from '../engine/gradle.ts';
+
 import { planAndroid, type AndroidPlanDeps, type AndroidPlanOptions } from '../commands/android/next-build.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
+import { readProductFlavors } from '../integrations/react-native-build.ts';
 
 let root: string;
 

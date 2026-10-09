@@ -27,9 +27,15 @@ same project can be reused, but Stim cannot capture its full output.
 
 ## Choose the port
 
-Stim picks a free Metro port from 8082 up. When a workspace's own tools
-already expect a port, set it with the `metro.port` setting or
-`STIM_METRO_PORT`, and Stim reserves that number instead. A committed value
+Stim picks a free Metro port from 8082 up. It finds listeners in the native
+TCP table (`netstat` on macOS and Windows, `/proc/net/tcp*` on Linux). When
+that table is denied, empty or unreadable, as in some sandboxes, it checks each
+port with `lsof` and connects to `127.0.0.1` and `::1` instead. If none of
+these can answer, `stim start` refuses with `STIM_PORT_INSPECTION_FAILED`.
+
+When a workspace's own tools already expect a port, set it with the
+`metro.port` setting or `STIM_METRO_PORT`, and Stim reserves that number
+instead. A committed value
 suits a single checkout. Give each worktree its own, in the workspace layer or
 the environment: `stim start` refuses with `STIM_BAD_ARG` when another
 workspace reserves the port or another process holds it.
@@ -445,8 +451,10 @@ stim ports stop web`}
 
 Stim keeps allocations in its machine registry and never starts or supervises these
 servers. It checks new allocations for existing listeners and skips busy
-ports in the 8900–8999 band, announcing retries on stderr. Install `lsof` if
-your system does not provide it; Windows uses `netstat` instead.
+ports in the 8900–8999 band, announcing retries on stderr. Allocation checks
+listeners the same way as Metro's, falling back to `lsof` and loopback
+connects when the TCP table cannot be read, and refuses only when none of them
+can answer.
 
 A repeated `get` returns the same number even while the server is listening.
 The reservation does not hold a socket open: another process can bind it
@@ -454,7 +462,8 @@ between allocation and launch. Use the server's strict-port option when
 available, and check that it actually bound the supplied port.
 
 `ports stop` kills the TCP listener regardless of its working directory and
-prints its PID and command. Reserve a port only for a service this workspace
+prints its PID and command. Stopping listeners requires `lsof` on macOS and
+Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
 server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
 listeners before releasing their named allocations.
