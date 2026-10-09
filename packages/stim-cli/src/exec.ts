@@ -12,8 +12,14 @@ interface ExecOptions {
   omitEnv?: readonly string[];
   /** Text written to the child's stdin; `runFile` only. */
   input?: string;
+  /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
+  onSpawn?: (child: ChildProcess) => void;
   /** `runFile` only: return stdout as written, without trimming surrounding whitespace. */
   untrimmed?: boolean;
+  /**
+   * `runFile` and `runFileAsync`: reject nonempty stderr even when the command exits successfully.
+   */
+  rejectStderr?: boolean;
 }
 
 export interface Executor {
@@ -58,7 +64,7 @@ const defaultExecutor: Executor = {
   // refuses .cmd/.bat files and shebang scripts without a shell, and every
   // package bin (eas, agent-device) is one of those. The throw matches
   // execFileSync's, so callers keep reading status, stdout and stderr off it.
-  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed } = {}) {
+  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr } = {}) {
     const opts: Parameters<typeof spawn.sync>[2] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -75,14 +81,14 @@ const defaultExecutor: Executor = {
     }
     const result = spawn.sync(file, args, opts);
     if (result.error) throw nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs);
-    if (result.status !== 0) {
+    if (result.status !== 0 || (rejectStderr && String(result.stderr ?? '').trim())) {
       const stderr = String(result.stderr ?? '');
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
       throw Object.assign(new Error(message), result);
     }
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
-  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv } = {}) {
+  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn } = {}) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
@@ -93,6 +99,13 @@ const defaultExecutor: Executor = {
         opts.env = childEnv;
       }
       const child = spawn(file, args, opts);
+      try {
+        onSpawn?.(child);
+      } catch (error) {
+        child.kill('SIGKILL');
+        reject(error);
+        return;
+      }
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let timedOut = false;
@@ -115,7 +128,7 @@ const defaultExecutor: Executor = {
         const result = { status, signal, stdout: out, stderr: err };
         if (timedOut) {
           reject(nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs));
-        } else if (status !== 0) {
+        } else if (status !== 0 || (rejectStderr && err.trim())) {
           reject(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result));
         } else {
           resolve(out.trim());
@@ -158,20 +171,26 @@ function outcomeOf(error: unknown): Record<string, unknown> {
   };
 }
 
+let executionId = 0;
+
 function timedSync<A extends unknown[]>(
   fn: (...args: A) => string,
   program: (...args: A) => string,
 ): (...args: A) => string {
   return (...args) => {
     if (!debugLog.enabled()) return fn(...args);
+    const id = ++executionId;
+    const name = program(...args);
     const started = performance.now();
+    debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = fn(...args);
-      debugLog.log('exec', { program: program(...args), ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
-        program: program(...args),
+        program: name,
+        executionId: id,
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });
@@ -189,14 +208,18 @@ const debugExecutor: Executor = {
   ),
   async runFileAsync(file, args, opts) {
     if (!debugLog.enabled()) return defaultExecutor.runFileAsync(file, args, opts);
+    const id = ++executionId;
+    const name = basename(file);
     const started = performance.now();
+    debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = await defaultExecutor.runFileAsync(file, args, opts);
-      debugLog.log('exec', { program: basename(file), ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
-        program: basename(file),
+        program: name,
+        executionId: id,
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });

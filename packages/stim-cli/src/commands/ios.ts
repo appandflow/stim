@@ -192,10 +192,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy. local runs here, whatever ios.remote says.',
       (value) => {
         if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, auto, or a remote Mac name');
+        throw new InvalidArgumentError('expected eas, proxy, auto, local, or a remote Mac name');
       },
     )
     .option(
@@ -1104,6 +1104,7 @@ async function runIos(
           devServer,
           fail,
           note,
+          enterPhase: progress.step,
           selectors,
         });
       if (!localBoot) {

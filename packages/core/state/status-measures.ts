@@ -28,6 +28,11 @@ export function diskUsageCacheFile(path: string): string {
   return join(diskUsageCacheDir(), cacheName(path));
 }
 
+/** The file that records when the last walk of `path` failed, so other processes do not repeat it at once. */
+export function diskUsageFailureFile(path: string): string {
+  return join(diskUsageCacheDir(), cacheName(path).replace(/\.json$/, '.failed.json'));
+}
+
 /** The file that caches the pull request of the worktree at `path`. */
 export function pullRequestCacheFile(path: string): string {
   return join(pullRequestCacheDir(), cacheName(path));
@@ -130,6 +135,13 @@ export function readDiskUsage(path: string): DiskMeasure | null {
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || typeof measuredAt !== 'string') return null;
   if (!Number.isFinite(Date.parse(measuredAt))) return null;
   return { bytes, measuredAt };
+}
+
+/** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
+export function readDiskUsageFailure(path: string): string | null {
+  const entry = readJsonObject(diskUsageFailureFile(path));
+  if (!entry || entry.path !== path || typeof entry.failedAt !== 'string') return null;
+  return Number.isFinite(Date.parse(entry.failedAt)) ? entry.failedAt : null;
 }
 
 function countOrNull(value: unknown): number | null {
