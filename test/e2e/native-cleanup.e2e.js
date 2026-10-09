@@ -312,3 +312,12 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
   }
   await f.verify();
 });
+
+test('a failed JSON command throws so the native QA failure handler can retain diagnostics', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-native-failure-'));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const cliPath = join(home, 'failing-cli.mjs');
+  writeFileSync(cliPath, "process.stderr.write('STIM_LAUNCH_FAILED: fixture launch failed'); process.exit(23);");
+  const h = createHarness({ env: { ...process.env, STIM_HOME: home }, cliPath, label: 'failure' });
+  assert.throws(() => h.cliJson(['android', '--json']), /failed \(exit 23\).*STIM_LAUNCH_FAILED/s);
+});
