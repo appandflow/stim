@@ -24,9 +24,14 @@ export class NativeInputError extends Error {}
 
 export function fingerprintNativeInputs(
   inputs: readonly NativeInput[],
-  { excluded = [], parameters }: { excluded?: readonly string[]; parameters: unknown },
+  {
+    excluded = [],
+    ignoredDirectoryMarkers = [],
+    parameters,
+  }: { excluded?: readonly string[]; ignoredDirectoryMarkers?: readonly string[]; parameters: unknown },
 ): NativeInputSnapshot {
   const exclusions = excluded.map((path) => resolve(path));
+  const directoryMarkers = new Set(ignoredDirectoryMarkers.map((path) => resolve(path)));
   const entries: NativeInputEntry[] = [];
   const names = new Set<string>();
   const isExcluded = (path: string) =>
@@ -55,7 +60,7 @@ export function fingerprintNativeInputs(
     } else if (stat.isDirectory()) {
       const canonical = realpathSync(absolute);
       if (ancestors.has(canonical)) throw new NativeInputError(`Native input ${logical} contains a directory cycle.`);
-      record(logical, 'directory');
+      if (!directoryMarkers.has(absolute)) record(logical, 'directory');
       const next = new Set([...ancestors, canonical]);
       for (const name of readdirSync(absolute).toSorted()) {
         const child = join(absolute, name);
