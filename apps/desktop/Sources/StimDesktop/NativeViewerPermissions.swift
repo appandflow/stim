@@ -75,7 +75,7 @@ final class NativeViewerPermissions: ObservableObject {
 
   func requestScreenRecording() {
     if !CGPreflightScreenCaptureAccess() { _ = CGRequestScreenCaptureAccess() }
-    refresh()
+    poll()
   }
 
   func requestControl() {
@@ -84,7 +84,7 @@ final class NativeViewerPermissions: ObservableObject {
     } else if !CGPreflightPostEventAccess() {
       _ = CGRequestPostEventAccess()
     }
-    refresh()
+    poll()
   }
 
   func openSettings(_ pane: String) {

@@ -5,17 +5,21 @@ import SwiftUI
 struct NativeViewerPermissionsView: View {
   @ObservedObject var permissions: NativeViewerPermissions
   var relaunch: (() -> Void)?
-  var polls = true
-  @State private var skipped: Set<Int>
+  private var polls = true
+  @State private var skipped: Set<Int> = []
 
-  init(
-    permissions: NativeViewerPermissions, relaunch: (() -> Void)? = nil, polls: Bool = true, skipped: Set<Int> = []
-  ) {
+  init(permissions: NativeViewerPermissions, relaunch: (() -> Void)? = nil) {
     self.permissions = permissions
     self.relaunch = relaunch
-    self.polls = polls
-    _skipped = State(initialValue: skipped)
   }
+
+  #if DEBUG
+    init(permissions: NativeViewerPermissions, relaunch: (() -> Void)?, polls: Bool, skipped: Set<Int>) {
+      self.init(permissions: permissions, relaunch: relaunch)
+      self.polls = polls
+      _skipped = State(initialValue: skipped)
+    }
+  #endif
 
   private static let titles = ["Screen Recording", "Device Control", "Done"]
 
@@ -31,13 +35,16 @@ struct NativeViewerPermissionsView: View {
         ForEach(Array(Self.titles.enumerated()), id: \.offset) { index, title in
           let done = index < 2 ? granted(index) : allGranted
           let current = index == step
+          let skippedStep = index < 2 && !done && skipped.contains(index)
           HStack(spacing: Space.md) {
-            Image(systemName: done ? "checkmark.circle.fill" : current ? "circle.inset.filled" : "circle")
+            Image(
+              systemName: done
+                ? "checkmark.circle.fill" : skippedStep ? "minus.circle" : current ? "circle.inset.filled" : "circle")
             Text(title).font(.stim(.callout, weight: current ? .semibold : .regular))
           }
           .foregroundStyle(current ? (done ? Palette.success : Palette.accent) : done ? Palette.secondary : Palette.tertiary)
           .frame(height: 30)
-          .accessibilityLabel(title + (done ? ", done" : current ? ", current step" : ", waiting"))
+          .accessibilityLabel(title + (done ? ", done" : skippedStep ? ", skipped" : current ? ", current step" : ", waiting"))
         }
         Spacer()
       }
@@ -55,11 +62,12 @@ struct NativeViewerPermissionsView: View {
     .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-      if polls { permissions.refresh() }
+      if polls { permissions.poll() }
     }
     .task(id: polls) {
       while polls && !Task.isCancelled {
         try? await Task.sleep(for: .seconds(2))
+        guard !Task.isCancelled else { return }
         permissions.poll()
       }
     }
@@ -117,7 +125,7 @@ struct NativeViewerPermissionsView: View {
         resultLine(permissions.screenPermissionTitle, granted: permissions.screenRecording)
         resultLine(permissions.controlPermissionTitle, granted: permissions.accessibility)
       }
-      Text(PhoneApp.Copy.screenPermissionRequest(phoneApp: FeatureFlags.isEnabled(.phoneApp)))
+      Text(PhoneApp.Copy.screenPermissionDone(allowed: allGranted, phoneApp: FeatureFlags.isEnabled(.phoneApp)))
         .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -132,7 +140,9 @@ struct NativeViewerPermissionsView: View {
 
   private var footer: some View {
     HStack(spacing: Space.md) {
-      Button("Not Now") { permissions.showsSetup = false }.buttonStyle(.stim()).keyboardShortcut(.cancelAction)
+      if step < 2 {
+        Button("Not Now") { permissions.showsSetup = false }.buttonStyle(.stim()).keyboardShortcut(.cancelAction)
+      }
       Spacer()
       switch step {
       case 0:
