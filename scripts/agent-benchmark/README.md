@@ -195,6 +195,24 @@ profile before starting the clock; collection rejects changed compatibility
 bytes. This does not replace a real untimed build, recording, and cleanup test
 before accepting a new toolchain combination.
 
+When the adapter is configured, both arms receive the same additional proof
+command after copying the recording and before closing the session. This
+awaited read-only command hashes live compatibility and the saved media. Its
+exact Node/helper bytes, literal arguments, run/worktree identities and
+successful recorded output bind the receipt. Collection rechecks immutable
+tools and media, and rejects a recorded native build overlapping or following
+the receipt. This recorded-command check is not arbitrary shell analysis.
+Deleting the task-owned dependency link afterward does not erase that evidence;
+changed compatibility bytes that remain present still fail. Leave the app,
+device and worktree available for coordinator teardown.
+
+The receipt records compatibility when its command runs, after recording-copy;
+it does not attest earlier frames. Existing source, command, screen and recording
+audits remain required. The screenshot remains the readiness endpoint; the
+extra command and its token/total-run overhead are retained. Use a new cohort
+identity and requalify both profiles after changing the protocol; do not revise
+completed verdicts.
+
 Dispatch also runs two untimed compatibility probes under the run's exact
 policy and refuses an iOS run without the adapter when either fails: a nested
 `sandbox-exec` applying

@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
+import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
   automaticMachineEnabled,
@@ -32,6 +33,7 @@ import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -477,6 +479,7 @@ export class BuildConnection {
   }
 
   async sendBinary(frame: Buffer): Promise<void> {
+    if (this.closed) return;
     this.socket.send(frame, { binary: true });
     while (this.socket.bufferedAmount > MAX_BUFFERED && !this.closed) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -523,6 +526,11 @@ export class BuildConnection {
 
   private forget(): void {
     this.ended = true;
+    this.closed ??= 'the connection was closed by this client';
+    for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
+    this.pending.clear();
+    this.progress = null;
+    this.binary = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     openSockets.delete(this.socket);
@@ -811,6 +819,7 @@ async function resumeJob(
   credential: BuildMachineCredential,
   job: string,
   abandoned: () => boolean,
+  signal: AbortSignal | undefined,
   native = false,
 ): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
   const deadline = Date.now() + RESUME_WINDOW_MS;
@@ -826,13 +835,24 @@ async function resumeJob(
       if (connection.refused) return `the machine turned this Mac away (${connection.failure})`;
       last = connection.failure;
     } else {
+      if (abandoned()) {
+        connection.close();
+        break;
+      }
       if (native && !connection.supports('native-xcode-build')) {
         connection.close();
         return 'This worker does not support native Xcode builds.';
       }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
+      const cancel = () => connection.close();
+      signal?.addEventListener('abort', cancel, { once: true });
       const reply = await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
+      signal?.removeEventListener('abort', cancel);
+      if (abandoned()) {
+        connection.close();
+        break;
+      }
       if ('result' in reply) {
         const outcome = isJsonObject(reply.result) ? reply.result.outcome : null;
         return { connection, outcome: isJsonObject(outcome) ? outcome : null, early };
@@ -844,8 +864,8 @@ async function resumeJob(
       }
       connection.drop();
     }
-    if (Date.now() + delay > deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (abandoned() || Date.now() + delay > deadline) break;
+    await wait(delay, undefined, { signal }).catch(() => {});
     delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
   }
   return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
@@ -937,25 +957,36 @@ export async function offloadBuild({
     closeOffload(choice);
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
+  const signal = runCancellationSignal();
+  const throwIfCancelled = () => {
+    if (signal?.aborted)
+      throw Object.assign(new Error('The offloaded build was cancelled.'), { code: 'STIM_CANCELLED' });
+  };
+  let settle!: (outcome: Record<string, unknown>) => void;
+  let settled = false;
+  const outcome = new Promise<Record<string, unknown>>((resolve) => {
+    settle = (value) => {
+      settled = true;
+      resolve(value);
+    };
+  });
+  const cancel = () => {
+    settle({ ok: false, code: 'cancelled' });
+    closeOffload(choice);
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
+    throwIfCancelled();
     if (native && native.snapshot.hash !== expectedFingerprint)
       return fail('The native source snapshot does not match the requested artifact identity.');
     let job: string | null = null;
     let early: ProgressEvent[] = [];
-    let settle!: (outcome: Record<string, unknown>) => void;
-    let settled = false;
-    const outcome = new Promise<Record<string, unknown>>((resolve) => {
-      settle = (value) => {
-        settled = true;
-        resolve(value);
-      };
-    });
     let resuming = false;
     const reattach = async (why: string) => {
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, job!, () => settled, Boolean(native));
+      const resumed = await resumeJob(choice.credential, job!, () => settled, signal, Boolean(native));
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string') resumed.connection.close();
@@ -1003,6 +1034,7 @@ export async function offloadBuild({
         return fail('This worker does not support native Xcode builds.');
       }
       const synced = await syncSource(choice.connection, identity, onEnter, native?.snapshot);
+      throwIfCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
         return fail(synced.failure);
@@ -1017,6 +1049,7 @@ export async function offloadBuild({
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (choice.automatic) requireAutomaticMachine('build', choice.machine);
+      throwIfCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
         project: identity.project,
@@ -1054,6 +1087,7 @@ export async function offloadBuild({
             }),
         stimBuild: choice.target.local.stimBuild,
       });
+      throwIfCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;
         break;
@@ -1070,6 +1104,7 @@ export async function offloadBuild({
     );
     const result = await outcome;
     clearTimeout(timer);
+    throwIfCancelled();
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
@@ -1083,6 +1118,7 @@ export async function offloadBuild({
     }
 
     onEnter('fetch');
+    throwIfCancelled();
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
@@ -1109,6 +1145,7 @@ export async function offloadBuild({
     const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
     connection.onBinary(null);
     closeSync(fd);
+    throwIfCancelled();
     const fetchFailure = replyError(fetched);
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
@@ -1120,6 +1157,7 @@ export async function offloadBuild({
       );
     }
     await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
+    throwIfCancelled();
     rmSync(archive, { force: true });
     const artifactPath = join(stagingDir, name);
     if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
@@ -1161,7 +1199,11 @@ export async function offloadBuild({
       },
     };
   } catch (error) {
+    closeOffload(choice);
+    throwIfCancelled();
     return fail((error as Error).message.split('\n')[0] ?? String(error));
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
 }
 

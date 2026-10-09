@@ -14,6 +14,7 @@ struct WorkspaceDetail: View {
   var reportsBundles: Bool
   var history: OwnerHistory
   var inspector: InspectorPresentation
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @Binding var inspectorWidth: CGFloat
   @Binding var focusedID: String?
   @Binding var logQuery: LogQuery
@@ -90,11 +91,14 @@ struct WorkspaceDetail: View {
       content(devices: devices, focused: focused)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if inspector == .column {
-        Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-          .overlay { resizeHandle }
-        inspectorPanel
-          .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
-          .background(Palette.sidebar)
+        HStack(spacing: 0) {
+          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+            .overlay { resizeHandle }
+          inspectorPanel
+            .frame(width: Self.clampedInspectorWidth(inspectorWidth, detailWidth: width))
+            .background(Palette.sidebar)
+        }
+        .transition(.move(edge: .trailing))
       }
     }
     .onGeometryChange(for: CGFloat.self) {
@@ -112,8 +116,10 @@ struct WorkspaceDetail: View {
           }
           .compositingGroup()
           .shadow(color: .black.opacity(0.25), radius: 16)
+          .transition(.move(edge: .trailing))
       }
     }
+    .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: inspector)
     .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
@@ -245,7 +251,7 @@ struct WorkspaceDetail: View {
           .tutorialAnchor(.logsTab, workspace: workspace.path)
         }
       }
-      .padding(.horizontal, Space.xxl)
+      .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
       let earlier = ArchivedWorkspace.newestFirst(
         archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
@@ -257,7 +263,7 @@ struct WorkspaceDetail: View {
               .buttonStyle(.link).help(archive.title)
           }
         }
-        .font(.stim(.footnote)).padding(.horizontal, Space.xxl).padding(.bottom, Space.md)
+        .font(.stim(.footnote)).padding(.horizontal, PageInset.horizontal).padding(.bottom, Space.md)
       }
       Rectangle().fill(Palette.border).frame(height: 1)
       VStack(spacing: 0) {
@@ -411,7 +417,7 @@ struct WorkspaceDetail: View {
           }
         }
         if let archiveError { Text(archiveError).foregroundStyle(Palette.secondary) }
-      }.padding(Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
+      }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -421,15 +427,15 @@ struct WorkspaceDetail: View {
         if devices.isEmpty {
           emptyCanvas.frame(maxWidth: .infinity).padding(Space.xxxl)
         } else {
-          let availableWidth = max(0, geo.size.width - Space.xxl * 2)
+          let availableWidth = max(0, geo.size.width - PageInset.horizontal * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
-          let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+          let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
             }
           }
-          .padding(Space.xxl)
+          .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
         }
       }
     }
@@ -449,16 +455,16 @@ struct WorkspaceDetail: View {
               emptyCanvas(stage: page.lead(now: context.date).stage(now: context.date))
             }.frame(maxWidth: .infinity).padding(Space.xxxl)
           } else if !devices.isEmpty {
-            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - Space.xxl * 2))
-            let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+            let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - PageInset.horizontal * 2))
+            let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
               ForEach(devices) { entry in
                 tile(
                   entry.device, focused: entry.device.id == focusedID, cardWidth: cardWidth, cardHeight: cardHeight,
                   owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
                 ).id(entry.id)
               }
-            }.padding(Space.xxl).id("devices")
+            }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).id("devices")
           }
         }
         .onChange(of: selectedPath, initial: true) {

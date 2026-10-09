@@ -94,6 +94,20 @@ jobs:
       - name: Build (tsdown, all packages)
         run: pnpm run build
 
+      - name: Committed Action bundle matches source
+        id: action-bundle
+        run: git diff --exit-code -- .github/actions/stim-ci/dist
+
+      - name: Retain the generated Action bundle when stale
+        if: failure() && matrix.node == 22 && steps.action-bundle.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-stim-ci-action
+          path: .github/actions/stim-ci/dist/main.mjs
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Typecheck (production)
         run: pnpm run typecheck
 
