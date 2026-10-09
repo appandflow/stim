@@ -121,12 +121,27 @@ if (expectUnattributed) {
     const errors = deviceRecords.filter((record) => ['error', 'fatal'].includes(record.level));
     assert(!errors.some(isAppLaunchError), 'named-slot app reported errors');
     nonAppErrors = errors.filter((record) => !isAppLaunchError(record));
+    const loading = deviceRecords.find(
+      (record) =>
+        record.src === 'device' &&
+        /^(?:unknown:)?BridgelessReact\(\d+\)$/.test(String(record.proc)) &&
+        /^ReactHost\{\d+\}\.getOrCreateReactInstanceTask\(\): Loading JS Bundle$/.test(String(record.msg)),
+    );
+    const runtimeWaiting =
+      loading &&
+      !deviceRecords.some(
+        (record) =>
+          record.src === 'device' &&
+          Number(record.ts) >= Number(loading.ts) &&
+          (/^ReactNativeJS\(\d+\)$/.test(String(record.proc)) || appReadinessSignal(record, platform) !== null),
+      );
     const pending = deviceRecords.findLast((record) => appReadinessSignal(record, platform) === 'pending');
     if (
-      !pending ||
-      deviceRecords.some(
-        (record) => Number(record.ts) >= Number(pending.ts) && appReadinessSignal(record, platform) === 'ready',
-      )
+      !runtimeWaiting &&
+      (!pending ||
+        deviceRecords.some(
+          (record) => Number(record.ts) >= Number(pending.ts) && appReadinessSignal(record, platform) === 'ready',
+        ))
     )
       break;
     assert(Date.now() < deadline, 'named-slot app readiness timed out');

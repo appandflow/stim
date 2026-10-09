@@ -303,8 +303,11 @@ jobs:
           name: build-logs-ios-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-pool-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-pool-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -465,7 +468,9 @@ jobs:
           name: build-logs-android-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -575,7 +580,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-android-${{ matrix.suite }}-logs
-          path: D:\e\stim-home\workspaces\**\logs\*
+          path: |
+            D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\archive\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
