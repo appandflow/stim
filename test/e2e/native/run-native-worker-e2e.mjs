@@ -292,14 +292,10 @@ async function build(label, revision, workerHit) {
   assert.equal(state.activeBuild, undefined);
   assert.equal(state.supervisor, undefined);
   assert.equal(readWorkspaceState(app).supervisor, undefined);
-  const strings = await run(`${label}-binary-strings`, '/usr/bin/strings', [
-    '-a',
-    join(facts.appPath, 'NativeAcceptance'),
-  ]);
+  const binary = join(facts.appPath, 'NativeAcceptance.debug.dylib');
+  const strings = await run(`${label}-binary-strings`, '/usr/bin/strings', ['-a', binary]);
   assert(strings.includes(revision), 'Returned app must contain the current source revision.');
-  const binaryHash = createHash('sha256')
-    .update(readFileSync(join(facts.appPath, 'NativeAcceptance')))
-    .digest('hex');
+  const binaryHash = createHash('sha256').update(readFileSync(binary)).digest('hex');
   claimsFree();
   const requests = readFileSync(join(evidence, 'host-requests.ndjson'), 'utf8')
     .trim()
