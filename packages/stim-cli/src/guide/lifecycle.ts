@@ -14,9 +14,10 @@ no Metro, npm install or React Native dependency is required. The directory must
 contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
 one application module and the exact variant (debug by default). Stim installs
 one signed universal or matching-ABI APK on an owned emulator or leased phone.
-Multiple application modules, density/split APK sets, EAS and remote targets
-are unsupported. Set org.gradle.configureondemand=false; configuration cache
-remains supported. Stim verifies the existing APK signature; it does not sign it.
+Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
+must support native Android process mode. Multiple application modules,
+density/split APK sets and EAS/proxy targets are unsupported. Set
+org.gradle.configureondemand=false; configuration cache remains supported. Stim verifies the existing APK signature; it does not sign it.
 Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
 and build offload are unavailable until arbitrary Gradle inputs can be tracked.
 Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
@@ -405,7 +406,7 @@ policy. No flag or setting runs on this Mac.
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
 machine, a running local owned emulator in the slot, and --no-metro-check for
-hosted Debug refuse STIM_BAD_ARG. Run stim stop before switching placement.
+hosted Metro development apps refuse STIM_BAD_ARG. Run stim stop before switching placement.
 Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
@@ -415,7 +416,7 @@ compatible build worker. Stim builds before reserving, records the session as
 soon as it exists, then delivers one App.apk. The emulator boots headless;
 androidEmulatorApp is ignored with a note.
 
-Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
+React Native Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
 are ignored with a note. A private tailnet gateway reaches the host loopback
 bridge; the host reverses the client's Metro port into that bridge on its exact
 ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
@@ -424,6 +425,13 @@ adb server restart. Reload broadcasts through the local Metro and never runs
 adb against the host serial on this Mac. Release variants skip Metro. Launch
 is true only with client bundle evidence or a live host release process;
 bundling requires a bundle request and unverified has no launch evidence.
+
+Native Gradle apps use process mode for every variant. The host must advertise
+hosted-android-process; older hosts refuse before admission or APK upload.
+Native runs close any previous Metro bridge, launch the signed APK and require
+a live app process for launched=true. --no-metro-check is allowed, and reload
+refuses because there is no Metro runtime. Re-run stim android after an edit.
+Native EAS/proxy targets and build offload remain unsupported.
 
 Status adds android.host { machine, session, selected, agent, device: { name,
 systemImage, api }, state } per slot. The public name is the profile and API

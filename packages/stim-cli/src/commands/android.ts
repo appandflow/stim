@@ -852,12 +852,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
   const { variant, release } = buildPlan;
+  const runtimeKind = integration.runtimeKind(buildPlan);
+  const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
   const hosting = await selectAndroidPlacement({
     root,
     slot,
     target: plan.target,
     release,
+    appMode,
     metroCheck,
     noWait: plan.deviceSlotWaitMs === 0,
     buildMachine: options.buildMachine,
@@ -865,7 +868,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
     automatic: options.automaticDevicePlacement,
-    ...(remoteEasFallbackSetting(settings)
+    ...(integration.eas && remoteEasFallbackSetting(settings)
       ? {
           eas: () =>
             (options.checkEasFallback ?? checkEasFallback)({
@@ -912,7 +915,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (hostedTarget) {
     if (settings.androidEmulatorApp !== undefined)
       phase('device', 'androidEmulatorApp is ignored on a hosting Mac; the emulator boots headless.');
-    if (publicUrlSetting(settings) || tunnelModeSetting(settings))
+    if (appMode === 'development' && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
       phase(
         'metro',
         'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
@@ -1265,6 +1268,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         slot,
         release,
+        appMode,
         isExpo,
         metroPort,
         logsDir,

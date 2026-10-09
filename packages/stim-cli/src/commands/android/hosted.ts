@@ -1,4 +1,4 @@
-import { hostedAndroidStatus, type HostedDeviceSelectors } from '@stim-cli/core/state';
+import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroid } from '../../device-host/ios-state.ts';
 import { writeWorkspaceLaunch, MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
@@ -15,6 +15,7 @@ export async function finishHostedAndroidRun({
   root,
   slot = 'default',
   release,
+  appMode = release ? 'release' : 'development',
   isExpo,
   metroPort,
   logsDir,
@@ -50,6 +51,7 @@ export async function finishHostedAndroidRun({
   target: HostedAndroidTarget;
   artifact: PreparedAndroidArtifact;
   isExpo: boolean;
+  appMode?: HostedAppOffer['mode'];
   selectors: HostedDeviceSelectors;
   place: typeof placeHostedAndroid;
   writePlacement: typeof writeHostedAndroid;
@@ -81,22 +83,31 @@ export async function finishHostedAndroidRun({
       handoff: artifact.handoff,
       bundleId: packageName,
       release,
+      ...(appMode === 'process' ? { mode: appMode } : {}),
       metroPort,
       selectors,
-      ...(!release && isExpo ? { devClientScheme: resolveDevClientScheme(root, artifact.apkPath) ?? undefined } : {}),
+      ...(appMode === 'development' && isExpo
+        ? { devClientScheme: resolveDevClientScheme(root, artifact.apkPath) ?? undefined }
+        : {}),
       reserved: (placement) => writePlacement(root, slot, placement),
       note: out,
     });
     writePlacement(root, slot, run.placement);
-    writeLaunch(root, 'android', {
-      appId: packageName,
-      deviceId: run.placement.session,
-      metroPort,
-      release,
-      launchedAt: new Date(launchedAt).toISOString(),
-    });
+    writeLaunch(
+      root,
+      'android',
+      {
+        appId: packageName,
+        deviceId: run.placement.session,
+        metroPort,
+        release,
+        ...(appMode === 'process' ? { runtime: 'process' as const } : {}),
+        launchedAt: new Date(launchedAt).toISOString(),
+      },
+      slot,
+    );
     let launched: true | 'bundling' | 'unverified' = run.launched;
-    if (!release) {
+    if (appMode === 'development') {
       const evidence = await verify({
         requireBundleResponse: true,
         platform: 'android',
@@ -135,6 +146,7 @@ export async function finishHostedAndroidRun({
     await artifact.providerUpload;
     const facts = reportAndroidResult({
       ...report,
+      ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),
       root,
       slot,
       release,

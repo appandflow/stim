@@ -846,8 +846,8 @@ export class DeviceHost {
       );
     try {
       const record = this.appSession(client, offer);
-      if (offer.mode === 'process' && record.platform !== 'ios')
-        throw new Error('Process-mode app offers are supported only for hosted iOS sessions.');
+      if (offer.mode === 'process' && record.platform === 'macos')
+        throw new Error('Process-mode app offers require a hosted iOS or Android session.');
       if (record.platform !== 'macos' && offer.arguments !== undefined)
         throw new Error('App arguments are supported only for hosted macOS sessions.');
       if (record.platform === 'macos') {

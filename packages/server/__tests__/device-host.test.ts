@@ -26,6 +26,7 @@ import {
   deviceHostRoot,
   HOSTED_MACOS_APP_SLOTS,
   readHostedAppMetadata,
+  readHostedApp,
   readHostedSessions,
   readHostedMacosApp,
   readHostedDeviceLedger,
@@ -3500,13 +3501,26 @@ test('devices formats hosted rows as single safe lines and omits an empty Hosted
   ]);
 });
 
-test.each(['android', 'macos'])('process offers do not broaden %s session app admission', async (platform) => {
-  const first = await reserve({ platform });
+test('native Android process offers require a ready session owned by the approved client', async () => {
+  const first = await reserve({ platform: 'android' });
+  const app = appOffer(first.id, 'native', 'android');
+  const offer = { ...app.params, mode: 'process' };
+  expect(host.appOffer('other-client', offer)).toHaveProperty('error');
   await state(first.id, 'ready');
-  const app = appOffer(first.id, 'native', platform);
+  expect(host.appOffer('client', offer)).toHaveProperty('result');
+  expect(readHostedApp(first.id, 'native').mode).toBe('process');
+  await host.stop('client', { session: first.id });
+  await state(first.id, 'stopped');
+  expect(host.appOffer('client', { ...offer, attempt: 'after-stop' })).toHaveProperty('error');
+});
+
+test('process offers do not broaden macOS session app admission', async () => {
+  const first = await reserve({ platform: 'macos' });
+  await state(first.id, 'ready');
+  const app = appOffer(first.id, 'native', 'macos');
   expect(host.appOffer('client', { ...app.params, mode: 'process' })).toHaveProperty(
     'error.message',
-    'Process-mode app offers are supported only for hosted iOS sessions.',
+    'Process-mode app offers require a hosted iOS or Android session.',
   );
   expect(existsSync(join(deviceHostArea(first.id), 'apps', 'native', 'receipt.json'))).toBe(false);
   expect(host.appOffer('client', app.params)).toHaveProperty('result');

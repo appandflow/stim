@@ -890,6 +890,7 @@ describe('pairing', () => {
           'hosted-ios-process',
           'native-xcode-build',
           'hosted-android-data',
+          'hosted-android-process',
           'server-update',
         ],
         actions: [],

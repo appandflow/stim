@@ -497,8 +497,13 @@ Stim does not infer their model from source text. No Node dependencies or Metro
 are required. Stim verifies the APK signature and installs one universal or
 matching-ABI APK on an owned emulator or leased physical Android phone.
 
-Multiple application modules, density/split APK sets, unsigned APKs, EAS and
-remote targets are unsupported. Set `org.gradle.configureondemand=false` so all
+Use `--remote <approved-mac>` or `--remote auto` for a hosted emulator. The host
+must support `hosted-android-process`; older hosts refuse before reserving a
+device or uploading the APK. Native variants require a live app process and
+never open a Metro bridge.
+
+Multiple application modules, density/split APK sets, unsigned APKs and
+EAS/proxy targets are unsupported. Set `org.gradle.configureondemand=false` so all
 application modules can be enumerated; configuration cache remains supported.
 Gradle incremental and build-cache reuse still apply, but Stim artifact caching
 and build offload are unavailable because arbitrary Gradle inputs are not fully

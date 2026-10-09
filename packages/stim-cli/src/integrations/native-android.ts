@@ -115,7 +115,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
     packageRemedy: 'Check the applicationId reported by AGP for the selected application variant.',
     appIds: () => ({ bundleId: null, androidPackage: null }),
     variantProblem: () => null,
-    targets: ['emulator', 'physical'],
+    targets: ['emulator', 'physical', 'hosted'],
     eas: false,
     runtimeKind: () => 'process',
     plan: async () => ({
@@ -201,7 +201,7 @@ export function nativeAndroidDoctor(root: string): ProjectDoctor {
         {
           level: 'note',
           title: 'Native Android Gradle project',
-          detail: `${MODEL_LIMIT} ${CACHE_LIMIT} Metro, EAS and remote targets are unsupported.`,
+          detail: `${MODEL_LIMIT} ${CACHE_LIMIT} Metro and EAS are unsupported; local and hosted emulators use native process readiness.`,
           fix: null,
         },
         ...(sdk
