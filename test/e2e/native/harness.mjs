@@ -631,7 +631,7 @@ function dumpFailedAndroidCommand(h, command) {
     assert(serials.length <= 8, 'refusing unbounded Android transport inspection');
     const matches = serials.filter((serial) => {
       const result = query('adb', ['-s', serial, 'emu', 'avd', 'name']);
-      const lines = result.stdout.trim().split(/\r?\n/);
+      const lines = result.stdout.trim().split(/\r*\n/);
       return result.code === 0 && lines.length === 2 && lines[0] === device.avdName && lines[1] === 'OK';
     });
     assert(matches.length === 1, 'failed command AVD has no unique verified online transport');

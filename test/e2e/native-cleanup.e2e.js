@@ -380,6 +380,7 @@ test('failed install diagnostics select the owned slot even when the last launch
       '\n',
   );
   let targetName = 'stim-third';
+  let consoleNewline = '\n';
   let inventoryCode = 0;
   const h = {
     env: { STIM_HOME: process.env.STIM_HOME },
@@ -397,20 +398,26 @@ test('failed install diagnostics select the owned slot even when the last launch
           stderr: '',
         };
       if (argv.includes('emu'))
-        return { code: 0, stdout: `${argv[1] === 'emulator-5558' ? 'stim-second' : targetName}\r\nOK\r\n`, stderr: '' };
+        return {
+          code: 0,
+          stdout: `${argv[1] === 'emulator-5558' ? 'stim-second' : targetName}${consoleNewline}OK${consoleNewline}`,
+          stderr: '',
+        };
       return { code: 0, stdout: `observed ${argv[1]}`, stderr: '' };
     },
   };
   const failure = { nativeCommand: { cwd: f.cwd, platform: 'android', slot: 'third' }, preserveNativeState: true };
-  dumpDiagnostics(h, [f.cwd], failure);
   const resultPath = join(workspaceLogsDir(f.cwd), 'android-failed-command-diagnostics.json');
-  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
-  assert.equal(result.error, null);
-  assert.equal(result.avdName, 'stim-third');
-  assert.equal(result.deviceId, 'emulator-5560');
-  const guest = result.queries.filter(({ argv }) => argv.includes('logcat'));
-  assert.equal(guest.length, 1);
-  assert.deepEqual(guest[0].argv, ['-s', 'emulator-5560', 'logcat', '-b', 'all', '-d', '-t', '2000']);
+  for (consoleNewline of ['\n', '\r\n', '\r\r\n']) {
+    dumpDiagnostics(h, [f.cwd], failure);
+    const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+    assert.equal(result.error, null);
+    assert.equal(result.avdName, 'stim-third');
+    assert.equal(result.deviceId, 'emulator-5560');
+    const guest = result.queries.filter(({ argv }) => argv.includes('logcat'));
+    assert.equal(guest.length, 1);
+    assert.deepEqual(guest[0].argv, ['-s', 'emulator-5560', 'logcat', '-b', 'all', '-d', '-t', '2000']);
+  }
   const config = readFileSync(f.configFile, 'utf8');
   for (const invalid of ['inventory', 'transport', 'ledger', 'ownership']) {
     inventoryCode = invalid === 'inventory' ? 1 : 0;
