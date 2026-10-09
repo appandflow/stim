@@ -38,6 +38,8 @@ import { podAction } from '../commands/ios/support.ts';
 import type { AndroidBuildOptions } from './client.ts';
 import { workerToolchain } from './toolchain.ts';
 import { verifyNativeTransfer } from './native-source.ts';
+import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
+import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -382,7 +384,10 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   if (job.native) {
     if (job.platform !== 'ios' || job.native.provider !== 'xcode')
       return failed('unsupported-provider', 'The worker does not implement this native provider.');
-    if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest))
+    const metadataDirectories = nativeXcodeMetadataDirectories(
+      selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
+    );
+    if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
       return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
     const selected = projectRegistry.selectIos(root);
     if ('problem' in selected || selected.id !== 'native-xcode')
@@ -390,7 +395,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await compileNativeIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
-      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest))
+      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
         throw new Error('The native source changed while the worker compiled it.');
     } catch (error) {
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });

@@ -1,4 +1,13 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as xcode from '../engine/xcode.ts';
@@ -43,6 +52,47 @@ function fingerprint() {
     optimizations: resolveOptimizations({}, {}).ios,
   });
 }
+
+test.each(['xcshareddata', 'xcshareddata/swiftpm', 'xcshareddata/swiftpm/configuration'])(
+  'Xcode metadata directory %s does not change identity but its files do',
+  (path) => {
+    const project = writeNativeXcodeProject(root);
+    const workspace = join(project, 'project.xcworkspace');
+    mkdirSync(workspace);
+    const before = fingerprint();
+    expect(before).toHaveProperty('hash');
+    const directory = join(workspace, path);
+    mkdirSync(directory, { recursive: true });
+    expect(fingerprint()).toEqual(before);
+    const file = join(directory, 'input.json');
+    write(file, 'first');
+    const populated = fingerprint();
+    expect(populated).not.toEqual(before);
+    write(file, 'edited');
+    expect(fingerprint()).not.toEqual(populated);
+    rmSync(file);
+    expect(fingerprint()).toEqual(before);
+    rmSync(directory, { recursive: true });
+    write(directory, 'a file in place of the directory');
+    expect(fingerprint()).not.toEqual(before);
+  },
+);
+
+test.skipIf(process.platform === 'win32')('links cannot masquerade as ignored Xcode directory markers', () => {
+  const project = writeNativeXcodeProject(root);
+  const workspace = join(project, 'project.xcworkspace');
+  mkdirSync(workspace);
+  const before = fingerprint();
+  symlinkSync('../xcshareddata', join(workspace, 'xcshareddata'));
+  expect(fingerprint()).not.toEqual(before);
+});
+
+test('ordinary empty source directories remain part of the native identity', () => {
+  writeNativeXcodeProject(root);
+  const before = fingerprint();
+  mkdirSync(join(root, 'Assets', 'xcshareddata', 'swiftpm', 'configuration'), { recursive: true });
+  expect(fingerprint()).not.toEqual(before);
+});
 
 function configuredProject(projectBase: string, projectInline = '', targetBase = '', targetInline = '') {
   const project = writeNativeXcodeProject(root);
@@ -617,7 +667,8 @@ test('native planning refuses unresolved source closure without dependency prepa
 });
 
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {
-  writeNativeXcodeProject(root);
+  const project = writeNativeXcodeProject(root);
+  mkdirSync(join(project, 'project.xcworkspace'));
   write(join(root, 'settings.gradle.kts'), 'include(":mobile")');
   write(join(root, 'gradlew'), '');
   write(join(root, '.stim.json'), JSON.stringify({ optimizations: { releaseBundleSwap: false } }));
@@ -637,6 +688,7 @@ test('the registered native iOS provider builds Release without a device and reu
     expect(options.udid).toBeNull();
     expect(options.destination).toBe('generic/platform=iOS Simulator');
     expect(options.configuration).toBe('Release');
+    mkdirSync(join(project, 'project.xcworkspace', 'xcshareddata', 'swiftpm', 'configuration'), { recursive: true });
     write(join(compiled, 'Native'), readFileSync(join(root, 'Native.swift'), 'utf8'));
     write(
       join(compiled, 'Info.plist'),
@@ -659,6 +711,7 @@ test('the registered native iOS provider builds Release without a device and reu
   writeWorkspaceState(root, { ios: existing });
   const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
   const cold = await buildIosOperation(root, options);
+  expect(cold.cacheKey).not.toBeNull();
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
   const warm = await buildIosOperation(root, options);
   expect(warm).toMatchObject({ cacheHit: 'local', cacheSkipped: false, cacheKey: cold.cacheKey });

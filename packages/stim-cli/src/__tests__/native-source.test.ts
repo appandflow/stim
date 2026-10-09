@@ -15,6 +15,9 @@ import { join } from 'node:path';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import { nativeTransferManifest, verifyNativeTransfer, type NativeTransferFile } from '../offload/native-source.ts';
 import { manifestDigest } from '../offload/manifest.ts';
+import { nativeXcodeInputSnapshot, nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
+import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
+import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 
 let area: string;
 let root: string;
@@ -100,3 +103,32 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
+
+test('native transfer tolerates only declared Xcode directory markers, never untransferred contents', () => {
+  const project = writeNativeXcodeProject(root);
+  const workspace = join(project, 'project.xcworkspace');
+  mkdirSync(workspace);
+  const selection = selectNativeXcodeProject(root);
+  const inputs = nativeXcodeInputSnapshot(root, selection, {
+    sdk: 'iphonesimulator',
+    architecture: 'arm64',
+    toolchain: { xcode: 'fixture' },
+    optimizations: {},
+  });
+  if ('cacheIneligible' in inputs) throw new Error(inputs.cacheIneligible);
+  const visible = inputs.entries
+    .filter((entry) => entry.kind === 'file:0')
+    .map((entry) => file(entry.path.slice('repository/'.length)));
+  const files = nativeTransferManifest(root, inputs, visible);
+  const markers = nativeXcodeMetadataDirectories(selection);
+  const digest = manifestDigest(files);
+  expect(verifyNativeTransfer(root, files, digest, markers)).toBe(true);
+  const configuration = join(workspace, 'xcshareddata', 'swiftpm', 'configuration');
+  mkdirSync(configuration, { recursive: true });
+  expect(verifyNativeTransfer(root, files, digest, markers)).toBe(true);
+  writeFileSync(join(configuration, 'mirrors.json'), 'untransferred');
+  expect(() => verifyNativeTransfer(root, files, digest, markers)).toThrow(/ignored or absent/);
+  rmSync(configuration, { recursive: true });
+  writeFileSync(configuration, 'a file replacing the directory');
+  expect(() => verifyNativeTransfer(root, files, digest, markers)).toThrow(/ignored or absent/);
+});
