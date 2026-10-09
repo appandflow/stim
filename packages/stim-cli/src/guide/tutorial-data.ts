@@ -10,8 +10,7 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
  */
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and run it on iOS with stim. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
-  agent:
-    'In {base}, use agent-device to open the app on the iOS simulator, take a screenshot and tap around, then tell me what you saw.',
+  agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove only the worktrees you made for them, and keep the clone. Follow stim guide tutorial finish.",

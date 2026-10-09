@@ -90,6 +90,13 @@
         message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
         canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
+        asks: { step in
+          step.ask.map {
+            tutorialAsk(
+              $0, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
+              machine: "Studio")
+          }
+        },
         commands: { step in
           tutorialCommands(
             step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
@@ -98,7 +105,9 @@
         }
       )
       .defaultAppStorage(storage)
-      .frame(width: 320, height: name == "machine-approved-commands" ? 1440 : machineState.showsPrompt ? 1120 : 960)
+      .frame(
+        width: 320,
+        height: name.hasSuffix("-commands") || name == "build-no-agent-device" ? 1500 : machineState.showsPrompt ? 1120 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
@@ -119,9 +128,10 @@
       var record = TutorialRecord(
         version: 2, startedAt: now, step: id, done: done)
       if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
-      if ["machine", "finish"].contains(id) {
-        record.done.removeAll { $0 == "phone" }
-        record.skipped = ["phone"]
+      let skippedOptional = TutorialSteps.all.prefix { $0.id != id }.filter(\.optional).map(\.id)
+      if name != "done" {
+        record.done.removeAll { skippedOptional.contains($0) }
+        record.skipped = skippedOptional
       }
       if name == "begin-timeout" {
         record.startedAt = now.addingTimeInterval(-300)

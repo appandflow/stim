@@ -42,7 +42,7 @@ public enum TutorialSteps {
       ]),
     TutorialStep(
       id: "agent", title: "Agent Actions and Replay", who: "agent", optional: true,
-      ask: "In {base}, use agent-device to open the app on the iOS simulator, take a screenshot and tap around, then tell me what you saw.", section: nil,
+      ask: "Open the app on the iOS simulator, take a screenshot and confirm the title color.", section: nil,
       commands: [
         "cd \"{tour}\"",
         "export AGENT_DEVICE_STATE_DIR=\"{stateDir}\"",
