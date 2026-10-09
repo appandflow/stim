@@ -669,10 +669,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
     runs-on: macos-26
     timeout-minutes: 35
-    env:
-      QA_ROOT: ${{ runner.temp }}/stim-convergence-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set task QA path
+        shell: bash
+        run: echo "QA_ROOT=$RUNNER_TEMP/stim-convergence-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-stim
       - name: Record toolchain and require installed Chrome
         shell: bash
@@ -754,10 +755,10 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/platform-convergence-local'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      EXPO_WEB_QA_OUT: ${{ runner.temp }}/stim-platform-qa-expo-web
     steps:
       - uses: actions/checkout@v4
+      - name: Set task QA path
+        run: echo "EXPO_WEB_QA_OUT=$RUNNER_TEMP/stim-platform-qa-expo-web" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-stim
         with:
           node: '24'
