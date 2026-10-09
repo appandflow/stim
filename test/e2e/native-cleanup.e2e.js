@@ -3,7 +3,14 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
-import { cleanupTmp, createCleanupTracker, createHarness, verifyCleanup, workspaceLogsDir } from './native/harness.mjs';
+import {
+  cleanupTmp,
+  createCleanupTracker,
+  createHarness,
+  dumpDiagnostics,
+  verifyCleanup,
+  workspaceLogsDir,
+} from './native/harness.mjs';
 
 function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
   const home = mkdtempSync(join(tmpdir(), 'stim-native-cleanup-'));
@@ -345,13 +352,92 @@ test('a failed JSON command keeps native ownership and diagnostics available to 
   const h = createHarness({ env: { ...process.env, STIM_HOME: home }, cliPath, label: 'failure' });
   let failure;
   assert.throws(
-    () => h.cliJson(['android', '--json']),
+    () => h.cliJson(['android', '--slot', 'third', '--json'], { cwd: worktree }),
     (error) => {
       assert.match(error.message, /failed \(exit 23\).*STIM_LAUNCH_FAILED/s);
+      assert.deepEqual(error.nativeCommand, { cwd: worktree, platform: 'android', slot: 'third' });
       failure = error;
       return true;
     },
   );
   cleanupTmp([worktree, home], failure);
   for (const [path, content] of files) assert.equal(readFileSync(path, 'utf-8'), content);
+});
+
+test('failed install diagnostics select the owned slot even when the last launch belongs to its sibling', (t) => {
+  const f = fixture(t, 'android');
+  mkdirSync(workspaceLogsDir(f.cwd), { recursive: true });
+  writeFileSync(
+    f.configFile,
+    JSON.stringify({
+      projects: { [f.cwd]: { deviceSlots: { third: { android: { owned: true, avdName: 'stim-third' } } } } },
+    }),
+  );
+  writeFileSync(join(process.env.STIM_HOME, 'created-devices.json'), JSON.stringify({ android: ['stim-third'] }));
+  writeFileSync(
+    join(workspaceLogsDir(f.cwd), 'build-android.second.ndjson'),
+    JSON.stringify({ event: 'launch_attempt', platform: 'android', deviceId: 'emulator-5558', appId: 'fixture.app' }) +
+      '\n',
+  );
+  let targetName = 'stim-third';
+  let consoleNewline = '\n';
+  let inventoryCode = 0;
+  const h = {
+    env: { STIM_HOME: process.env.STIM_HOME },
+    banner() {},
+    log() {},
+    sh(file, argv, opts) {
+      assert.equal(opts.allowFail, true);
+      assert(opts.timeout <= 10_000);
+      if (file === 'powershell.exe') return { code: 0, stdout: '{}', stderr: '' };
+      assert.equal(file, 'adb');
+      if (argv[0] === 'devices')
+        return {
+          code: inventoryCode,
+          stdout: 'List of devices attached\r\nemulator-5558\tdevice\r\nemulator-5560\tdevice\r\n',
+          stderr: '',
+        };
+      if (argv.includes('emu'))
+        return {
+          code: 0,
+          stdout: `${argv[1] === 'emulator-5558' ? 'stim-second' : targetName}${consoleNewline}OK${consoleNewline}`,
+          stderr: '',
+        };
+      return { code: 0, stdout: `observed ${argv[1]}`, stderr: '' };
+    },
+  };
+  const failure = { nativeCommand: { cwd: f.cwd, platform: 'android', slot: 'third' }, preserveNativeState: true };
+  const resultPath = join(workspaceLogsDir(f.cwd), 'android-failed-command-diagnostics.json');
+  for (consoleNewline of ['\n', '\r\n', '\r\r\n']) {
+    dumpDiagnostics(h, [f.cwd], failure);
+    const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+    assert.equal(result.error, null);
+    assert.equal(result.avdName, 'stim-third');
+    assert.equal(result.deviceId, 'emulator-5560');
+    const guest = result.queries.filter(({ argv }) => argv.includes('logcat'));
+    assert.equal(guest.length, 1);
+    assert.deepEqual(guest[0].argv, ['-s', 'emulator-5560', 'logcat', '-b', 'all', '-d', '-t', '2000']);
+  }
+  const config = readFileSync(f.configFile, 'utf8');
+  for (const invalid of ['inventory', 'transport', 'ledger', 'ownership']) {
+    inventoryCode = invalid === 'inventory' ? 1 : 0;
+    targetName = invalid === 'transport' ? 'foreign' : 'stim-third';
+    writeFileSync(
+      join(process.env.STIM_HOME, 'created-devices.json'),
+      JSON.stringify({ android: invalid === 'ledger' ? [] : ['stim-third'] }),
+    );
+    writeFileSync(f.configFile, invalid === 'ownership' ? JSON.stringify({ projects: {} }) : config);
+    dumpDiagnostics(h, [f.cwd], failure);
+    const refused = JSON.parse(readFileSync(resultPath, 'utf8'));
+    assert.equal(refused.deviceId, null);
+    assert.match(
+      refused.error,
+      /inventory unavailable|no unique verified online transport|no verified task-owned AVD assignment/,
+    );
+    assert.equal(
+      refused.queries.some(({ argv }) => argv.includes('logcat')),
+      false,
+    );
+    assert.equal(failure.preserveNativeState, true);
+  }
 });
