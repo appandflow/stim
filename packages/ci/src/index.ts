@@ -83,6 +83,20 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
     throw new Error('timeoutMs must be a positive integer.');
   }
+  if (
+    process.env.GITHUB_ACTIONS === 'true' &&
+    process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
+    process.env.RUNNER_TEMP &&
+    !options.home &&
+    !process.env.STIM_HOME
+  ) {
+    const directory = join(resolve(process.env.RUNNER_TEMP), 'stim-ci');
+    options = {
+      ...options,
+      home: join(directory, 'home'),
+      buildCache: options.buildCache || (process.env.STIM_BUILD_CACHE ? undefined : join(directory, 'build-cache')),
+    };
+  }
   const projectRoot = realpathSync(options.projectRoot);
   const artifactsDir = options.artifactsDir ? resolve(options.artifactsDir) : mkdtempSync(join(tmpdir(), 'stim-ci-'));
   mkdirSync(artifactsDir, { recursive: true });
