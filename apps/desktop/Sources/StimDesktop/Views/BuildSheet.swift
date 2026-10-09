@@ -377,7 +377,8 @@ private struct BuildRunDetail: View {
           } else {
             LogsView(
               cli: cli, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
-              moment: .constant(nil), archive: archive
+              moment: .constant(nil), archive: archive,
+              availableSources: LogSource.allCases.filter { !run.isMacos || $0 != .metro }
             )
             .id(run.id)
             .frame(height: 320)
