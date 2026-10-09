@@ -175,19 +175,19 @@ struct RootView: View {
               .clipped()
           }
         }
+        ToolbarItem(placement: .primaryAction) { Spacer() }
         if !controlsBesideInspector {
-          ToolbarItem(placement: .primaryAction) { Spacer() }
-          if showsWorkspace {
-            ToolbarItem(placement: .primaryAction) { logsToggleButton }
-            ToolbarItem(placement: .primaryAction) {
-              InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
-            }
-          }
-          if #available(macOS 26.0, *) {
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-          }
           ToolbarItem(id: "notifications", placement: .primaryAction) {
             notificationButton
+          }
+          if showsWorkspace, #available(macOS 26.0, *) {
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+          }
+        }
+        if showsWorkspace {
+          ToolbarItem(placement: .primaryAction) { logsToggleButton }
+          ToolbarItem(placement: .primaryAction) {
+            InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
           }
         }
       }
@@ -492,16 +492,9 @@ struct RootView: View {
     }
   }
 
-  /// A column inspector fills the window toolbar's trailing edge, so these controls sit over the content, left of it.
   @ViewBuilder private var inspectorSideControls: some View {
     if controlsBesideInspector {
-      let controls = HStack(spacing: Space.xxs) {
-        logsToggleButton
-        InspectorToggleButton(isShown: true, action: toggleInspector)
-        notificationButton
-      }
-      .padding(.horizontal, Space.xs)
-      .frame(height: 40)
+      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: 40)
       Group {
         if #available(macOS 26.0, *) {
           controls.glassEffect(.regular, in: Capsule())
