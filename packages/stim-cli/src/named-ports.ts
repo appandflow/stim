@@ -2,9 +2,9 @@ import { realpathSync } from 'node:fs';
 import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
-import { listeningPids, signalProcessTree } from './metro.ts';
+import { parseNetstatPids, signalProcessTree } from './metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from './process-identity.ts';
-import { isPortFree } from './ports.ts';
+import { createPortProbe } from './ports.ts';
 
 const FIRST_PORT = 8900;
 const LAST_PORT = 8999;
@@ -23,7 +23,11 @@ function validatePortLabel(label: string): void {
 }
 
 function portListeners(port: number, platform: NodeJS.Platform): number[] {
-  if (platform === 'win32') return listeningPids(port, platform);
+  if (platform === 'win32') {
+    const out = getExecutor().runFile('netstat', ['-ano'], { timeoutMs: 5000, rejectStderr: true });
+    if (!/^\s*(?:Proto|TCP)\s/m.test(out)) throw new Error('netstat printed no TCP connection table.');
+    return parseNetstatPids(out, port);
+  }
   let out: string;
   try {
     out = getExecutor().runFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 5000 });
@@ -81,9 +85,7 @@ export function releaseBrowserPort(projectPath: string, port: number): Promise<v
 async function allocateNamedPort(
   projectPath: string,
   label: string,
-  {
-    isFree = async (port: number) => (await isPortFree(port)) && portListeners(port, process.platform).length === 0,
-  }: AllocateOptions,
+  { isFree = createPortProbe() }: AllocateOptions,
 ): Promise<number> {
   const root = realpathSync(projectPath);
   return withPortsLock(async () => {
