@@ -331,7 +331,7 @@ it.each(['self-hosted', ''])('keeps normal coordination paths for a %s runner', 
   const output = recordEnvironment();
   expect((await runCI(options)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({});
-  expect(lifecycle.create.mock.calls[0][0]).toMatchObject({ home: undefined, buildCache: undefined });
+  expect(lifecycle.create.mock.calls[0]?.[0]).toMatchObject({ home: undefined, buildCache: undefined });
 });
 
 it.each(['environment', 'options'])('respects an explicit %s home and cache on hosted runners', async (source) => {
@@ -349,7 +349,7 @@ it.each(['environment', 'options'])('respects an explicit %s home and cache on h
   const output = recordEnvironment();
   expect((await runCI(options)).exitCode).toBe(0);
   expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected);
-  expect(lifecycle.create.mock.calls[0][0]).toMatchObject(
+  expect(lifecycle.create.mock.calls[0]?.[0]).toMatchObject(
     source === 'options'
       ? { home: expected.home, buildCache: expected.cache }
       : { home: undefined, buildCache: undefined },
