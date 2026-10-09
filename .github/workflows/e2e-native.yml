@@ -147,6 +147,7 @@ jobs:
         exclude:
           - framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       # The registry stays throwaway per run (the driver makes its own temp home)
       # for deterministic device/project state; the SHARED build cache is
@@ -330,6 +331,7 @@ jobs:
           - suite: smoke
             framework: bare
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
       STIM_BUILD_CACHE: ${{ github.workspace }}/.e2e-build-cache/android-${{ matrix.framework }}
       STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-android-${{ matrix.framework }}
@@ -493,6 +495,7 @@ jobs:
       matrix:
         suite: ${{ fromJSON(needs.plan.outputs.windows) }}
     env:
+      STIM_ARCHIVE_ENABLED: '1'
       # os.tmpdir() reads TEMP on Windows, and the driver builds its fixture
       # under it. It is D:\e rather than a path inside the workspace because
       # every CMake object path is built from the fixture root and Windows caps
