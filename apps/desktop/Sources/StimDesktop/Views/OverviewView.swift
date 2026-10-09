@@ -12,12 +12,14 @@ struct OverviewView: View {
   var openDevice: (String, String) -> Void
   var openIdleProject: (Project) -> Void
   @State private var showsAllIdle = false
+  @State private var showsAllArchived = false
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
   @State private var tipState = TryThisStore(defaults: .standard).state
 
   private static let cardWidth: CGFloat = 340
+  private static let projectCardMinimum: CGFloat = 220
 
   var body: some View {
     if store.payload == nil {
@@ -41,7 +43,7 @@ struct OverviewView: View {
     let running = running
     let idle = Overview.idleProjects(
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
-    let archived = Overview.recentlyArchived(store.payload?.archived ?? [])
+    let archived = ArchivedWorkspace.newestFirst(store.payload?.archived ?? [])
     let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
@@ -154,21 +156,40 @@ struct OverviewView: View {
   }
 
   private func archivedSection(_ items: [ArchivedWorkspace]) -> some View {
-    section("Recently archived") {
-      FlowLayout(spacing: Space.md, lineSpacing: Space.md) {
-        ForEach(items) { archive in
+    let shown = showsAllArchived ? items : Array(items.prefix(6))
+    return section("Recently archived") {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+        alignment: .leading, spacing: Space.lg
+      ) {
+        ForEach(shown) { archive in
           Button {
             selection = .archived(archive.id)
           } label: {
-            Pill {
-              Text(archive.title)
-              Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
-                .foregroundStyle(Palette.tertiary)
+            Card {
+              VStack(alignment: .leading, spacing: Space.xs) {
+                Text(archive.title).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
+                  .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+              }
+              .padding(.horizontal, Space.lg)
+              .padding(.vertical, Space.md)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
             }
           }
-          .buttonStyle(.hoverRow())
+          .buttonStyle(CardPressStyle())
+          .hoverHighlight(radius: Radius.card)
           .help("Open the archive of \(archive.title)")
         }
+      }
+      .finiteAccessibilityFrame()
+      if items.count > 6 {
+        Button(showsAllArchived ? "Show less" : "Show more (\(items.count - shown.count))") {
+          withAnimation(.easeInOut(duration: 0.15)) { showsAllArchived.toggle() }
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .foregroundStyle(Palette.primary)
       }
     }
   }

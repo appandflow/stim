@@ -13,7 +13,6 @@ public struct IdleProject: Hashable, Identifiable, Sendable {
 }
 
 public enum Overview {
-  public static let archivedShown = 5
   public static let idleShown = 6
 
   /// The idle projects to show: all of them when `expanded`, otherwise the first `idleShown`.
@@ -56,9 +55,6 @@ public enum Overview {
     return dates.max()
   }
 
-  public static func recentlyArchived(_ archives: [ArchivedWorkspace]) -> [ArchivedWorkspace] {
-    Array(ArchivedWorkspace.newestFirst(archives).prefix(archivedShown))
-  }
 }
 
 /// A feature the Overview suggests trying, with a prompt the user can hand to an agent.
