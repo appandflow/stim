@@ -1511,8 +1511,13 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(await session.start({ ...base, native: undefined })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, platform: 'android' })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, optimizations: null })).toHaveProperty('error.code', 'bad-request');
-    expect(await host.offer('client', { repo: 'app-1', native: 'gradle' })).toHaveProperty('error.code', 'bad-request');
-    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'gradle' } })).toBe(false);
+    expect(await host.offer('client', { repo: 'app-1', native: 'unsupported' })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'unsupported' } })).toBe(
+      false,
+    );
     expect(toolchain).not.toHaveBeenCalled();
     expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'xcode' } })).toBe(true);
     expect(await host.offer('client', { repo: 'app-1', native: 'xcode' })).toHaveProperty(
