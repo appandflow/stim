@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { buildArtifactFiles, copyDiagnosticLogs, diagnosticArtifactFiles } from '../artifacts.ts';
@@ -101,7 +102,8 @@ it('selects reports and logs consistently through an explicit symlink root while
 it('build uploads include only the reported completed export and regular diagnostic files', async () => {
   for (const name of ['app.apk', 'app.tar.gz', 'result.json', 'build.json', 'artifact.stderr.log', 'private.txt'])
     writeFileSync(join(root, name), name);
-  expect((await buildArtifactFiles(root, join(root, 'app.apk'))).map((path) => relative(root, path))).toEqual([
+  const canonicalRoot = await realpath(root);
+  expect((await buildArtifactFiles(root, join(root, 'app.apk'))).map((path) => relative(canonicalRoot, path))).toEqual([
     'result.json',
     'build.json',
     'artifact.stderr.log',
@@ -109,9 +111,9 @@ it('build uploads include only the reported completed export and regular diagnos
   ]);
   const alias = join(root, 'alias');
   symlinkSync(root, alias, 'junction');
-  expect(await buildArtifactFiles(alias, join(alias, 'app.apk'))).toContain(join(root, 'app.apk'));
-  expect(await buildArtifactFiles(root, null)).not.toContain(join(root, 'app.apk'));
-  expect(await buildArtifactFiles(root, null)).not.toContain(join(root, 'app.tar.gz'));
+  expect(await buildArtifactFiles(alias, join(alias, 'app.apk'))).toContain(join(canonicalRoot, 'app.apk'));
+  expect(await buildArtifactFiles(root, null)).not.toContain(join(canonicalRoot, 'app.apk'));
+  expect(await buildArtifactFiles(root, null)).not.toContain(join(canonicalRoot, 'app.tar.gz'));
   await expect(buildArtifactFiles(root, join(root, 'private.txt'))).rejects.toThrow('regular exported');
   rmSync(join(root, 'app.apk'));
   symlinkSync(join(root, 'private.txt'), join(root, 'app.apk'));
