@@ -752,6 +752,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Verify accelerated emulator support before building
         run: |
           mkdir -p "$RUNNER_TEMP/hosted-native-android/evidence"
