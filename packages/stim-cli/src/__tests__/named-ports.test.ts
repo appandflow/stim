@@ -263,6 +263,19 @@ test('an lsof failure other than "no listeners" keeps that allocation and still 
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 
+test('a win32 netstat failure keeps the allocations it could not inspect', async () => {
+  upsertProject(root, { ports: { web: 8900 } });
+  setExecutor({
+    runFile: (file: string, args: string[] = [], opts: { rejectStderr?: boolean } = {}) => {
+      expect([file, ...args, opts.rejectStderr]).toEqual(['netstat', '-ano', true]);
+      throw Object.assign(new Error('denied'), { status: 0, stdout: '', stderr: 'denied' });
+    },
+    runFileQuiet: () => null,
+  });
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'win32' })).rejects.toThrow('denied');
+  expect(getProject(root)?.ports).toEqual({ web: 8900 });
+});
+
 test('Metro reclamation and registry removal retain named allocations', async () => {
   const missing = join(home, 'missing');
   upsertProject(missing, { metroPort: 8082, ports: { web: 8900 } });
