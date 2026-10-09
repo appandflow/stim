@@ -625,6 +625,7 @@ test('the registered native iOS provider builds Release without a device and reu
   setExecutor(
     makeExecutor({
       runFile(file, args = []) {
+        if (args.includes('simctl')) throw new Error('A local artifact build must not inspect simulator runtimes');
         if (file === 'cp') cpSync(args.at(-2)!, args.at(-1)!, { recursive: true });
         return 'Xcode 26.0 build 17A';
       },

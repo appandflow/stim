@@ -498,10 +498,13 @@ export async function acquireIosArtifact(
     const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
-    const { runtime, unsupported } = recipe.offload?.context() ?? {
-      runtime: null,
-      unsupported: 'this project integration does not support offloaded builds',
-    };
+    const { runtime, unsupported } =
+      mode === 'off' && !namedBuildMachine(buildMachine)
+        ? { runtime: null, unsupported: null }
+        : (recipe.offload?.context() ?? {
+            runtime: null,
+            unsupported: 'this project integration does not support offloaded builds',
+          });
     const here = machineCapacity();
     const placement = offloadPlacement({
       mode,
