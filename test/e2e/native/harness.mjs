@@ -49,7 +49,10 @@ export function createHarness({ env, cliPath, label }) {
 
   const cliJson = (argv, opts = {}) => {
     const r = cli(argv, { ...opts, allowFail: true });
-    if (r.code !== 0) throw new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`);
+    if (r.code !== 0)
+      throw Object.assign(new Error(`stim ${argv.join(' ')} failed (exit ${r.code}):\n${lastLines(r.stderr, 40)}`), {
+        preserveNativeState: true,
+      });
     const line = r.stdout.trim().split('\n').findLast(Boolean);
     try {
       return JSON.parse(line);
@@ -504,7 +507,7 @@ export function dumpDiagnostics(h, created) {
       ['shell', 'pm', 'path', launch.appId],
       ['shell', 'cmd', 'package', 'resolve-activity', '--brief', launch.appId],
       ['shell', 'pidof', launch.appId],
-      ['logcat', '-d', '-t', '200'],
+      ['logcat', '-b', 'all', '-d', '-t', '2000'],
     ];
     const diagnostics = queries.map((query) => {
       const argv = ['-s', launch.deviceId, ...query];
