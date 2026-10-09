@@ -77,6 +77,7 @@ test('a run that --remote eas would refuse falls through before asking EAS', asy
     [{ tunnelMode: 'off' }, 'eas-metro-unreachable'],
     [{ platform: 'android', readSession: () => session }, 'eas-session-busy'],
     [{ deviceTypeFlag: 'iPad Pro', readSession: () => session }, 'eas-session-busy'],
+    [{ deviceTypeFlag: 'iPad Pro', readSession: () => ({ ...session, deviceType: null }) }, 'eas-session-busy'],
   ];
   for (const [overrides, code] of cases) expect(await check(overrides)).toMatchObject({ usable: false, code });
   expect(availability).not.toHaveBeenCalled();

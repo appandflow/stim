@@ -108,10 +108,10 @@ export async function checkEasFallback({
       'eas-session-busy',
       `this workspace's EAS Simulator session ${session.sessionId} runs ${session.platform ?? 'another platform'}`,
     );
-  if (session && deviceTypeFlag?.trim() && session.deviceType && session.deviceType !== deviceTypeFlag.trim())
+  if (session && deviceTypeFlag?.trim() && session.deviceType !== deviceTypeFlag.trim())
     return unusable(
       'eas-session-busy',
-      `this workspace's EAS Simulator session ${session.sessionId} runs ${session.deviceType}, not ${deviceTypeFlag.trim()}`,
+      `this workspace's EAS Simulator session ${session.sessionId} runs ${session.deviceType ?? 'the model EAS chose'}, not ${deviceTypeFlag.trim()}`,
     );
   if (!onPath('agent-device')) return unusable('eas-no-agent-device', 'agent-device is not on PATH');
   const bin = resolveBin(root);
