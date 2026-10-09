@@ -51,8 +51,9 @@ export async function stopMacosAppHeld(root: string): Promise<boolean> {
   const record = requiredMacosRecord(root);
   if (record?.supervisor) await stopProcesses([record.supervisor], SUPERVISOR_EXIT_MS);
   const app = readMacosRecord(root)?.app ?? record?.app;
+  if (app) await stopProcesses([app]);
   const instances = runningBundleInstances(root);
-  await stopProcesses(app ? [app, ...instances] : instances);
+  await stopProcesses(instances);
   if (!record) return instances.length > 0;
   const claims = readClaimSet(macosRuntimeClaim(root));
   if (claims.unresolved.length || claims.live.length) {

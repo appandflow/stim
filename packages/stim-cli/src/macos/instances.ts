@@ -68,7 +68,8 @@ export function runningBundleInstances(root: string): MacosProcess[] {
       open = getExecutor().runFile('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], { timeoutMs: 10_000 });
     } catch (error) {
       if (['gone', 'different'].includes(inspectProcessIdentity(record))) continue;
-      throw unverified(pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
+      open = String((error as { stdout?: unknown }).stdout ?? '');
+      if (!open.trim()) throw unverified(pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
     }
     if (lsofNamesBundleExecutable(open, dirs)) instances.push(record);
   }
