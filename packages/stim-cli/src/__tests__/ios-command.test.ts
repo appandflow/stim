@@ -795,6 +795,8 @@ describe('the simulator boot gate', () => {
 });
 
 describe('parked simulator adoption', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
     reserve();
     const events: string[] = [];
