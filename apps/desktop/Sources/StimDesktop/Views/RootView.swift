@@ -103,6 +103,10 @@ struct RootView: View {
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: $selection, openLogs: showLogs,
         tips: tips
       )
+      .toolbar(removing: .sidebarToggle)
+      .toolbar {
+        if columnVisibility != .detailOnly { sidebarToggleToolbar }
+      }
       .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
@@ -148,6 +152,7 @@ struct RootView: View {
       }
       .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
       .toolbar {
+        if columnVisibility == .detailOnly { sidebarToggleToolbar }
         let history = HistoryButtons(
           navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
         if #available(macOS 26.0, *) {
@@ -493,6 +498,33 @@ struct RootView: View {
   }
 
   private var controlsBesideInspector: Bool { showsWorkspace && inspector == .column }
+
+  @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
+    if #available(macOS 26.0, *) {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.glassEffect(.regular.interactive(), in: Capsule())
+      }
+      .sharedBackgroundVisibility(.hidden)
+    } else {
+      ToolbarItem(placement: .navigation) {
+        sidebarToggleButton.background(.regularMaterial, in: Capsule())
+      }
+    }
+  }
+
+  private var sidebarToggleButton: some View {
+    Button {
+      withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
+    } label: {
+      Image(systemName: "sidebar.left")
+        .font(.system(size: 17))
+        .frame(width: 40, height: 40)
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(Palette.secondary)
+    .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
+  }
 
   private var logsToggleButton: some View {
     LogsToggleButton(isShown: showsLogs, errors: selectedPage?.errors ?? 0) {
