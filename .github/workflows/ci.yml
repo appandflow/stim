@@ -10,6 +10,11 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      workspace_diff_diagnostic:
+        description: Collect the Windows Git output-cap process lifecycle.
+        type: boolean
+        default: false
   schedule:
     - cron: '0 6 * * *'
   push:
@@ -54,6 +59,22 @@ permissions:
   contents: read
 
 jobs:
+  workspace-diff-diagnostic:
+    if: github.event_name == 'workflow_dispatch' && inputs.workspace_diff_diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - run: node test/e2e/native/workspace-diff-diagnostic.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: workspace-diff-diagnostic
+          path: ${{ runner.temp }}/workspace-diff-diagnostic
+          if-no-files-found: error
+          retention-days: 7
+
   test:
     name: test (node ${{ matrix.node }})
     if: github.event_name != 'schedule'
