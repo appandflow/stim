@@ -1249,7 +1249,7 @@ private struct WebScreen: View {
   }
 }
 
-/// Covers a device's screen while its build runs: the phase, a thin bar and elapsed over the estimate.
+/// Covers a device's screen while its build runs; the workspace header shows the phase, progress and elapsed time.
 private struct BuildCover: View {
   var build: Build
   var opaque: Bool
@@ -1257,39 +1257,17 @@ private struct BuildCover: View {
   @Environment(\.workspaceTitle) private var title
 
   var body: some View {
-    TimelineView(.buildSeconds(build)) { context in
-      let progress = build.progress(at: context.date)
-      let (phase, counts) = build.currentPhaseLabel
-      let estimate = Format.estimateSuffix(elapsedMs: progress.elapsedMs, expectedMs: build.expectedMs)
-      VStack(spacing: Space.sm) {
-        Text(
-          heading
-            ?? (build.phase == "wait" && build.waitingOn != nil
-              ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-              : "Waiting for the \(platformName(build.platform)) build")
-        )
-        .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
-        if let text = build.waitingFor?.text(at: context.date) {
-          Text(text).font(.stim(.caption)).foregroundStyle(.white.opacity(0.85)).monospacedDigit()
-        }
-        Text([phase, counts].compactMap { $0 }.joined(separator: " \u{00B7} "))
-          .font(.stim(.caption))
-          .foregroundStyle(.white.opacity(0.6))
-          .lineLimit(1)
-        StimProgressBar(value: progress.fraction)
-          .controlSize(.small)
-          .frame(maxWidth: 160)
-        Text(Format.clock(ms: progress.elapsedMs) + estimate)
-          .font(.stim(.caption))
-          .monospacedDigit()
-          .foregroundStyle(.white.opacity(0.6))
-      }
-      .multilineTextAlignment(.center)
-      .padding()
-      .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Media.screen.opacity(opaque ? 1 : 0.85))
-      .accessibilityElement(children: .combine)
-    }
+    Text(
+      heading
+        ?? (build.phase == "wait" && build.waitingOn != nil
+          ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
+          : "Waiting for the \(platformName(build.platform)) build")
+    )
+    .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    .multilineTextAlignment(.center)
+    .padding()
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .background(Media.screen.opacity(opaque ? 1 : 0.85))
     .allowsHitTesting(false)
   }
 }
