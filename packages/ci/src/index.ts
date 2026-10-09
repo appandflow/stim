@@ -1,21 +1,13 @@
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { failure, prepareCI, writeJson, type CIContextOptions } from './context.ts';
 import { join, resolve } from 'node:path';
-import { createStim, type StimOptions, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
+import { createStim, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
 import { runCommand, type CommandResult } from './command.ts';
 
 type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 
-export interface CIOptions {
-  projectRoot: string;
+export interface CIOptions extends CIContextOptions {
   run: WithoutSignal<StimRunOptions>;
   command: readonly [string, ...string[]];
-  artifactsDir?: string;
-  home?: string;
-  buildCache?: string;
-  timeoutMs?: number;
-  signal?: AbortSignal;
-  onProgress?: StimOptions['onProgress'];
 }
 
 export interface CIFailure {
@@ -42,21 +34,6 @@ export interface CIResult {
   cleanup: { result: StimStopResult | null; error?: CIFailure };
 }
 
-function failure(error: unknown, code: string): CIFailure {
-  const caught = error as { code?: unknown; message?: unknown; remedy?: unknown } | null;
-  return {
-    code: typeof caught?.code === 'string' ? caught.code : code,
-    message: typeof caught?.message === 'string' ? caught.message : String(error),
-    ...(typeof caught?.remedy === 'string' ? { remedy: caught.remedy } : {}),
-  };
-}
-
-function writeJson(path: string, value: unknown): void {
-  const pending = `${path}.tmp`;
-  writeFileSync(pending, `${JSON.stringify(value, null, 2)}\n`);
-  renameSync(pending, path);
-}
-
 function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.ProcessEnv {
   const facts = result.run!.facts;
   return {
@@ -80,32 +57,9 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
       throw new Error('Test command arguments must be strings without null bytes.');
     }
   }
-  if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs <= 0)) {
-    throw new Error('timeoutMs must be a positive integer.');
-  }
-  if (
-    process.env.GITHUB_ACTIONS === 'true' &&
-    process.env.RUNNER_ENVIRONMENT === 'github-hosted' &&
-    process.env.RUNNER_TEMP &&
-    !options.home &&
-    !process.env.STIM_HOME
-  ) {
-    const directory = join(resolve(process.env.RUNNER_TEMP), 'stim-ci');
-    options = {
-      ...options,
-      home: join(directory, 'home'),
-      buildCache: options.buildCache || (process.env.STIM_BUILD_CACHE ? undefined : join(directory, 'build-cache')),
-    };
-  }
-  const projectRoot = realpathSync(options.projectRoot);
-  const artifactsDir = options.artifactsDir ? resolve(options.artifactsDir) : mkdtempSync(join(tmpdir(), 'stim-ci-'));
-  mkdirSync(artifactsDir, { recursive: true });
-  if (readdirSync(artifactsDir).length > 0) {
-    throw new Error(`Artifacts directory must be empty: ${artifactsDir}. Choose a new directory for this run.`);
-  }
-  const timeout = options.timeoutMs === undefined ? undefined : AbortSignal.timeout(options.timeoutMs);
-  const signals = [options.signal, timeout].filter((value): value is AbortSignal => value !== undefined);
-  const signal = signals.length ? AbortSignal.any(signals) : undefined;
+  const prepared = prepareCI(options);
+  options = prepared.options;
+  const { projectRoot, artifactsDir, timeout, signal } = prepared;
   const started = Date.now();
   const result: CIResult = {
     version: 1,
@@ -224,3 +178,5 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
 }
 
 export type { CommandResult } from './command.ts';
+
+export { buildCI, type CIBuildOptions, type CIBuildResult } from './build.ts';

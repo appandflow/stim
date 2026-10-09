@@ -48,13 +48,36 @@ operations as the CLI. It does not parse Commander arguments. The importing
 process keeps its working directory, environment, output and signal handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
-`StimRunOptions`, `StimRunResult`, `StimStopOptions`, `StimStopResult`,
+`StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`, `StimStopOptions`, `StimStopResult`,
 `StimDiagnosticsOptions`, `StimDiagnostics`, `StimProgress`, and `StimPlatform`.
+
+## Build only
+
+```ts
+const result = await stim.build({ platform: 'ios', configuration: 'Debug' });
+console.log(result.facts.appPath);
+```
+
+`build` uses the selected project's compiler recipe and normal build/cache
+coordination. It does not create or boot a device, launch an app, start Metro,
+or stop a session. Results are inferred from `platform`, just like `run`.
+
+| Platform  | Options                                                                                            | Returned artifact                        |
+| --------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `ios`     | `scheme`, `configuration`, `arch` (`arm64`, `x86_64`, `all`), `buildCache`, `remoteBuild`          | `facts.appPath`, a simulator app         |
+| `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild` | `facts.apkPath`                          |
+| `macos`   | `remoteBuild`                                                                                      | `facts.bundle`, the configured Debug app |
+
+The default Debug target architecture matches the host; Release uses all
+architectures. Each result points to a separate owned copy retained until this
+workspace is removed. A later build does not overwrite that copy. Build-only
+does not export distribution archives or infer a web compilation pipeline.
+Use `buildCI` from `@stim-cli/ci` to export the app and diagnostics for CI artifacts.
 
 ## Run
 
 `run` builds, installs and launches with the same requirements and configuration
-as the corresponding CLI command. There is no build-only method yet.
+as the corresponding CLI command.
 
 | Platform  | Project              | Options                                            |
 | --------- | -------------------- | -------------------------------------------------- |

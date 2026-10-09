@@ -31,6 +31,32 @@ npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --ar
 </TabItem>
 </Tabs>
 
+## Build without launching
+
+```sh
+stim-ci build --platform android --project ./app --artifacts ./build-results
+```
+
+`build` needs no test command or device. It preserves existing workspace
+sessions and shares normal cache validation with a later `run` step. GitHub-hosted
+steps automatically share the job's temporary home and cache. Use a separate
+results directory for each step.
+
+Upload the results directory through your CI provider. It includes `result.json`,
+`build.json`, diagnostics, and an APK or a `tar.gz` app bundle. Apple bundles are
+archived to preserve executable modes and symlinks across artifact transport.
+iOS outputs target the simulator; distribution archives and web compilation
+are outside this command. Downloaded-artifact import into a Stim run is not
+provided.
+
+```ts
+import { buildCI } from '@stim-cli/ci';
+const result = await buildCI({ projectRoot: '/checkout/app', build: { platform: 'ios' } });
+process.exitCode = result.exitCode;
+```
+
+## Run and test
+
 The command after `--` is an argument vector. Use an explicit shell when you
 need shell syntax. Progress and test output go to stderr; stdout and
 `test-results/result.json` contain the structured outcome. A failed test keeps

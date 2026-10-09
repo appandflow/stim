@@ -60,9 +60,12 @@ try {
 
 `run` supports iOS and Android React Native/Expo apps, SwiftPM macOS apps, and
 web pages with the same requirements as their CLI commands. Web runs require an
-already running server. `run` builds, installs and launches; there is no
-build-only API yet. It preserves the CLI's launch evidence, including
-`'bundling'` and `'unverified'` results.
+already running server. `run` builds, installs and launches.
+`build({ platform: 'ios' })` returns a retained simulator app without starting
+a device or runtime; Android returns an APK and macOS returns an app bundle.
+Build-only preserves existing sessions and uses the same cache and build locks.
+Run results preserve the CLI's launch evidence, including `'bundling'` and
+`'unverified'` results.
 
 Each operation uses a separate bundled worker so its home, cancellation and
 process state cannot change the importing process. The CLI and workers call
