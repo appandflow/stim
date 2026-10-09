@@ -384,14 +384,14 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   if (job.native) {
     if (job.platform !== 'ios' || job.native.provider !== 'xcode')
       return failed('unsupported-provider', 'The worker does not implement this native provider.');
+    const selected = projectRegistry.selectIos(root);
+    if ('problem' in selected || selected.id !== 'native-xcode')
+      return failed('provider-mismatch', 'The transferred project did not select the native Xcode integration.');
     const metadataDirectories = nativeXcodeMetadataDirectories(
       selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
     );
     if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
       return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
-    const selected = projectRegistry.selectIos(root);
-    if ('problem' in selected || selected.id !== 'native-xcode')
-      return failed('provider-mismatch', 'The transferred project did not select the native Xcode integration.');
     compiled = await compileNativeIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
