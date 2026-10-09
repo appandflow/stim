@@ -16,7 +16,8 @@
         "apps/desktop/scripts/*.mjs",
         "packaging/store/assemble.mjs",
         "scripts/ci/app-smoke.mjs"
-      ]
+      ],
+      "ignoreBinaries": ["pwsh.exe"]
     },
     "packages/server": {
       "ignoreBinaries": ["plutil", "ditto", "mkfifo"]

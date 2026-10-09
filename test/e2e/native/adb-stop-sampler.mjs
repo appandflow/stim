@@ -20,17 +20,20 @@ Mark 'listeners.end'
 Mark 'memory.start'
 $memory = Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize -OperationTimeoutSec 2
 Mark 'memory.end'
+Mark 'serialization.start'
 @{ rows = $rows; listeners = $listeners; memory = @{ freePhysicalKiB = [string]$memory.FreePhysicalMemory; totalPhysicalKiB = [string]$memory.TotalVisibleMemorySize; freeVirtualKiB = [string]$memory.FreeVirtualMemory; totalVirtualKiB = [string]$memory.TotalVirtualMemorySize } } | ConvertTo-Json -Depth 4 -Compress
+Mark 'serialization.end'
 `;
 function snapshot() {
   return new Promise((resolve, reject) => {
     const child = execFile(
-      'powershell.exe',
+      'pwsh.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
       { timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' },
       (error, stdout, stderr) => {
         const stages = stderr.split(/\r?\n/).flatMap((line) => {
-          const match = /^\[stim-stop-query\] (processes|listeners|memory)\.(start|end) ([0-9T:.Z-]+)$/.exec(line);
+          const match =
+            /^\[stim-stop-query\] (processes|listeners|memory|serialization)\.(start|end) ([0-9T:.Z-]+)$/.exec(line);
           return match ? [{ stage: `${match[1]}.${match[2]}`, at: match[3] }] : [];
         });
         record('observer.query-stages', { pid: child.pid, stages });
