@@ -3315,21 +3315,34 @@ test('revocation during inspection refuses adoption and retires the parked devic
 });
 
 test('an eviction snapshot cannot retire a device adopted and parked again while an older retirement runs', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents,
+    allowed: (client) => allowed.has(client),
+    limits: { prepareMs: 5000, logsMs: 1000, killGraceMs: 100 },
+  });
   parkingLimits('1');
   const oldest = seedHosted({ deviceType: 'delayed-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const reused = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const third = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } });
   const oldHome = join(deviceHostArea(oldest.id), 'home');
   const reconciliation = host.reconcileStopped();
-  await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
-  const adopted = await reserve({ attempt: 'new' });
-  expect(adopted.id).toBe(reused.id);
-  await state(reused.id, 'ready');
-  host.stop('client', { session: reused.id });
-  await state(reused.id, 'stopped');
-  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined());
-  writeFileSync(join(oldHome, 'release-stop'), 'continue');
-  await reconciliation;
+  try {
+    await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
+    const adopted = await reserve({ attempt: 'new' });
+    expect(adopted.id).toBe(reused.id);
+    await state(reused.id, 'ready');
+    host.stop('client', { session: reused.id });
+    await state(reused.id, 'stopped');
+    await vi.waitFor(() =>
+      expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined(),
+    );
+  } finally {
+    writeFileSync(join(oldHome, 'release-stop'), 'continue');
+    await reconciliation;
+  }
   expectRetired(oldest.id);
   expectRetired(third.id);
   expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();
