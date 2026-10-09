@@ -50,7 +50,7 @@ export type BuildTarget =
       runtime: string | null;
       cocoapodsPinned: boolean;
     }
-  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements }
+  | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -189,7 +189,18 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode'): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
+  if (native === 'gradle')
+    return {
+      ...androidToolchain(),
+      xcode: null,
+      simulatorSdk: null,
+      cocoapods: null,
+      macosSdk: null,
+      bundler: null,
+      runtimes: [],
+      androidSdk: sdkPackages(),
+    };
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');

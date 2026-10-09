@@ -50,6 +50,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
+ * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -74,6 +75,7 @@ export const FEATURES = [
   'hosted-ios-process',
   'native-xcode-build',
   'native-xcode-toolchain',
+  'native-gradle-build',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
@@ -784,6 +786,7 @@ export interface BuildOfferParams {
   lockfile?: string;
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
+  native?: 'xcode' | 'gradle';
 }
 
 /** The toolchain a build must match exactly on both Macs. */
@@ -861,9 +864,16 @@ export interface BuildAndroidOptions {
   compilerCache: 'ccache' | 'none';
 }
 
+export interface GradleOffloadInputs {
+  complete: true;
+  ignored: string[];
+  outputs: string[];
+}
+
 /**
  * Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. iOS
  * needs `runtime`; Android needs `android`; macOS needs `macos` and uses the manifest digest as its fingerprint.
+ * Declared native Gradle jobs use a null fingerprint; their sourceDigest is only a transfer identity.
  */
 export interface BuildStartParams {
   repo: string;
@@ -872,8 +882,10 @@ export interface BuildStartParams {
   configuration?: string | null;
   scheme?: string | null;
   runtime?: string | null;
-  fingerprint: string;
-  native?: { provider: 'xcode'; sourceDigest: string; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
+  fingerprint: string | null;
+  native?:
+    | { provider: 'xcode'; sourceDigest: string; cacheKey: string; arch: 'arm64' | 'x86_64' | null }
+    | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
@@ -913,8 +925,9 @@ export type BuildJobOutcome =
   | {
       ok: true;
       artifact: BuildArtifactResult;
-      fingerprint: string;
+      fingerprint: string | null;
       sourceDigest?: string;
+      androidPackage?: string;
       compilationCache: Record<string, unknown>;
       timings: Record<string, number>;
     }

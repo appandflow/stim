@@ -43,6 +43,7 @@ export interface AndroidArtifactRecipe {
     runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } | null;
   } | null;
   offload: {
+    supportsUncachedArtifacts?: boolean;
     unsupported: string | null;
     target(): Parameters<typeof chooseBuildMachine>[0]['target'];
     request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;

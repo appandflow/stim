@@ -285,7 +285,7 @@ export class BuildHost {
     return join(this.root(), client);
   }
 
-  toolchain(rubyVersion: string | null = null, native?: 'xcode'): Promise<BuildToolchain | null> {
+  toolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): Promise<BuildToolchain | null> {
     const key = JSON.stringify([native ?? null, native ? null : rubyVersion]);
     const now = Date.now();
     for (const [context, entry] of this.toolchains) {
@@ -294,7 +294,7 @@ export class BuildHost {
     const cached = this.toolchains.get(key);
     if (cached) return cached.value;
     const value = new Promise<BuildToolchain | null>((resolve) => {
-      const args = native ? ['offer-native-xcode'] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
+      const args = native ? [`offer-native-${native}`] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
       const child = spawn(process.execPath, [this.options.worker, ...args], {
         env: this.options.env,
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -332,8 +332,8 @@ export class BuildHost {
     ) {
       return refusal('bad-request', 'build.offer needs a Ruby installation name without path separators.');
     }
-    if (params.native !== undefined && params.native !== 'xcode')
-      return refusal('bad-request', 'build.offer supports only the native Xcode toolchain.');
+    if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
+      return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
     if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
     const root = this.root();
@@ -546,7 +546,10 @@ export class BuildHost {
       } else if (value.type === 'log' && isJsonObject(value.record)) {
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
-        entry.outcome = workerOutcome(value);
+        entry.outcome = workerOutcome(
+          value,
+          isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
+        );
       }
     });
     this.jobs.add(entry);
@@ -699,15 +702,24 @@ export class BuildHost {
   }
 }
 
-function workerOutcome(value: Record<string, unknown>): BuildJobOutcome {
+function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
   if (value.ok === true && isJsonObject(value.artifact)) {
     const { name, size, sha256 } = value.artifact;
-    if (typeof name === 'string' && typeof size === 'number' && typeof sha256 === 'string') {
+    if (
+      typeof name === 'string' &&
+      typeof size === 'number' &&
+      typeof sha256 === 'string' &&
+      (native !== 'gradle' ||
+        (value.fingerprint === null &&
+          typeof value.androidPackage === 'string' &&
+          /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)))
+    ) {
       return {
         ok: true,
         artifact: { name, size, sha256 },
-        fingerprint: String(value.fingerprint),
+        fingerprint: native === 'gradle' ? null : String(value.fingerprint),
+        ...(native === 'gradle' ? { androidPackage: value.androidPackage as string } : {}),
         ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
         timings,
@@ -815,7 +827,7 @@ export class BuildSession {
   async start(params: unknown): Promise<{ result: { job: string } } | Refusal> {
     if (!isJsonObject(params) || !validRepo(params.repo))
       return refusal('bad-request', 'build.start needs params.repo.');
-    const strings = ['fingerprint', 'stimBuild'] as const;
+    const strings = ['stimBuild'] as const;
     if (strings.some((key) => typeof params[key] !== 'string' || !params[key])) {
       return refusal('bad-request', `build.start needs params.${strings.join(', params.')}.`);
     }
@@ -829,27 +841,47 @@ export class BuildSession {
     let native: BuildStartParams['native'];
     if (params.native !== undefined) {
       const input = params.native;
-      const optimizations = params.optimizations;
-      if (
-        platform !== 'ios' ||
-        !isJsonObject(input) ||
-        input.provider !== 'xcode' ||
-        typeof input.sourceDigest !== 'string' ||
-        !/^[0-9a-f]{64}$/.test(input.sourceDigest) ||
-        typeof input.cacheKey !== 'string' ||
-        !input.cacheKey ||
-        ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
-        !isJsonObject(optimizations) ||
-        typeof optimizations.compilationCache !== 'boolean' ||
-        typeof optimizations.prefixMapping !== 'boolean' ||
-        (optimizations.swiftCompilationCache !== null && typeof optimizations.swiftCompilationCache !== 'boolean')
-      )
-        return refusal(
-          'bad-request',
-          'A native Xcode build needs its source digest, cache key, architecture and compiler options.',
-        );
+      if (!isJsonObject(input) || typeof input.sourceDigest !== 'string' || !/^[0-9a-f]{64}$/.test(input.sourceDigest))
+        return refusal('bad-request', 'A native build needs its source transfer digest.');
+      if (input.provider === 'gradle') {
+        const inputs = input.inputs;
+        if (
+          platform !== 'android' ||
+          params.fingerprint !== null ||
+          !isJsonObject(inputs) ||
+          inputs.complete !== true ||
+          Object.keys(inputs).some((key) => !['complete', 'ignored', 'outputs'].includes(key)) ||
+          !Array.isArray(inputs.ignored) ||
+          !inputs.ignored.every(validBuildPath) ||
+          !Array.isArray(inputs.outputs) ||
+          !inputs.outputs.every(validBuildPath)
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle build needs declared complete inputs and a null artifact fingerprint.',
+          );
+      } else {
+        const optimizations = params.optimizations;
+        if (
+          platform !== 'ios' ||
+          input.provider !== 'xcode' ||
+          typeof input.cacheKey !== 'string' ||
+          !input.cacheKey ||
+          ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
+          !isJsonObject(optimizations) ||
+          typeof optimizations.compilationCache !== 'boolean' ||
+          typeof optimizations.prefixMapping !== 'boolean' ||
+          (optimizations.swiftCompilationCache !== null && typeof optimizations.swiftCompilationCache !== 'boolean')
+        )
+          return refusal(
+            'bad-request',
+            'A native Xcode build needs its source digest, cache key, architecture and compiler options.',
+          );
+      }
       native = input as unknown as NonNullable<BuildStartParams['native']>;
     }
+    if (native?.provider !== 'gradle' && (typeof params.fingerprint !== 'string' || !params.fingerprint))
+      return refusal('bad-request', 'build.start needs params.fingerprint.');
     if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
       return refusal('bad-request', 'Directory entries require a native build request.');
     const android = platform === 'android' ? androidOptions(params.android) : null;
@@ -933,7 +965,7 @@ export class BuildSession {
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         runtime: optional(params.runtime),
-        expectedFingerprint: params.fingerprint,
+        expectedFingerprint: params.fingerprint as string | null,
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });

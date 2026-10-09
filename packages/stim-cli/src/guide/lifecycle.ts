@@ -18,8 +18,19 @@ Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the 
 must support native Android process mode. Multiple application modules,
 density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported. Stim verifies the existing APK signature; it does not sign it.
-Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
-and build offload are unavailable until arbitrary Gradle inputs can be tracked.
+Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
+tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+\`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
+Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
+Paths are exact repository-relative paths. complete affirms that Git-visible
+source plus the listed ignored files suffice, including optional files; Gradle
+DSL can read undeclared input without failing. Never list secrets or user Gradle
+homes. External inputs, directory links, submodules and custom local.properties
+refuse; an SDK-only local.properties stays local. Only declared directories
+reported by AGP and previously produced by this worker remain warm, along with
+worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
+incremental, task-cache and configuration-cache reuse; transfer digests never
+become reusable APK cache keys. Older hosts refuse before source upload.
 Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
 prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.
@@ -431,7 +442,8 @@ hosted-android-process; older hosts refuse before admission or APK upload.
 Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
-Native EAS/proxy targets and build offload remain unsupported.
+Native EAS/proxy targets remain unsupported. Build offload requires the complete
+android.offloadInputs declaration described in the android guide.
 
 Status adds android.host { machine, session, selected, agent, device: { name,
 systemImage, api }, state } per slot. The public name is the profile and API

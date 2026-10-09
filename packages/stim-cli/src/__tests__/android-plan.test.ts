@@ -285,6 +285,7 @@ describe('planAndroid', () => {
               return 'problem' in selected
                 ? selected
                 : {
+                    id: selected.id,
                     load: async () =>
                       reactNativeAndroidProject(path, {
                         plan: {
