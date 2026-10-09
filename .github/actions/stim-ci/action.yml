@@ -24,26 +24,23 @@ inputs:
   timeout:
     description: Session timeout in seconds.
     default: '1800'
+  upload-artifacts:
+    description: Upload result, test and diagnostic logs to GitHub, including on failure. Set false for local paths only.
+    default: 'true'
+  artifact-name:
+    description: Unique GitHub artifact name. Defaults to a generated name for this invocation.
+  retention-days:
+    description: Artifact retention in days. Zero uses the repository default.
+    default: '0'
 outputs:
   result:
     description: Absolute path to result.json.
-    value: ${{ steps.run.outputs.result }}
   artifacts:
     description: Absolute diagnostics directory.
-    value: ${{ steps.run.outputs.artifacts }}
+  artifact-id:
+    description: Uploaded GitHub artifact ID, when an upload succeeds.
+  artifact-url:
+    description: Uploaded GitHub artifact URL, when an upload succeeds.
 runs:
-  using: composite
-  steps:
-    - id: run
-      shell: bash
-      env:
-        STIM_ACTION_PLATFORM: ${{ inputs.platform }}
-        STIM_ACTION_PROJECT: ${{ inputs.project }}
-        STIM_ACTION_COMMAND: ${{ inputs.command }}
-        STIM_ACTION_VERSION: ${{ inputs.version }}
-        STIM_ACTION_CLI: ${{ inputs.cli-path }}
-        STIM_ACTION_ARTIFACTS: ${{ inputs.artifacts }}
-        STIM_ACTION_HOME: ${{ inputs.home }}
-        STIM_ACTION_CACHE: ${{ inputs.build-cache }}
-        STIM_ACTION_TIMEOUT: ${{ inputs.timeout }}
-      run: exec node "$GITHUB_ACTION_PATH/run.mjs"
+  using: node24
+  main: dist/main.mjs

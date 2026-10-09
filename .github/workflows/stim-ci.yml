@@ -96,6 +96,8 @@ jobs:
           command: node ../../scripts/ci/app-smoke.mjs
           artifacts: stim-ci-results/${{ matrix.platform }}/first
           timeout: '2400'
+          artifact-name: stim-ci-${{ matrix.platform }}-first
+          retention-days: '7'
 
       - name: Repeat with the job's warm build state
         uses: ./.github/actions/stim-ci
@@ -106,6 +108,8 @@ jobs:
           command: node ../../scripts/ci/app-smoke.mjs
           artifacts: stim-ci-results/${{ matrix.platform }}/warm
           timeout: '600'
+          artifact-name: stim-ci-${{ matrix.platform }}-warm
+          retention-days: '7'
 
       - name: Record Android Gradle heap
         if: always() && matrix.platform == 'android'
@@ -113,11 +117,3 @@ jobs:
         run: |
           grep -h 'DefaultDaemonContext' "${GRADLE_USER_HOME:-$HOME/.gradle}"/daemon/*/daemon-*.out.log |
             grep -oE -- '-Xmx[0-9]+[kKmMgG]?' | sort -u
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: stim-ci-${{ matrix.platform }}
-          path: stim-ci-results/${{ matrix.platform }}
-          if-no-files-found: warn
-          retention-days: 7

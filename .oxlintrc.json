@@ -18,7 +18,8 @@
     "website/build/**",
     "website/.docusaurus/**",
     "apps/mobile/**",
-    "packages/core/receive-validators.mjs"
+    "packages/core/receive-validators.mjs",
+    ".github/actions/stim-ci/dist/**"
   ],
   "rules": {
     "complexity": ["error", { "max": 80 }],

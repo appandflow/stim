@@ -86,7 +86,9 @@ reason yet to bypass the remaining coordination.
 The repository includes a thin [Stim CI action](https://github.com/appandflow/stim/tree/main/.github/actions/stim-ci).
 It maps workflow inputs to `stim-ci`, forwards cancellation, and writes the
 job summary. Native tools and app dependencies must be installed first.
-The action supports macOS and Linux runners with Bash and Node.js 22.12 or later.
+The bundled TypeScript action uses GitHub's Node.js 24 runtime and supports
+macOS and Linux runners with Bash. Windows is refused; self-hosted runners
+need support for Node.js 24 JavaScript actions.
 
 For dogfood against a built Stim checkout:
 
@@ -100,11 +102,8 @@ For dogfood against a built Stim checkout:
     home: ${{ runner.temp }}/stim-home
     artifacts: stim-ci-results
     timeout: '1800'
-- uses: actions/upload-artifact@v4
-  if: always()
-  with:
-    name: stim-ci-results
-    path: stim-ci-results
+    artifact-name: stim-ci-ios
+    retention-days: '7'
 ```
 
 Once released, consumers can pin the action to a commit and supply `version`
@@ -113,8 +112,17 @@ command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
 
 Use a new, empty artifacts directory for each invocation. Leave at least 70
-seconds for cleanup after the action timeout and upload artifacts even on
-failure. Hard provider termination can prevent cleanup from completing.
+seconds for cleanup after the action timeout, plus time for artifact upload.
+The Action automatically uploads result, test and diagnostic/compiler logs on
+success and failure. It exposes `artifact-id` and `artifact-url` after upload,
+while `result` and `artifacts` remain local paths for later steps in the job.
+A custom `artifact-name` must be unique across invocations in the workflow run.
+Set `upload-artifacts: 'false'` to opt out or use another transport, including
+on GitHub Enterprise Server where the toolkit service is unavailable. An
+upload failure preserves an earlier nonzero CI exit code, otherwise it fails
+the Action. Uploads exclude app binaries, caches, symlinks and arbitrary test
+files. Raw log copying depends on the selected package version.
+Hard provider termination can prevent cleanup and uploads from completing.
 
 ## EAS Workflows
 
