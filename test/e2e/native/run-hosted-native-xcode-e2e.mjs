@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFile, fork } from 'node:child_process';
 import { once } from 'node:events';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -63,6 +74,7 @@ const env = {
   CI: '1',
   NODE_OPTIONS: '--dns-result-order=ipv4first',
   STIM_HOME: clientHome,
+  STIM_DEBUG: '1',
   STIM_BUILD_CACHE: join(root, 'build-cache'),
   STIM_POOL_IOS_PARKED_MAX: '0',
   STIM_POOL_ANDROID_PARKED_MAX: '0',
@@ -118,6 +130,27 @@ function save(label, payload) {
     join(evidence, `${label}.json`),
     JSON.stringify(payload, (key, value) => (/token|secret/i.test(key) ? '[redacted]' : value), 2) + '\n',
   );
+}
+function retainDebug(stage) {
+  const homes = [
+    ['client', clientHome],
+    ['host', hostHome],
+  ];
+  const sessionRoot = join(hostHome, 'device-host', 'sessions');
+  for (const entry of existsSync(sessionRoot) ? readdirSync(sessionRoot, { withFileTypes: true }) : [])
+    if (entry.isDirectory() && /^[a-f0-9-]{36}$/.test(entry.name))
+      homes.push([entry.name, join(sessionRoot, entry.name, 'home')]);
+  for (const [name, home] of homes) {
+    for (const file of ['cli.ndjson', 'cli.ndjson.1', 'server.ndjson', 'server.ndjson.1']) {
+      const path = join(home, 'logs', 'debug', file);
+      const stat = lstatSync(path, { throwIfNoEntry: false });
+      if (!stat) continue;
+      assert(stat.isFile() && stat.size <= 16 * 1024 * 1024, 'Debug capture must be a bounded regular file.');
+      const target = join(evidence, 'debug', stage, name);
+      mkdirSync(target, { recursive: true });
+      writeFileSync(join(target, file), redact(readFileSync(path, 'utf8')));
+    }
+  }
 }
 async function run(label, file, args, options = {}) {
   const prefix = join(evidence, `${String(++serial).padStart(3, '0')}-${label}`);
@@ -424,6 +457,11 @@ try {
   process.exitCode = 1;
 } finally {
   const failures = [];
+  try {
+    retainDebug('before-cleanup');
+  } catch (error) {
+    summary.diagnostics.push(`Debug capture before cleanup: ${error.message}`);
+  }
   if (createdWorktree && existsSync(app)) {
     try {
       await run('final-logs', process.execPath, [cli, 'logs', '--source', 'all', '--json']);
@@ -495,6 +533,11 @@ try {
     }
   } catch (error) {
     failures.push(error.message);
+  }
+  try {
+    retainDebug('after-cleanup');
+  } catch (error) {
+    summary.diagnostics.push(`Debug capture after cleanup: ${error.message}`);
   }
   summary.cleanup = { ok: failures.length === 0, failures };
   save('summary', summary);
