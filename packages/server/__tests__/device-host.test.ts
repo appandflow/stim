@@ -13,7 +13,7 @@ import {
   symlinkSync,
 } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -205,9 +205,11 @@ let home: string;
 let host: DeviceHost;
 let allowed: Set<string>;
 let hostEnv: NodeJS.ProcessEnv;
+let pendingQueryPid: number | undefined;
 const request = { workspace: '/client/worktree', slot: 'default', platform: 'ios', attempt: 'first' };
 
 beforeEach(() => {
+  pendingQueryPid = undefined;
   agentCalls = [];
   agentAccess = new Map();
   agentIssued = new Map();
@@ -237,7 +239,63 @@ afterEach(async () => {
     }
   }
   delete process.env.STIM_HOME;
-  rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  try {
+    rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch (error) {
+    if (
+      process.env.CI &&
+      process.platform === 'win32' &&
+      pendingQueryPid &&
+      (error as NodeJS.ErrnoException).code === 'EBUSY'
+    ) {
+      const evidence: Record<string, unknown> = { home, pendingQueryPid };
+      try {
+        process.kill(pendingQueryPid, 0);
+        evidence.pidObservation = 'present';
+      } catch (probeError) {
+        evidence.pidObservation = (probeError as NodeJS.ErrnoException).code;
+      }
+      try {
+        evidence.remainingEntries = readdirSync(home, { withFileTypes: true })
+          .slice(0, 32)
+          .map((entry) => ({
+            name: entry.name,
+            file: entry.isFile(),
+            directory: entry.isDirectory(),
+            symlink: entry.isSymbolicLink(),
+          }));
+      } catch (readError) {
+        evidence.directoryError = (readError as NodeJS.ErrnoException).code;
+      }
+      try {
+        const worker = join(home, 'worker.mjs').replaceAll("'", "''");
+        evidence.processes = JSON.parse(
+          execFileSync(
+            'powershell.exe',
+            [
+              '-NoProfile',
+              '-NonInteractive',
+              '-Command',
+              `$ErrorActionPreference='Stop'; @(Get-CimInstance Win32_Process -OperationTimeoutSec 1 | Where-Object { $_.ProcessId -eq ${pendingQueryPid} -or ($_.CommandLine -and $_.CommandLine.Contains('${worker}')) } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,HandleCount,ThreadCount,WorkingSetSize) | ConvertTo-Json -Compress`,
+            ],
+            {
+              encoding: 'utf8',
+              cwd: tmpdir(),
+              timeout: 2000,
+              killSignal: 'SIGKILL',
+              maxBuffer: 16384,
+              windowsHide: true,
+            },
+          ).trim() || '[]',
+        );
+      } catch (queryError) {
+        const failed = queryError as NodeJS.ErrnoException & { status?: number; signal?: string };
+        evidence.processQueryError = { code: failed.code, status: failed.status, signal: failed.signal };
+      }
+      console.error('hosted-query-cleanup-failure', JSON.stringify(evidence));
+    }
+    throw error;
+  }
 });
 
 async function reserve(extra = {}) {
@@ -1683,6 +1741,7 @@ test.each(['revoke', 'close'])('does not publish an offer after %s during an act
     expect(recordedPid).toBeGreaterThan(0);
     return recordedPid;
   });
+  pendingQueryPid = pid;
   if (action === 'revoke') {
     allowed.delete('client');
     host.revoke();
