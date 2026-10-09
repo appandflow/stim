@@ -69,6 +69,10 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      native_ios_only:
+        description: 'Run only the native Xcode acceptance fixture'
+        type: boolean
+        default: false
       suite:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
@@ -99,6 +103,7 @@ permissions:
 
 jobs:
   plan:
+    if: inputs.native_ios_only != true
     name: plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -599,3 +604,37 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+
+  native-xcode:
+    name: native Xcode acceptance
+    if: github.event_name == 'workflow_dispatch' && (inputs.native_ios_only || inputs.suite == 'all')
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Select Xcode 27
+        shell: bash
+        run: sudo xcode-select -s /Applications/Xcode_27.0.app/Contents/Developer
+      - name: Install pinned UI driver
+        shell: bash
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Native Debug, Release and Staging lifecycle
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-xcode
+          node test/e2e/native/run-native-xcode-e2e.mjs 2>&1 | tee artifacts/native-xcode/driver.log
+      - name: Upload native Xcode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-xcode-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/native-xcode
+          if-no-files-found: warn

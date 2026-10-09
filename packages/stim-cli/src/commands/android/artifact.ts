@@ -190,7 +190,8 @@ export async function acquireAndroidArtifact(
   const { variant, cache: cachePolicy } = buildPlan;
   const signal = runCancellationSignal() ?? new AbortController().signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
-  const useBuildCache = cachePolicy.read;
+  let useBuildCache = cachePolicy.read;
+  let cacheIneligible: string | null = null;
   let androidPackage = initialPackage;
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
   let phaseFailure: AndroidArtifactFailure | null = null;
@@ -263,6 +264,16 @@ export async function acquireAndroidArtifact(
       if (error instanceof ArtifactRefusal && error.missReason) record.missReason = error.missReason;
       throw error;
     }
+    if ('cacheIneligible' in computed) {
+      cacheIneligible = computed.cacheIneligible;
+      useBuildCache = false;
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = false;
+      record.cacheSkipped = true;
+      phase('fingerprint', `unavailable: ${cacheIneligible}`);
+      return true;
+    }
     hash = computed.hash;
     record.fingerprint = hash;
     cacheKey = computed.key;
@@ -301,7 +312,7 @@ export async function acquireAndroidArtifact(
   let uploadPending: Promise<RemoteUploadLike> | null = null;
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (!recipe.legacyCache) return;
+    if (cacheIneligible || !recipe.legacyCache) return;
 
     if (!apkPath) {
       const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
@@ -361,6 +372,7 @@ export async function acquireAndroidArtifact(
   let waitedForBuild: WaitedForBuild | null = null;
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
   async function awaitSharedBuild(): Promise<string | null> {
+    if (!useBuildCache) return null;
     const shared = await waitForSharedBuild({
       platform: PLATFORM,
       key: cacheKey,
@@ -421,6 +433,7 @@ export async function acquireAndroidArtifact(
         diff: null,
       };
     }
+    if (cacheIneligible) return { reason: skippedMissReason(cacheIneligible), diff: null };
     if (!useBuildCache) {
       return {
         reason: skippedMissReason(
@@ -476,6 +489,11 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
+    if (cacheIneligible) {
+      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
+      hereReason = cacheIneligible;
+      return null;
+    }
     const { mode, machines } = buildPlacementCandidates(buildMachine);
     if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
     const unsupported =
@@ -629,6 +647,13 @@ export async function acquireAndroidArtifact(
       androidPackage = preparation.androidPackage;
       record.bundleId = androidPackage;
     }
+    if (cacheIneligible || !identity) {
+      storeHash = '';
+      storeKey = '';
+      record.fingerprint = null;
+      record.cacheKey = null;
+      return null;
+    }
     if (identity.key !== storeKey) {
       storeHash = identity.hash;
       storeKey = identity.key;
@@ -726,6 +751,7 @@ export async function acquireAndroidArtifact(
   }
 
   async function validateCompiled(): Promise<'cacheable' | 'uncacheable'> {
+    if (cacheIneligible) return 'uncacheable';
     const identity = await recipe.validate();
     if (!identity) {
       record.fingerprint = null;

@@ -36,8 +36,9 @@ stim logs --errors
 stim stop`}
 />
 
-`ios` and `android` require a running dev server for a Debug build. Release
-builds embed the JavaScript bundle and skip that requirement.
+React Native and Expo Debug runs use a dev server and start it when needed.
+Their Release builds embed JavaScript and skip that requirement.
+[Native Xcode apps](#native-xcode-apps) run without Metro in every configuration.
 
 When [Stim Desktop](./desktop.md) is installed, `worktree warm`, `start`,
 `ios`, `android` and `web` print a link that opens the workspace in it, on
@@ -344,13 +345,13 @@ build can compile on a paired remote Mac instead: see `remote.buildMode` in
   (the selected `auto`, `local`, or machine name) and `builtOn` (`here` or the
   worker name, absent when no build ran, including cache hits).
 
-A Debug run starts the workspace's dev server as `stim start` would when it is
+A React Native or Expo Debug run starts the workspace's dev server as `stim start` would when it is
 not running, including after an idle stop. With eas/proxy `--remote`, it starts it as
 `stim start --remote` would. The JSON result then carries
 `devServer: { "started": true, "reason": "not running" | "stopped (idle)" }`.
 The run refuses only when that start fails, with the start's error code.
 
-A non-Debug configuration embeds its JavaScript bundle.
+A React Native or Expo non-Debug configuration embeds its JavaScript bundle.
 
 A locally compiled device build is local-tier only. Its cache key ends `-device`, so it cannot
 collide with a simulator build, and no build-cache provider or Expo remote cache
@@ -371,7 +372,7 @@ included, so the app's own `embedded.mobileprovision` must be unexpired and must
 name the phone, and the identity it names must be in this machine's keychain
 whenever Stim modifies the bundle.
 
-In Debug the phone reaches Metro over the LAN, because it shares no loopback
+In React Native or Expo Debug, the phone reaches Metro over the LAN, because it shares no loopback
 with the host and USB carries no reverse forward. Stim gates a non-internal IPv4
 address as this workspace's Metro, then hands it to the app: an expo-dev-client
 app through the deep link (`--payload-url`), a bare app by writing
@@ -390,9 +391,57 @@ ungranted app. A prior Don't Allow logs the same reason, and the remedy covers
 that too. Until it is granted, `launched` comes back `unverified`. Run
 `stim guide errors unverified` for the signature and the full recovery.
 
-A `--device` run in a Release configuration builds fresh every time: a cached
+A React Native or Expo `--device` run in a Release configuration builds fresh every time: a cached
 Release app carries its builder's JavaScript, and Stim does not swap JavaScript
 into cached iOS physical-device builds.
+
+### Native Xcode apps
+
+Run from the directory containing the `.xcodeproj` or `.xcworkspace`; no
+`package.json` is required. React Native and Expo apps keep their existing
+integration.
+
+<StimTabs
+code={`stim doctor --platform ios
+stim ios --scheme MyApp --configuration Debug --json
+stim ios --scheme MyApp --configuration Release --json
+stim logs --errors
+stim stop`}
+/>
+
+Replace `MyApp` and the configuration with names from your project. Shared Run
+schemes select application targets; a unique application target can also use
+its automatic scheme. A workspace owns its referenced projects. `--scheme`
+selects an exact name, and duplicate container/scheme matches refuse rather
+than guessing. `--configuration` overrides `ios.configuration` in `.stim.json`,
+then defaults to Debug. Custom configurations such as Staging work the same way.
+
+Every native configuration uses process launch without Metro or JavaScript
+bundle injection. Results report `metroPort: null`; `launched: true` establishes
+a live process, so verify the expected UI and interaction separately. Rerun
+`stim ios` after native source edits. `stim reload` reloads JavaScript.
+Existing simulator ownership, physical-device leases and signing checks, logs,
+and scoped cleanup still apply.
+
+Artifact identity includes configuration, source and known dependency inputs,
+toolchain and build options. Native Release cache reuse is independent of
+`releaseBundleSwap`, and compatible Xcode builds use the shared compilation
+cache. `--plan` predicts the same local artifact without preparing dependencies
+or choosing a device. An unbounded input graph skips artifact caching and
+reports why: examples include shell build phases, custom build rules, C-family
+header graphs, Swift package graphs and unresolved external inputs or compiler
+overrides. Planning refuses these cases; run without `--plan` to build locally.
+
+Native Xcode build offload, hosted/remote devices and EAS artifact profiles are
+not supported yet. These limits do not change React Native or Expo support.
+
+Copy this request to your agent, substituting your scheme:
+
+```text
+Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
+--json. Verify its expected screen and interaction on the reported device,
+inspect stim logs --errors, then stop only this workspace with stim stop.
+```
 
 ## `android`
 

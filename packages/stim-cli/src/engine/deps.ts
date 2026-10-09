@@ -119,19 +119,18 @@ function normalize(text: unknown) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
-function podfilePath(root: string) {
-  return join(root, 'ios', 'Podfile');
-}
-
-export function readPodState(root: string): {
+export function readPodState(
+  root: string,
+  directory: string = join(root, 'ios'),
+): {
   hasPodfile: boolean;
   lockText: string | null;
   manifestText: string | null;
 } {
   return {
-    hasPodfile: existsSync(podfilePath(root)),
-    lockText: readOrNull(join(root, 'ios', 'Podfile.lock')),
-    manifestText: readOrNull(join(root, 'ios', 'Pods', 'Manifest.lock')),
+    hasPodfile: existsSync(join(directory, 'Podfile')),
+    lockText: readOrNull(join(directory, 'Podfile.lock')),
+    manifestText: readOrNull(join(directory, 'Pods', 'Manifest.lock')),
   };
 }
 
@@ -440,15 +439,17 @@ export async function runPodInstall(
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
+    directory = join(root, 'ios'),
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
+    directory?: string;
   } = {},
 ): Promise<PodInstallResult> {
-  const iosDir = join(root, 'ios');
+  const iosDir = directory;
   if (!existsSync(iosDir)) {
     return {
       failed: true,

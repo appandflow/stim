@@ -22,14 +22,14 @@ interface AndroidArtifactIdentity {
 }
 
 export interface AndroidSourcePreparation {
-  identity: AndroidArtifactIdentity;
+  identity: AndroidArtifactIdentity | null;
   rekeyedBy: string[];
   cacheRefusal: string | null;
   androidPackage?: string | null;
 }
 
 export interface AndroidArtifactRecipe {
-  identity(): Promise<AndroidArtifactIdentity>;
+  identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
   cache(compiled?: boolean): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<AndroidSourcePreparation>;

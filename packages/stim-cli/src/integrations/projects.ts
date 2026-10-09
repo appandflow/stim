@@ -13,6 +13,7 @@ import {
   readPackageJson,
 } from '../workspace/project-files.ts';
 import { settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
 
 import {
   createProjectRegistry,
@@ -123,7 +124,12 @@ const browserWeb: ProjectIntegration = {
   },
 };
 
-export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
+export const projectIntegrations: readonly ProjectIntegration[] = [
+  reactNativeProject,
+  swiftPackage,
+  browserWeb,
+  nativeXcodeProjectIntegration,
+];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 

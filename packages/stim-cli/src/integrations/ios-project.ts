@@ -24,7 +24,7 @@ export interface IosSourcePreparation {
 }
 
 export interface IosArtifactRecipe {
-  identity(): Promise<IosArtifactIdentity>;
+  identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
   cache(): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
@@ -83,7 +83,7 @@ export interface IosProject {
   plan?: ProjectBuildPlanner<IosCommandOptions>;
   isExpo: boolean;
   bundleId(): string | null;
-  schemeProblem(scheme: string | undefined): FailArgs | null;
+  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
   eas: boolean;
   runtime(args: {
