@@ -1118,6 +1118,8 @@ describe('the boot this run performed', () => {
 });
 
 describe('Metro prefetch', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([null, '/custom.bundle?platform=ios&dev=true'])(
     'starts before native work without waiting for the bundle: %s',
     async (bundleUrl) => {
