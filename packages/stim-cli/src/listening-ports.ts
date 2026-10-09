@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { connect } from 'node:net';
 import { getExecutor } from './exec.ts';
 
 /**
@@ -140,4 +141,61 @@ export function parseLsofListeners(out: unknown): Map<number, number[]> {
     }
   }
   return byPort;
+}
+
+export const PORT_INSPECTION_REMEDY =
+  'Allow Stim to run netstat or lsof, or to connect to 127.0.0.1 and ::1, then retry. A metro.port pin skips the scan for Metro.';
+
+export class PortInspectionError extends Error {
+  readonly code = 'STIM_PORT_INSPECTION_FAILED';
+  readonly reason: string;
+
+  constructor(reason: string) {
+    super(`${reason} ${PORT_INSPECTION_REMEDY}`);
+    this.reason = reason;
+  }
+}
+
+/**
+ * Returns the TCP ports lsof lists as listening, or null when lsof cannot list them.
+ */
+export async function readLsofListeningPorts(): Promise<ReadonlySet<number> | null> {
+  try {
+    const out = await getExecutor().runFileAsync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-Fpn'], { timeoutMs: 5000 });
+    return new Set([...parseLsofListeners(out).keys()].filter(Number.isInteger));
+  } catch (error) {
+    const result = error as { status?: unknown; stdout?: unknown; stderr?: unknown };
+    if (result.status === 1 && !String(result.stdout ?? '').trim() && !String(result.stderr ?? '').trim()) {
+      return new Set();
+    }
+    return null;
+  }
+}
+
+const IPV6_UNAVAILABLE = new Set(['EADDRNOTAVAIL', 'EAFNOSUPPORT', 'ENETUNREACH']);
+
+/**
+ * Connects to a loopback port: `taken` when something accepts or the connect hangs, `free` when
+ * it is refused or IPv6 is unavailable, `unknown` for any other connect error.
+ */
+export function probeLoopback(
+  port: number,
+  host: '127.0.0.1' | '::1',
+  timeoutMs = 400,
+): Promise<'free' | 'taken' | 'unknown'> {
+  return new Promise((resolve) => {
+    const socket = connect({ port, host });
+    const done = (answer: 'free' | 'taken' | 'unknown') => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(answer);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => done('taken'));
+    socket.once('timeout', () => done('taken'));
+    socket.once('error', (error: NodeJS.ErrnoException) => {
+      const refused = error.code === 'ECONNREFUSED' || (host === '::1' && IPV6_UNAVAILABLE.has(error.code ?? ''));
+      done(refused ? 'free' : 'unknown');
+    });
+  });
 }

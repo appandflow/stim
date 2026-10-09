@@ -21,6 +21,7 @@ import {
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
+import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
@@ -1143,7 +1144,7 @@ export async function resolveWorkspaceMetroPort(
   const pinned = setting.port;
   const project = getProject(root);
   const recorded = project?.metroPort;
-  if (pinned === null && command === 'web') return recorded ?? (await reserveMetroPort(root));
+  if (pinned === null && command === 'web') return recorded ?? (await reservePort(root, null));
   if (recorded) {
     const supervisor = resolveSupervisorTarget({
       state: readWorkspaceState(root)?.supervisor,
@@ -1179,17 +1180,24 @@ export async function resolveWorkspaceMetroPort(
   } else if (recorded) {
     const held = await resolveProjectMetro(recorded, root);
     if (!held.notOurs) return recorded;
-    const fresh = await reserveMetroPort(root);
-    if (fresh !== recorded) {
+    const fresh = await reservePort(root, null);
+    if (typeof fresh === 'number' && fresh !== recorded) {
       note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
       note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
     }
     return fresh;
   }
   if (!reserve && pinned !== null) return pinned;
+  return reservePort(root, pinned);
+}
+
+async function reservePort(root: string, pinned: number | null): Promise<number | StartError> {
   try {
     return await reserveMetroPort(root, undefined, undefined, pinned);
   } catch (error) {
+    if (error instanceof PortInspectionError) {
+      return { code: error.code, message: error.reason, remedy: PORT_INSPECTION_REMEDY };
+    }
     return {
       code: 'STIM_BAD_ARG',
       message: (error as Error).message,

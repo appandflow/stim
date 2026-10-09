@@ -2,14 +2,32 @@ import { request } from 'http';
 import { existsSync } from 'fs';
 import { loadConfig, allMetroPorts, releaseMetroPort, claimMetroPort } from './workspace/config.ts';
 import { isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
-import { readListeningPorts } from './listening-ports.ts';
+import { PortInspectionError, probeLoopback, readLsofListeningPorts, readListeningPorts } from './listening-ports.ts';
 
 /**
  * Creates one lazy listener snapshot for an allocation attempt; discard the probe before retrying.
+ * When the native TCP table cannot be read, each port is checked with an lsof listener scan and
+ * loopback connects instead. Rejects with `PortInspectionError` only when none of them can answer.
  */
 export function createPortProbe(): (port: number) => Promise<boolean> {
-  let snapshot: Promise<ReadonlySet<number>> | undefined;
-  return async (port) => !(await (snapshot ??= readListeningPorts())).has(port);
+  let snapshot: Promise<ReadonlySet<number> | Error> | undefined;
+  let lsof: Promise<ReadonlySet<number> | null> | undefined;
+  return async (port) => {
+    const listening = await (snapshot ??= readListeningPorts().catch((error: unknown) =>
+      error instanceof Error ? error : new Error(String(error)),
+    ));
+    if (!(listening instanceof Error)) return !listening.has(port);
+    const [listed, ipv4, ipv6] = await Promise.all([
+      (lsof ??= readLsofListeningPorts()),
+      probeLoopback(port, '127.0.0.1'),
+      probeLoopback(port, '::1'),
+    ]);
+    if (listed?.has(port) || ipv4 === 'taken' || ipv6 === 'taken') return false;
+    if (listed || (ipv4 === 'free' && ipv6 === 'free')) return true;
+    throw new PortInspectionError(
+      `Cannot tell whether TCP port ${port} is free: the TCP listener table failed (${listening.message.replace(/\s+/g, ' ').trim()}), lsof could not list listeners, and a loopback connect failed.`,
+    );
+  };
 }
 
 export function isMetroRunning(port: number): Promise<boolean> {

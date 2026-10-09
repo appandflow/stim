@@ -4,9 +4,10 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'node:url';
-import { getExecutor, resetExecutor } from '../exec.ts';
+import { createServer } from 'node:net';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
-import { computeNextPort, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
+import { computeNextPort, createPortProbe, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
 import * as listeners from '../listening-ports.ts';
 
 const allFree = async () => true;
@@ -142,7 +143,7 @@ test('computeNextPort throws rather than returning an occupied port when the ran
   expect(read).not.toHaveBeenCalled();
 });
 
-test('listener snapshots observe a foreign process and refresh after it exits', async (t) => {
+test('port probes observe a foreign IPv6 listener and refresh after it exits', async (t) => {
   const child = getExecutor().spawn(
     process.execPath,
     [fileURLToPath(new URL('./fixtures/ipv6-listener.mts', import.meta.url))],
@@ -153,15 +154,58 @@ test('listener snapshots observe a foreign process and refresh after it exits', 
     const [port] = await once(child, 'message', { signal: AbortSignal.timeout(15_000) });
     if (port === null) t.skip('IPv6 loopback is unavailable');
     expect(typeof port).toBe('number');
-    expect(await listeners.readListeningPorts()).toContain(port);
+    expect(await createPortProbe()(port)).toBe(false);
     child.kill();
     await exited;
-    expect(await listeners.readListeningPorts()).not.toContain(port);
+    expect(await createPortProbe()(port)).toBe(true);
   } finally {
     child.kill('SIGKILL');
     await exited;
   }
 }, 30_000);
+
+test('a netstat denied on stderr falls back and still detects a real listener', async () => {
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFileAsync: async (file, args, opts) => {
+      if (file.endsWith('netstat')) {
+        throw Object.assign(new Error('Command failed'), {
+          status: 0,
+          stdout: '',
+          stderr: 'netstat: sysctl: net.inet.tcp.pcblist_n: Operation not permitted',
+        });
+      }
+      return real.runFileAsync(file, args, opts);
+    },
+  });
+  const server = createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  try {
+    expect(await createPortProbe()(address.port)).toBe(false);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+  expect(await createPortProbe()(address.port)).toBe(true);
+});
+
+test('without a listener table, a port is free only when lsof or both loopback connects answer', async () => {
+  vi.spyOn(listeners, 'readListeningPorts').mockRejectedValue(new Error('no table'));
+  const lsof = vi.spyOn(listeners, 'readLsofListeningPorts').mockResolvedValue(null);
+  const connect = vi.spyOn(listeners, 'probeLoopback').mockResolvedValue('free');
+  expect(await createPortProbe()(8082)).toBe(true);
+
+  connect.mockImplementation(async (_port, host) => (host === '::1' ? 'unknown' : 'free'));
+  await expect(createPortProbe()(8082)).rejects.toMatchObject({ code: 'STIM_PORT_INSPECTION_FAILED' });
+
+  lsof.mockResolvedValue(new Set([8083]));
+  expect(await createPortProbe()(8082)).toBe(true);
+  expect(await createPortProbe()(8083)).toBe(false);
+});
 
 test('findReclaimablePort skips a project whose volume is not mounted', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
