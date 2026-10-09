@@ -3,9 +3,10 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launchEvidenceMessage, noCompileEvidenceMessage } from './assertions.mjs';
+import { noCompileEvidenceMessage } from './assertions.mjs';
 import {
   FIXTURE_COMMANDS,
+  assertVerifiedLaunch,
   assert,
   buildLog,
   cleanupTmp,
@@ -75,7 +76,12 @@ async function main() {
     const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', '--json'], { timeout: 30000 }).stdout);
     const supported = new Set(
       inventory.runtimes
-        .filter((runtime) => runtime.isAvailable && runtime.identifier.includes('.iOS-'))
+        .filter(
+          (runtime) =>
+            runtime.isAvailable &&
+            runtime.identifier.includes('.iOS-') &&
+            (!ENV.STIM_E2E_IOS_RUNTIME || runtime.version === ENV.STIM_E2E_IOS_RUNTIME),
+        )
         .flatMap((runtime) => runtime.supportedDeviceTypes.map((type) => type.identifier)),
     );
     const tablet = inventory.devicetypes.find(
@@ -105,12 +111,12 @@ async function main() {
     assert(build1.cacheHit === false, `cold build must be a cache MISS, got ${JSON.stringify(build1.cacheHit)}`);
   }
   assertArtifact(build1.appPath);
-  handleLaunch(build1, 'wt1');
+  handleLaunch(build1, 'wt1', wt1);
 
   if (args.smoke) {
     log('smoke: one worktree built, launched and verified. Skipping the cache proof and named slots.');
     cleanup.recordWorkspace(wt1);
-    cli(['stop'], { cwd: wt1 });
+    stop(wt1);
     worktreeRemove(wt1);
     await verifyCleanup({ h, cleanup, appDir, created });
     return;
@@ -125,17 +131,21 @@ async function main() {
   );
   assertArtifact(build2.appPath);
   assertNoCompile(wt2);
-  handleLaunch(build2, 'wt2');
+  handleLaunch(build2, 'wt2', wt2);
   log('CACHE PROOF: second worktree installed from cache without compiling.');
 
   cleanup.recordWorkspace(wt2);
-  cli(['stop'], { cwd: wt2 });
+  stop(wt2);
   verifyDeviceSlots(wt1, build1, flags);
   cleanup.recordWorkspace(wt1);
-  cli(['stop'], { cwd: wt1 });
+  stop(wt1);
   worktreeRemove(wt2);
   worktreeRemove(wt1);
   await verifyCleanup({ h, cleanup, appDir, created });
+}
+
+function stop(cwd) {
+  cli(['stop'], { cwd, env: { ...ENV, STIM_DEBUG: '1' } });
 }
 
 function verifyDeviceSlots(cwd, original, thirdFlags) {
@@ -145,6 +155,9 @@ function verifyDeviceSlots(cwd, original, thirdFlags) {
     const facts = cliJson([PLATFORM, '--slot', slot, ...flags, '--json'], { cwd, timeout: 40 * 60 * 1000 });
     cleanup.recordBuild(facts);
     cleanup.recordWorkspace(cwd);
+    if (ENV.STIM_E2E_STRICT_QA === '1') {
+      assertVerifiedLaunch({ h, facts, label: slot, cwd, expectUnattributedAndroidSlot: PLATFORM === 'android' });
+    }
     assert(facts.slot === slot, `launch facts did not identify ${slot}`);
     assert(facts.cacheHit === 'local' || facts.cacheHit === 'remote', `slot ${slot} did not reuse the native build`);
     const records = cli(['logs', '--slot', slot, '--source', 'build', '--json'], { cwd })
@@ -237,8 +250,8 @@ function assertArtifact(appPath) {
   log(`artifact ok: ${appPath}`);
 }
 
-function handleLaunch(facts, label) {
-  log(launchEvidenceMessage(facts.launched, label));
+function handleLaunch(facts, label, cwd) {
+  assertVerifiedLaunch({ h, facts, label, cwd });
 }
 
 function assertNoCompile(cwd) {
