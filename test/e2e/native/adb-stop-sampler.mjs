@@ -118,12 +118,18 @@ try {
   Atomics.store(state, 0, 1);
   Atomics.notify(state, 0);
   const deadline = Date.now() + 290000;
-  while (!Atomics.load(state, 1) && Date.now() < deadline) {
+  let completed = false;
+  while (Date.now() < deadline) {
     Atomics.wait(state, 1, 0, 1000);
+    const final = Atomics.load(state, 1) === 1;
     const sample = await snapshot();
-    record('sample', { processes: processes(sample), memory: sample.memory, adb: adbObservations(sample) });
+    record('sample', { processes: processes(sample), memory: sample.memory, adb: adbObservations(sample), final });
+    if (final) {
+      completed = true;
+      break;
+    }
   }
-  if (!Atomics.load(state, 1)) throw new Error('Stop observer deadline reached before the CLI exited');
+  if (!completed) throw new Error('Stop observer deadline reached before the final exit observation');
   record('observer.complete');
 } catch (error) {
   failed = true;

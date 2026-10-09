@@ -118,8 +118,10 @@ process.exit(process.env.STIM_STOP_MODE === 'failure' ? 23 : 0);
       observations.some((entry) => entry.observation === 'same' && entry.birth),
       'exact child must have a live birth observation',
     );
+    const finalSample = records.findLast((entry) => entry.event === 'sample');
+    assert.equal(finalSample?.final, true, 'the final query must begin after the CLI signals exit');
     assert(
-      observations.some((entry) => entry.observation === 'absent'),
+      finalSample.processes.some((entry) => entry.pid === childPid && entry.observation === 'absent'),
       'exact child must be absent by final observer settlement',
     );
     scenarios.push({
