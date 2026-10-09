@@ -326,10 +326,11 @@ struct RootView: View {
     }
     .onChange(of: selection, initial: true) { old, item in
       let name = item?.logName ?? "none"
+      let cause = navigation.takeCause()
       if old == item {
         DebugLog.setDestination(name)
       } else {
-        DebugLog.setDestination(name, from: old?.logName ?? "none", cause: navigation.takeCause())
+        DebugLog.setDestination(name, from: old?.logName ?? "none", cause: cause)
       }
     }
     .onChange(of: selection) { old, item in

@@ -86,12 +86,15 @@ struct NavigationHistoryTests {
   }
 }
 
-struct NavigationCauseTests {
-  @Test func aSwipeIsNotADeliberateChoice() {
-    #expect(NavigationCause.back(.swipe(deltaX: -1)).isDeliberate == false)
-    #expect(NavigationCause.back(.mouseButton(3)).isDeliberate)
-    #expect(NavigationCause.click("sidebar").isDeliberate)
-    #expect(NavigationCause.automatic("archived workspace no longer listed").isDeliberate == false)
-    #expect(NavigationCause.unattributed.isDeliberate == false)
+struct NavigationLevelTests {
+  @Test func arrivingAtTheOverviewFromAnotherPageIsAWarning() {
+    #expect(DebugLog.navigationLevel(to: "overview", from: "workspace /a") == .warning)
+    #expect(DebugLog.navigationLevel(to: "overview", from: "none") == .warning)
+  }
+
+  @Test func otherChangesStayAtDebug() {
+    #expect(DebugLog.navigationLevel(to: "wall", from: "overview") == .debug)
+    #expect(DebugLog.navigationLevel(to: "overview", from: nil) == .debug)
+    #expect(DebugLog.navigationLevel(to: "overview", from: "overview") == .debug)
   }
 }

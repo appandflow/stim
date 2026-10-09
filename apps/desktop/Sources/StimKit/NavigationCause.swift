@@ -38,14 +38,4 @@ public enum NavigationCause: Equatable, Sendable {
     case .unattributed: "unattributed"
     }
   }
-
-  /// Whether the person pointed at this page. A swipe can come from a gesture meant for a scroll view, so it does not count.
-  public var isDeliberate: Bool {
-    switch self {
-    case .click, .command: true
-    case .back(let input), .forward(let input):
-      if case .swipe = input { false } else { true }
-    case .request, .automatic, .unattributed: false
-    }
-  }
 }
