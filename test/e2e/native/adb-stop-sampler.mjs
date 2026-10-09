@@ -8,11 +8,18 @@ const record = (event, detail = {}) =>
   appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), event, ...detail })}\n`);
 const script = `
 $ErrorActionPreference = 'Stop'
+function Mark([string]$stage) { [Console]::Error.WriteLine('[stim-stop-query] ' + $stage + ' ' + [DateTime]::UtcNow.ToString('o')) }
+Mark 'processes.start'
 $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 | ForEach-Object {
   [pscustomobject]@{ pid = [int]$_.ProcessId; parent = [int]$_.ParentProcessId; birth = $_.CreationDate.ToUniversalTime().ToString('o'); name = $_.Name; workingSet = [string]$_.WorkingSetSize; privateBytes = [string]$_.PrivatePageCount; kernelTime = [string]$_.KernelModeTime; userTime = [string]$_.UserModeTime; handles = $_.HandleCount; threads = $_.ThreadCount }
 })
+Mark 'processes.end'
+Mark 'listeners.start'
 $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq 5037 } | ForEach-Object { [pscustomobject]@{ address = $_.LocalAddress; port = $_.LocalPort; pid = [int]$_.OwningProcess } })
+Mark 'listeners.end'
+Mark 'memory.start'
 $memory = Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize -OperationTimeoutSec 2
+Mark 'memory.end'
 @{ rows = $rows; listeners = $listeners; memory = @{ freePhysicalKiB = [string]$memory.FreePhysicalMemory; totalPhysicalKiB = [string]$memory.TotalVisibleMemorySize; freeVirtualKiB = [string]$memory.FreeVirtualMemory; totalVirtualKiB = [string]$memory.TotalVirtualMemorySize } } | ConvertTo-Json -Depth 4 -Compress
 `;
 function snapshot() {
@@ -21,7 +28,12 @@ function snapshot() {
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-Command', script],
       { timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024, encoding: 'utf8' },
-      (error, stdout) => {
+      (error, stdout, stderr) => {
+        const stages = stderr.split(/\r?\n/).flatMap((line) => {
+          const match = /^\[stim-stop-query\] (processes|listeners|memory)\.(start|end) ([0-9T:.Z-]+)$/.exec(line);
+          return match ? [{ stage: `${match[1]}.${match[2]}`, at: match[3] }] : [];
+        });
+        record('observer.query-stages', { pid: child.pid, stages });
         if (error) reject(Object.assign(new Error('CIM snapshot failed'), { code: error.code, signal: error.signal }));
         else {
           try {
