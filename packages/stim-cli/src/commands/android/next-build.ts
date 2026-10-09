@@ -1,3 +1,4 @@
+import { reactNativeAndroidProject } from '../../integrations/react-native-android.ts';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildCacheKey, fingerprintProject } from '../../cache/build-cache.ts';
@@ -160,6 +161,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
       buildCache: opts.buildCache !== false,
     },
     {
+      runtimeKind: reactNativeAndroidProject(root).runtimeKind,
       warn: (label, message) => note(phaseLine(label, chalk.yellow(message))),
       resolveCompilerCache: ({ optimizations }) => ({ cas: null, optimizations, warning: null }),
       listSystemImages: deps.listSystemImages,

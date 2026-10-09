@@ -37,6 +37,7 @@ beforeEach(() => {
     eas: false,
     appIds: () => ({ bundleId: null, androidPackage: 'org.example.native' }),
     variantProblem: () => null,
+    runtimeKind: () => 'process',
     runtime: () => {
       throw new Error('A build must not create a runtime.');
     },

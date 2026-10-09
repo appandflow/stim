@@ -346,6 +346,7 @@ function iosArtifactTargetInputs({
     },
     device: physical
       ? {
+          udid,
           lanAddress,
           metroPort,
           signingName: iosSigningIdentitySetting(settings),
@@ -583,7 +584,11 @@ async function runIos(
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
-  const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
+  const cachePolicy = artifactCachePolicy(
+    optimizations,
+    useBuildCache,
+    integration.runtimeKind(configuration) === 'embedded-js',
+  );
   useBuildCache = cachePolicy.read;
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);

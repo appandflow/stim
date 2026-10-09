@@ -69,20 +69,25 @@ export function reactNativeIosSchemeProblem(
   return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
+const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
+  isReleaseConfiguration(configuration) ? 'embedded-js' : 'metro';
+
 export function reactNativeIosProject(
   root: string,
   dependencies: Partial<ReactNativeIosDependencies> = {},
 ): IosProject {
   const d: ReactNativeIosDependencies = { ...DEFAULT_DEPS, ...dependencies };
   const isExpo = d.detectIsExpo(root);
+
   return {
     isExpo,
     bundleId: () => d.detectBundleId(root),
     schemeProblem: (scheme) => reactNativeIosSchemeProblem(root, scheme, isExpo, d),
     targets: ['simulator', 'physical', 'remote', 'hosted'],
     eas: true,
+    runtimeKind,
     runtime: ({ configuration, prepareMetro, prepareEmbedded }) =>
-      isReleaseConfiguration(configuration)
+      runtimeKind(configuration) === 'embedded-js'
         ? iosProcessRuntime(prepareEmbedded, 'embedded-js')
         : iosMetroRuntime(prepareMetro),
     artifact: (context) => reactNativeIosArtifact(context, isExpo, d),
@@ -134,7 +139,11 @@ function reactNativeIosArtifact(
   const materialize: IosArtifactRecipe['materialize'] = async (artifactPath, { fresh: isFresh, ownTemporary }) => {
     const lanAddress = device?.lanAddress ?? null;
     const metroPort = device?.metroPort ?? null;
-    const prepareDeviceApp = async (path: string, { fresh }: { fresh: boolean }): Promise<string | null> => {
+    const prepareDeviceApp = async (
+      path: string,
+      physicalDevice: NonNullable<IosArtifactContext['device']>,
+      { fresh }: { fresh: boolean },
+    ): Promise<string | null> => {
       const refuse = (code: string, reason: string, remedy: string): null => {
         if (fresh) {
           fail({ code, message: reason, remedy, build: { appPath: path } });
@@ -144,7 +153,7 @@ function reactNativeIosArtifact(
         return null;
       };
       const gateProfile = (): string | null => {
-        const gate = d.gateProfileForDevice({ appPath: path, udid, configuration });
+        const gate = d.gateProfileForDevice({ appPath: path, udid: physicalDevice.udid, configuration });
         return gate.ok ? path : refuse(gate.code, gate.reason, gate.remedy);
       };
 
@@ -181,10 +190,10 @@ function reactNativeIosArtifact(
       writeIpTxt(copy.appPath, lanAddress as string, metroPort as number);
       const sealed = d.sealAppForDevice({
         appPath: copy.appPath,
-        udid,
+        udid: physicalDevice.udid,
         configuration,
-        pinnedName: device?.signingName ?? null,
-        pinnedSha1: device?.signingSha1 ?? null,
+        pinnedName: physicalDevice.signingName ?? null,
+        pinnedSha1: physicalDevice.signingSha1 ?? null,
       });
       if (!sealed.ok) {
         try {
@@ -202,7 +211,7 @@ function reactNativeIosArtifact(
     };
 
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
-      if (physical) return prepareDeviceApp(cachedPath, { fresh: false });
+      if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
@@ -228,7 +237,7 @@ function reactNativeIosArtifact(
       return null;
     };
 
-    if (isFresh) return physical ? prepareDeviceApp(artifactPath, { fresh: true }) : artifactPath;
+    if (isFresh) return device ? prepareDeviceApp(artifactPath, device, { fresh: true }) : artifactPath;
     return installableCachedApp(artifactPath);
   };
   return {
@@ -257,8 +266,8 @@ function reactNativeIosArtifact(
     },
     cache: () => filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
     validateExternal(path) {
-      if (physical) {
-        const gate = d.gateProfileForDevice({ appPath: path, udid, configuration });
+      if (device) {
+        const gate = d.gateProfileForDevice({ appPath: path, udid: device.udid, configuration });
         if (!gate.ok) {
           fail({ code: gate.code, message: gate.reason, remedy: easDeviceBuildRemedy(easProfile!) });
         }
@@ -468,7 +477,9 @@ function reactNativeIosArtifact(
             : !cachePolicy.write
               ? 'the build cache is off'
               : !runtime
-                ? `the runtime of simulator ${udid} is unknown`
+                ? udid
+                  ? `the runtime of simulator ${udid} is unknown`
+                  : 'no simulator runtime is available for worker selection'
                 : null);
         return { runtime, unsupported };
       },

@@ -1,5 +1,7 @@
 import type { MacosBuild, NdjsonRecord } from '@stim-cli/core/state';
 import type { AndroidBuildFacts, AndroidBuildOptions } from '../commands/android/build.ts';
+import type { MacosBuildFacts, MacosBuildOptions } from '../commands/macos-build.ts';
+import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
 import type { StopResult } from '../commands/stop.ts';
 import type { WebFacts } from '../commands/web.ts';
 import type { AndroidFacts, IosFacts } from '../engine/build-facts.ts';
@@ -68,9 +70,16 @@ export type StimRunResult =
     }
   | { platform: 'web'; facts: WebFacts };
 
-export type StimBuildOptions = AndroidBuildOptions & { platform: 'android'; signal?: AbortSignal };
+export type StimBuildOptions = (
+  | (IosBuildOptions & { platform: 'ios' })
+  | (AndroidBuildOptions & { platform: 'android' })
+  | (MacosBuildOptions & { platform: 'macos' })
+) & { signal?: AbortSignal };
 
-export type StimBuildResult = { platform: 'android'; facts: AndroidBuildFacts };
+export type StimBuildResult =
+  | { platform: 'ios'; facts: IosBuildFacts }
+  | { platform: 'android'; facts: AndroidBuildFacts }
+  | { platform: 'macos'; facts: MacosBuildFacts };
 
 export interface StimStopOptions {
   slot?: string;
@@ -94,6 +103,9 @@ export interface StimDiagnostics {
 export interface StimClient {
   readonly projectRoot: string;
   /** Builds an artifact without acquiring a device or starting a runtime. */
+  build<P extends StimBuildOptions['platform']>(
+    options: StimBuildOptions & { platform: P },
+  ): Promise<Extract<StimBuildResult, { platform: P }>>;
   build(options: StimBuildOptions): Promise<StimBuildResult>;
   run<P extends StimPlatform>(
     options: StimRunOptions & { platform: P },

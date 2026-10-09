@@ -64,7 +64,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   const plan = resolveAndroidBuildPlan(
     { settings, settingsContext, variant: options.variant ?? null, buildCache: options.buildCache !== false },
-    { warn: phase, variantProblem: integration.variantProblem },
+    { warn: phase, runtimeKind: integration.runtimeKind, variantProblem: integration.variantProblem },
   );
   if (!plan.ok) throw Object.assign(new Error(plan.message), plan);
   const placement = resolveBuildPlacement(options.remoteBuild);

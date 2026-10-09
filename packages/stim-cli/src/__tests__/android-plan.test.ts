@@ -46,6 +46,7 @@ function inputs(overrides: Partial<AndroidPlanInputs> = {}): AndroidPlanInputs {
 
 function inspection(events: string[]): AndroidPlanDependencies {
   return {
+    runtimeKind: ({ release }) => (release ? 'embedded-js' : 'metro'),
     warn: (label) => events.push(`warning:${label}`),
     parkedLimit: () => {
       events.push('pool');

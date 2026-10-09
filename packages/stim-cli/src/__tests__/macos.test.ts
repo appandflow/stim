@@ -35,6 +35,7 @@ import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
@@ -43,7 +44,7 @@ import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { findCommandWorkspace, findProjectRoot } from '../workspace/project.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 
 let dir: string;
@@ -300,6 +301,27 @@ describe('macOS build placement and promotion', () => {
       handoff,
     } as Extract<offload.OffloadOutcome, { ok: true }>);
   }
+
+  test.skipIf(process.platform !== 'darwin')(
+    'build-only retains separate bundles and leaves an existing app untouched',
+    async () => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      const previous = record();
+      writeWorkspaceState(root, { macos: previous });
+      const first = await buildMacosOperation(root, { remoteBuild: 'local' });
+      expect(first.build).toMatchObject({ state: 'ok', builtOn: 'here' });
+      expect(readFileSync(first.executable, 'utf8')).toBe('local');
+      expect(readWorkspaceState(root)?.macos).toEqual(previous);
+      writeFileSync(join(bin, 'Sample'), 'edited');
+      const second = await buildMacosOperation(root, { remoteBuild: 'local' });
+      expect(readFileSync(second.executable, 'utf8')).toBe('edited');
+      expect(readFileSync(first.executable, 'utf8')).toBe('local');
+      expect(readWorkspaceState(root)?.macos).toEqual(previous);
+      expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
+      expect(compilerCalls.every(({ file }) => file === 'swift')).toBe(true);
+    },
+  );
 
   it('promotes a verified offloaded bundle without taking a local build slot and persists placement', async () => {
     succeeds(remoteBundle());

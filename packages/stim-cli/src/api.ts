@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
 import type {
+  StimBuildOptions,
   StimClient,
   StimFailure,
   StimOptions,
@@ -75,9 +76,8 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
-    build({ signal, ...request }) {
-      return invoke(context, { operation: 'build', options: request }, signal) as ReturnType<StimClient['build']>;
-    },
+    build: (({ signal, ...request }: StimBuildOptions) =>
+      invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
       invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
     stop({ signal, ...request } = {}) {

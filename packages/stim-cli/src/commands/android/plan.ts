@@ -1,3 +1,4 @@
+import type { AndroidRuntimeKind } from './launch.ts';
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
@@ -131,6 +132,7 @@ type PlanResult<Plan> =
 export type AndroidPlanResult = PlanResult<AndroidRunPlan>;
 
 export interface AndroidBuildPlanDependencies {
+  runtimeKind: (build: { release: boolean }) => AndroidRuntimeKind;
   warn: (label: 'setting' | 'cache', message: string) => void;
   resolveCompilerCache?: typeof androidCompilerCache;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
@@ -206,6 +208,7 @@ export function resolveAndroidBuildPlan(
   }: AndroidBuildPlanInputs,
   {
     warn,
+    runtimeKind,
     resolveCompilerCache = androidCompilerCache,
     resolveCacheProvider = resolveCacheProviderConfig,
     variantProblem,
@@ -235,7 +238,11 @@ export function resolveAndroidBuildPlan(
   const flavorRefusal = variantProblem(variant);
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
-  const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
+  const cachePolicy = artifactCachePolicy(
+    optimizations,
+    requestedBuildCache,
+    runtimeKind({ release }) === 'embedded-js',
+  );
   return {
     ok: true,
     plan: {
@@ -273,6 +280,7 @@ export function resolveAndroidRunPlan(
   }: AndroidPlanInputs,
   {
     warn,
+    runtimeKind,
     resolveCompilerCache = androidCompilerCache,
     resolveCacheProvider = resolveCacheProviderConfig,
     validateAvdConfig = androidAvdConfigSettingError,
@@ -295,7 +303,7 @@ export function resolveAndroidRunPlan(
   }
   const plannedBuild = resolveAndroidBuildPlan(
     { settings, settingsContext, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
-    { warn, resolveCompilerCache, resolveCacheProvider, variantProblem },
+    { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem },
   );
   if (!plannedBuild.ok) return plannedBuild;
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);

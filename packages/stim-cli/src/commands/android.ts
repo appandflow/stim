@@ -816,6 +816,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     },
     {
       resolveCacheProvider,
+      runtimeKind: integration.runtimeKind,
       variantProblem: integration.variantProblem,
       detectExpo: () => integration.isExpo,
       listSystemImages,

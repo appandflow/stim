@@ -1,7 +1,7 @@
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
-import type { AndroidRuntimePlan } from '../commands/android/launch.ts';
+import type { AndroidRuntimeKind, AndroidRuntimePlan } from '../commands/android/launch.ts';
 import type { AndroidWriter, FailExtra } from '../commands/android/types.ts';
 import type { BuildAndroidResult } from '../engine/gradle.ts';
 import type { LoadProjectProviderResult } from '../engine/remote-cache.ts';
@@ -68,6 +68,7 @@ export interface AndroidProject {
   variantProblem(variant: string | null): { code: string; reason: string; remedy: string } | null;
   targets: readonly AndroidRunPlan['target']['kind'][];
   eas: boolean;
+  runtimeKind(build: Pick<AndroidBuildPlan['build'], 'release'>): AndroidRuntimeKind;
   runtime(args: {
     build: AndroidBuildPlan['build'];
     prepareMetro: AndroidRuntimePlan['prepare'];
