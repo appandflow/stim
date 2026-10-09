@@ -227,7 +227,8 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   env = try environment("05-stopped")
   var stopped = TutorialProgress()
   let result = stopped.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "device")))
-  #expect(state("device", in: result).state == .failed("Ask your agent to run the app again"))
+  #expect(state("device", in: result).state == .current)
+  #expect(state("device", in: result).detail == "Run the app first, then open its live view")
 }
 
 @Test func tutorialAgentRequiresFreshActionOnTourDevice() throws {

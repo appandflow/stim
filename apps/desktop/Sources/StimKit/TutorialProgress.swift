@@ -458,7 +458,7 @@ public struct TutorialProgress: Sendable {
         detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
     case "device":
       guard environment?.ios?.app?.state == "running" else {
-        return Checkpoint(failure: "Ask your agent to run the app again")
+        return Checkpoint(detail: "Run the app first, then open its live view")
       }
       return Checkpoint(
         completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view and tap around.",

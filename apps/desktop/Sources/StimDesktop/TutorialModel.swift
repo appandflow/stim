@@ -43,7 +43,7 @@ final class TutorialModel: ObservableObject {
 
   func ask(for step: TutorialStep) -> String? {
     var template = step.ask
-    if step.id == snapshot?.currentStep, ["build", "device"].contains(step.id),
+    if step.id == snapshot?.currentStep, step.id == "build",
       snapshot?.steps.first(where: { $0.id == step.id }).map({
         if case .failed = $0.state { return true }
         return false
