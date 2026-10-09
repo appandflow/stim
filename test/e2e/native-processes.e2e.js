@@ -41,6 +41,7 @@ test('native cleanup inspects only recorded processes and proves their exit', { 
   h.sh = (...args) => {
     const result = sh(...args);
     captured = result.stdout;
+    t.diagnostic(JSON.stringify({ command: args[0], argv: args[1], ...result }));
     return result;
   };
   const cleanup = createCleanupTracker({ h, platform: 'ios', processExitTimeoutMs: 0 });
