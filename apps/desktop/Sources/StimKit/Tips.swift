@@ -41,7 +41,7 @@ public enum NudgeTopic: Sendable {
 
   public var discoveryTypes: [DiscoveryType] {
     switch self {
-    case .buildMachine: [.slowCold, .newMac, .slotWait]
+    case .buildMachine: [.newMac, .slotWait]
     case .phone: [.away]
     case .hostedSimulators: [.capHit]
     }
@@ -152,14 +152,18 @@ public enum Tips {
 
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
     switch topic {
-    case .buildMachine: inputs.machines?.isEmpty == true && inputs.macs?.isEmpty == false
+    case .buildMachine: noMacPaired(inputs) && inputs.macs?.isEmpty == false
     case .phone: inputs.phoneApp && inputs.pairedPhones == 0
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: inputs.workspaces.contains { $0.recording?.enabled == true }
-    case .hostedSimulators: inputs.hosting?.isEmpty == true && inputs.macs?.isEmpty == false
+    case .hostedSimulators: noMacPaired(inputs) && inputs.macs?.isEmpty == false
     }
+  }
+
+  private static func noMacPaired(_ inputs: TipInputs) -> Bool {
+    inputs.machines?.isEmpty == true && inputs.hosting?.isEmpty == true
   }
 
   public static func taken(_ topic: TipTopic, states: [DiscoveryType: DiscoveryState], now: Date) -> Bool {

@@ -1564,8 +1564,11 @@ that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer remote Macs, hosted simulators, cache review, or phone
-pairing when recent activity makes them useful. The X snoozes a suggestion for
+Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+recent activity makes them useful. A low-disk banner points to the Machine page,
+where caches are reviewed and cleared. Suggestions to add a Mac appear only
+while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
@@ -1588,7 +1591,7 @@ until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Mac
 Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
 suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, slow cold builds, build slot waits, away
+matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
