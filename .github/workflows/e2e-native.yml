@@ -103,7 +103,7 @@ permissions:
   contents: read
 
 env:
-  SOURCE_SHA: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+  SOURCE_SHA: e67cfbdfc9f2a491b026b184013383cb85a24513
   HARNESS_SHA: 097917ef00c34b684b9fcf398b3f2bfefbe33d7c
 
 jobs:
@@ -619,7 +619,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+          ref: e67cfbdfc9f2a491b026b184013383cb85a24513
           persist-credentials: false
       - name: Record exact source and load reviewed harness
         shell: bash
@@ -704,7 +704,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 50bf96fa228df82bb9f413657126c8f3cc41c11f
+          ref: e67cfbdfc9f2a491b026b184013383cb85a24513
           persist-credentials: false
       - name: Record exact source and load reviewed harness
         shell: bash
