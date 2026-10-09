@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
+import type { IosProject } from './ios-project.ts';
 import type { AndroidProject } from './android-project.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
 
@@ -18,6 +19,7 @@ interface ProjectMatch {
   application: boolean;
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
+  ios?(): Promise<IosProject>;
   android?(): Promise<AndroidProject>;
   validate?(operation: ProjectOperation): ProjectProblem | null | undefined;
 }
@@ -30,6 +32,7 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
+  selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
@@ -138,6 +141,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     };
   }
 
+  function selectIos(root: string): ReturnType<ProjectRegistry['selectIos']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'ios');
+    if ('problem' in selected) return selected;
+    if (selected.match.ios) return { load: selected.match.ios };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide an iOS operation.`,
+        remedy: 'Use an integration with an iOS build and runtime recipe.',
+      },
+    };
+  }
+
   function isMobileProject(root: string): boolean {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -163,5 +183,13 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return ordered.filter((platform) => platforms.has(platform));
   }
 
-  return { findProjectRoot, projectProblem, selectAndroid, isMobileProject, keepsWorkspace, detectPlatforms };
+  return {
+    findProjectRoot,
+    projectProblem,
+    selectAndroid,
+    selectIos,
+    isMobileProject,
+    keepsWorkspace,
+    detectPlatforms,
+  };
 }

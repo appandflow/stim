@@ -1,3 +1,4 @@
+import type { IosRuntimeKind } from './launch.ts';
 import chalk from 'chalk';
 import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
 import {
@@ -223,6 +224,7 @@ export interface ReportIosResultArgs {
   root: string;
   json: boolean;
   release: boolean;
+  runtimeKind?: IosRuntimeKind;
   configuration: string | null;
   buildScheme?: string | null;
   metroCheck: boolean;
@@ -265,6 +267,7 @@ export function reportIosResult({
   root,
   json,
   release,
+  runtimeKind = release ? 'embedded-js' : 'metro',
   configuration,
   buildScheme = null,
   metroCheck,
@@ -361,7 +364,11 @@ export function reportIosResult({
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +
-      (release ? `${configuration} (embedded JS, no Metro)` : `Metro port ${metroPort}`) +
+      (runtimeKind === 'process'
+        ? `${configuration ?? 'Debug'} (native process, no Metro)`
+        : runtimeKind === 'embedded-js'
+          ? `${configuration} (embedded JS, no Metro)`
+          : `Metro port ${metroPort}`) +
       ` (${cacheDescription(cacheHit, providerName, offloadedTo)}, ${formatDuration(durationMs)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
@@ -374,13 +381,16 @@ export function reportIosResult({
     const cacheResult = useBuildCache
       ? cacheDescription(cacheHit, providerName, offloadedTo)
       : `bypassed; ${cacheDescription(false, null, offloadedTo)}`;
-    const metroResult = release
-      ? `embedded (${configuration})`
-      : !metroCheck
-        ? `check skipped on port ${metroPort}`
-        : launchState === LAUNCH_UNVERIFIED
-          ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
+    const metroResult =
+      runtimeKind === 'process'
+        ? 'native process (no Metro)'
+        : runtimeKind === 'embedded-js'
+          ? `embedded (${configuration})`
+          : !metroCheck
+            ? `check skipped on port ${metroPort}`
+            : launchState === LAUNCH_UNVERIFIED
+              ? `state unverified on port ${metroPort}`
+              : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
     console.log(
       [
         outcome,
@@ -391,7 +401,7 @@ export function reportIosResult({
             : `${deviceName} (${udid})`,
         ),
         phaseLine('app', bundleId),
-        phaseLine('metro', metroResult),
+        phaseLine(runtimeKind === 'process' ? 'runtime' : 'metro', metroResult),
         phaseLine('cache', cacheResult),
         ...(compilationCache.status === 'not-run'
           ? [phaseLine('compilation cache', compilationCacheActivityLine(compilationCache))]

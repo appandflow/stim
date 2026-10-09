@@ -1,3 +1,6 @@
+import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
+import { reactNativeIosSchemeProblem } from '../integrations/react-native-ios.ts';
+import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
@@ -25,7 +28,6 @@ import {
   iosPlacementBudget,
   hostedIosMetroNote,
   connectIosTarget,
-  hostedIosBuildTarget,
   hostedIosSelectors,
   selectIosPlacement,
 } from './ios/remote.ts';
@@ -72,7 +74,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { projectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest, type MobileRuntimePreparation } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -90,7 +92,7 @@ import {
   simulatorBuildArch,
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
-import { finishIosRun, iosMetroRuntime, iosProcessRuntime, type IosRunCompletion } from './ios/launch.ts';
+import { finishIosRun, type IosRunCompletion } from './ios/launch.ts';
 import { planIos } from './ios/next-build.ts';
 
 export { lastBuildRecord, iosFacts, writeLastBuild, cacheDescription } from './ios/result.ts';
@@ -208,7 +210,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .action(async (opts: IosCommandOptions) => {
       if (opts.plan) {
         const d = { ...DEFAULT_DEPS, ...deps };
-        await planIos(opts, d, (root, scheme, isExpo) => explicitSchemeRefusal(root, scheme, isExpo, d));
+        await planIos(opts, d, (root, scheme, isExpo) => reactNativeIosSchemeProblem(root, scheme, isExpo, d));
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
@@ -260,23 +262,6 @@ function unlessCancelled(
   };
 }
 
-function explicitSchemeRefusal(root: string, scheme: string | undefined, isExpo: boolean, d: IosDeps): FailArgs | null {
-  if (scheme === undefined) return null;
-  if (!scheme.trim()) {
-    return {
-      code: 'STIM_BAD_ARG',
-      message: '--scheme must name a non-empty shared Xcode app scheme.',
-      remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
-    };
-  }
-  // An Expo project's ios/ can be regenerated before the build; that check runs in
-  // acquireIosArtifact, after regeneration, instead of against this possibly-stale read.
-  if (isExpo) return null;
-  const project = d.discoverXcodeProject(root);
-  if (project.error) return project.error;
-  return d.resolveScheme(project, { scheme }).error ?? null;
-}
-
 function resolveIosBuildSetup(
   flag: string | undefined,
   settings: ReturnType<IosDeps['resolveSettings']>,
@@ -291,6 +276,83 @@ function resolveIosBuildSetup(
       failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
     };
   }
+}
+
+function iosProjectTargetRefusal(
+  project: IosProject,
+  {
+    physical,
+    easProfile,
+    placement,
+  }: {
+    physical: boolean;
+    easProfile?: string;
+    placement?: { machine: string | null; backend: string | null };
+  },
+): FailArgs | null {
+  const target = physical
+    ? 'physical'
+    : placement
+      ? placement.machine
+        ? 'hosted'
+        : placement.backend
+          ? 'remote'
+          : 'simulator'
+      : null;
+  if (target && !project.targets.includes(target))
+    return {
+      code: 'STIM_BAD_ARG',
+      message: `This project integration does not support the ${target} iOS target.`,
+      remedy: 'Use a local iOS simulator for this integration.',
+    };
+  if (easProfile !== undefined && !project.eas)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'This project integration does not support EAS builds.',
+      remedy: 'Use its local iOS build recipe.',
+    };
+  return null;
+}
+
+function iosArtifactTargetInputs({
+  udid,
+  physical,
+  remote,
+  hosted,
+  simulatorArch,
+  lanAddress,
+  metroPort,
+  settings,
+}: {
+  udid: string;
+  physical: boolean;
+  remote: boolean;
+  hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
+  simulatorArch: IosArtifactContext['target']['arch'];
+  lanAddress: string | null;
+  metroPort: number | null;
+  settings: ReturnType<IosDeps['resolveSettings']>;
+}): Pick<IosArtifactContext, 'target' | 'device'> {
+  return {
+    target: {
+      udid,
+      destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
+      sdk: physical ? 'iphoneos' : 'iphonesimulator',
+      arch: remote || hosted ? simulatorArch : null,
+      keyArch: simulatorArch,
+      offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
+      hostedArchitecture: hosted?.choice.architecture,
+      offloadRefusal: physical ? 'device builds build here' : remote ? '--remote builds build here' : null,
+    },
+    device: physical
+      ? {
+          lanAddress,
+          metroPort,
+          signingName: iosSigningIdentitySetting(settings),
+          signingSha1: iosSigningIdentitySha1Setting(settings),
+        }
+      : null,
+  };
 }
 
 function iosSlotLogFile(root: string, slot: string): string {
@@ -349,8 +411,9 @@ async function runIos(
   };
   if (!projectRoot) return refuseProject(NO_PROJECT_REFUSAL);
   const root = projectRoot;
-  const problem = projectProblem(root, 'ios');
-  if (problem) return refuseProject(problem);
+  const selectedProject = d.projectRegistry.selectIos(root);
+  if ('problem' in selectedProject) return refuseProject(selectedProject.problem);
+  const integration = await selectedProject.load();
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -558,9 +621,11 @@ async function runIos(
     },
   };
 
-  const isExpo = d.detectIsExpo(root);
-  const schemeRefusal = explicitSchemeRefusal(root, buildScheme, isExpo, d);
+  const isExpo = integration.isExpo;
+  const schemeRefusal = integration.schemeProblem(buildScheme);
   if (schemeRefusal) return fail(schemeRefusal);
+  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  if (capabilityRefusal) return fail(capabilityRefusal);
   const remoteSelection = await selectIosPlacement({
     root,
     slot,
@@ -591,6 +656,8 @@ async function runIos(
     log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;
@@ -651,7 +718,7 @@ async function runIos(
       buildCache: opts.buildCache,
     });
     if (isEasBuildFailure(easBuild)) return fail(easBuild);
-    const registerProject = () => d.upsertProject(root, { bundleId: d.detectBundleId(root) ?? undefined, isExpo });
+    const registerProject = () => d.upsertProject(root, { bundleId: integration.bundleId() ?? undefined, isExpo });
     if (remoteBackend !== 'eas') registerProject();
     const proj = d.getProject(root);
 
@@ -766,13 +833,15 @@ async function runIos(
     function composeRuntime() {
       return (
         d.runtimePlan ??
-        (release
-          ? iosProcessRuntime(async () => {
-              phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
-              hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
-              return { ok: true, prepared: { metroPort: null } };
-            })
-          : iosMetroRuntime(prepareMetro))
+        integration.runtime({
+          configuration,
+          prepareMetro,
+          prepareEmbedded: async () => {
+            phase('metro', `skipped (${configuration}: the JS bundle is embedded, no dev server is used)`);
+            hostedIosMetroNote(Boolean(hostedTarget), settings, note, opts.simulatorApp);
+            return { ok: true, prepared: { metroPort: null } };
+          },
+        })
       );
     }
 
@@ -938,42 +1007,57 @@ async function runIos(
       // restarts it on an EAS host (https://github.com/appandflow/stim/issues/1212).
       const localBoot = remoteDevice || hostedTarget ? null : startBoot();
       udid = (device.deviceUdid as string | undefined) ?? (await localBoot) ?? '';
+      const simulatorArch = simulatorBuildArch({
+        physical,
+        remoteArch,
+        hostArch: d.hostSimulatorArch(),
+        configuration,
+      });
       const acquiredArtifact = unlessCancelled(
         await acquireIosArtifact(
           {
             root,
             logFile,
-            udid,
             configuration,
-            buildScheme,
-            buildProfile,
             buildMachine,
-            isExpo,
-            remoteDestination: Boolean(remoteDevice || hostedTarget),
-            ...hostedIosBuildTarget(hostedTarget),
-            simulatorArch: simulatorBuildArch({ physical, remoteArch, hostArch: d.hostSimulatorArch(), configuration }),
-            device: physical
-              ? {
-                  lanAddress,
-                  metroPort,
-                  signingName: iosSigningIdentitySetting(settings),
-                  signingSha1: iosSigningIdentitySha1Setting(settings),
-                }
-              : null,
-            optimizations: optimizations.ios,
+            physical,
+            recipe: integration.artifact({
+              root,
+              logFile,
+              configuration,
+              buildScheme,
+              buildProfile,
+              ...iosArtifactTargetInputs({
+                udid,
+                physical,
+                remote: Boolean(remoteDevice),
+                hosted: hostedTarget,
+                simulatorArch,
+                lanAddress,
+                metroPort,
+                settings,
+              }),
+              optimizations: optimizations.ios,
+              easProfile: opts.easProfile,
+              cache: cachePolicy,
+              phase,
+              note,
+              logWriter,
+              estimates,
+              step: progress.step,
+              setPodsMs: (ms) => stats.setPodsMs(ms),
+            }),
             cache: {
               policy: cachePolicy,
               providerConfig: cacheProviderConfig,
               disabledByFlag: opts.buildCache === false,
             },
             easBuild,
-            easProfile: opts.easProfile,
             maxBuilds: limits.maxBuilds,
             progress: {
               phase,
               note,
               logWriter,
-              estimates,
               stats,
               step: progress.step,
               miss: progress.miss,
@@ -1064,6 +1148,7 @@ async function runIos(
 
       try {
         return await finishIosRun({
+          projectBundleId: integration.bundleId,
           runtime: appRuntime,
           runtimePreparation,
           slot,

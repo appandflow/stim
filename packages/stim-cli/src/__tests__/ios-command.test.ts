@@ -1,3 +1,9 @@
+import { nativeIosFixture } from './_native-ios-project.ts';
+import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { runReload } from '../commands/reload.ts';
+import { createProjectRegistry } from '../integrations/project-registry.ts';
+import { projectIntegrations } from '../integrations/projects.ts';
+import { reactNativeIosProject } from '../integrations/react-native-ios.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
@@ -13,9 +19,10 @@ import * as crashDiagnostics from '../diagnostics/native-crash.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild } from '../engine/build-progress.ts';
 import { ClaimUnavailableError, readClaimSet } from '../ownership-claim.ts';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -30,7 +37,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
-import { getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
+import { getProject, setDevice, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { prepareHostedIos } from '../device-host/hosted-ios.ts';
 import { writeHostedIos } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement } from '@stim-cli/core/state';
@@ -75,7 +82,12 @@ import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
-import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
+import {
+  COMPILATION_CACHE_UNAVAILABLE,
+  readBundleId,
+  readBundleExecutable,
+  type BuildIosResult,
+} from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import {
@@ -90,7 +102,7 @@ import {
   type RecordStatsResult,
   type StatsRun,
 } from '../engine/stats.ts';
-import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
+import { buildCacheKey, entryDir, resolveBuild } from '../cache/build-cache.ts';
 import { resolveRemote } from '../engine/remote-cache.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -442,6 +454,25 @@ function harness(overrides: LooseDeps = {}) {
     },
     ...overrides,
   };
+  deps.projectRegistry ??= createProjectRegistry(
+    projectIntegrations.map((provider) =>
+      provider.id !== 'react-native'
+        ? provider
+        : {
+            ...provider,
+            inspect(path) {
+              const match = provider.inspect(path);
+              return match
+                ? {
+                    ...match,
+                    ios: async () =>
+                      reactNativeIosProject(path, deps as Partial<import('../commands/ios/dependencies.ts').IosDeps>),
+                  }
+                : null;
+            },
+          },
+    ),
+  );
   return { deps, calls, appPath };
 }
 
@@ -8542,6 +8573,12 @@ describe('strict remote Mac selection', () => {
       },
     );
     expect(result.exitCode).toBeNull();
+    expect(offloadClient.chooseBuildMachine).toHaveBeenCalledWith(
+      expect.objectContaining({ target: expect.objectContaining({ runtime: 'ios27' }) }),
+    );
+    expect(offloadClient.offloadBuild).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ runtime: 'ios27' }) }),
+    );
     expect(delivered).toBe(true);
     expect(parseFirst(result.logs).offloadedTo).toBe('mini');
   });
@@ -8623,4 +8660,240 @@ test('stop cancels an iOS cache hit waiting on boot, releases its ticket, and ne
   } finally {
     resetExecutor();
   }
+});
+
+describe('registered iOS project recipes', () => {
+  function nativeProject() {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'tooling-only' }));
+    mkdirSync(join(root, 'Native.xcodeproj'));
+    writeFileSync(join(root, 'Native.xcodeproj', 'project.pbxproj'), 'native project');
+    writeFileSync(join(root, 'Native.swift'), 'struct NativeApp {}');
+    upsertProject(root, {});
+    setDevice(root, 'ios', { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true });
+    return createProjectRegistry([...projectIntegrations, nativeIosFixture]);
+  }
+
+  function compiler(onCompile: () => void = () => {}) {
+    const requests: { file: string; args: readonly string[]; cwd: unknown }[] = [];
+    const app = join(root, 'products', 'Native.app');
+    setExecutor(
+      makeExecutor({
+        runFile(file, args = []) {
+          if (file === 'cp') {
+            cpSync(args.at(-2)!, args.at(-1)!, { recursive: true });
+            return '';
+          }
+          if (file === 'plutil') return readFileSync(args.at(-1)!, 'utf8');
+          if (file === 'xcodebuild' && args.includes('-list'))
+            return JSON.stringify({ project: { name: 'Native', schemes: ['Native'] } });
+          if (file === 'xcodebuild' && args.includes('-showBuildSettings'))
+            return JSON.stringify([
+              {
+                buildSettings: {
+                  PRODUCT_TYPE: 'com.apple.product-type.application',
+                  PLATFORM_NAME: 'iphonesimulator',
+                  TARGET_BUILD_DIR: join(root, 'products'),
+                  FULL_PRODUCT_NAME: 'Native.app',
+                },
+              },
+            ]);
+          return '';
+        },
+        spawn(file, args = [], options = {}) {
+          requests.push({ file, args, cwd: options.cwd });
+          const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+          child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          setImmediate(() => {
+            mkdirSync(app, { recursive: true });
+            writeFileSync(
+              join(app, 'Info.plist'),
+              JSON.stringify({ CFBundleIdentifier: 'org.example.native', CFBundleExecutable: 'Native' }),
+            );
+            writeFileSync(join(app, 'Native'), 'native app', { mode: 0o755 });
+            onCompile();
+            child.stdout.emit('data', 'BUILD SUCCEEDED\n');
+            child.emit('close', 0, null);
+          });
+          return child as unknown as ChildProcess;
+        },
+      }),
+    );
+    return requests;
+  }
+
+  test('an added native recipe compiles Debug, reuses its app and verifies the process without RN or Metro', async () => {
+    const projectRegistry = nativeProject();
+    const requests = compiler();
+    const deps = { projectRegistry, readBundleId, readBundleExecutable };
+    const first = await run({ configuration: 'Debug', json: true }, deps);
+    expect(first.exitCode).toBe(null);
+    const facts = parseFirst(first.logs);
+    expect(facts).toMatchObject({
+      configuration: 'Debug',
+      metroPort: null,
+      bundleId: 'org.example.native',
+      launched: true,
+      cacheHit: false,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ file: 'xcodebuild', cwd: root });
+    expect(requests[0]!.args).toEqual(
+      expect.arrayContaining([
+        '-project',
+        join(root, 'Native.xcodeproj'),
+        '-scheme',
+        'Native',
+        '-configuration',
+        'Debug',
+        '-destination',
+        `id=${UDID}`,
+        '-sdk',
+        'iphonesimulator',
+      ]),
+    );
+    expect(first.calls.args.installIosApp).toMatchObject({ udid: UDID });
+    expect(first.calls.args.launchIosApp).toMatchObject({ bundleId: 'org.example.native', metroPort: null });
+    expect(first.calls.order).toContain('verifyReleaseLaunch');
+    for (const forbidden of [
+      'resolveProjectMetro',
+      'startDevServer',
+      'fingerprintProject',
+      'runPrebuild',
+      'runPodInstall',
+      'buildIos',
+      'swapJsBundle',
+      'loadProjectProvider',
+      'verifyLaunch',
+    ])
+      expect(first.calls.order).not.toContain(forbidden);
+    expect(readWorkspaceLaunches(root).ios).toMatchObject({
+      appId: 'org.example.native',
+      metroPort: null,
+      release: false,
+      runtime: 'process',
+    });
+    const second = await run({ configuration: 'Debug', json: true }, deps);
+    expect(second.exitCode).toBe(null);
+    const cached = parseFirst(second.logs);
+    expect(cached).toMatchObject({ configuration: 'Debug', metroPort: null, cacheHit: 'local', launched: true });
+    expect(requests).toHaveLength(1);
+    expect(readFileSync(join(cached.appPath, 'Native'), 'utf8')).toBe('native app');
+    const reload = await runReload({
+      root,
+      platform: 'ios',
+      deps: {
+        findWorkspace: () => root,
+        getProject: () => getProject(root),
+        readBrowser: () => null,
+        resolveIos: () => ({ sim: makeIosSim({ udid: UDID, state: 'Booted' }) }),
+        iosProcess: () => 4242,
+        resolveMetro: async () => {
+          throw new Error('native reload must not probe Metro');
+        },
+        reloadMetro: async () => {
+          throw new Error('native reload must not send a Metro command');
+        },
+      },
+    });
+    expect(reload).toMatchObject({ ok: false, error: { code: 'STIM_NO_METRO' } });
+    expect(buildRecords().some((record) => String(record.msg).includes('native process'))).toBe(true);
+    expect(buildRecords().some((record) => String(record.msg).includes('embedded JS'))).toBe(false);
+  });
+
+  test('a recipe refusing fresh materialization cleans its owned copy and never installs', async () => {
+    nativeProject();
+    compiler();
+    const temporary = join(tmpHome, 'refused-install-copy');
+    const projectRegistry = createProjectRegistry([
+      ...projectIntegrations,
+      {
+        ...nativeIosFixture,
+        inspect(path) {
+          const match = nativeIosFixture.inspect(path);
+          return match
+            ? {
+                ...match,
+                ios: async () => {
+                  const project = await match.ios!();
+                  return {
+                    ...project,
+                    artifact(context) {
+                      const recipe = project.artifact(context);
+                      return {
+                        ...recipe,
+                        materialize: async (appPath, options) => {
+                          if (!options.fresh) return recipe.materialize(appPath, options);
+                          mkdirSync(temporary);
+                          options.ownTemporary(temporary);
+                          return null;
+                        },
+                      };
+                    },
+                  };
+                },
+              }
+            : null;
+        },
+      },
+    ]);
+    const result = await run({ configuration: 'Debug', json: true }, { projectRegistry });
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_INSTALL_FAILED' });
+    expect(result.calls.order).not.toContain('installIosApp');
+    expect(result.calls.order).not.toContain('launchIosApp');
+    expect(existsSync(temporary)).toBe(false);
+  });
+
+  test('a native source edit during compilation prevents publication and the next run recompiles', async () => {
+    const projectRegistry = nativeProject();
+    let edited = false;
+    const requests = compiler(() => {
+      if (!edited) writeFileSync(join(root, 'Native.swift'), 'struct ChangedApp {}');
+      edited = true;
+    });
+    const deps = { projectRegistry, readBundleId, readBundleExecutable };
+    const first = await run({ configuration: 'Debug', json: true }, deps);
+    expect(first.exitCode).toBe(null);
+    expect(parseFirst(first.logs)).toMatchObject({ fingerprint: null, cacheKey: null, launched: true });
+    const initialKey = first.calls.args.acquireBuildLock.key;
+    assert(typeof initialKey === 'string');
+    expect(resolveBuild('ios', initialKey)).toBeNull();
+    const second = await run({ configuration: 'Debug', json: true }, deps);
+    expect(second.exitCode).toBe(null);
+    expect(requests).toHaveLength(2);
+    expect(resolveBuild('ios', parseFirst(second.logs).cacheKey)).not.toBeNull();
+    const third = await run({ configuration: 'Debug', json: true }, deps);
+    expect(parseFirst(third.logs).cacheHit).toBe('local');
+    expect(requests).toHaveLength(2);
+  });
+
+  test.each([{ device: true }, { easProfile: 'development' }])(
+    'unsupported recipe capabilities refuse before resources: %j',
+    async (options) => {
+      const projectRegistry = nativeProject();
+      const result = await run({ ...options, json: true }, { projectRegistry });
+      expect(result.exitCode).toBe(1);
+      expect(parseFirst(result.logs)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('This project integration does not support'),
+      });
+      expect(result.calls.order).not.toContain('ensureOwnedDevice');
+      expect(result.calls.order).not.toContain('fingerprintProject');
+      expect(result.calls.order).not.toContain('resolveProjectMetro');
+      expect(result.calls.order).not.toContain('buildIos');
+    },
+  );
+
+  test('two admitted iOS recipes refuse before source or device work', async () => {
+    const projectRegistry = nativeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    const result = await run({ json: true }, { projectRegistry });
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs)).toMatchObject({
+      code: 'STIM_NO_PROJECT',
+      message: expect.stringContaining('react-native, test-native-ios'),
+    });
+    expect(result.calls.order).toEqual([]);
+  });
 });

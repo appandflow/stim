@@ -216,14 +216,6 @@ export async function connectIosTarget(
   }
 }
 
-export function hostedIosBuildTarget(target: HostedIosTarget | null): {
-  hostedDestination?: { runtime: string; architecture: 'arm64' | 'x86_64' };
-} {
-  return target
-    ? { hostedDestination: { runtime: target.choice.runtimeId, architecture: target.choice.architecture } }
-    : {};
-}
-
 export async function iosPlacementBudget(
   d: IosDeps,
   root: string,
