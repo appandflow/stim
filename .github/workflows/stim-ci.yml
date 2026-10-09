@@ -83,6 +83,8 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          echo 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
           node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
 
       - name: Build, launch, probe and stop
@@ -108,3 +110,10 @@ jobs:
           timeout: '600'
           artifact-name: stim-ci-${{ matrix.platform }}-warm
           retention-days: '7'
+
+      - name: Record Android Gradle heap
+        if: always() && matrix.platform == 'android'
+        shell: bash
+        run: |
+          grep -h 'DefaultDaemonContext' "${GRADLE_USER_HOME:-$HOME/.gradle}"/daemon/*/daemon-*.out.log |
+            grep -oE -- '-Xmx[0-9]+[kKmMgG]?' | sort -u
