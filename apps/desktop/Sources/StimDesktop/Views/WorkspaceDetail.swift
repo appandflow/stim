@@ -411,7 +411,7 @@ struct WorkspaceDetail: View {
           }
         }
         if let archiveError { Text(archiveError).foregroundStyle(Palette.secondary) }
-      }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl).frame(maxWidth: .infinity, alignment: .leading)
+      }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).frame(maxWidth: .infinity, alignment: .leading)
     }
   }
 
@@ -423,13 +423,13 @@ struct WorkspaceDetail: View {
         } else {
           let availableWidth = max(0, geo.size.width - PageInset.horizontal * 2)
           let cardWidth = min(Self.maximumCardWidth, availableWidth)
-          let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+          let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+          FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
             ForEach(devices) { device in
               tile(device, focused: device.id == focused?.id, cardWidth: cardWidth, cardHeight: cardHeight)
             }
           }
-          .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl)
+          .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
         }
       }
     }
@@ -450,15 +450,15 @@ struct WorkspaceDetail: View {
             }.frame(maxWidth: .infinity).padding(Space.xxxl)
           } else if !devices.isEmpty {
             let cardWidth = min(Self.maximumCardWidth, max(0, geo.size.width - PageInset.horizontal * 2))
-            let cardHeight = max(0, geo.size.height - Space.xxl * 2)
-            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true, centered: true) {
+            let cardHeight = max(0, geo.size.height - Space.xxxl * 2)
+            FlowLayout(spacing: Space.xl, lineSpacing: Space.xl, topAligned: true) {
               ForEach(devices) { entry in
                 tile(
                   entry.device, focused: entry.device.id == focusedID, cardWidth: cardWidth, cardHeight: cardHeight,
                   owner: entry.workspace, project: page.subtitle(for: entry.entry, among: entries)
                 ).id(entry.id)
               }
-            }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxl).id("devices")
+            }.padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl).id("devices")
           }
         }
         .onChange(of: selectedPath, initial: true) {
