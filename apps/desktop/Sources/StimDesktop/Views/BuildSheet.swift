@@ -194,7 +194,7 @@ struct BuildSheet: View {
         } label: {
           Label(lastFailed ? "Rebuild" : "Run", systemImage: "play.fill")
         }
-        .buttonStyle(.stim(.primary, .regular))
+        .buttonStyle(.stim(.primary))
         .disabled(busy)
         .help(
           isMacos
