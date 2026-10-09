@@ -55,7 +55,7 @@ struct SetupGuideView: View {
     .frame(width: 760, height: 620)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: step)
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
       if step == .notifications { onboarding.refreshNotifications() }

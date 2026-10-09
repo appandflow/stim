@@ -223,7 +223,7 @@ private struct PhoneArt: View {
         }
       Image(systemName: "antenna.radiowaves.left.and.right")
         .font(.system(size: 28, weight: .semibold))
-        .foregroundStyle(Palette.brand)
+        .foregroundStyle(Palette.primary)
         .symbolEffect(.pulse, isActive: !reduceMotion)
     }
   }

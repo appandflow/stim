@@ -223,7 +223,7 @@ struct RootView: View {
     }
     .environment(\.windowSize, windowSize)
     .toolbarBackground(.hidden, for: .windowToolbar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .font(.stim(.body))
     .foregroundStyle(Palette.text)
     .environmentObject(actions)

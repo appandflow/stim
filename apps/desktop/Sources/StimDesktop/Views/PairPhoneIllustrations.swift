@@ -70,7 +70,7 @@ struct PhoneServeArt: View {
       BrandBadge(systemImage: "antenna.radiowaves.left.and.right")
         .symbolEffect(.pulse, isActive: !reduceMotion)
       HStack(spacing: Space.xs) {
-        Image(systemName: "lock.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.brand)
+        Image(systemName: "lock.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.primary)
         Text("Tailnet only").font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
       }
       .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
