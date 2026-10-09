@@ -47,6 +47,7 @@ struct RootView: View {
   @StateObject private var navigation = NavigationController()
   @State private var replacesHistory = false
   @State private var restoredProject = false
+  @State private var lastResolvedWorkspace: String?
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
@@ -343,12 +344,17 @@ struct RootView: View {
       navigate(.environment(path), .request("workspace path"))
     }
     .onReceive(store.$payload) { payload in
-      if let payload, case .environment(let path) = selection,
-        WorktreePage(path: path, environments: payload.environments) == nil,
-        let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
-      {
-        navigate(.archived(archive.id), .automatic("workspace removed, opening its archive"))
-        return
+      if let payload, case .environment(let path) = selection {
+        if WorktreePage(path: path, environments: payload.environments) != nil {
+          lastResolvedWorkspace = path
+        } else if lastResolvedWorkspace == path
+          || WorktreePage(path: path, environments: store.payload?.environments ?? []) != nil,
+          let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+        {
+          lastResolvedWorkspace = nil
+          navigate(.archived(archive.id), .automatic("workspace removed, opening its archive"))
+          return
+        }
       }
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
