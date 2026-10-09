@@ -121,3 +121,23 @@ function addPort(ports: Set<number>, port: number): void {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid TCP listener port.');
   ports.add(port);
 }
+
+export function addressPort(address: string | undefined): number {
+  const colon = String(address ?? '').lastIndexOf(':');
+  return colon < 0 ? Number.NaN : Number(String(address).slice(colon + 1));
+}
+
+export function parseLsofListeners(out: unknown): Map<number, number[]> {
+  const byPort = new Map<number, number[]>();
+  let pid: number | null = null;
+  for (const line of String(out ?? '').split('\n')) {
+    if (line.startsWith('p')) pid = parseInt(line.slice(1), 10);
+    else if (line.startsWith('n') && pid !== null && Number.isFinite(pid)) {
+      const port = addressPort(line.slice(1));
+      const pids = byPort.get(port) ?? [];
+      if (!pids.includes(pid)) pids.push(pid);
+      byPort.set(port, pids);
+    }
+  }
+  return byPort;
+}
