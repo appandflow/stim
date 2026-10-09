@@ -164,11 +164,19 @@ async function lifecycle(configuration, phase, revision, expectedHit) {
   assert.equal(plan.cacheHit, expectedHit);
   assert.equal(plan.prebuild, expectedHit ? null : 'none');
   let facts;
+  let buildFailure;
   try {
     facts = await stim(label, [...flags(configuration), '--simulator-app', 'xcode'], { timeout: 15 * 60_000 });
-  } finally {
-    cleanup.recordWorkspace(app);
+  } catch (error) {
+    buildFailure = error;
   }
+  try {
+    cleanup.recordWorkspace(app);
+  } catch (error) {
+    if (!buildFailure) throw error;
+    summary.diagnostics.push(error.stack ?? String(error));
+  }
+  if (buildFailure) throw buildFailure;
   cleanup.recordBuild(facts);
   assert.equal(facts.platform, 'ios');
   assert.equal(facts.configuration, configuration);
@@ -215,6 +223,9 @@ try {
   await run('xcode-version', 'xcodebuild', ['-version']);
   await run('swift-version', 'xcrun', ['swift', '--version']);
   await run('agent-device-version', 'agent-device', ['--version']);
+  await run('xcode-schemes', 'xcodebuild', ['-project', join(app, 'NativeAcceptance.xcodeproj'), '-list', '-json'], {
+    timeout: 180_000,
+  });
   const initialDevices = (await inventory('initial-devices')).map((device) => device.udid).toSorted();
   await stim('read-only-plan', [...flags('Debug'), '--plan']);
   assert.deepEqual((await inventory('after-plan-devices')).map((device) => device.udid).toSorted(), initialDevices);
