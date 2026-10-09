@@ -232,3 +232,53 @@ test.skipIf(process.platform === 'win32')(
     expect(github.upload.mock.calls[0]![2]).toBe(target);
   },
 );
+
+test.skipIf(process.platform === 'win32')('build uploads its completed artifact without a test command', async () => {
+  github.inputs.stage = 'build';
+  github.inputs.platform = 'android';
+  delete github.inputs.command;
+  delete github.inputs.artifacts;
+  fixture(
+    0,
+    `result.stage = 'build'; result.artifactPath = join(dir, 'app.apk'); writeFileSync(join(dir, 'build.json'), '{}'); save();`,
+  );
+  expect(await runAction()).toBe(0);
+  const directory = join(root, 'stim-ci-build-results');
+  const args = JSON.parse(readFileSync(join(directory, 'argv.json'), 'utf8'));
+  expect(args[0]).toBe('build');
+  expect(args).not.toContain('--');
+  expect(github.upload.mock.calls[0]![1]).toEqual(
+    expect.arrayContaining([join(directory, 'app.apk'), join(directory, 'build.json')]),
+  );
+  expect(github.output).toHaveBeenCalledWith('build-artifact', join(directory, 'app.apk'));
+});
+
+test.skipIf(process.platform === 'win32')('failed builds upload reports without partial app bytes', async () => {
+  github.inputs.stage = 'build';
+  github.inputs.platform = 'android';
+  delete github.inputs.command;
+  fixture(23, `result.stage = 'build'; result.artifactPath = null; save();`);
+  expect(await runAction()).toBe(23);
+  expect(github.upload.mock.calls[0]![1]).not.toContain(join(root, 'results/app.apk'));
+  expect(github.output.mock.calls.some(([name]) => name === 'build-artifact')).toBe(false);
+});
+
+test.skipIf(process.platform === 'win32')('refuses a result from another stage before uploading it', async () => {
+  github.inputs.stage = 'build';
+  github.inputs.platform = 'android';
+  delete github.inputs.command;
+  fixture(0);
+  expect(await runAction()).toBe(1);
+  expect(github.upload).not.toHaveBeenCalled();
+});
+
+it('refuses commands on build-only steps and unsupported stages or web builds', () => {
+  github.inputs.stage = 'build';
+  github.inputs.platform = 'android';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('command only applies');
+  delete github.inputs.command;
+  github.inputs.platform = 'web';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('no native build artifact');
+  github.inputs.stage = 'launch';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('stage must');
+});

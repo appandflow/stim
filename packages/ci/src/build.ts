@@ -2,6 +2,7 @@ import { copyFileSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createStim, type StimBuildOptions, type StimBuildResult } from 'stim';
 import { runCommand } from './command.ts';
+import { copyDiagnosticLogs } from './artifacts.ts';
 import { failure, prepareCI, writeJson, type CIContextOptions } from './context.ts';
 import type { CIFailure } from './index.ts';
 
@@ -27,7 +28,7 @@ export interface CIBuildResult {
   build: StimBuildResult | null;
   failure?: CIFailure;
   reportingError?: CIFailure;
-  diagnostics: { path: string | null; error?: CIFailure };
+  diagnostics: { path: string | null; files?: string[]; error?: CIFailure };
 }
 
 /** Builds and exports an artifact without starting or stopping a workspace runtime. */
@@ -113,6 +114,7 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
         const diagnostics = await stim.diagnostics({ tail: 1000, signal: AbortSignal.timeout(10_000) });
         result.diagnostics.path = join(artifactsDir, 'diagnostics.json');
         writeJson(result.diagnostics.path, diagnostics);
+        result.diagnostics.files = await copyDiagnosticLogs(diagnostics.directory, artifactsDir);
       } catch (error) {
         result.diagnostics.error = failure(error, 'STIM_CI_DIAGNOSTICS_FAILED');
       }

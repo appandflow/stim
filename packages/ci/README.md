@@ -30,7 +30,9 @@ Stim run is not part of this command.
 
 The library exports `buildCI({ projectRoot, build: { platform: "ios" }, ... })`.
 It accepts the same home/cache, timeout, cancellation and progress options as
-`runCI`. Build cancellation waits for the owned build operation to finish
+`runCI`. Diagnostics retain the same regular compiler logs. Providers can use
+`buildArtifactFiles(artifactsDir, result.artifactPath)` from `@stim-cli/ci/artifacts`
+to select reports and the completed export; partial or linked app files are excluded. Build cancellation waits for the owned build operation to finish
 cleanup and retains diagnostics; it never calls workspace `stop()`.
 
 ## Command line

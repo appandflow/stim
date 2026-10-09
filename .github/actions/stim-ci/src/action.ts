@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
-import { diagnosticArtifactFiles } from '@stim-cli/ci/artifacts';
-import type { CIResult } from '@stim-cli/ci';
+import { buildArtifactFiles, diagnosticArtifactFiles } from '@stim-cli/ci/artifacts';
+import type { CIBuildResult, CIResult } from '@stim-cli/ci';
 
 interface Inputs {
+  stage: 'build' | 'run';
   platform: 'ios' | 'android' | 'macos' | 'web';
   project: string;
   command: string;
@@ -30,8 +31,12 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (platform !== 'ios' && platform !== 'android' && platform !== 'macos' && platform !== 'web') {
     throw new Error('platform must be ios, android, macos, or web.');
   }
+  const stage = input('stage') || 'run';
+  if (stage !== 'build' && stage !== 'run') throw new Error('stage must be build or run.');
+  if (stage === 'build' && platform === 'web') throw new Error('Web has no native build artifact. Use stage: run.');
   const command = input('command');
-  if (!command.trim()) throw new Error('command is required.');
+  if (stage === 'run' && !command.trim()) throw new Error('command is required for stage: run.');
+  if (stage === 'build' && command.trim()) throw new Error('command only applies to stage: run.');
   const cli = input('cli-path');
   const version = input('version');
   if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) {
@@ -48,17 +53,18 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     throw new Error('retention-days must be a non-negative whole number.');
   }
   return {
+    stage,
     platform,
     project: resolve(root, input('project') || '.'),
     command,
     version,
     cli: cli ? resolve(root, cli) : '',
-    artifacts: resolve(root, input('artifacts') || 'stim-ci-results'),
+    artifacts: resolve(root, input('artifacts') || `stim-ci-${stage}-results`),
     home: input('home') ? resolve(root, input('home')) : '',
     cache: input('build-cache') ? resolve(root, input('build-cache')) : '',
     timeout,
     upload: upload === 'true',
-    artifactName: input('artifact-name') || `stim-ci-${platform}-${randomUUID()}`,
+    artifactName: input('artifact-name') || `stim-ci-${stage}-${platform}-${randomUUID()}`,
     retentionDays: Number(retention),
   };
 }
@@ -84,16 +90,17 @@ async function execute(file: string, args: string[], cwd: string): Promise<numbe
   }
 }
 
-function currentResult(path: string, options: Inputs, started: number): CIResult | null {
+function currentResult(path: string, options: Inputs, started: number): CIResult | CIBuildResult | null {
   try {
     if (!lstatSync(path).isFile()) throw new Error('result.json is not a regular file.');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
-  const result = JSON.parse(readFileSync(path, 'utf8')) as CIResult;
+  const result = JSON.parse(readFileSync(path, 'utf8')) as CIResult | CIBuildResult;
   if (
     result.version !== 1 ||
+    ('stage' in result ? result.stage : 'run') !== options.stage ||
     result.platform !== options.platform ||
     typeof result.artifactsDir !== 'string' ||
     resolve(result.artifactsDir) !== options.artifacts ||
@@ -140,7 +147,7 @@ export async function runAction(): Promise<number> {
     }
     const args = [
       cli,
-      'run',
+      options.stage,
       '--platform',
       options.platform,
       '--project',
@@ -152,19 +159,24 @@ export async function runAction(): Promise<number> {
     ];
     if (options.home) args.push('--home', options.home);
     if (options.cache) args.push('--build-cache', options.cache);
-    args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
+    if (options.stage === 'run') args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
     const started = Date.now();
     let code = await execute(process.execPath, args, root);
-    let result: CIResult | null;
+    let result: CIResult | CIBuildResult | null;
     try {
       result = currentResult(resultPath, options, started);
     } catch (error) {
       core.warning(String(error));
       return code || 1;
     }
+    const build = result && 'stage' in result && result.stage === 'build' ? result : null;
+    if (build?.artifactPath) core.setOutput('build-artifact', build.artifactPath);
     if (options.upload) {
       try {
-        const files = await diagnosticArtifactFiles(options.artifacts);
+        const files =
+          options.stage === 'build'
+            ? await buildArtifactFiles(options.artifacts, build?.artifactPath ?? null)
+            : await diagnosticArtifactFiles(options.artifacts);
         if (!files.length) throw new Error('No diagnostic artifact files were produced.');
         const uploaded = await new DefaultArtifactClient().uploadArtifact(
           options.artifactName,
@@ -186,6 +198,7 @@ export async function runAction(): Promise<number> {
     if (process.env.GITHUB_STEP_SUMMARY) {
       try {
         core.summary.addHeading('Stim CI', 2).addTable([
+          ['Stage', options.stage],
           ['Platform', options.platform],
           ['Exit code', String(code)],
           ['Duration', result ? `${Math.round(result.durationMs / 1000)}s` : 'Result unavailable'],

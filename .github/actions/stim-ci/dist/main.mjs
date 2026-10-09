@@ -97548,14 +97548,35 @@ async function diagnosticArtifactFiles(artifactsDir) {
 	const logs = join(artifactsDir, "logs");
 	return [...files, ...(await regularFiles(logs)).filter(isLog).map((name) => join(logs, name))];
 }
+/** Lists build reports and a completed APK or app archive, excluding linked entries and partial exports. */
+async function buildArtifactFiles(artifactsDir, artifactPath) {
+	const root = await realpath$1(artifactsDir);
+	const names = await regularFiles(root);
+	const files = await diagnosticArtifactFiles(root);
+	for (const name of [
+		"build.json",
+		"artifact.stdout.log",
+		"artifact.stderr.log"
+	]) if (names.includes(name)) files.push(join(root, name));
+	if (artifactPath !== null) {
+		const selected = ["app.apk", "app.tar.gz"].find((name) => [join(root, name), join(resolve$1(artifactsDir), name)].includes(resolve$1(artifactPath)));
+		if (!selected || !names.includes(selected)) throw new Error("Build artifact must be a regular exported APK or app archive inside the results directory.");
+		files.push(join(root, selected));
+	}
+	return files;
+}
 //#endregion
 //#region src/action.ts
 function readInputs(input, root, host = process.platform) {
 	if (host !== "darwin" && host !== "linux") throw new Error("Stim CI action supports macOS and Linux runners with Bash.");
 	const platform = input("platform");
 	if (platform !== "ios" && platform !== "android" && platform !== "macos" && platform !== "web") throw new Error("platform must be ios, android, macos, or web.");
+	const stage = input("stage") || "run";
+	if (stage !== "build" && stage !== "run") throw new Error("stage must be build or run.");
+	if (stage === "build" && platform === "web") throw new Error("Web has no native build artifact. Use stage: run.");
 	const command = input("command");
-	if (!command.trim()) throw new Error("command is required.");
+	if (stage === "run" && !command.trim()) throw new Error("command is required for stage: run.");
+	if (stage === "build" && command.trim()) throw new Error("command only applies to stage: run.");
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
@@ -97566,17 +97587,18 @@ function readInputs(input, root, host = process.platform) {
 	const retention = input("retention-days") || "0";
 	if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) throw new Error("retention-days must be a non-negative whole number.");
 	return {
+		stage,
 		platform,
 		project: resolve$1(root, input("project") || "."),
 		command,
 		version,
 		cli: cli ? resolve$1(root, cli) : "",
-		artifacts: resolve$1(root, input("artifacts") || "stim-ci-results"),
+		artifacts: resolve$1(root, input("artifacts") || `stim-ci-${stage}-results`),
 		home: input("home") ? resolve$1(root, input("home")) : "",
 		cache: input("build-cache") ? resolve$1(root, input("build-cache")) : "",
 		timeout,
 		upload: upload === "true",
-		artifactName: input("artifact-name") || `stim-ci-${platform}-${randomUUID()}`,
+		artifactName: input("artifact-name") || `stim-ci-${stage}-${platform}-${randomUUID()}`,
 		retentionDays: Number(retention)
 	};
 }
@@ -97611,7 +97633,7 @@ function currentResult(path, options, started) {
 		throw error;
 	}
 	const result = JSON.parse(readFileSync$1(path, "utf8"));
-	if (result.version !== 1 || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
+	if (result.version !== 1 || ("stage" in result ? result.stage : "run") !== options.stage || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
 	return result;
 }
 async function runAction() {
@@ -97642,7 +97664,7 @@ async function runAction() {
 		}
 		const args = [
 			cli,
-			"run",
+			options.stage,
 			"--platform",
 			options.platform,
 			"--project",
@@ -97654,7 +97676,7 @@ async function runAction() {
 		];
 		if (options.home) args.push("--home", options.home);
 		if (options.cache) args.push("--build-cache", options.cache);
-		args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
+		if (options.stage === "run") args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
 		const started = Date.now();
 		let code = await execute(process.execPath, args, root);
 		let result;
@@ -97664,8 +97686,10 @@ async function runAction() {
 			warning(String(error));
 			return code || 1;
 		}
+		const build = result && "stage" in result && result.stage === "build" ? result : null;
+		if (build?.artifactPath) setOutput("build-artifact", build.artifactPath);
 		if (options.upload) try {
-			const files = await diagnosticArtifactFiles(options.artifacts);
+			const files = options.stage === "build" ? await buildArtifactFiles(options.artifacts, build?.artifactPath ?? null) : await diagnosticArtifactFiles(options.artifacts);
 			if (!files.length) throw new Error("No diagnostic artifact files were produced.");
 			const uploaded = await new DefaultArtifactClient().uploadArtifact(options.artifactName, files, options.artifacts, { retentionDays: options.retentionDays });
 			if (uploaded.id === void 0) throw new Error("GitHub did not return an artifact ID.");
@@ -97677,6 +97701,7 @@ async function runAction() {
 		}
 		if (process.env.GITHUB_STEP_SUMMARY) try {
 			summary.addHeading("Stim CI", 2).addTable([
+				["Stage", options.stage],
 				["Platform", options.platform],
 				["Exit code", String(code)],
 				["Duration", result ? `${Math.round(result.durationMs / 1e3)}s` : "Result unavailable"]

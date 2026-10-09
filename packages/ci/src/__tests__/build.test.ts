@@ -41,6 +41,7 @@ beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ci-build-')));
   active = join(root, 'existing-session');
   writeFileSync(active, 'running');
+  writeFileSync(join(root, 'compiler.log'), 'native compiler evidence');
   const apkPath = join(root, 'built.apk');
   writeFileSync(apkPath, 'compiled apk');
   options = { projectRoot: root, build: { platform: 'android' }, artifactsDir: join(root, 'artifacts') };
@@ -65,6 +66,7 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).stage).toBe('build');
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(readFileSync(active, 'utf8')).toBe('running');
+  expect(readFileSync(result.diagnostics.files![0]!, 'utf8')).toBe('native compiler evidence');
   expect(lifecycle.stop).not.toHaveBeenCalled();
 });
 
