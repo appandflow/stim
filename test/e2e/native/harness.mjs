@@ -358,10 +358,10 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
       state.supervisor,
       { pid: state.supervisor?.serverPid, startedAt: state.supervisor?.startedAt },
       ...Object.values(state.collectors ?? {}),
-    ].filter(Boolean);
+    ].filter((record) => Number.isInteger(record?.pid) && record.pid > 0);
+    if (records.length === 0) return;
     const live = processSnapshot(h);
     for (const record of records) {
-      if (!Number.isInteger(record.pid) || record.pid <= 0) continue;
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
       if (!processes.has(key)) processes.set(key, live.get(record.pid));
     }

@@ -106,7 +106,10 @@ for (const platform of ['ios', 'android']) {
         },
       }),
     );
+    f.writeState({});
+    f.output.failure = 'ps';
     f.cleanup.recordWorkspace(f.cwd);
+    f.output.failure = null;
     rmSync(f.configFile);
     f.cleanup.recordWorkspace(f.cwd);
     f.output.devices = [{ udid: 'RUN', name: 'stim-parked' }];
