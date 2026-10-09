@@ -89,14 +89,22 @@ final class BuildMachinesModelTests: XCTestCase {
     await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
     XCTAssertEqual(harness.calls.count, 2)
 
-    harness.machines = "[\"mini\", \"studio\"]"
-    await model.settings.refresh()
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: nil)
+    await model.checkMachinesIfDue(checkout: nil, enabled: true, identity: "build-c")
+    XCTAssertEqual(harness.calls.count, 2)
+
+    await model.checkMachinesIfDue(checkout: "/w", enabled: false, identity: "build-b")
     await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
     XCTAssertEqual(harness.calls.count, 3)
 
-    harness.now = harness.now.addingTimeInterval(15 * 60)
+    harness.machines = "[\"mini\", \"studio\"]"
+    await model.settings.refresh()
     await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
     XCTAssertEqual(harness.calls.count, 4)
+
+    harness.now = harness.now.addingTimeInterval(15 * 60)
+    await model.checkMachinesIfDue(checkout: "/w", enabled: true, identity: "build-b")
+    XCTAssertEqual(harness.calls.count, 5)
   }
 
   @MainActor func testAutomaticCheckWaitsWhileAnotherRefreshIsRunning() async {

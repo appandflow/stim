@@ -140,17 +140,21 @@ final class BuildMachinesModel {
     }
   }
 
-  /// Looks for a build machine on another Stim build while the automatic-install setting is on, whichever page is
-  /// open: when status first has a checkout, when this Mac's `stim` executable is replaced or the machine list
-  /// changes, and every 15 minutes otherwise. Wake-ups compare cached values and stat the executable; settings are
-  /// re-read at the slow cadence, also after a failed read.
   func keepMachinesCurrent(status: StatusStore) {
     Task { [weak self, weak status] in
       while !Task.isCancelled {
         guard let self, let status else { return }
-        let checkout = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:))
-          .first { FileManager.default.fileExists(atPath: $0.path) }?.path
+        let candidates = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).map(\.path)
         let enabled = UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines)
+        let cli = await cli.value
+        let launcher = cli.launcher
+        let executable = cli.executable
+        let (checkout, identity) = await Task.detached {
+          (
+            candidates.first { FileManager.default.fileExists(atPath: $0) },
+            (launcher?.script ?? executable).flatMap(Self.identity(ofExecutable:))
+          )
+        }.value
         let current = now()
         if enabled, checkout != nil, !isBusy,
           settingsReadAt.map({ current.timeIntervalSince($0) >= BuildMachineCheckState.interval }) ?? true
@@ -158,16 +162,13 @@ final class BuildMachinesModel {
           settingsReadAt = current
           await settings.refresh()
         }
-        await checkMachinesIfDue(checkout: checkout, enabled: enabled, identity: await localStimIdentity())
+        await checkMachinesIfDue(checkout: checkout, enabled: enabled, identity: identity)
         try? await Task.sleep(for: .seconds(30))
       }
     }
   }
 
-  /// The modification time of the `stim` executable behind any symlink, which changes when Stim is rebuilt or
-  /// reinstalled even at the same version.
-  private func localStimIdentity() async -> String? {
-    guard let path = await cli.value.executable else { return nil }
+  nonisolated private static func identity(ofExecutable path: String) -> String? {
     let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     return (try? FileManager.default.attributesOfItem(atPath: resolved)[.modificationDate] as? Date)
       .map { "\(resolved)@\($0.timeIntervalSince1970)" }
@@ -178,7 +179,7 @@ final class BuildMachinesModel {
       lastMachineCheck = nil
       return
     }
-    guard !isBusy, let checkout else { return }
+    guard !isBusy, let checkout, let identity else { return }
     let due = shouldCheckBuildMachines(
       BuildMachineCheckState(
         entries: entries, checkout: checkout, last: lastMachineCheck, identity: identity, now: now()))
