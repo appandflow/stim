@@ -69,6 +69,10 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      native_worker_only:
+        description: Run only the native Xcode build-worker acceptance
+        type: boolean
+        default: false
       native_ios_only:
         description: 'Run only the native Xcode acceptance fixture'
         type: boolean
@@ -115,7 +119,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || inputs.native_worker_only && '-worker' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -124,7 +128,7 @@ permissions:
 jobs:
   plan:
     name: plan
-    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.native_worker_only)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -627,7 +631,7 @@ jobs:
 
   native-xcode:
     name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
-    if: github.event_name == 'workflow_dispatch' && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    if: github.event_name == 'workflow_dispatch' && !inputs.native_worker_only && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
     runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -677,7 +681,7 @@ jobs:
 
   native-gradle:
     name: native Gradle Android
-    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
+    if: github.event_name == 'workflow_dispatch' && !inputs.native_worker_only && inputs.native_gradle
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -735,3 +739,38 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
             ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  native-xcode-worker:
+    name: native Xcode build-worker acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.native_worker_only
+    runs-on: macos-26-xlarge
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_NATIVE_WORKER_EVIDENCE: ${{ github.workspace }}/artifacts/native-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '24'
+      - name: Select native worker Xcode
+        shell: bash
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Validate task harness format and lint
+        run: |
+          pnpm run format:check
+          pnpm run lint
+      - name: Native Xcode worker cold, warm and edited-source builds
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-worker
+          node test/e2e/native/run-native-worker-e2e.mjs 2>&1 | tee artifacts/native-worker/driver.log
+      - name: Upload native worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-worker-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/native-worker
+          if-no-files-found: warn
