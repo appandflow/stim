@@ -233,6 +233,7 @@ struct StimDesktopApp: App {
       tips.start()
       metrics.start()
       autopilot.start()
+      buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
   }

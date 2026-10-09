@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import StimKit
+import StimStores
 
 @MainActor @Observable
 final class BuildMachinesModel {
@@ -134,6 +135,21 @@ final class BuildMachinesModel {
       guard !autoUpdated.contains(key), updates[status.machine]?.isDone ?? true else { continue }
       autoUpdated.insert(key)
       Task { await update(status.machine, checkout: checkout) }
+    }
+  }
+
+  /// Checks the build machines once a minute while the automatic-install setting is on, whichever page is open.
+  func keepMachinesCurrent(status: StatusStore) {
+    Task { [weak self, weak status] in
+      while !Task.isCancelled {
+        guard let self, let status else { return }
+        if UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines),
+          let checkout = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).first?.path
+        {
+          await refresh(checkout: checkout)
+        }
+        try? await Task.sleep(for: .seconds(60))
+      }
     }
   }
 
