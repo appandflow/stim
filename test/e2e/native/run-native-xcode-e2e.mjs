@@ -10,6 +10,11 @@ import { createCleanupTracker, createHarness, workspaceLogsDir } from './harness
 
 assert(process.env.CI === 'true' || process.env.CI === '1', 'This acceptance driver runs only in CI.');
 assert.equal(process.platform, 'darwin', 'Native Xcode acceptance requires a hosted macOS runner.');
+const project = process.env.STIM_NATIVE_XCODE_PROJECT ?? 'fixture';
+assert(['fixture', 'food-truck'].includes(project), 'Unknown native Xcode acceptance project.');
+const foodTruck = project === 'food-truck';
+const sampleCommit = '3954a769e99f3cc53297d94f2b960ceb2665b3d6';
+const scheme = foodTruck ? 'Food Truck' : 'NativeAcceptance';
 const exec = promisify(execFile);
 const evidence = resolve(process.env.STIM_NATIVE_XCODE_EVIDENCE ?? 'artifacts/native-xcode');
 mkdirSync(evidence, { recursive: true });
@@ -33,7 +38,19 @@ const env = {
 process.env.STIM_HOME = home;
 const harness = createHarness({ env, cliPath: cli, label: 'native-xcode' });
 const cleanup = createCleanupTracker({ h: harness, platform: 'ios' });
-const summary = { temporary, source, app, home, steps: [], runs: [], diagnostics: [], cleanup: null, failure: null };
+const summary = {
+  project,
+  sampleCommit: foodTruck ? sampleCommit : null,
+  temporary,
+  source,
+  app,
+  home,
+  steps: [],
+  runs: [],
+  diagnostics: [],
+  cleanup: null,
+  failure: null,
+};
 let commandNumber = 0;
 let activeAgentEnv;
 let ownedUdid;
@@ -114,35 +131,60 @@ async function verifyUi(label, facts, revision) {
     'UI attachment must not replace the app process.',
   );
   await agent(`${label}-revision`, ['wait', 'text', revision, '30000']);
-  await agent(`${label}-initial-state`, ['wait', 'text', 'Count: 0', '30000']);
+  if (!foodTruck) await agent(`${label}-initial-state`, ['wait', 'text', 'Count: 0', '30000']);
   await agent(`${label}-snapshot`, ['snapshot', '-i']);
   const clickedAt = Date.now();
-  await agent(`${label}-press`, ['press', 'id="increment"', '--settle']);
-  await agent(`${label}-changed-state`, ['wait', 'text', 'Count: 1', '30000']);
+  if (foodTruck) {
+    await agent(`${label}-orders`, ['press', 'label="New Orders"', '--settle']);
+    await agent(`${label}-left-truck`, ['wait', 'absent', 'label="New Orders"', '30000']);
+    await agent(`${label}-changed-state`, ['wait', 'label="Orders"', '30000']);
+    await agent(`${label}-orders-snapshot`, ['snapshot', '-i']);
+    await agent(`${label}-orders-screenshot`, ['screenshot', join(evidence, `${label}-orders.png`)]);
+    await agent(`${label}-back`, ['back', '--settle']);
+    await agent(`${label}-returned`, ['wait', `label="${revision}"`, '30000']);
+    await agent(`${label}-returned-content`, ['wait', 'label="New Orders"', '30000']);
+  } else {
+    await agent(`${label}-press`, ['press', 'id="increment"', '--settle']);
+    await agent(`${label}-changed-state`, ['wait', 'text', 'Count: 1', '30000']);
+  }
   await agent(`${label}-screenshot`, ['screenshot', join(evidence, `${label}-clicked.png`)]);
-  const deadline = Date.now() + 30_000;
-  let records;
-  do {
-    const text = await run(`${label}-device-logs`, process.execPath, [
-      cli,
-      'logs',
-      '--source',
-      'device',
-      '--grep',
-      `native-acceptance-click:${revision}:1`,
-      '--json',
-    ]);
-    records = text
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-    if (records.some((record) => record.ts >= clickedAt)) break;
-    await sleep(1000);
-  } while (Date.now() < deadline);
-  assert(
-    records.some((record) => record.ts >= clickedAt),
-    'Stim must collect the current native UI click log.',
+  const marker = foodTruck
+    ? revision === 'Truck'
+      ? null
+      : `stim-real-food-truck:${revision}`
+    : `native-acceptance-click:${revision}:1`;
+  if (marker) {
+    const deadline = Date.now() + 30_000;
+    let records;
+    do {
+      const text = await run(`${label}-device-logs`, process.execPath, [
+        cli,
+        'logs',
+        '--source',
+        'device',
+        '--grep',
+        marker,
+        '--json',
+      ]);
+      records = text
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      if (records.some((record) => record.ts >= clickedAt)) break;
+      await sleep(1000);
+    } while (Date.now() < deadline);
+    assert(
+      records.some((record) => record.ts >= clickedAt),
+      'Stim must collect the current native UI interaction log.',
+    );
+  } else {
+    await run(`${label}-device-logs`, process.execPath, [cli, 'logs', '--source', 'device', '--json']);
+  }
+  assert.equal(
+    await appPid(`${label}-pid-after-interaction`, facts),
+    beforePid,
+    'UI interaction must retain the launched process.',
   );
   const errors = await run(`${label}-errors`, process.execPath, [cli, 'logs', '--errors', '--json']);
   assert.equal(errors.trim(), '', 'Stim reported an app, build, or runtime error.');
@@ -151,19 +193,30 @@ async function verifyUi(label, facts, revision) {
 }
 
 function flags(configuration) {
-  return [
-    'ios',
-    '--scheme',
-    'NativeAcceptance',
-    ...(configuration === 'Staging' ? [] : ['--configuration', configuration]),
-  ];
+  return ['ios', '--scheme', scheme, ...(configuration === 'Staging' ? [] : ['--configuration', configuration])];
+}
+
+async function readPlan(label, configuration) {
+  if (!foodTruck) return stim(label, [...flags(configuration), '--plan']);
+  try {
+    await stim(label, [...flags(configuration), '--plan']);
+    assert.fail('The real project must not claim an artifact key with unresolved package/configuration inputs.');
+  } catch (error) {
+    assert.equal(error.cause?.code, 1);
+    const refusal = JSON.parse(error.cause.stdout);
+    assert.equal(refusal.code, 'STIM_BAD_ARG');
+    assert.match(refusal.message, /No reusable native artifact/);
+    return refusal;
+  }
 }
 
 async function lifecycle(configuration, phase, revision, expectedHit) {
   const label = `${configuration}-${phase}`;
-  const plan = await stim(`${label}-plan`, [...flags(configuration), '--plan']);
-  assert.equal(plan.cacheHit, expectedHit);
-  assert.equal(plan.prebuild, expectedHit ? null : 'none');
+  const plan = await readPlan(`${label}-plan`, configuration);
+  if (!foodTruck) {
+    assert.equal(plan.cacheHit, expectedHit);
+    assert.equal(plan.prebuild, expectedHit ? null : 'none');
+  }
   let facts;
   let buildFailure;
   try {
@@ -182,7 +235,7 @@ async function lifecycle(configuration, phase, revision, expectedHit) {
       await run(
         `${label}-schemes-after-failure`,
         'xcodebuild',
-        ['-project', join(app, 'NativeAcceptance.xcodeproj'), '-list', '-json'],
+        ['-project', join(app, `${scheme}.xcodeproj`), '-list', '-json'],
         { timeout: 180_000 },
       );
     } catch (error) {
@@ -196,11 +249,17 @@ async function lifecycle(configuration, phase, revision, expectedHit) {
   assert.equal(facts.launched, true);
   assert.equal(facts.metroPort, null);
   assert.equal(facts.devServer, undefined);
-  assert.equal(facts.cacheSkipped, false);
+  assert.equal(facts.cacheSkipped, foodTruck);
   assert.equal(facts.cacheHit, expectedHit);
-  assert.equal(facts.cacheKey, plan.cacheKey, 'Planning must predict the artifact execution reads/writes.');
-  assert.equal(facts.bundleId, 'dev.stim.native.acceptance');
-  assert(facts.cacheKey && facts.fingerprint && existsSync(facts.appPath));
+  if (foodTruck) {
+    assert.equal(facts.cacheKey, null);
+    assert.equal(facts.fingerprint, null);
+  } else {
+    assert.equal(facts.cacheKey, plan.cacheKey, 'Planning must predict the artifact execution reads/writes.');
+    assert(facts.cacheKey && facts.fingerprint);
+  }
+  assert.equal(facts.bundleId, foodTruck ? 'com.example.apple-samplecode.Food-Truck' : 'dev.stim.native.acceptance');
+  assert(existsSync(facts.appPath));
   if (ownedUdid) assert.equal(facts.udid, ownedUdid, 'Repeated native runs must retain their owned simulator.');
   ownedUdid = facts.udid;
   const status = await stim(`${label}-status`, ['status']);
@@ -214,21 +273,33 @@ async function lifecycle(configuration, phase, revision, expectedHit) {
 }
 
 try {
-  cpSync(fileURLToPath(new URL('./fixtures/xcode', import.meta.url)), source, { recursive: true });
-  writeFileSync(
-    join(source, '.stim.json'),
-    JSON.stringify({ ios: { configuration: 'Staging' }, optimizations: { releaseBundleSwap: false } }) + '\n',
-  );
-  for (const args of [
-    ['init', '-b', 'main'],
-    ['config', 'user.name', 'Stim native acceptance'],
-    ['config', 'user.email', 'native-acceptance@example.invalid'],
-    ['config', 'commit.gpgsign', 'false'],
-    ['add', '-A'],
-    ['commit', '-m', 'Native Xcode acceptance fixture'],
-    ['worktree', 'add', '--detach', app, 'HEAD'],
-  ])
-    await run('fixture-git', 'git', args, { cwd: source });
+  if (foodTruck) {
+    mkdirSync(source);
+    for (const args of [
+      ['init'],
+      ['remote', 'add', 'origin', 'https://github.com/apple/sample-food-truck.git'],
+      ['fetch', '--depth', '1', 'origin', sampleCommit],
+      ['checkout', '--detach', 'FETCH_HEAD'],
+    ])
+      await run('sample-git', 'git', args, { cwd: source });
+    assert.equal((await run('sample-head', 'git', ['rev-parse', 'HEAD'], { cwd: source })).trim(), sampleCommit);
+  } else {
+    cpSync(fileURLToPath(new URL('./fixtures/xcode', import.meta.url)), source, { recursive: true });
+    writeFileSync(
+      join(source, '.stim.json'),
+      JSON.stringify({ ios: { configuration: 'Staging' }, optimizations: { releaseBundleSwap: false } }) + '\n',
+    );
+    for (const args of [
+      ['init', '-b', 'main'],
+      ['config', 'user.name', 'Stim native acceptance'],
+      ['config', 'user.email', 'native-acceptance@example.invalid'],
+      ['config', 'commit.gpgsign', 'false'],
+      ['add', '-A'],
+      ['commit', '-m', 'Native Xcode acceptance fixture'],
+    ])
+      await run('fixture-git', 'git', args, { cwd: source });
+  }
+  await run('fixture-worktree', 'git', ['worktree', 'add', '--detach', app, 'HEAD'], { cwd: source });
   worktreeCreated = true;
   await run('ios-viewer-default', process.execPath, [cli, 'settings', 'set', 'iosSimulatorApp', 'stim-desktop']);
   await run('android-viewer-default', process.execPath, [cli, 'settings', 'set', 'androidEmulatorApp', 'stim-desktop']);
@@ -236,22 +307,41 @@ try {
   await run('xcode-version', 'xcodebuild', ['-version']);
   await run('swift-version', 'xcrun', ['swift', '--version']);
   await run('agent-device-version', 'agent-device', ['--version']);
-  await run('xcode-schemes', 'xcodebuild', ['-project', join(app, 'NativeAcceptance.xcodeproj'), '-list', '-json'], {
+  await run('xcode-schemes', 'xcodebuild', ['-project', join(app, `${scheme}.xcodeproj`), '-list', '-json'], {
     timeout: 180_000,
   });
   const initialDevices = (await inventory('initial-devices')).map((device) => device.udid).toSorted();
-  await stim('read-only-plan', [...flags('Debug'), '--plan']);
+  await readPlan('read-only-plan', 'Debug');
   assert.deepEqual((await inventory('after-plan-devices')).map((device) => device.udid).toSorted(), initialDevices);
-  const original = readFileSync(join(app, 'NativeAcceptance.swift'), 'utf8');
-  for (const configuration of ['Debug', 'Release', 'Staging']) {
-    writeFileSync(join(app, 'NativeAcceptance.swift'), original);
-    const cold = await lifecycle(configuration, 'cold', 'native-revision-one', false);
-    const warm = await lifecycle(configuration, 'warm', 'native-revision-one', 'local');
-    assert.equal(warm.cacheKey, cold.cacheKey);
-    const revision = `native-revision-${configuration.toLowerCase()}`;
-    writeFileSync(join(app, 'NativeAcceptance.swift'), original.replace('native-revision-one', revision));
-    const edited = await lifecycle(configuration, 'edited', revision, false);
-    assert.notEqual(edited.cacheKey, cold.cacheKey, 'Changing native source must invalidate the artifact.');
+  if (foodTruck) {
+    await lifecycle('Debug', 'cold', 'Truck', false);
+    await lifecycle('Debug', 'unchanged', 'Truck', false);
+    const file = join(app, 'App', 'Truck', 'TruckView.swift');
+    const original = readFileSync(file, 'utf8');
+    const title = '.navigationTitle("Truck")';
+    assert.equal(original.split(title).length, 2, 'The pinned real source must contain exactly one title edit target.');
+    const revision = 'Stim Real Food Truck';
+    writeFileSync(
+      file,
+      original.replace(
+        title,
+        `.navigationTitle("${revision}").onAppear { FileHandle.standardOutput.write(Data("stim-real-food-truck:${revision}\\n".utf8)) }`,
+      ),
+    );
+    await run('source-edit', 'git', ['diff', '--', 'App/Truck/TruckView.swift']);
+    await lifecycle('Debug', 'edited', revision, false);
+  } else {
+    const original = readFileSync(join(app, 'NativeAcceptance.swift'), 'utf8');
+    for (const configuration of ['Debug', 'Release', 'Staging']) {
+      writeFileSync(join(app, 'NativeAcceptance.swift'), original);
+      const cold = await lifecycle(configuration, 'cold', 'native-revision-one', false);
+      const warm = await lifecycle(configuration, 'warm', 'native-revision-one', 'local');
+      assert.equal(warm.cacheKey, cold.cacheKey);
+      const revision = `native-revision-${configuration.toLowerCase()}`;
+      writeFileSync(join(app, 'NativeAcceptance.swift'), original.replace('native-revision-one', revision));
+      const edited = await lifecycle(configuration, 'edited', revision, false);
+      assert.notEqual(edited.cacheKey, cold.cacheKey, 'Changing native source must invalidate the artifact.');
+    }
   }
   const stopped = await stim('stop', ['stop']);
   assert.equal(stopped.ok, true);

@@ -73,6 +73,11 @@ on:
         description: 'Run only the native Xcode acceptance fixture'
         type: boolean
         default: false
+      native_ios_project:
+        description: 'Native Xcode acceptance project'
+        type: choice
+        default: fixture
+        options: [fixture, food-truck]
       native_ios_runner:
         description: 'Native Xcode fixture host and toolchain'
         type: choice
@@ -620,6 +625,7 @@ jobs:
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
       STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
+      STIM_NATIVE_XCODE_PROJECT: ${{ inputs.native_ios_project || 'fixture' }}
       NATIVE_XCODE_VERSION: ${{ inputs.native_ios_runner == 'ga-large' && '26.6' || '27.0' }}
     steps:
       - uses: actions/checkout@v4
@@ -638,7 +644,7 @@ jobs:
           mkdir -p artifacts/native-xcode
           node test/e2e/native/monitor-macos-memory.mjs > artifacts/native-xcode/host-memory.jsonl 2>&1 &
           echo "$!" > "$RUNNER_TEMP/stim-native-xcode-monitor.pid"
-      - name: Native Debug, Release and Staging lifecycle
+      - name: Native Xcode lifecycle acceptance
         shell: bash
         run: |
           mkdir -p artifacts/native-xcode
