@@ -1,6 +1,8 @@
 name: Windows AVD observer qualification
 on:
   workflow_dispatch:
+  push:
+    branches: [ci/3144-loaded-avd-diagnostics]
 permissions:
   contents: read
 jobs:
