@@ -61,9 +61,17 @@ Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, the
 `~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
 refuse servers for another home.
 
-The app updates itself. Release builds report crashes to Sentry with file paths,
-host names, addresses and credentials removed, and send no screenshots or
-performance traces. Every release is listed under
+The app updates itself. Release builds report crashes, app hangs of 2 seconds or
+more and a few handled failures to Sentry, with file paths, host names,
+addresses and credentials removed. They send no screenshots, performance traces
+or usage analytics. The handled failures are a failed `stim` command (the
+command name, exit code and `STIM_*` error code, never its arguments), a
+payload that did not decode (the type and the field names, never values), and
+a `stim-server` that did not start. Each is sent at most once per launch, with
+breadcrumbs of the page kinds you visited, command names with durations and the
+server's state. Builds without a Sentry key, including every development build,
+send nothing. [Crash reports](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#crash-reports)
+lists every field. Every release is listed under
 [desktop-v releases](https://github.com/appandflow/stim/releases?q=desktop-v&expanded=true).
 
 ## Tutorial
@@ -202,14 +210,17 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan with **Check**. The header's running-build progress opens the current
+  plan. Checks run automatically while visible, reusing a completed build or check
+  for 60 seconds and skipping running builds; there is no manual Check button. The header's running-build progress opens the current
   run in the same sheet. **Open in Logs Panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run
-  chip to return to generic logs. **Run** starts iOS or Android; a failed last
+  chip to return to generic logs. **Run** starts iOS, Android or macOS; a failed last
   build offers **Rebuild**. For multi-app worktrees, the sheet switches among
   all apps' iOS, Android and macOS entries, adding project names only for repeated
-  platforms; checks, runs, history and logs use the selected app. The macOS panel
-  shows the product, build state, duration, error and build logs.
+  platforms; checks, runs, history and logs use the selected app. macOS uses the
+  same Details/Run and Last Build/Next Build card layout. Its plan validates
+  packaging settings but does not predict SwiftPM incremental work, worker
+  availability, a cache outcome or duration.
 - **Other tools storage.** The Storage page reports agent-device runner builds,
   sessions and logs under **Other tools**, with Reveal opening its state
   directory. It also reports the user-level **SwiftPM cache**, shared by every
@@ -585,7 +596,7 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 ## Suggestions
 
-Desktop suggests remote Macs, hosted simulators, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
+Desktop suggests a remote Mac, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another Mac. Suggestions to add a Mac (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs in that workspace refuse and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet Mac already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
 The **Tip** card at the bottom of the sidebar appears after setup is complete and
 Desktop has been used on at least **3 calendar days**, with either **3 distinct
@@ -605,7 +616,7 @@ until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Mac
 Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
 suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, slow cold builds, build slot waits, away
+matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 

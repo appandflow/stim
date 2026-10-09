@@ -45,7 +45,7 @@ public func stopCommand(for device: DeviceRef, cwd: String) -> StimCommand {
   switch device {
   case .ios(let slot, _), .android(let slot, _):
     return StimCommand(["stop", "--slot", slot], cwd: cwd)
-  case .remote:
+  case .remote, .macos:
     return StimCommand(["stop"], cwd: cwd)
   case .web:
     return StimCommand(["stop", "--slot", DeviceRef.webSlot], cwd: cwd)
@@ -57,12 +57,14 @@ public func shellQuote(_ s: String) -> String {
 }
 
 /// The `stim ios` or `stim android` command that builds if needed, installs and launches the app on one
-/// Stim-owned simulator or emulator, naming its slot unless it is the default one, or `stim web` for the
-/// workspace's Chrome. Nil for a physical device or one Stim does not own, which that command does not target.
+/// Stim-owned simulator or emulator, naming its slot unless it is the default one, `stim macos` for the workspace's
+/// macOS app, or `stim web` for the workspace's Chrome. Nil for a physical device or one Stim does not own, which
+/// that command does not target.
 public func runCommand(for device: DeviceRef, cwd: String) -> StimCommand? {
   switch device {
   case .ios(_, let sim) where sim.owned || sim.host != nil: break
   case .android(_, let avd) where (avd.owned || avd.host != nil) && !avd.physical: break
+  case .macos: break
   case .web(let browser): return webCommand(browser, cwd: cwd)
   default: return nil
   }

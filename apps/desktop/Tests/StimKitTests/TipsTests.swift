@@ -52,13 +52,13 @@ struct TipsTests {
       #expect(Tips.applicable(topic, inputs: inputs))
       var negative = inputs
       switch topic {
-      case .buildMachine: negative.machines = ["mini"]
+      case .buildMachine: negative.hosting = ["mini"]
       case .phone: negative.pairedPhones = 1
       case .tutorial: negative.tutorialCompleted = true
       case .hideWorkspaces: negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
       case .statusFilter: negative.sidebar.statuses = [.live]
       case .replay: negative.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":false}")]
-      case .hostedSimulators: negative.hosting = ["mini"]
+      case .hostedSimulators: negative.machines = ["mini"]
       }
       #expect(!Tips.applicable(topic, inputs: negative))
     }
@@ -216,7 +216,7 @@ struct TipsTests {
 
   @Test func discoveryStatesTakeTheirMatchingTipsUntilASnoozeExpires() {
     for (topic, types) in [
-      (TipTopic.buildMachine, [DiscoveryType.slowCold, .newMac, .slotWait]), (.phone, [.away]),
+      (TipTopic.buildMachine, [DiscoveryType.newMac, .slotWait]), (.phone, [.away]),
       (.hostedSimulators, [.capHit]),
     ] {
       for type in types {
@@ -233,7 +233,7 @@ struct TipsTests {
 
   @Test func aShownTipSuppressesOnlyInformationalDiscoveryTypesOfItsOwnTopic() {
     let shown: [TipTopic: Date] = [.buildMachine: now]
-    for type in [DiscoveryType.slowCold, .newMac, .slotWait] {
+    for type in [DiscoveryType.newMac, .slotWait] {
       #expect(Tips.suppressesDiscovery(type, lastShown: shown))
     }
     for type in [DiscoveryType.lowWithCaches, .away, .capHit] {

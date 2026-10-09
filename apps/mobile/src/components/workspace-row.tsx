@@ -98,7 +98,8 @@ const WorkspaceRow = memo(function WorkspaceRow({
   const { online, cached, lastSeenAt } = useMachinePresence(item.macId);
   const offline = !online || cached;
   const at = offline ? (lastSeenAt ?? now) : now;
-  const summary = apps && !('archive' in item) ? worktreeRowSummary(apps, at, offline ? { lastSeenAt } : null) : null;
+  const rowSummary = 'archive' in item ? null : worktreeRowSummary(apps ?? [item], at, offline ? { lastSeenAt } : null);
+  const summary = apps ? rowSummary : null;
   const shown = summary?.lead ?? item;
   const { env } = shown;
   const archive = 'archive' in item ? archivedPage(item.archive, null, now) : null;
@@ -130,10 +131,10 @@ const WorkspaceRow = memo(function WorkspaceRow({
       </View>,
     );
   }
-  if (summary?.platforms.length) {
+  if (rowSummary?.platforms.length) {
     context.push(
       <View key="platforms" style={styles.platforms}>
-        {summary.platforms.map((platform) => (
+        {rowSummary.platforms.map((platform) => (
           <View key={platform.platform} style={styles.inline}>
             <View style={[styles.platformDot, platformDotStyle(theme, platform, offline)]} />
             <Text variant="footnote" tone="secondary">
@@ -142,13 +143,6 @@ const WorkspaceRow = memo(function WorkspaceRow({
           </View>
         ))}
       </View>,
-    );
-  }
-  if (devices.names && !summary) {
-    context.push(
-      <Text key="devices" variant="footnote" tone="secondary">
-        {devices.names}
-      </Text>,
     );
   }
   const drivers = summary ? summary.drivers.map((tool) => tool || t`unknown tool`).join(', ') : devices.drivers;

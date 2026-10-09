@@ -36,6 +36,7 @@ struct WorkspaceCardGrid: View {
           openLogs: openLogs)
       }
     }
+    .finiteAccessibilityFrame()
     .onGeometryChange(for: CGFloat.self, of: { $0.size.width }, action: { width = $0 })
   }
 }
@@ -138,11 +139,6 @@ struct WorkspaceCardView: View {
         }
         .buttonStyle(CardPressStyle(highlightsDevice: true))
         .id(selected.id)
-      case .macos(let macos):
-        MacosAppCard(app: macos, workspace: env.path)
-          .environment(\.macosViewportHeight, CGFloat(tileSize.screenHeight) - Space.lg * 2)
-          .padding(Space.lg)
-          .id(selected.id)
       }
     } else {
       status

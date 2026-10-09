@@ -7,6 +7,21 @@ struct NavigationDestination: Equatable {
   var selection: SidebarItem?
   var showsAllWorktrees = false
   var focusedDeviceID: String?
+
+  /// The kind of page, which the crash reporter records instead of a project, workspace or worktree name.
+  var pageKind: String {
+    switch selection {
+    case .overview: "overview"
+    case .wall: "wall"
+    case .project: "project"
+    case .environment: "workspace"
+    case .archived: "archived-workspace"
+    case .worktree: "worktree"
+    case .notifications: "notifications"
+    case .machine: "machine"
+    case nil: "none"
+    }
+  }
 }
 
 /// The main window's back and forward history. `resolves` and `apply` are set by `RootView`.
@@ -22,18 +37,48 @@ final class NavigationController: ObservableObject {
 
   func record(_ destination: NavigationDestination) {
     history.push(destination)
+    report(destination)
   }
 
   func replaceCurrent(_ destination: NavigationDestination) {
     history.replaceCurrent(destination)
+    report(destination)
   }
 
-  func goBack() {
-    if let destination = history.goBack(where: resolves) { apply(destination) }
+  private func report(_ destination: NavigationDestination) {
+    Diagnostics.shared.breadcrumb("navigation", destination.pageKind)
+    Diagnostics.shared.tag("page", destination.pageKind)
   }
 
-  func goForward() {
-    if let destination = history.goForward(where: resolves) { apply(destination) }
+  /// The cause of the next `selection` change, set right before the assignment and read by the change handler. One
+  /// that nothing read within two seconds (an assignment that changed nothing) is dropped, so it never explains a
+  /// later unrelated change.
+  private var pendingCause: (cause: NavigationCause, at: Date)?
+
+  func setCause(_ cause: NavigationCause) { pendingCause = (cause, Date()) }
+
+  func takeCause() -> NavigationCause {
+    defer { pendingCause = nil }
+    guard let pendingCause, Date().timeIntervalSince(pendingCause.at) < 2 else { return .unattributed }
+    return pendingCause.cause
+  }
+
+  func goBack(via input: NavigationInput) {
+    guard let destination = history.goBack(where: resolves) else {
+      DebugLog.debug(.navigation, "back via \(input.logDescription) ignored: no earlier page")
+      return
+    }
+    setCause(.back(input))
+    apply(destination)
+  }
+
+  func goForward(via input: NavigationInput) {
+    guard let destination = history.goForward(where: resolves) else {
+      DebugLog.debug(.navigation, "forward via \(input.logDescription) ignored: no later page")
+      return
+    }
+    setCause(.forward(input))
+    apply(destination)
   }
 
   func startMonitoring() {
@@ -42,13 +87,18 @@ final class NavigationController: ObservableObject {
       guard let self, let window = event.window, MainWindow.isMain(window), window.attachedSheet == nil else { return event }
       switch event.type {
       case .otherMouseDown where event.buttonNumber == 3:
-        goBack()
+        goBack(via: .mouseButton(3))
       case .otherMouseDown where event.buttonNumber == 4:
-        goForward()
+        goForward(via: .mouseButton(4))
       case .swipe where event.deltaX < 0:
-        goBack()
+        DebugLog.debug(.navigation, "swipe deltaX=\(event.deltaX) phase=\(event.phase.rawValue) -> back")
+        goBack(via: .swipe(deltaX: event.deltaX))
       case .swipe where event.deltaX > 0:
-        goForward()
+        DebugLog.debug(.navigation, "swipe deltaX=\(event.deltaX) phase=\(event.phase.rawValue) -> forward")
+        goForward(via: .swipe(deltaX: event.deltaX))
+      case .swipe:
+        DebugLog.debug(.navigation, "swipe deltaX=\(event.deltaX) phase=\(event.phase.rawValue) ignored")
+        return event
       default:
         return event
       }
@@ -96,12 +146,16 @@ struct HistoryButtons: View {
 
   var body: some View {
     HStack(spacing: Space.xxs) {
-      Button(action: navigation.goBack) {
+      Button {
+        navigation.goBack(via: .button)
+      } label: {
         Label("Back", systemImage: "chevron.left")
       }
       .disabled(!canGoBack)
       .help("Go back")
-      Button(action: navigation.goForward) {
+      Button {
+        navigation.goForward(via: .button)
+      } label: {
         Label("Forward", systemImage: "chevron.right")
       }
       .disabled(!canGoForward)

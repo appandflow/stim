@@ -7,9 +7,12 @@ import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } f
 import { appProjectProblem, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {
   cacheProviderSettingError,
+  publicUrlSetting,
+  remoteEasFallbackSetting,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  tunnelModeSetting,
 } from '../../workspace/settings.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
 import { planHostedDevice } from '../../device-host/plan-placement.ts';
@@ -167,6 +170,22 @@ export async function planIos(
         resolveRuntime(opts.runtime, settings),
       ),
       sameKey: (choice) => keyArch('runtime' in choice ? choice.architecture : null) === arch,
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              d.checkEasFallback({
+                root,
+                platform: 'ios',
+                slot,
+                release: isReleaseConfiguration(configuration),
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                deviceTypeFlag: opts.deviceType,
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
+              }),
+          }
+        : {}),
     });
     if (planned.kind === 'unknown') {
       return refuse({

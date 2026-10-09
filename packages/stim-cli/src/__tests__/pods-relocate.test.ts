@@ -137,40 +137,43 @@ describe('relocatePods', () => {
     writeFileSync(join(base, rel), value);
   }
 
-  test('moves generated paths and symlinks, then makes Manifest.lock equal Podfile.lock', () => {
-    const pods = 'ios/Pods';
-    write('ios/Podfile.lock', lock());
-    write(`${pods}/Manifest.lock`, lock({ core: SEED_CHECKSUM }));
-    write(`${pods}/Local Podspecs/ExpoModulesCore.podspec.json`, PODSPEC);
-    write(`${pods}/Target Support Files/A/A.xcconfig`, `HEADER_SEARCH_PATHS = "${SOURCE}/node_modules/a"\n`);
-    write(`${pods}/Pods.xcodeproj/project.pbxproj`, `path = ${SOURCE}/node_modules/b;\n`);
-    mkdirSync(join(base, pods, 'ExpoImage'), { recursive: true });
-    symlinkSync(`${SOURCE}/node_modules/expo-image/X.xcframework`, join(base, pods, 'ExpoImage/X.xcframework'));
-    symlinkSync('../relative', join(base, pods, 'ExpoImage/rel'));
+  test.skipIf(process.platform === 'win32')(
+    'moves generated paths and symlinks, then makes Manifest.lock equal Podfile.lock',
+    () => {
+      const pods = 'ios/Pods';
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock({ core: SEED_CHECKSUM }));
+      write(`${pods}/Local Podspecs/ExpoModulesCore.podspec.json`, PODSPEC);
+      write(`${pods}/Target Support Files/A/A.xcconfig`, `HEADER_SEARCH_PATHS = "${SOURCE}/node_modules/a"\n`);
+      write(`${pods}/Pods.xcodeproj/project.pbxproj`, `path = ${SOURCE}/node_modules/b;\n`);
+      mkdirSync(join(base, pods, 'ExpoImage'), { recursive: true });
+      symlinkSync(`${SOURCE}/node_modules/expo-image/X.xcframework`, join(base, pods, 'ExpoImage/X.xcframework'));
+      symlinkSync('../relative', join(base, pods, 'ExpoImage/rel'));
 
-    const result = relocatePods({
-      podsDir: join(base, pods),
-      podfileLockPath: join(base, 'ios/Podfile.lock'),
-      sourceRoot: SOURCE,
-      targetRoot: '/wt/trailhead',
-    });
+      const result = relocatePods({
+        podsDir: join(base, pods),
+        podfileLockPath: join(base, 'ios/Podfile.lock'),
+        sourceRoot: SOURCE,
+        targetRoot: '/wt/trailhead',
+      });
 
-    expect(result).toEqual({ ok: true, pods: ['ExpoModulesCore'] });
-    expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock());
-    expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(
-      'HEADER_SEARCH_PATHS = "/wt/trailhead/node_modules/a"\n',
-    );
-    expect(readFileSync(join(base, pods, 'Pods.xcodeproj/project.pbxproj'), 'utf-8')).toBe(
-      'path = /wt/trailhead/node_modules/b;\n',
-    );
-    expect(readFileSync(join(base, pods, 'Local Podspecs/ExpoModulesCore.podspec.json'), 'utf-8')).toContain(
-      'file:///wt/trailhead/node_modules/',
-    );
-    expect(readlinkSync(join(base, pods, 'ExpoImage/X.xcframework'))).toBe(
-      '/wt/trailhead/node_modules/expo-image/X.xcframework',
-    );
-    expect(readlinkSync(join(base, pods, 'ExpoImage/rel'))).toBe('../relative');
-  });
+      expect(result).toEqual({ ok: true, pods: ['ExpoModulesCore'] });
+      expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock());
+      expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(
+        'HEADER_SEARCH_PATHS = "/wt/trailhead/node_modules/a"\n',
+      );
+      expect(readFileSync(join(base, pods, 'Pods.xcodeproj/project.pbxproj'), 'utf-8')).toBe(
+        'path = /wt/trailhead/node_modules/b;\n',
+      );
+      expect(readFileSync(join(base, pods, 'Local Podspecs/ExpoModulesCore.podspec.json'), 'utf-8')).toContain(
+        'file:///wt/trailhead/node_modules/',
+      );
+      expect(readlinkSync(join(base, pods, 'ExpoImage/X.xcframework'))).toBe(
+        '/wt/trailhead/node_modules/expo-image/X.xcframework',
+      );
+      expect(readlinkSync(join(base, pods, 'ExpoImage/rel'))).toBe('../relative');
+    },
+  );
 
   test('keeps the old Manifest.lock when another Pods file still names the source path', () => {
     const pods = 'ios/Pods';
@@ -227,7 +230,7 @@ describe('relocatePods', () => {
       symlinkSync(`${SOURCE}/node_modules/expo-image/X.xcframework`, join(base, pods, 'ExpoImage/X.xcframework'));
     }
 
-    test('moves the source path to the worktree and keeps Manifest.lock', () => {
+    test.skipIf(process.platform === 'win32')('moves the source path to the worktree and keeps Manifest.lock', () => {
       seed();
       expect(run()).toEqual({ ok: true, pods: [] });
       expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(
@@ -261,7 +264,7 @@ describe('relocatePods', () => {
       expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock());
     });
 
-    test('a worktree nested under the source checkout is not a leftover', () => {
+    test.skipIf(process.platform === 'win32')('a worktree nested under the source checkout is not a leftover', () => {
       seed();
       expect(run({ targetRoot: `${SOURCE}/.worktrees/wt` })).toEqual({ ok: true, pods: [] });
       expect(readlinkSync(join(base, pods, 'ExpoImage/X.xcframework'))).toBe(

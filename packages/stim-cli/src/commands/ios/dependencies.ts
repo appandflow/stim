@@ -1,4 +1,5 @@
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
+import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -69,6 +70,7 @@ import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
   automaticDevicePlacement: typeof automaticDevicePlacement;
+  checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;
   placeHostedIos: typeof placeHostedIos;
   readHostedIos: typeof readHostedIos;
@@ -167,6 +169,7 @@ export interface IosDeps {
 
 export const DEFAULT_DEPS: IosDeps = {
   automaticDevicePlacement,
+  checkEasFallback,
   prepareHostedIos,
   placeHostedIos,
   readHostedIos,

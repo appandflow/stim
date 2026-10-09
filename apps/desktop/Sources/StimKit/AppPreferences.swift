@@ -49,6 +49,8 @@ public enum AppPreferences {
     public static let viewerShowsActions = "viewer.showsActions"
     public static let syncsClipboard = "viewer.syncsClipboard"
     public static let viewerOfferDismissed = "onboarding.viewerOfferDismissed"
+    /// Turns on the verbose Desktop debug log. Set only with `defaults write dev.stim.desktop debugLogging -bool YES`.
+    public static let debugLogging = "debugLogging"
 
     public static let tipsEnabled = "tips.enabled"
     public static let usageRecord = "tips.usageRecord"
@@ -56,6 +58,7 @@ public enum AppPreferences {
     public static let discoveryLaunches = "discovery.launches"
     public static let discoveryLastShown = "discovery.lastShown"
     public static let discoverySeenPeers = "discovery.seenPeers"
+    public static let discoveryMacSuggested = "discovery.macSuggested"
     public static let discoveryMigrations = "discovery.migrations"
     public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }
 

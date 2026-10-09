@@ -258,6 +258,7 @@ public final class EmulatorDisplayNSView: NSView {
       onEnd: { [weak self] in
         DispatchQueue.main.async {
           guard let self, self.stream != nil, self.generation == current else { return }
+          DebugLog.info(.stream, "emulator screenshot stream ended serial=\(serial)")
           self.releaseInput()
           self.stream = nil
           self.report(.connecting)
@@ -265,6 +266,7 @@ public final class EmulatorDisplayNSView: NSView {
         }
       })
     self.stream = stream
+    DebugLog.info(.stream, "emulator screenshot stream start serial=\(serial)")
     stream.start()
   }
 

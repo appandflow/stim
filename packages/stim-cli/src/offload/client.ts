@@ -16,6 +16,7 @@ import type { ConnectionOptions } from 'node:tls';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
   isJsonObject,
+  runId,
   OFFLOAD_MODES,
   saturation,
   type BuildMachineCredential,
@@ -25,12 +26,15 @@ import {
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
 import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import { debugLog } from '../debug-log.ts';
+import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
+import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
@@ -105,21 +109,21 @@ export function offloadPlacement({
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
-}): { offload: boolean; reason: string } {
+}): { offload: boolean; code: string; reason: string } {
   if (namedBuildMachine(selected)) {
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote Mac cannot take it`);
     if (machines === 0) throw new OffloadRefusal(selected, 'no remote Mac is paired');
-    return { offload: true, reason: `selected with --remote-build ${selected}` };
+    return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
-  if (selected === 'local') return { offload: false, reason: '--remote-build local' };
-  if (mode === 'off') return { offload: false, reason: 'remote.buildMode is off' };
-  if (machines === 0) return { offload: false, reason: 'no remote Mac is paired' };
-  if (unsupported) return { offload: false, reason: unsupported };
-  if (mode === 'force') return { offload: true, reason: 'remote.buildMode is force' };
+  if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
+  if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
+  if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote Mac is paired' };
+  if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
+  if (mode === 'force') return { offload: true, code: 'forced', reason: 'remote.buildMode is force' };
   const busy = saturation(here);
   return busy
-    ? { offload: true, reason: `this Mac is busy: ${busy} (${capacityText(here)})` }
-    : { offload: false, reason: `${capacityText(here)} here` };
+    ? { offload: true, code: 'this-mac-busy', reason: `this Mac is busy: ${busy} (${capacityText(here)})` }
+    : { offload: false, code: 'this-mac-free', reason: `${capacityText(here)} here` };
 }
 
 export interface BuildOffer {
@@ -181,31 +185,54 @@ export function pickOffer({
   selected?: string;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
-}): { order: number[]; reasons: string[] } {
+}): { order: number[]; reasons: string[]; candidates: PlacementCandidate[] } {
   const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
   const reasons: string[] = [];
+  const candidates: PlacementCandidate[] = [];
+  const skip = (machine: string, code: string, msg: string, detail?: string[]) => {
+    reasons.push(`${machine}: ${msg}`);
+    candidates.push({ machine, code, msg, ...(detail ? { detail } : {}) });
+  };
   const ranked: Array<{ index: number; score: number; load: number }> = [];
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
-    if (!offer) return void reasons.push(`${machine}: ${failure ?? 'no offer'}`);
+    if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
     const problems = offerProblems(offer, target);
     if (problems.length) {
-      return void reasons.push(`${machine}: ${problems.map((problem) => problem.reason).join('; ')}`);
+      return skip(
+        machine,
+        problemCode(problems[0]!),
+        problems.map((problem) => problem.reason).join('; '),
+        problems.map((problem) => problem.code),
+      );
     }
     const load = offer.capacity.loadPerCore;
     if (selected === 'auto' && mode === 'auto' && !slotsFull) {
       if (typeof load !== 'number') {
-        return void reasons.push(`${machine}: capacity unknown (older stim-server) while this Mac has a free slot`);
+        return skip(machine, 'load', 'capacity unknown (older stim-server) while this Mac has a free slot');
       }
       if (load >= here.loadPerCore) {
-        return void reasons.push(`${machine}: no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
+        return skip(machine, 'load', `no less loaded (load ${load}/core there, ${here.loadPerCore}/core here)`);
       }
     }
     const score = Number(offer.warm.checkout) + Number(offer.warm.dependencies) + Number(offer.warm.build);
     ranked.push({ index, score, load: typeof load === 'number' ? load : Number.POSITIVE_INFINITY });
+    candidates.push({
+      machine,
+      code: 'accepted',
+      msg: typeof load === 'number' ? `can take the build (load ${load}/core there)` : 'can take the build',
+    });
   });
   ranked.sort((a, b) => b.score - a.score || a.load - b.load);
-  return { order: ranked.map((each) => each.index), reasons };
+  return { order: ranked.map((each) => each.index), reasons, candidates };
+}
+
+function problemCode({ code }: OffloadProblem): string {
+  return code === 'disk' || code === 'busy' || code === 'unreachable'
+    ? code
+    : code === 'runtime'
+      ? 'no-matching-device'
+      : 'version-mismatch';
 }
 
 export type Reply = { result: unknown } | { error: { code: string; message: string } };
@@ -294,11 +321,39 @@ export class BuildConnection {
   }
 
   /** Resolves why it could not connect; `refused` when the machine answered and turned this Mac away. */
-  static open(
+  static async open(
     target: Endpoint,
     token: string,
     timeoutMs: number,
     capability: 'build' | 'device-host' = 'build',
+  ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
+    const started = performance.now();
+    const result = await BuildConnection.connect(target, token, timeoutMs, capability);
+    const ms = Math.round(performance.now() - started);
+    debugLog.log('remote_connect', {
+      host: target.host,
+      capability,
+      ms,
+      timeoutMs,
+      ...(result instanceof BuildConnection ? { ok: true } : { ok: false, failure: result.failure, code: result.code }),
+    });
+    if (!(result instanceof BuildConnection))
+      reportRemoteFailure('remote_connect_failed', {
+        host: target.host,
+        capability,
+        ms,
+        timeoutMs,
+        msg: result.failure,
+        code: result.code,
+      });
+    return result;
+  }
+
+  private static connect(
+    target: Endpoint,
+    token: string,
+    timeoutMs: number,
+    capability: 'build' | 'device-host',
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
@@ -328,7 +383,11 @@ export class BuildConnection {
           JSON.stringify({
             id: 1,
             method: 'hello',
-            params: { protocol: 1, client: { name: 'stim', version: '1' }, auth: { deviceToken: token } },
+            params: {
+              protocol: 1,
+              client: { name: 'stim', version: '1', runId: runId() },
+              auth: { deviceToken: token },
+            },
           }),
         );
       });
@@ -370,14 +429,26 @@ export class BuildConnection {
   request(method: string, params: unknown, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<Reply> {
     if (this.closed) return Promise.resolve({ error: { code: 'closed', message: this.closed } });
     const id = this.nextId++;
+    const started = performance.now();
+    const done = (reply: Reply): Reply => {
+      const ms = Math.round(performance.now() - started);
+      debugLog.log('remote_request', {
+        method,
+        ms,
+        ...('error' in reply ? { ok: false, code: reply.error.code } : { ok: true }),
+      });
+      if ('error' in reply)
+        reportRemoteFailure('remote_request_failed', { method, ms, code: reply.error.code, msg: reply.error.message });
+      return reply;
+    };
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        resolve({ error: { code: 'timeout', message: `${method} got no reply in ${timeoutMs / 1000} s` } });
+        resolve(done({ error: { code: 'timeout', message: `${method} got no reply in ${timeoutMs / 1000} s` } }));
       }, timeoutMs);
       this.pending.set(id, (reply) => {
         clearTimeout(timer);
-        resolve(reply);
+        resolve(done(reply));
       });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
@@ -606,6 +677,7 @@ export async function chooseBuildMachine({
   note,
   machines = pairedMachines(),
   selected = 'auto',
+  onCandidates,
 }: {
   projectRoot: string;
   target: BuildTarget;
@@ -614,6 +686,7 @@ export async function chooseBuildMachine({
   note: (line: string) => void;
   machines?: BuildMachineCredential[];
   selected?: string;
+  onCandidates?: (candidates: PlacementCandidate[]) => void;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
   let identity: RepoIdentity;
@@ -625,7 +698,7 @@ export async function chooseBuildMachine({
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
   const asked = await Promise.all(machines.map((credential) => probeMachine(credential, { ...identity, rubyVersion })));
-  const { order, reasons } = pickOffer({
+  const { order, reasons, candidates } = pickOffer({
     selected,
     mode,
     here,
@@ -639,6 +712,7 @@ export async function chooseBuildMachine({
   asked.forEach((each, at) => {
     if (!order.includes(at) && 'connection' in each) each.connection.close();
   });
+  onCandidates?.(candidates);
   if (order.length === 0) return reasons.length ? reasons.join('; ') : 'no remote Mac is paired';
   for (const reason of reasons) note(reason);
   const [first, ...rest] = order.map((at) => {

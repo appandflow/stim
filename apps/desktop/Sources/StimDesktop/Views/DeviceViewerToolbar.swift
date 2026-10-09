@@ -13,6 +13,7 @@ struct DeviceViewerToolbar: View {
   var showsActions: Binding<Bool>?
   @Binding var scalingMode: DeviceScalingMode
   var scalingModes: [DeviceScalingMode]
+  var windowChoice: MacosWindowChoice
   var close: () -> Void
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -152,12 +153,13 @@ struct DeviceViewerToolbar: View {
     case .android(_, let d): return d.physical ? "Android device" : "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
+    case .macos: return "macOS app"
     }
   }
 
   @ViewBuilder private var commands: some View {
     let busy = actions.active(for: env.path) != nil
-    if device.appStopped {
+    if device.appStopped || (device.platform == "macos" && !device.isRunning) {
       DeviceRunButton(
         device: device, workspace: env.path, title: "Run", native: true,
         disabled: busy || env.runningBuild(for: device) != nil)
@@ -167,6 +169,10 @@ struct DeviceViewerToolbar: View {
       remoteStop(busy: busy)
     } else if case .web(let browser) = device {
       webControls(browser, busy: busy)
+    } else if case .macos = device {
+      DeviceTileMenu(
+        device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
+        openBuildLogs: nil)
     } else if device.isRunning, !device.isPhysical {
       Button("Stop") {
         actions.run("Stop \(device.slot)", steps: [stopCommand(for: device, cwd: env.path)], present: false)
