@@ -41,15 +41,10 @@ jobs:
       matrix:
         include:
           - platform: ios
-            runner: xcode-27
+            runner: xcode-27-xlarge
             project: apps/mobile
-          - platform: android
-            runner: ubuntu-latest
-            project: apps/mobile
-          - platform: macos
-            runner: macos-15
-            project: apps/desktop
     env:
+      STIM_DEBUG: '1'
       APP_VARIANT: development
       STIM_HOME: ${{ github.workspace }}/.stim-ci-home
       STIM_BIN: ${{ github.workspace }}/packages/stim-cli/dist/cli.mjs
@@ -85,6 +80,26 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
 
+      - name: Retain host capacity samples
+        shell: bash
+        run: |
+          mkdir -p stim-ci-host
+          node --input-type=module <<'JS' > stim-ci-host/samples.log 2>&1 &
+          import { existsSync, writeFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          import { setTimeout } from 'node:timers/promises';
+          const deadline = Date.now() + 60 * 60_000;
+          while (Date.now() < deadline && !existsSync('stim-ci-host/stop')) {
+            console.log(new Date().toISOString());
+            for (const [file, args] of [['uptime', []], ['vm_stat', []], ['sysctl', ['hw.memsize', 'hw.ncpu']]]) {
+              try { console.log(execFileSync(file, args, { encoding: 'utf8', timeout: 5000 })); }
+              catch (error) { console.log(`${file}: ${error.message}`); }
+            }
+            await setTimeout(15000);
+          }
+          writeFileSync('stim-ci-host/done', new Date().toISOString());
+          JS
+
       - name: Build, launch, probe and stop
         uses: ./.github/actions/stim-ci
         with:
@@ -108,3 +123,26 @@ jobs:
           timeout: '600'
           artifact-name: stim-ci-${{ matrix.platform }}-warm
           retention-days: '7'
+
+      - name: Finish host sampling
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p stim-ci-host
+          touch stim-ci-host/stop
+          for ((attempt = 0; attempt < 20; attempt++)); do
+            if test -f stim-ci-host/done; then break; fi
+            sleep 1
+          done
+          if ! test -f stim-ci-host/done; then echo 'Sampler did not acknowledge stop; retained sample is partial.'; fi
+
+      - name: Upload host capacity samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stim-ci-ios-host
+          path: |
+            stim-ci-host/
+            .stim-ci-home/logs/debug/
+          include-hidden-files: true
+          retention-days: 7
