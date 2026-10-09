@@ -1,0 +1,24 @@
+name: Windows AVD observer qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    env:
+      CI: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+      - run: New-Item -ItemType Directory -Force -Path 'D:\e'
+      - run: node test/e2e/native/qualify-avd-delete-diagnostics.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-avd-observer-qualification
+          path: D:\e\avd-delete-qualification
+          if-no-files-found: error

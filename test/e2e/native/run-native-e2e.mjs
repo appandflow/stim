@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -263,7 +263,38 @@ function assertNoCompile(cwd) {
 function worktreeRemove(path) {
   sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true });
   sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true });
-  const r = cli(['worktree', 'remove', path], { allowFail: true });
+  const diagnostics = process.platform === 'win32' && ENV.STIM_E2E_AVD_DIAGNOSTICS;
+  const previousDiagnostics = diagnostics && existsSync(diagnostics) ? new Set(readdirSync(diagnostics)) : new Set();
+  const r = diagnostics
+    ? sh(process.execPath, ['--require', join(HERE, 'avd-delete-preload.cjs'), CLI, 'worktree', 'remove', path], {
+        allowFail: true,
+      })
+    : cli(['worktree', 'remove', path], { allowFail: true });
+  if (diagnostics) {
+    assert(existsSync(diagnostics), 'AVD diagnostic directory was not created');
+    const added = readdirSync(diagnostics).filter(
+      (entry) => entry.endsWith('.ndjson') && !previousDiagnostics.has(entry),
+    );
+    assert(added.length > 0, 'AVD observer did not intercept an SDK deletion');
+    for (const name of added) {
+      const rows = readFileSync(join(diagnostics, name), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line));
+      assert(
+        rows.some((row) => row.event === 'observer.complete'),
+        `AVD observer did not complete: ${name}`,
+      );
+      assert(
+        rows.some((row) => row.event === 'observer.settlement' && row.state === 1),
+        `AVD observer did not settle: ${name}`,
+      );
+      assert(
+        !rows.some((row) => row.event === 'observer.failed' || row.event === 'observer.worker-error'),
+        `AVD observer failed: ${name}`,
+      );
+    }
+  }
   assert(r.code === 0, `worktree remove refused a clean worktree:\n${r.stderr}`);
   log(`removed worktree ${path}`);
 }
