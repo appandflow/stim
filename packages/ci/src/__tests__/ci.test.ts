@@ -2,20 +2,32 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCI, type CIOptions } from '../index.ts';
+import type { StimOptions } from 'stim';
 import { main } from '../cli.ts';
 
 const lifecycle = vi.hoisted(() => ({
+  create: vi.fn<(options: StimOptions) => void>(),
   run: vi.fn<(options: { signal?: AbortSignal }) => Promise<unknown>>(),
   diagnostics: vi.fn<() => Promise<unknown>>(),
   stop: vi.fn<(options: { signal: AbortSignal }) => Promise<unknown>>(),
 }));
-vi.mock('stim', () => ({ createStim: () => lifecycle }));
+vi.mock('stim', () => ({
+  createStim: (options: StimOptions) => {
+    lifecycle.create(options);
+    return lifecycle;
+  },
+}));
 
 let root: string;
 let active: string;
 let options: CIOptions;
 
 beforeEach(() => {
+  lifecycle.create.mockClear();
+  vi.stubEnv('GITHUB_ACTIONS', 'false');
+  vi.stubEnv('RUNNER_ENVIRONMENT', '');
+  vi.stubEnv('STIM_HOME', undefined);
+  vi.stubEnv('STIM_BUILD_CACHE', undefined);
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ci-lifecycle-')));
   active = join(root, 'native-session');
   options = {
@@ -39,7 +51,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(root, { recursive: true, force: true });
+});
 
 it('gives the command exact target facts and retains persisted diagnostics after cleanup', async () => {
   const cwd = process.cwd();
@@ -277,4 +292,79 @@ it('the CLI reports SIGTERM during cleanup as exit 130 and saves the same result
     output.mockRestore();
     process.exitCode = exitCode;
   }
+});
+
+function recordEnvironment(): string {
+  const output = join(root, 'environment.json');
+  options.command = [
+    process.execPath,
+    '-e',
+    `require('node:fs').writeFileSync(${JSON.stringify(output)}, JSON.stringify({home:process.env.STIM_HOME, cache:process.env.STIM_BUILD_CACHE}));`,
+  ];
+  return output;
+}
+
+it('uses the same job-local home and cache for native work and commands across hosted steps', async () => {
+  vi.stubEnv('GITHUB_ACTIONS', 'true');
+  vi.stubEnv('RUNNER_ENVIRONMENT', 'github-hosted');
+  vi.stubEnv('RUNNER_TEMP', join(root, 'job'));
+  const output = recordEnvironment();
+  const expected = { home: join(root, 'job', 'stim-ci', 'home'), cache: join(root, 'job', 'stim-ci', 'build-cache') };
+  const first = await runCI(options);
+  const second = await runCI({ ...options, artifactsDir: join(root, 'second-results') });
+  expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected);
+  expect(lifecycle.create.mock.calls.map(([value]) => ({ home: value.home, cache: value.buildCache }))).toEqual([
+    expected,
+    expected,
+  ]);
+  expect(options.home).toBeUndefined();
+  expect(process.env.STIM_HOME).toBeUndefined();
+  expect(process.env.STIM_BUILD_CACHE).toBeUndefined();
+});
+
+it.each(['self-hosted', ''])('keeps normal coordination paths for a %s runner', async (runner) => {
+  vi.stubEnv('CI', 'true');
+  vi.stubEnv('GITHUB_ACTIONS', 'true');
+  vi.stubEnv('RUNNER_ENVIRONMENT', runner);
+  vi.stubEnv('RUNNER_TEMP', join(root, 'job'));
+  const output = recordEnvironment();
+  expect((await runCI(options)).exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({});
+  expect(lifecycle.create.mock.calls[0]?.[0]).toMatchObject({ home: undefined, buildCache: undefined });
+});
+
+it.each(['environment', 'options'])('respects an explicit %s home and cache on hosted runners', async (source) => {
+  vi.stubEnv('GITHUB_ACTIONS', 'true');
+  vi.stubEnv('RUNNER_ENVIRONMENT', 'github-hosted');
+  vi.stubEnv('RUNNER_TEMP', join(root, 'job'));
+  const expected = { home: join(root, 'configured-home'), cache: join(root, 'configured-cache') };
+  if (source === 'environment') {
+    vi.stubEnv('STIM_HOME', expected.home);
+    vi.stubEnv('STIM_BUILD_CACHE', expected.cache);
+  } else {
+    options.home = expected.home;
+    options.buildCache = expected.cache;
+  }
+  const output = recordEnvironment();
+  expect((await runCI(options)).exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected);
+  expect(lifecycle.create.mock.calls[0]?.[0]).toMatchObject(
+    source === 'options'
+      ? { home: expected.home, buildCache: expected.cache }
+      : { home: undefined, buildCache: undefined },
+  );
+});
+
+it('retains an explicit cache with the automatic hosted home', async () => {
+  vi.stubEnv('GITHUB_ACTIONS', 'true');
+  vi.stubEnv('RUNNER_ENVIRONMENT', 'github-hosted');
+  vi.stubEnv('RUNNER_TEMP', join(root, 'job'));
+  vi.stubEnv('STIM_BUILD_CACHE', join(root, 'restored-cache'));
+  const output = recordEnvironment();
+  expect((await runCI(options)).exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({
+    home: join(root, 'job', 'stim-ci', 'home'),
+    cache: join(root, 'restored-cache'),
+  });
 });

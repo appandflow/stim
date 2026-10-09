@@ -11,7 +11,7 @@ The final result is JSON on stdout; progress and test output go to stderr.
 Options:
   --project <path>       Project directory (default: current directory)
   --artifacts <path>     Results directory (default: a fresh temporary directory)
-  --home <path>          Explicit Stim home (default: normal Stim home)
+  --home <path>          Explicit Stim home (default: job-local on GitHub-hosted runners)
   --build-cache <path>   Native artifact cache directory
   --timeout <seconds>   Setup and test timeout (cleanup has its own deadline)
   --help                Show this help
