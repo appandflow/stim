@@ -448,7 +448,15 @@ reports why: examples include shell build phases, custom build rules, C-family
 header graphs, Swift package graphs and unresolved external inputs or compiler
 overrides. Planning refuses these cases; run without `--plan` to build locally.
 
-An already approved hosting Mac can run the locally built app:
+A compatible approved build Mac can compile a native Xcode app with
+`--remote-build auto` or `--remote-build <name>`. Both peers must support
+`native-xcode-build`. The worker path requires a verified artifact identity and
+all inputs contained in the repository and visible to git. Ignored or external
+inputs refuse transfer instead of being silently omitted. Worker source mirrors
+remove stale inputs; Xcode compilation caches remain in the worker's private
+Stim home. Physical builds stay local.
+
+An already approved hosting Mac can run the built app:
 
 <StimTabs code={`stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json`} />
 
@@ -461,8 +469,8 @@ The existing [hosted iOS](./remote-machines.md) logs, view/control, agent access
 and scoped cleanup apply. Verify UI and interaction separately from process
 readiness.
 
-Native Xcode build offload, hosted `--plan`, eas/proxy devices and EAS artifact
-profiles remain unsupported. These limits do not change React Native or Expo support.
+Unbounded native Xcode build offload, hosted `--plan`, eas/proxy devices and EAS
+artifact profiles remain unsupported. These limits do not change React Native or Expo support.
 
 Copy this request to your agent, substituting your scheme:
 

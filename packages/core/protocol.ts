@@ -48,6 +48,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` accepts native iOS app offers in process mode, with live process readiness and no Metro.
+ * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -70,6 +71,7 @@ export const FEATURES = [
   'hosted-congestion',
   'hosted-ios-data',
   'hosted-ios-process',
+  'native-xcode-build',
   'hosted-android-data',
   'server-update',
 ] as const;
@@ -827,7 +829,7 @@ export interface BuildOfferResult {
 /** One file of the client's checkout. A `link` blob holds the symlink's target. */
 export interface BuildFile {
   path: string;
-  kind: 'file' | 'exec' | 'link';
+  kind: 'file' | 'exec' | 'link' | 'directory';
   size: number;
   sha256: string;
 }
@@ -868,6 +870,7 @@ export interface BuildStartParams {
   scheme?: string | null;
   runtime?: string | null;
   fingerprint: string;
+  native?: { provider: 'xcode'; sourceDigest: string; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
@@ -908,6 +911,7 @@ export type BuildJobOutcome =
       ok: true;
       artifact: BuildArtifactResult;
       fingerprint: string;
+      sourceDigest?: string;
       compilationCache: Record<string, unknown>;
       timings: Record<string, number>;
     }

@@ -35,6 +35,8 @@ import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
+import { nativeTransferManifest, type NativeTransferFile } from './native-source.ts';
+import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
@@ -558,12 +560,7 @@ function repoIdentity(projectRoot: string): RepoIdentity {
   };
 }
 
-interface ManifestFile {
-  path: string;
-  kind: 'file' | 'exec' | 'link';
-  size: number;
-  sha256: string;
-}
+type ManifestFile = NativeTransferFile;
 
 /** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
 function sourceManifest(repoRoot: string): ManifestFile[] {
@@ -595,7 +592,11 @@ const sha256 = (content: Buffer): string => createHash('sha256').update(content)
 
 function blobContent(repoRoot: string, file: ManifestFile): Buffer {
   const absolute = join(repoRoot, file.path);
-  return file.kind === 'link' ? Buffer.from(readlinkSync(absolute)) : readFileSync(absolute);
+  return file.kind === 'directory'
+    ? Buffer.alloc(0)
+    : file.kind === 'link'
+      ? Buffer.from(readlinkSync(absolute))
+      : readFileSync(absolute);
 }
 
 interface OffloadTimings {
@@ -662,13 +663,17 @@ type MachineProbe =
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
 async function probeMachine(
   credential: BuildMachineCredential,
-  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string },
+  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
   const target = pinnedEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
   const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
+  if (identity.native && !connection.supports('native-xcode-build')) {
+    connection.close();
+    return { credential, failure: 'This worker does not support native Xcode builds.' };
+  }
   const reply = await connection.request(
     'build.offer',
     {
@@ -719,7 +724,15 @@ export async function chooseBuildMachine({
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
-  const asked = await Promise.all(machines.map((credential) => probeMachine(credential, { ...identity, rubyVersion })));
+  const asked = await Promise.all(
+    machines.map((credential) =>
+      probeMachine(credential, {
+        ...identity,
+        rubyVersion,
+        ...(target.platform === 'ios' ? { native: target.native } : {}),
+      }),
+    ),
+  );
   const { order, reasons, candidates } = pickOffer({
     localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local'),
     selected,
@@ -770,6 +783,7 @@ export interface AndroidBuildOptions {
 export type BuildRequest =
   | {
       platform: 'ios';
+      native?: { provider: 'xcode'; snapshot: NativeInputSnapshot; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
       runtime: string;
       configuration: string | null;
       scheme: string | null;
@@ -797,6 +811,7 @@ async function resumeJob(
   credential: BuildMachineCredential,
   job: string,
   abandoned: () => boolean,
+  native = false,
 ): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
   const deadline = Date.now() + RESUME_WINDOW_MS;
   let delay = RESUME_DELAY_MS;
@@ -811,6 +826,10 @@ async function resumeJob(
       if (connection.refused) return `the machine turned this Mac away (${connection.failure})`;
       last = connection.failure;
     } else {
+      if (native && !connection.supports('native-xcode-build')) {
+        connection.close();
+        return 'This worker does not support native Xcode builds.';
+      }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
       const reply = await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
@@ -837,12 +856,14 @@ async function syncSource(
   connection: BuildConnection,
   identity: RepoIdentity,
   onEnter: (phase: string) => void,
+  native?: NativeInputSnapshot,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
   onEnter('sync');
   const syncStarted = Date.now();
-  const manifest = sourceManifest(identity.repoRoot);
+  const visible = sourceManifest(identity.repoRoot);
+  const manifest = native ? nativeTransferManifest(identity.repoRoot, native, visible) : visible;
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
   const missing: string[] = [];
   for (let index = 0; index < manifest.length || index === 0;) {
@@ -909,12 +930,16 @@ export async function offloadBuild({
   | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string }
 )): Promise<OffloadOutcome> {
   const { identity } = choice;
+  const native = request.platform === 'ios' ? request.native : undefined;
+  let sourceDigest: string | null = null;
   const started = Date.now();
   const fail = (reason: string): OffloadOutcome => {
     closeOffload(choice);
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
   try {
+    if (native && native.snapshot.hash !== expectedFingerprint)
+      return fail('The native source snapshot does not match the requested artifact identity.');
     let job: string | null = null;
     let early: ProgressEvent[] = [];
     let settle!: (outcome: Record<string, unknown>) => void;
@@ -930,7 +955,7 @@ export async function offloadBuild({
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, job!, () => settled);
+      const resumed = await resumeJob(choice.credential, job!, () => settled, Boolean(native));
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string') resumed.connection.close();
@@ -973,12 +998,17 @@ export async function offloadBuild({
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      const synced = await syncSource(choice.connection, identity, onEnter);
+      if (native && !choice.connection.supports('native-xcode-build')) {
+        if (moveOn('This worker does not support native Xcode builds.')) continue;
+        return fail('This worker does not support native Xcode builds.');
+      }
+      const synced = await syncSource(choice.connection, identity, onEnter, native?.snapshot);
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
         return fail(synced.failure);
       }
       ({ syncMs, uploadedBytes } = synced);
+      sourceDigest = synced.digest;
       onPhase(
         'sync',
         `${synced.files} files, uploaded ${synced.uploaded} (${mb(uploadedBytes)}) in ${seconds(syncMs)}`,
@@ -992,6 +1022,16 @@ export async function offloadBuild({
         project: identity.project,
         platform: request.platform,
         fingerprint: request.platform === 'macos' ? synced.digest : expectedFingerprint,
+        ...(native
+          ? {
+              native: {
+                provider: native.provider,
+                sourceDigest: synced.digest,
+                cacheKey: native.cacheKey,
+                arch: native.arch,
+              },
+            }
+          : {}),
         ...(request.platform === 'macos'
           ? {
               macos: {
@@ -1034,6 +1074,8 @@ export async function offloadBuild({
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
+    if (native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
+      return fail('The worker returned a different native source or artifact identity.');
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
     const name = typeof artifact?.name === 'string' ? artifact.name : '';
     if (!ARTIFACT_NAME[request.platform].test(name) || typeof artifact.sha256 !== 'string') {

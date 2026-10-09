@@ -313,8 +313,16 @@ C-family header graphs, Swift package graphs and unresolved external input
 paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
-Native Xcode builds run locally and can install on an already approved hosting
-Mac with process-mode support:
+A compatible approved build Mac can compile a native Xcode app with
+--remote-build auto or --remote-build <name>. Both peers must support
+native-xcode-build. This first worker path requires a verified artifact identity
+and all inputs contained in the repository and visible to git. Ignored or
+external inputs refuse source transfer; their bytes are never silently omitted.
+Worker source mirrors remove stale inputs, while Xcode compilation caches remain
+in the worker's private Stim home. Physical builds stay local.
+
+Native Xcode apps can install on an already approved hosting Mac with
+process-mode support:
   stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json
 
 The host must advertise hosted-ios-process; older hosts refuse with an update
@@ -325,8 +333,8 @@ report metroPort: null, and close any previous session Metro bridge. Logs,
 view/control, agent access and scoped stop use the existing hosted-ios services.
 Verify UI and interaction separately from the host's live process evidence.
 
-Build offload, hosted --plan, eas/proxy devices and EAS artifact profiles remain
-unsupported for native Xcode apps. These limits do not change React Native or
+Unbounded native build offload, hosted --plan, eas/proxy devices and EAS artifact
+profiles remain unsupported for native Xcode apps. These limits do not change React Native or
 Expo support.
 
 Copyable agent request:

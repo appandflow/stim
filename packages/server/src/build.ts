@@ -110,7 +110,9 @@ function validBuildPath(path: unknown): path is string {
 
 function validFile(file: unknown): file is BuildFile {
   if (!isJsonObject(file) || !validBuildPath(file.path)) return false;
-  if (file.kind !== 'file' && file.kind !== 'exec' && file.kind !== 'link') return false;
+  if (file.kind !== 'file' && file.kind !== 'exec' && file.kind !== 'link' && file.kind !== 'directory') return false;
+  if (file.kind === 'directory' && (file.size !== 0 || file.sha256 !== createHash('sha256').update('').digest('hex')))
+    return false;
   const size = file.size;
   if (typeof size !== 'number' || !Number.isInteger(size) || size < 0 || size > MAX_FILE_BYTES) return false;
   return typeof file.sha256 === 'string' && /^[0-9a-f]{64}$/.test(file.sha256);
@@ -702,6 +704,7 @@ function workerOutcome(value: Record<string, unknown>): BuildJobOutcome {
         ok: true,
         artifact: { name, size, sha256 },
         fingerprint: String(value.fingerprint),
+        ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
         timings,
       };
@@ -819,6 +822,32 @@ export class BuildSession {
     if (platform === 'ios' && (typeof params.runtime !== 'string' || !params.runtime)) {
       return refusal('bad-request', 'An ios build needs params.runtime.');
     }
+    let native: BuildStartParams['native'];
+    if (params.native !== undefined) {
+      const input = params.native;
+      const optimizations = params.optimizations;
+      if (
+        platform !== 'ios' ||
+        !isJsonObject(input) ||
+        input.provider !== 'xcode' ||
+        typeof input.sourceDigest !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(input.sourceDigest) ||
+        typeof input.cacheKey !== 'string' ||
+        !input.cacheKey ||
+        ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
+        !isJsonObject(optimizations) ||
+        typeof optimizations.compilationCache !== 'boolean' ||
+        typeof optimizations.prefixMapping !== 'boolean' ||
+        (optimizations.swiftCompilationCache !== null && typeof optimizations.swiftCompilationCache !== 'boolean')
+      )
+        return refusal(
+          'bad-request',
+          'A native Xcode build needs its source digest, cache key, architecture and compiler options.',
+        );
+      native = input as unknown as NonNullable<BuildStartParams['native']>;
+    }
+    if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
+      return refusal('bad-request', 'Directory entries require a native build request.');
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -891,6 +920,7 @@ export class BuildSession {
       job: {
         manifest: [...this.files.values()],
         platform,
+        ...(native ? { native } : {}),
         android,
         macos,
         project: params.project,

@@ -10,6 +10,7 @@ import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts
 import { nativeXcodeIosProject } from '../integrations/native-xcode-ios.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
+import type { IosArtifactContext } from '../integrations/ios-project.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 
@@ -670,4 +671,47 @@ test('the registered native iOS provider builds Release without a device and reu
   expect(readFileSync(join(edited.appPath, 'Native'), 'utf8')).toBe('struct EditedApp {}');
   expect(readWorkspaceState(root)?.ios).toEqual(existing);
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
+});
+
+test('native run and worker build-only recipes share the selected architecture identity', async () => {
+  writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  const unused = () => {
+    throw new Error('Identity must not prepare or compile');
+  };
+  const context: IosArtifactContext = {
+    root,
+    logFile: join(home, 'build.ndjson'),
+    configuration: 'Debug',
+    target: {
+      udid: 'owned-device',
+      destination: null,
+      sdk: 'iphonesimulator',
+      arch: null,
+      keyArch: 'arm64',
+      offloadRuntime: () => 'iOS-26-0',
+      offloadRefusal: null,
+    },
+    device: null,
+    optimizations: resolveOptimizations({}, {}).ios,
+    cache: { read: true, write: true, remote: true },
+    phase: unused,
+    note: unused,
+    logWriter: unused,
+    estimates: unused,
+    step: unused,
+    setPodsMs: unused,
+  };
+  const project = nativeXcodeIosProject(root);
+  const run = project.artifact(context);
+  const worker = project.artifact({
+    ...context,
+    target: { ...context.target, udid: null, destination: 'generic/platform=iOS Simulator', arch: 'arm64' },
+  });
+  const identity = await run.identity();
+  expect(identity).not.toHaveProperty('cacheIneligible');
+  expect(await worker.identity()).toEqual(identity);
+  expect(run.offload!.request('iOS-26-0').native).toMatchObject({ arch: 'arm64' });
+  const other = project.artifact({ ...context, target: { ...context.target, keyArch: 'x86_64' } });
+  expect(await other.identity()).not.toEqual(identity);
 });

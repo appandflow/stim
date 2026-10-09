@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
 import { chooseBuildMachine, offloadBuild, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
+import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
 
 const ports = new Map<string, number>();
@@ -73,7 +74,7 @@ async function fakeMachine(
     dropOnSync?: boolean;
     attach?: object;
     hello?: () => object;
-    artifact?: { archive: Buffer; digest: string } | null;
+    artifact?: { archive: Buffer; digest: string; fingerprint?: string; sourceDigest?: string } | null;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -109,6 +110,8 @@ async function fakeMachine(
                   ok: true,
                   artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
                   compilationCache: {},
+                  fingerprint: artifact.fingerprint,
+                  sourceDigest: artifact.sourceDigest,
                 }
               : FAILED,
           }),
@@ -507,4 +510,123 @@ describe('macOS artifact transfer', () => {
       );
     },
   );
+});
+
+describe('native Xcode worker selection', () => {
+  test('an old worker is refused before offer or source upload', async () => {
+    const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
+    machines.push(machine);
+    const result = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('old')],
+    });
+    expect(typeof result).toBe('string');
+    expect(String(result)).toContain('does not support native Xcode builds');
+    expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('ignored native bytes refuse before the supported worker receives any source', async () => {
+    const machine = await fakeMachine(
+      'native',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      },
+    );
+    machines.push(machine);
+    writeFileSync(join(repo, '.gitignore'), 'private.key\n');
+    writeFileSync(join(repo, 'private.key'), 'not authorized for transport');
+    const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+      excluded: [join(repo, '.git')],
+      parameters: null,
+    });
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('native')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: snapshot.hash,
+      request: {
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: 'App',
+        isExpo: false,
+        optimizations: null,
+        native: { provider: 'xcode', snapshot, cacheKey: 'a'.repeat(64), arch: 'arm64' },
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('private.key is ignored or absent') });
+    expect(machine.methods).toEqual(['hello', 'build.offer']);
+  });
+});
+
+test('native results with a different transfer digest are refused before artifact fetch', async () => {
+  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+    excluded: [join(repo, '.git')],
+    parameters: null,
+  });
+  const machine = await fakeMachine(
+    'native',
+    offer(0.1),
+    { result: { job: 'j-native' } },
+    {
+      hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      artifact: {
+        archive: Buffer.from('not fetched'),
+        digest: 'b'.repeat(64),
+        fingerprint: snapshot.hash,
+        sourceDigest: 'c'.repeat(64),
+      },
+    },
+  );
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: { ...TARGET, native: 'xcode' },
+    mode: 'auto',
+    here: HERE,
+    note: () => {},
+    machines: [credential('native')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const result = await offloadBuild({
+    choice,
+    expectedFingerprint: snapshot.hash,
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: 'Debug',
+      scheme: 'App',
+      isExpo: false,
+      optimizations: null,
+      native: { provider: 'xcode', snapshot, cacheKey: 'a'.repeat(64), arch: 'arm64' },
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note: () => {},
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    reason: 'The worker returned a different native source or artifact identity.',
+  });
+  expect(machine.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
 });

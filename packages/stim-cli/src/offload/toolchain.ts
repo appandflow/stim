@@ -45,6 +45,7 @@ export interface WorkerToolchain extends IosToolchain {
 export type BuildTarget =
   | {
       platform: 'ios';
+      native?: 'xcode';
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
@@ -287,11 +288,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
-  if (target.cocoapodsPinned) {
+  if (!target.native && target.cocoapodsPinned) {
     if (!worker.bundler) {
       out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
     }
-  } else if (worker.cocoapods !== ios.cocoapods) {
+  } else if (!target.native && worker.cocoapods !== ios.cocoapods) {
     out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {

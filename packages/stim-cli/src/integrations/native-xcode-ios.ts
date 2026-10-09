@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { iosToolchain } from '../offload/toolchain.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
@@ -99,7 +100,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       selected,
       {
         sdk: context.target.sdk,
-        architecture: context.target.arch,
+        architecture: context.target.keyArch,
         toolchain: tools,
         optimizations: context.optimizations,
       },
@@ -273,7 +274,53 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     },
     untrackedLine: () => null,
     legacyCache: null,
-    offload: null,
+    offload: {
+      context: () => {
+        const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;
+        return {
+          runtime,
+          unsupported:
+            context.target.offloadRefusal ??
+            (context.device
+              ? 'Physical native Xcode builds build here'
+              : !context.cache.write
+                ? 'the build cache is off'
+                : !runtime
+                  ? 'no simulator runtime is available for worker selection'
+                  : null),
+        };
+      },
+      target: (runtime) => ({
+        platform: 'ios',
+        native: 'xcode',
+        local: {
+          ...iosToolchain(root),
+          ...(context.target.hostedArchitecture
+            ? {
+                arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',
+              }
+            : {}),
+        },
+        runtime,
+        cocoapodsPinned: false,
+      }),
+      request: (runtime) => {
+        if (!snapshot) throw new Error('Native Xcode offload needs a verified artifact input identity.');
+        return {
+          platform: 'ios',
+          runtime,
+          configuration,
+          scheme: selected.scheme,
+          isExpo: false,
+          optimizations: context.optimizations,
+          native: { provider: 'xcode', snapshot, cacheKey: identity(snapshot).key, arch: context.target.keyArch },
+        };
+      },
+      unchanged: async () => {
+        const current = read();
+        return snapshot !== null && !('cacheIneligible' in current) && current.hash === snapshot.hash;
+      },
+    },
   };
 }
 
