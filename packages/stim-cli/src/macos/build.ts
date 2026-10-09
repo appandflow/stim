@@ -1,12 +1,11 @@
 import { setRemoteLogSink } from '../remote-log.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../placement-log.ts';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { machineCapacity, type MacosBuild } from '@stim-cli/core/state';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
 import { NO_BUILD_PROGRESS, type BuildProgress } from '../engine/build-progress.ts';
-import { spawnDeclared } from '../engine/spawn-claims.ts';
-import { getExecutor } from '../exec.ts';
+import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import {
   chooseBuildMachine,
@@ -20,46 +19,12 @@ import {
   type OffloadChoice,
 } from '../offload/client.ts';
 import { namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
-import { macosToolchain } from '../offload/toolchain.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
-import { logLines } from './run.ts';
 import { macosDir } from './state.ts';
-import { repoRoot } from '../workspace/worktree.ts';
-import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from './stage.ts';
-
-async function tool(
-  root: string,
-  args: string[],
-  writer: NdjsonWriter,
-  note: (line: string) => void,
-  capture = false,
-): Promise<string> {
-  const child = spawnDeclared(() =>
-    getExecutor().spawn('swift', args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
-  );
-  let stdout = '';
-  child.stdout?.on('data', (chunk: Buffer) => {
-    if (capture) stdout += chunk.toString('utf8');
-  });
-  const write = (msg: string) => {
-    writer.write({ src: 'build', platform: 'macos', level: 'debug', msg });
-    note(msg);
-  };
-  if (child.stdout) logLines(child.stdout, write);
-  if (child.stderr) logLines(child.stderr, write);
-  await new Promise<void>((done, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) =>
-      code === 0 ? done() : reject(new Error(`swift ${args[0]} failed (${code}). See stim logs --source build.`)),
-    );
-  });
-  return stdout.trim();
-}
 
 export async function buildMacosBundle({
   root,
-  product,
-  infoPlist,
+  recipe,
   bundle,
   bundleId,
   displayName,
@@ -68,13 +33,10 @@ export async function buildMacosBundle({
   note,
   record,
   buildMachine,
-  resources,
-  assetCatalog,
   progress = NO_BUILD_PROGRESS,
 }: {
   root: string;
-  product: string;
-  infoPlist: string;
+  recipe: MacosArtifactRecipe;
   bundle: string;
   bundleId: string;
   displayName?: string;
@@ -83,8 +45,6 @@ export async function buildMacosBundle({
   note: (line: string) => void;
   record?: MacosBuild;
   buildMachine: string;
-  resources?: unknown;
-  assetCatalog?: unknown;
   progress?: BuildProgress;
 }): Promise<{
   bundleId: string;
@@ -94,9 +54,6 @@ export async function buildMacosBundle({
 }> {
   if (record) record.buildMachine = buildMachine;
   setRemoteLogSink((entry) => writer.write({ ...entry, platform: 'macos' }));
-  validateInfoPlist(root, product, infoPlist);
-  const repository = realpathSync(repoRoot(root) ?? root);
-  const extras = resolveBundleExtras(root, repository, resources, assetCatalog);
   const write = (msg: string) => {
     writer.write({ src: 'build', platform: 'macos', level: 'info', msg });
     note(msg);
@@ -153,7 +110,7 @@ export async function buildMacosBundle({
       if (placement.offload) {
         const chosen = await chooseBuildMachine({
           projectRoot: root,
-          target: { platform: 'macos', local: macosToolchain() },
+          target: recipe.offload.target(),
           mode,
           here,
           machines,
@@ -175,19 +132,7 @@ export async function buildMacosBundle({
         write(`placement: ${choice.machine} (${placement.reason}${placementLoad(choice)})`);
         const outcome = await offloadBuild({
           choice,
-          request: {
-            platform: 'macos',
-            product,
-            infoPlist: relative(root, resolve(root, infoPlist)),
-            bundleId,
-            resources: Object.fromEntries(
-              Object.entries(extras.resources).map(([destination, source]) => [
-                destination,
-                relative(repository, source),
-              ]),
-            ),
-            assetCatalog: extras.assetCatalog ? relative(repository, extras.assetCatalog) : null,
-          },
+          request: recipe.offload.request(bundleId),
           stagingDir: join(staging, 'offload'),
           onPhase: (phase, line) => note(remotePhaseText(phase, line, choice!.machine)),
           onEnter: (phase) => {
@@ -201,27 +146,7 @@ export async function buildMacosBundle({
         progress.place(null);
         if (!outcome.ok) throw new Error(`${outcome.machine}: ${outcome.reason}`);
         progress.step('install');
-        const executable = join(outcome.artifactPath, 'Contents', 'MacOS', product);
-        const plist = JSON.parse(
-          getExecutor().runFile('plutil', [
-            '-convert',
-            'json',
-            '-o',
-            '-',
-            join(outcome.artifactPath, 'Contents', 'Info.plist'),
-          ]),
-        );
-        if (plist.CFBundleIdentifier !== bundleId || plist.CFBundleExecutable !== product || !existsSync(executable))
-          throw new Error('The fetched macOS bundle does not match the requested identity and executable.');
-        for (const destination of [...Object.keys(extras.resources), ...(extras.assetCatalog ? ['Assets.car'] : [])]) {
-          if (!existsSync(join(outcome.artifactPath, 'Contents', 'Resources', destination)))
-            throw new Error(`The fetched macOS bundle lacks declared resource ${destination}.`);
-        }
-        if (displayName !== undefined) {
-          setBundleName(join(outcome.artifactPath, 'Contents', 'Info.plist'), displayName);
-          getExecutor().runFile('codesign', ['--force', '--sign', '-', outcome.artifactPath]);
-        }
-        getExecutor().runFile('codesign', ['--verify', '--strict', outcome.artifactPath]);
+        recipe.validateFetched(outcome.artifactPath, bundleId, displayName);
         promote(outcome.artifactPath);
         if (record) {
           record.offloadedTo = outcome.machine;
@@ -253,22 +178,10 @@ export async function buildMacosBundle({
       });
       if (record) record.builtOn = 'here';
       progress.step('compile');
-      await tool(
-        root,
-        ['build', '-c', 'debug', '--product', product, '--scratch-path', scratch, '--jobs', '2'],
-        writer,
-        note,
-      );
-      const bin = await tool(
-        root,
-        ['build', '-c', 'debug', '--scratch-path', scratch, '--show-bin-path'],
-        writer,
-        () => {},
-        true,
-      );
+      const bin = await recipe.compile({ scratch, writer, note });
       progress.step('install');
-      const staged = join(staging, `${product}.app`);
-      stageBundle(root, product, infoPlist, bin, staged, bundleId, extras, displayName);
+      const staged = join(staging, `${recipe.product}.app`);
+      recipe.stage(bin, staged, bundleId, displayName);
       promote(staged);
       return { bundleId, offloadedTo: null, offloadFallback, handoff: null };
     } finally {

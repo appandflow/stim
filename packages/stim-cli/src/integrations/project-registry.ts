@@ -3,10 +3,11 @@ import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
 import type { IosProject } from './ios-project.ts';
 import type { AndroidProject } from './android-project.ts';
+import type { MacosProject } from './macos-project.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
 
 export type ProjectPlatform = 'ios' | 'android' | 'macos' | 'web';
-type ProjectOperation = 'ios' | 'android' | 'dev-server';
+type ProjectOperation = 'ios' | 'android' | 'macos' | 'dev-server';
 
 interface ProjectProblem {
   kind: 'not-an-app' | 'unreadable' | 'ambiguous';
@@ -21,6 +22,7 @@ interface ProjectMatch {
   platforms(settings: SettingsObject): ProjectPlatform[];
   ios?(): Promise<IosProject>;
   android?(): Promise<AndroidProject>;
+  macos?(): Promise<MacosProject>;
   validate?(operation: ProjectOperation): ProjectProblem | null | undefined;
 }
 
@@ -34,6 +36,7 @@ export interface ProjectRegistry {
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
   selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
+  selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
   detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[];
@@ -158,6 +161,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     };
   }
 
+  function selectMacos(root: string): ReturnType<ProjectRegistry['selectMacos']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'macos');
+    if ('problem' in selected) return selected;
+    if (selected.match.macos) return { load: selected.match.macos };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide a macOS operation.`,
+        remedy: 'Use an integration with a macOS build recipe.',
+      },
+    };
+  }
+
   function isMobileProject(root: string): boolean {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -188,6 +208,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     projectProblem,
     selectAndroid,
     selectIos,
+    selectMacos,
     isMobileProject,
     keepsWorkspace,
     detectPlatforms,

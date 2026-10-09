@@ -26,6 +26,7 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
@@ -182,6 +183,7 @@ describe('macOS build placement and promotion', () => {
   let writer: ReturnType<typeof createNdjsonWriter>;
   let localBuilds: number;
   let previousDuringBuild: string[];
+  let compilerCalls: Array<{ file: string; args: string[]; cwd: string | undefined }>;
   let plist: Record<string, unknown>;
   const bundleId = 'dev.sample.stim.test';
   const choice = { machine: 'mini', offer: { capacity: {} } } as offload.OffloadChoice;
@@ -195,9 +197,11 @@ describe('macOS build placement and promotion', () => {
     mkdirSync(bin);
     writeFileSync(join(bin, 'Sample'), 'local');
     writeFileSync(join(root, 'Info.plist'), '{}');
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
     writer = createNdjsonWriter(join(dir, 'build.ndjson'));
     localBuilds = 0;
     previousDuringBuild = [];
+    compilerCalls = [];
     plist = { CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' };
     buildRecord = { state: 'running', startedAt: new Date().toISOString() };
     writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
@@ -224,7 +228,8 @@ describe('macOS build placement and promotion', () => {
         if (file === 'otool') return '@executable_path/../Frameworks';
         return '';
       },
-      spawn: (_file: string, args: string[]) => {
+      spawn: (file, args, options) => {
+        compilerCalls.push({ file, args, cwd: options?.cwd as string | undefined });
         const child = Object.assign(new EventEmitter(), {
           stdout: new PassThrough(),
           stderr: new PassThrough(),
@@ -249,22 +254,32 @@ describe('macOS build placement and promotion', () => {
     vi.restoreAllMocks();
   });
 
-  const build = (
+  const build = async (
     extras: { buildMachine?: string; resources?: unknown; assetCatalog?: unknown; displayName?: string } = {},
-  ) =>
-    buildMacosBundle({
+  ) => {
+    const selected = projectRegistry.selectMacos(root);
+    if ('problem' in selected) throw new Error(selected.problem.message);
+    const recipe = (await selected.load()).prepare({
+      macos: {
+        product: 'Sample',
+        infoPlist: 'Info.plist',
+        resources: extras.resources,
+        assetCatalog: extras.assetCatalog,
+      },
+    });
+    return buildMacosBundle({
       root,
-      product: 'Sample',
-      infoPlist: 'Info.plist',
+      recipe,
       bundle,
       bundleId,
       scratch: join(dir, 'scratch'),
       writer,
       note: () => {},
       record: buildRecord,
-      buildMachine: 'auto',
-      ...extras,
+      buildMachine: extras.buildMachine ?? 'auto',
+      displayName: extras.displayName,
     });
+  };
   function remoteBundle(valid = true): string {
     const fetched = join(dir, 'fetched', 'Sample.app');
     mkdirSync(join(fetched, 'Contents', 'MacOS'), { recursive: true });
@@ -400,6 +415,18 @@ describe('macOS build placement and promotion', () => {
     expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
     expect(localBuilds).toBe(1);
     expect(buildRecord).toMatchObject({ buildMachine: 'local', builtOn: 'here' });
+    expect(compilerCalls).toEqual([
+      {
+        file: 'swift',
+        args: ['build', '-c', 'debug', '--product', 'Sample', '--scratch-path', join(dir, 'scratch'), '--jobs', '2'],
+        cwd: root,
+      },
+      {
+        file: 'swift',
+        args: ['build', '-c', 'debug', '--scratch-path', join(dir, 'scratch'), '--show-bin-path'],
+        cwd: root,
+      },
+    ]);
   });
 
   test.each(['invalid', 'not listed', 'not paired'])(
@@ -429,6 +456,35 @@ describe('macOS build placement and promotion', () => {
       expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     },
   );
+  test.each(['missing product', 'malformed settings', 'invalid plist', 'missing resource'])(
+    'the selected SwiftPM operation refuses %s before stopping the previous app',
+    async (reason) => {
+      if (process.platform !== 'darwin') return;
+      const macos = {
+        product: reason === 'missing product' ? undefined : reason === 'malformed settings' ? 42 : 'Sample',
+        infoPlist: 'Info.plist',
+        ...(reason === 'missing resource' ? { resources: { 'icon.icns': 'missing' } } : {}),
+      };
+      writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos }));
+      if (reason === 'invalid plist') plist.SUFeedURL = 'feed';
+      writeWorkspaceState(root, { macos: record() });
+      const before = readMacosRecord(root);
+      const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
+      await expect(runMacos(root, () => {})).rejects.toThrow(
+        reason === 'missing product' || reason === 'malformed settings'
+          ? 'macos.product'
+          : reason === 'invalid plist'
+            ? 'development Info.plist'
+            : 'source does not exist',
+      );
+      expect(readMacosRecord(root)).toEqual(before);
+      expect(stop).not.toHaveBeenCalled();
+      expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+      expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+      expect(localBuilds).toBe(0);
+    },
+  );
+
   it.each(['icon.icns', 'Assets.car'])('falls back when an older worker omits declared %s', async (missing) => {
     writeFileSync(join(root, 'icon'), 'icon bytes');
     mkdirSync(join(root, 'Assets.xcassets'));
@@ -754,7 +810,11 @@ test.skipIf(process.platform !== 'darwin')(
   async () => {
     writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
     writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }));
-    setExecutor({ runFileQuiet: () => null });
+    writeFileSync(join(root, 'Info.plist'), '{}');
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile: () => JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' }),
+    });
     const launch = vi.spyOn(nativeRun, 'withNativeBuildRun');
     const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);
     const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});

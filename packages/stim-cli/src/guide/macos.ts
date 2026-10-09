@@ -55,7 +55,8 @@ executables, including Stim Desktop's sim-fold helper, are not built.
   stim logs --errors
   stim stop               # stop this workspace's owned app and supervisor
 
-Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
+Each invocation validates the project settings, development plist and resource
+entries before stopping its previous owned app, rebuilding and launching. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which

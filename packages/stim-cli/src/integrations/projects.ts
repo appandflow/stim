@@ -78,7 +78,8 @@ const reactNativeProject: ProjectIntegration = {
       application: problem === null,
       ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
       platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
-      validate: () => problem,
+      validate: (operation) =>
+        operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
       ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
       android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
     };
@@ -94,6 +95,8 @@ const swiftPackage: ProjectIntegration = {
       application: true,
       platforms: (settings) =>
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
+      validate: (operation) => (operation === 'macos' ? null : undefined),
+      macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
     };
   },
 };
