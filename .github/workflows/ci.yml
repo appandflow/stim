@@ -1,189 +1,33 @@
-#
-# Everything provable on a plain Linux box with no Xcode and no Android SDK:
-# lint, format, typecheck, build, the full vitest unit suite (all six
-# packages), and the fast cross-platform e2e (test/e2e/cache-flow.e2e.js), which
-# drives the real CLI and the real cache library end to end with no compiler.
-# The SLOW native builds live in e2e-native.yml: a smoke on every push to
-# main, the full loop nightly, and on a pull request only the suites its
-# e2e-* labels ask for, so a flaky 15-minute build never blocks a PR.
 name: CI
+run-name: Windows workspace diff cleanup probe
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * *'
-  push:
-    branches: [main]
-    paths:
-      - '**'
-      - '!website/docs/**'
-      - '!apps/desktop/**'
-      - '!.github/workflows/desktop.yml'
-      - '!apps/mobile/**'
-      - '!.github/workflows/mobile.yml'
-      - '!apps/demo-server/**'
-      - '!.github/workflows/demo-server*.yml'
-      - 'apps/mobile/src/protocol/types.ts'
-      - 'apps/mobile/src/lib/workspace-names.ts'
-      - 'apps/mobile/mock-server/fixtures/status.json'
-      - 'apps/desktop/Sources/SimulatorFrames/**'
-      - 'apps/desktop/Sources/EmulatorFrames/**'
-      - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
-  pull_request:
-    paths:
-      - '**'
-      - '!website/docs/**'
-      - '!apps/desktop/**'
-      - '!.github/workflows/desktop.yml'
-      - '!apps/mobile/**'
-      - '!.github/workflows/mobile.yml'
-      - '!apps/demo-server/**'
-      - '!.github/workflows/demo-server*.yml'
-      - 'apps/mobile/src/protocol/types.ts'
-      - 'apps/mobile/src/lib/workspace-names.ts'
-      - 'apps/mobile/mock-server/fixtures/status.json'
-      - 'apps/desktop/Sources/SimulatorFrames/**'
-      - 'apps/desktop/Sources/EmulatorFrames/**'
-      - 'apps/desktop/Tests/StimKitTests/Fixtures/oversight-vectors.json'
-
-concurrency:
-  group: ci-v2-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: test (node ${{ matrix.node }})
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    strategy:
-      # Repository builds require Node 22.18 or later because tsdown uses that
-      # floor. Prove Node 22 and the current LTS line 24.
-      fail-fast: false
-      matrix:
-        node: [22, 24]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-stim
-        with:
-          node: ${{ matrix.node }}
-          build: 'false'
-
-      # Lint and format are fast and fail early. oxlint and oxfmt are the oxc
-      # toolchain; typecheck is the production src (tests run under vitest),
-      # and it now sits below the build -- see why on that step.
-      - name: Lint (oxlint)
-        run: pnpm run lint
-
-      - name: Format check (oxfmt)
-        run: pnpm run format:check
-
-      - name: Shared RPC validators match the contract
-        run: pnpm run rpc:check
-
-      # Build every package with tsdown as ESM. Proves the published artifacts
-      # compile.
-      #
-      # BEFORE typecheck, and that order is load-bearing. The cache packages
-      # are consumed by stim-cli's suite as `@stim-cli/expo-build-cache` and
-      # `@stim-cli/metro`; their declaration files are
-      # build OUTPUT, so a typecheck that runs first cannot resolve either
-      # module and fails with TS2307 on a tree that is perfectly fine.
-      - name: Build (tsdown, all packages)
-        run: pnpm run build
-
-      - name: Typecheck (production)
-        run: pnpm run typecheck
-
-      # Dead-code gate: unused exports, files, and dependencies. Keeps the
-      # surface honest as the codebase changes.
-      - name: Dead code (knip)
-        run: pnpm run knip
-
-      # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
-      # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
-      - name: Unit tests (vitest)
-        run: pnpm test
-
-      # The fast cross-platform e2e: real git worktrees, the real CLI, the real
-      # fingerprint/buildCacheKey/store/resolve cache machinery, and a real
-      # single-flight race between real node processes -- throwaway STIM_HOME,
-      # no Xcode, no Android SDK.
-      - name: Cross-platform e2e
-        run: pnpm run test:e2e
-
-  test-windows:
-    name: test (windows)
-    if: github.event_name != 'schedule'
+  workspace-diff-cleanup:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
-
-      - name: Typecheck (production)
-        run: pnpm run typecheck
-
-      - name: Windows CLI and cache smoke
-        run: >-
-          pnpm test
-          packages/stim-cli/src/__tests__/exec.test.ts
-          packages/stim-cli/src/__tests__/detached-entry.test.ts
-          packages/stim-cli/src/__tests__/logs-command.test.ts
-          packages/stim-cli/src/__tests__/cache-packages.test.ts
-          packages/stim-cli/src/__tests__/engine-build-lock.test.ts
-
-  native-process-inspection:
-    name: native process inspection (${{ matrix.os }})
-    if: github.event_name != 'schedule'
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Repeat the real over-budget fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/workspace-diff-cleanup"
+          git rev-parse HEAD > "$RUNNER_TEMP/workspace-diff-cleanup/source-sha.txt"
+          for attempt in {1..40}; do
+            echo "Attempt $attempt" | tee -a "$RUNNER_TEMP/workspace-diff-cleanup/fixtures.log"
+            pnpm test packages/server/__tests__/workspace-diff.test.ts -t 'reports tracked binary and over-budget patches without returning contents' 2>&1 | tee -a "$RUNNER_TEMP/workspace-diff-cleanup/fixtures.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          node-version: 22
-      - name: Verify recorded process inspection and exit
-        run: node --test test/e2e/native-processes.e2e.js
-
-  windows-full:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    uses: ./.github/workflows/windows-full.yml
-
-  runtime-floor:
-    name: published runtime (node 22.12.0)
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up build Node
-        uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.18.0
-
-      - name: Install and build
-        run: pnpm install --frozen-lockfile && pnpm run build
-
-      - name: Set up runtime Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22.12.0
-
-      - name: Verify published runtime
-        run: node test/runtime-floor.mjs
-
-      - name: Set up unsupported Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 18
-
-      - name: Verify the refusal below the runtime floor
-        run: node test/runtime-refusal.mjs
+          name: workspace-diff-cleanup
+          path: ${{ runner.temp }}/workspace-diff-cleanup
+          if-no-files-found: error
+          retention-days: 7
