@@ -4134,6 +4134,10 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
     ...original,
     findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runFile: (file, args, opts) => {
+      if (file === 'netstat') {
+        inspected.push(args.join(' '));
+        return 'Proto Local Address Foreign Address State PID\n';
+      }
       if (file === 'lsof') {
         inspected.push(args[1]);
         return '';
@@ -4155,7 +4159,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   await cli(['--delete']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-  expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
+  expect(inspected).toEqual(process.platform === 'win32' ? ['-ano', '-ano'] : ['-iTCP:8900', '-iTCP:8900']);
 });
 
 test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {
