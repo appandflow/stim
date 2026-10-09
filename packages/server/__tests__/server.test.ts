@@ -222,7 +222,7 @@ const RECORDS = [
 ];
 
 const FAKE_WORKER = `
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
@@ -230,7 +230,10 @@ if (process.argv[2] === 'offer') {
   print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
 } else {
   const job = JSON.parse(readFileSync(0, 'utf8'));
-  writeFileSync(join(process.env.FAKE_STIM_PIDS, '..', 'job.json'), JSON.stringify({ job, home: process.env.STIM_HOME, gradle: process.env.GRADLE_USER_HOME, pid: process.pid }));
+  const record = join(process.env.FAKE_STIM_PIDS, '..', 'job.json');
+  const pending = record + '.' + process.pid + '.tmp';
+  writeFileSync(pending, JSON.stringify({ job, home: process.env.STIM_HOME, gradle: process.env.GRADLE_USER_HOME, pid: process.pid }));
+  renameSync(pending, record);
   print({ type: 'phase', phase: 'build', msg: 'compiling' });
   print({ type: 'log', record: { src: 'build', level: 'info', msg: 'CompileC' } });
   if (process.env.FAKE_WORKER_HANG) {
