@@ -1178,6 +1178,8 @@ describe('Metro prefetch', () => {
 });
 
 describe('the device preparation step', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
     reserve();
     let clock = 1_000_000;

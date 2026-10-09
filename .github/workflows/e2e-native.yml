@@ -83,7 +83,7 @@ on:
         description: 'Task QA jobs to run; all runs the full regression'
         type: choice
         default: all
-        options: [all, supplement, ios, ios-expo, android, windows, macos, web]
+        options: [all, supplement, ios, ios-expo, ios-bare, android, windows, macos, web]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
@@ -629,7 +629,7 @@ jobs:
   ios-bare-qa:
     name: ios bare (${{ matrix.suite }}, Xcode 26.6)
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'loop' || inputs.suite == 'caches') && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios')
+    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'loop' || inputs.suite == 'caches') && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios' || inputs.qa_scope == 'ios-bare')
     runs-on: macos-26
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
     strategy:
@@ -638,6 +638,7 @@ jobs:
         suite: ${{ fromJSON(inputs.suite == 'all' && '["loop","caches"]' || format('["{0}"]', inputs.suite)) }}
     env:
       STIM_ARCHIVE_ENABLED: '1'
+      STIM_DEBUG: '1'
       DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
       LANG: en_US.UTF-8
       LC_ALL: en_US.UTF-8
@@ -702,6 +703,7 @@ jobs:
             runtimes-bare-ios.json
             cache-summary-bare-ios.json
             ${{ env.TMPDIR }}/**/logs/*
+            ${{ env.TMPDIR }}/**/logs/debug/*
             ${{ env.TMPDIR }}/**/app/package.json
             ${{ env.TMPDIR }}/**/app/package-lock.json
             ${{ env.TMPDIR }}/**/app/Gemfile.lock
