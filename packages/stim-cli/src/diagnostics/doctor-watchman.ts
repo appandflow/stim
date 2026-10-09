@@ -1,5 +1,6 @@
 import { readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { getExecutor } from '../exec.ts';
 import { parseWatchRoots, runWatchman, type WatchmanCommand } from '../watchman.ts';
 import { listWorktrees, repoRoot } from '../workspace/worktree.ts';
 import type { Finding } from './doctor.ts';
@@ -7,7 +8,10 @@ import type { Finding } from './doctor.ts';
 export const WATCHMAN_NESTED_WORKTREES = 'watchman-nested-worktrees';
 
 type WatchmanConfig = Record<string, unknown>;
-export type WatchmanConfigRead = { kind: 'absent' } | { kind: 'invalid' } | { kind: 'object'; value: WatchmanConfig };
+export type WatchmanConfigRead =
+  | { kind: 'absent' }
+  | { kind: 'invalid'; reason: string }
+  | { kind: 'object'; value: WatchmanConfig };
 
 export interface NestedWorktrees {
   checkout: string;
@@ -26,41 +30,36 @@ function ignoreDirsOf(config: WatchmanConfigRead): string[] {
   return config.value.ignore_dirs.filter((entry): entry is string => typeof entry === 'string');
 }
 
-function normalizeEntry(entry: string): string {
-  return normalize(entry).split(sep).join('/').replace(/\/+$/, '');
-}
-
 function covered(path: string, ignoreDirs: string[]): boolean {
-  return ignoreDirs.map(normalizeEntry).some((entry) => path === entry || path.startsWith(`${entry}/`));
+  return ignoreDirs.some((entry) => path === entry || path.startsWith(`${entry}/`));
 }
 
 /**
- * The linked worktrees inside `checkout` that a Watchman root there would crawl, as paths relative to it, and the
- * `ignore_dirs` entries that exclude them: their shared parent when they have one below the checkout root, otherwise
- * each worktree. All paths are canonical.
+ * Watchman joins each ignore_dirs entry to the root without normalizing it, so `.worktrees/` or `./.worktrees`
+ * ignores nothing; only an entry spelled exactly as the relative path, or as one of its ancestors, covers it.
  */
 export function nestedWorktreeIgnores(
   checkout: string,
   worktrees: string[],
   ignoreDirs: string[],
+  holdsSource: (dir: string) => boolean,
 ): { nested: string[]; add: string[] } {
   const nested = worktrees
     .map((path) => relative(checkout, path))
-    .filter((rel) => rel !== '' && !rel.startsWith('..') && !isAbsolute(rel))
+    .filter((rel) => rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
     .map((rel) => rel.split(sep).join('/'))
     .filter((rel) => !covered(rel, ignoreDirs))
     .toSorted();
   const parents = new Set(nested.map((rel) => dirname(rel)));
   const [parent] = parents;
-  const add = parents.size === 1 && parent !== undefined && parent !== '.' ? [parent] : nested;
+  const add = parents.size === 1 && parent !== undefined && parent !== '.' && !holdsSource(parent) ? [parent] : nested;
   return { nested, add };
 }
 
 export type IgnoreDirsMerge = { value: WatchmanConfig } | { refusal: string };
 
-/** `ignore_dirs` with `add` appended once, every other key and existing entry kept, or why the file cannot take it. */
 export function mergeIgnoreDirs(config: WatchmanConfigRead, add: string[]): IgnoreDirsMerge {
-  if (config.kind === 'invalid') return { refusal: 'is not a JSON object' };
+  if (config.kind === 'invalid') return { refusal: config.reason };
   const existing = config.kind === 'object' ? config.value : {};
   if ('ignore_dirs' in existing && !Array.isArray(existing.ignore_dirs)) {
     return { refusal: 'holds an ignore_dirs that is not an array' };
@@ -74,14 +73,18 @@ function readWatchmanConfig(path: string): WatchmanConfigRead {
   try {
     raw = readFileSync(path, 'utf-8');
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? { kind: 'absent' } : { kind: 'invalid' };
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' ? { kind: 'absent' } : { kind: 'invalid', reason: `cannot be read (${code})` };
   }
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(raw);
-    return isPlainObject(parsed) ? { kind: 'object', value: parsed } : { kind: 'invalid' };
+    parsed = JSON.parse(raw);
   } catch {
-    return { kind: 'invalid' };
+    parsed = null;
   }
+  return isPlainObject(parsed)
+    ? { kind: 'object', value: parsed }
+    : { kind: 'invalid', reason: 'is not a JSON object' };
 }
 
 function canonical(path: string): string | null {
@@ -92,7 +95,6 @@ function canonical(path: string): string | null {
   }
 }
 
-/** Every checkout of this repository that holds linked worktrees its `.watchmanconfig` does not ignore. */
 export function inspectNestedWorktrees(projectRoot: string): NestedWorktrees[] {
   const worktrees = listWorktrees(repoRoot(projectRoot) ?? projectRoot)
     .filter((entry) => !entry.prunable && !entry.bare)
@@ -100,12 +102,13 @@ export function inspectNestedWorktrees(projectRoot: string): NestedWorktrees[] {
   return worktrees.flatMap((checkout) => {
     const configPath = join(checkout, '.watchmanconfig');
     const config = readWatchmanConfig(configPath);
-    const { nested, add } = nestedWorktreeIgnores(checkout, worktrees, ignoreDirsOf(config));
+    const { nested, add } = nestedWorktreeIgnores(checkout, worktrees, ignoreDirsOf(config), (dir) =>
+      Boolean(getExecutor().runFileQuiet('git', ['-C', checkout, 'ls-files', '--', dir]) ?? true),
+    );
     return nested.length > 0 ? [{ checkout, configPath, config, nested, add }] : [];
   });
 }
 
-/** The checkouts among `checkouts` that Watchman watches as a root now, or none when it cannot be asked. */
 export async function watchedCheckouts(
   checkouts: string[],
   watchman: WatchmanCommand = runWatchman,
@@ -149,8 +152,8 @@ export function writeIgnoreDirs(entry: NestedWorktrees): IgnoreDirsWrite {
   const merge = mergeIgnoreDirs(entry.config, entry.add);
   if ('refusal' in merge) return { status: 'refused', reason: `${entry.configPath} ${merge.refusal}` };
   const tmp = `${entry.configPath}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(merge.value, null, 2)}\n`);
   try {
+    writeFileSync(tmp, `${JSON.stringify(merge.value, null, 2)}\n`);
     renameSync(tmp, entry.configPath);
   } catch (error) {
     rmSync(tmp, { force: true });

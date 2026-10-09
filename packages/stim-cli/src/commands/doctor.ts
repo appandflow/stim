@@ -262,8 +262,18 @@ export default function doctorCommand(
             process.exitCode = 1;
           }
         }
-        for (const entry of inspectNestedWorktrees(root)) {
-          const result = writeIgnoreDirs(entry);
+        const nestedToFix = inspectNestedWorktrees(root);
+        const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
+        for (const entry of nestedToFix) {
+          let result: ReturnType<typeof writeIgnoreDirs>;
+          try {
+            result = writeIgnoreDirs(entry);
+          } catch (error) {
+            result = {
+              status: 'refused',
+              reason: `${entry.configPath} could not be written: ${(error as Error).message}`,
+            };
+          }
           if (result.status === 'refused') {
             console.error(
               phaseLine('checkout', `kept ${result.reason}; add ${entry.add.join(', ')} to ignore_dirs by hand`),
@@ -273,6 +283,13 @@ export default function doctorCommand(
             console.error(
               phaseLine('checkout', `${result.status} ${entry.configPath}: ignore_dirs ${entry.add.join(', ')}`),
             );
+            if (watchedToFix.has(entry.checkout))
+              console.error(
+                phaseLine(
+                  'checkout',
+                  `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
+                ),
+              );
           }
         }
       }

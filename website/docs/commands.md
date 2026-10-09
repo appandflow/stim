@@ -121,9 +121,11 @@ Doctor reports a checkout that holds linked worktrees inside it, such as
 there registers, crawls every worktree's files, `node_modules`, and build output,
 which grows the shared Watchman daemon's memory and its recrawls. The finding
 says when Watchman watches the checkout now. `--fix` merges the worktrees' shared
-parent directory (such as `.worktrees`), or each worktree path when they share
-none, into that `.watchmanconfig`, keeping every other key and entry. It refuses
-a file that is not a JSON object and names the entries to add by hand. Commit
+parent directory (such as `.worktrees`) when Git tracks nothing in it, otherwise
+each worktree path, into that `.watchmanconfig`, keeping every other key and
+entry. It refuses a file that is not a JSON object or whose `ignore_dirs` is not
+an array, and names the entries to add by hand. Watchman matches entries
+literally, so `.worktrees/` or `./.worktrees` ignores nothing. Commit
 the file: Watchman reads `ignore_dirs` only from a root's `.watchmanconfig`, with
 no global equivalent. It reads the file only when it adds a root, so for a root
 it already watches run `watchman watch-del <checkout>`, then restart Watchman to
