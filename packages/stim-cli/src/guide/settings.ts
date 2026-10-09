@@ -295,9 +295,14 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         which the command must pass. It replaces bare-inproc
                         and expo-child with command-child (see \`guide
                         metro\`), and an app that sets it needs no react-native
-                        or expo dependency. Without Stim's Metro reporter,
-                        launches stay UNVERIFIED. A value that is not such an
-                        array, or has no {port}, refuses with STIM_BAD_ARG.
+                        or expo dependency. Workspace or committed scope.
+                        Metro must keep running from inside the app, which
+                        is how Stim proves it is this app's. Without Stim's
+                        Metro reporter, launches stay UNVERIFIED. start
+                        refuses with STIM_BAD_ARG a value that is not such an
+                        array or has no {port}, --reset-cache (put the
+                        command's own reset flag in metro.command instead),
+                        and any use on Windows.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.

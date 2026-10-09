@@ -9,6 +9,15 @@ import { type ChildServerHandle, superviseChildServer } from './child-server.ts'
 import { recordFromLine } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';
 
+function processGroupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 export function commandArgv(command: readonly string[], port: number): string[] {
   return command.map((arg) => arg.replaceAll(METRO_COMMAND_PORT, String(port)));
 }
@@ -21,6 +30,7 @@ export async function startCommandServer({
   writer = null,
   spawnFn = null,
   signalTree = signalProcessTree,
+  groupAlive = processGroupAlive,
   killTimeoutMs = 5000,
   platform = process.platform,
 }: {
@@ -31,6 +41,7 @@ export async function startCommandServer({
   writer?: NdjsonWriter | null;
   spawnFn?: ((cmd: string, args: string[], opts: SpawnOptions) => ChildProcess) | null;
   signalTree?: typeof signalProcessTree;
+  groupAlive?: (pgid: number) => boolean;
   killTimeoutMs?: number;
   platform?: NodeJS.Platform;
 }): Promise<ChildServerHandle> {
@@ -65,6 +76,7 @@ export async function startCommandServer({
         return false;
       }
     },
+    alive: group ? () => Boolean(child.pid) && groupAlive(child.pid as number) : null,
     killTimeoutMs,
   });
 }

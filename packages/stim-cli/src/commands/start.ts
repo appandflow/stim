@@ -492,6 +492,22 @@ export async function startDevServer(
         remedy: 'Set metro.tunnel to "ngrok" and metro.ngrokUrl to an HTTPS URL, or remove metro.ngrokUrl.',
       });
     }
+    if (metroCommand && d.platform === 'win32') {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message:
+          'metro.command is not supported on Windows: Stim cannot read a process working directory there, so it cannot prove the Metro a wrapper starts belongs to this app.',
+        remedy: 'Remove metro.command on Windows, or run this app from macOS or Linux.',
+      });
+    }
+    if (metroCommand && resetCache) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: '--reset-cache cannot reach a dev server started by metro.command; Stim does not know its reset flag.',
+        remedy:
+          "Add the command's own cache-reset flag to metro.command (for React Native, --reset-cache), then run stim stop and stim start.",
+      });
+    }
     const commandError = metroCommandSettingError(settings);
     if (commandError) {
       return fail({

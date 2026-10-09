@@ -241,7 +241,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
   {
     key: 'metro.command',
     type: { kind: 'strings' },
-    scopes: PROJECT,
+    scopes: ['workspace', 'committed'],
     description:
       "Command that starts this project's dev server, as an argv array run from the app directory; {port} is replaced with the reserved Metro port",
   },

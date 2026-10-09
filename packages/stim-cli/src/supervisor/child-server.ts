@@ -29,6 +29,7 @@ export function superviseChildServer({
   log,
   toRecord,
   signal,
+  alive = null,
   killTimeoutMs,
   onRecord = null,
 }: {
@@ -37,6 +38,7 @@ export function superviseChildServer({
   log: NdjsonWriter;
   toRecord: (chunk: unknown, stream: 'stdout' | 'stderr') => NdjsonRecord | null;
   signal: (sig: NodeJS.Signals) => boolean;
+  alive?: (() => boolean) | null;
   killTimeoutMs: number;
   onRecord?: ((record: NdjsonRecord) => void) | null;
 }): ChildServerHandle {
@@ -88,15 +90,16 @@ export function superviseChildServer({
       listeners.push(cb);
     },
     async close() {
-      if (exited || !child.pid) return;
-      const dead = new Promise<void>((resolve) => {
-        child.once('exit', () => resolve());
-      });
-      if (!signal('SIGTERM')) return;
-      await Promise.race([dead, delay(killTimeoutMs)]);
-      if (!exited) {
+      const running = () => (alive ? alive() : !exited && Boolean(child.pid));
+      const gone = async () => {
+        const deadline = Date.now() + killTimeoutMs;
+        while (running() && Date.now() < deadline) await delay(25);
+        return !running();
+      };
+      if (!running() || !signal('SIGTERM')) return;
+      if (!(await gone())) {
         signal('SIGKILL');
-        await Promise.race([dead, delay(killTimeoutMs)]);
+        await gone();
       }
     },
   };

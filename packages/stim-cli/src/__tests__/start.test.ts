@@ -1240,6 +1240,26 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_BAD_ARG');
   });
 
+  test.each([
+    ['--reset-cache', { json: true, resetCache: true }, 'linux', /--reset-cache cannot reach/],
+    ['Windows', { json: true }, 'win32', /not supported on Windows/],
+  ] as const)('metro.command refuses %s before anything starts', async (_label, opts, platform, message) => {
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, {
+      metroPort: 8180,
+      settings: { metro: { command: ['node', 'cli.js', 'start', '--port', '{port}'] } },
+    });
+
+    const result = await runAction({ ...opts }, (cmd) => registerStart(cmd, { platform }));
+
+    expect(result.exitCode).toBe(1);
+    const refusal = JSON.parse(result.logs[0] ?? '');
+    expect(refusal.code).toBe('STIM_BAD_ARG');
+    expect(refusal.message).toMatch(message);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
   test('start --remote reports worktree removal before project registration', async () => {
     setExecutor(metroExecutor({ listeners: {} }));
     let providerChecked = false;

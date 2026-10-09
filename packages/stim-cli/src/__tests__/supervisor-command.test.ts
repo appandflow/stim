@@ -61,6 +61,7 @@ describe('startCommandServer', () => {
       spawnFn: () => child,
       platform: 'darwin',
       killTimeoutMs: 1,
+      groupAlive: () => true,
       signalTree: (pid, sig, opts) => {
         signals.push([pid, sig as NodeJS.Signals, opts]);
         return true;
@@ -72,5 +73,30 @@ describe('startCommandServer', () => {
       [4242, 'SIGTERM', { group: true, platform: 'darwin' }],
       [4242, 'SIGKILL', { group: true, platform: 'darwin' }],
     ]);
+  });
+
+  test('close still stops the group after the wrapper itself has exited', async () => {
+    const child = makeChildProcess({ pid: 4242 });
+    let groupRunning = true;
+    const signals: NodeJS.Signals[] = [];
+    const server = await startCommandServer({
+      root,
+      port: 8098,
+      logsDir: join(root, 'logs'),
+      command,
+      spawnFn: () => child,
+      platform: 'darwin',
+      killTimeoutMs: 1000,
+      groupAlive: () => groupRunning,
+      signalTree: (_pid, sig) => {
+        signals.push(sig as NodeJS.Signals);
+        groupRunning = false;
+        return true;
+      },
+    });
+    child.emit('exit', 0, null);
+    await server.close();
+
+    expect(signals).toEqual(['SIGTERM']);
   });
 });

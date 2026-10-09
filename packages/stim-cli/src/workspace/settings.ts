@@ -589,6 +589,10 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
   return null;
 }
 
+export function projectSetsMetroCommand(root: string): boolean {
+  return settingValueAt(settingsForProject(root), 'metro.command') !== undefined;
+}
+
 export function projectMetroCommand(root: string): string[] | null {
   const settings = settingsForProject(root);
   return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
