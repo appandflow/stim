@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, existsSync, openSync, realpathSync } from 'node:fs';
+import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
@@ -24,7 +24,8 @@ import { workspaceAppName } from '../macos/app-name.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
-import { validateInfoPlist } from '../macos/stage.ts';
+import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
@@ -61,23 +62,19 @@ export async function runMacos(
     );
   if (process.platform !== 'darwin') throw new Error('stim macos requires a Mac with Swift installed.');
   root = realpathSync(root);
-  if (!existsSync(join(root, 'Package.swift')))
-    throw new Error('Run stim macos from the directory containing Package.swift.');
+  const operation = projectRegistry.selectMacos(root);
+  if ('problem' in operation)
+    throw Object.assign(new Error(operation.problem.message), {
+      code: 'STIM_NO_PROJECT',
+      remedy: operation.problem.remedy,
+    });
   const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const selected = resolveBuildPlacement(buildMachineFlag);
   if (selected.failure) throw Object.assign(new Error(selected.failure.message), selected.failure);
   const buildMachine = selected.selected;
-  const macos = settings.macos as
-    | { product?: string; infoPlist?: string; arguments?: string[]; resources?: unknown; assetCatalog?: unknown }
-    | undefined;
-  if (!macos?.product || !macos.infoPlist) {
-    throw Object.assign(
-      new Error('Set macos.product and macos.infoPlist explicitly in .stim.json. See stim guide macos.'),
-      { code: 'STIM_BAD_ARG' },
-    );
-  }
+  const macos = (await operation.load()).prepare(settings);
   ensureWorkspaceStorage(root);
   return withNativeBuildRun(
     root,
@@ -94,7 +91,7 @@ export async function runMacos(
               `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${remote ? ` --remote ${remote}` : ''}.`,
             );
           }
-          if (remote && !validHostedAppArguments(macos.arguments ?? []))
+          if (remote && !validHostedAppArguments(macos.arguments))
             throw new Error(
               'macos.arguments is too large for a hosted app: at most 32 arguments of 1024 characters (8192 in total), without NUL or line breaks.',
             );
@@ -104,25 +101,17 @@ export async function runMacos(
           recordWorkspaceUse(root);
           const bundle = join(macosDir(root), `${macos.product}.app`);
           const record: MacosAppRecord = {
-            product: macos.product!,
+            product: macos.product,
             bundle,
             bundleId: '',
-            executable: join(bundle, 'Contents', 'MacOS', macos.product!),
+            executable: join(bundle, 'Contents', 'MacOS', macos.product),
             launchId: randomUUID(),
-            arguments: macos.arguments ?? [],
+            arguments: macos.arguments,
             supervisor: macosProcess(process.pid),
             build: { state: 'running', startedAt: new Date().toISOString(), buildMachine },
             ...(previous?.host ? { host: previous.host, hostLaunched: previous.hostLaunched ?? false } : {}),
           };
-          const handoff = await buildBundle(
-            root,
-            macos.infoPlist!,
-            record,
-            remote !== undefined,
-            note,
-            macos,
-            progress,
-          );
+          const handoff = await buildBundle(root, macos, record, remote !== undefined, note, progress);
           progress.step('launch');
           const launched = (): void => {
             try {
@@ -146,7 +135,7 @@ export async function runMacos(
               bundle: record.bundle,
               bundleId: record.bundleId,
               handoff,
-              arguments: macos.arguments ?? [],
+              arguments: macos.arguments,
               recorded: previous?.host,
               reserved: (reserved) => {
                 placement = reserved;
@@ -180,11 +169,10 @@ export async function runMacos(
 
 async function buildBundle(
   root: string,
-  infoPlist: string,
+  recipe: MacosArtifactRecipe,
   record: MacosAppRecord,
   hosted: boolean,
   note: (line: string) => void,
-  extras: { resources?: unknown; assetCatalog?: unknown },
   progress: BuildProgress = NO_BUILD_PROGRESS,
 ): Promise<BuildHandoff | null> {
   const started = Date.parse(record.build.startedAt);
@@ -192,13 +180,12 @@ async function buildBundle(
   writeWorkspaceState(root, { macos: record });
   const writer = tapBuildLog(createNdjsonWriter(macosLogFile(root), { maxBytes: LOG_ROTATE_BYTES }), progress);
   try {
-    const { bundleId: base } = validateInfoPlist(root, record.product, infoPlist);
+    const base = recipe.bundleId;
     const bundleId = hosted ? base : `${base}.stim.${createHash('sha256').update(root).digest('hex').slice(0, 12)}`;
     const displayName = workspaceAppName(root, record.product);
     const built = await buildMacosBundle({
       root,
-      product: record.product,
-      infoPlist,
+      recipe,
       bundle: record.bundle,
       bundleId,
       displayName,
@@ -208,8 +195,6 @@ async function buildBundle(
       progress,
       record: record.build,
       buildMachine: record.build.buildMachine!,
-      resources: extras.resources,
-      assetCatalog: extras.assetCatalog,
     });
     record.bundleId = built.bundleId;
     record.displayName = displayName;
