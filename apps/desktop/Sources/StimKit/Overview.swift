@@ -13,12 +13,9 @@ public struct IdleProject: Hashable, Identifiable, Sendable {
 }
 
 public enum Overview {
-  public static let idleShown = 6
-
-  /// The idle projects to show: all of them when `expanded`, otherwise the first `idleShown`.
-  public static func visibleIdle(_ items: [IdleProject], expanded: Bool) -> (shown: [IdleProject], hidden: Int) {
-    guard !expanded, items.count > idleShown else { return (items, 0) }
-    return (Array(items.prefix(idleShown)), items.count - idleShown)
+  public static func visibleIdle(_ items: [IdleProject], expanded: Bool, limit: Int) -> (shown: [IdleProject], hidden: Int) {
+    guard !expanded, items.count > limit else { return (items, 0) }
+    return (Array(items.prefix(limit)), items.count - limit)
   }
 
   /// The projects without an active workspace, most recently used first, then by name.

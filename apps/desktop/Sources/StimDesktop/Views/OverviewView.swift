@@ -11,8 +11,10 @@ struct OverviewView: View {
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
   var openIdleProject: (Project) -> Void
+  @State private var showsAllActive = false
   @State private var showsAllIdle = false
   @State private var showsAllArchived = false
+  @State private var contentWidth: CGFloat = 1000
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
@@ -20,6 +22,10 @@ struct OverviewView: View {
 
   private static let cardWidth: CGFloat = 340
   private static let projectCardMinimum: CGFloat = 220
+
+  private var projectColumns: Int {
+    max(1, Int((contentWidth + Space.lg) / (Self.projectCardMinimum + Space.lg)))
+  }
 
   var body: some View {
     if store.payload == nil {
@@ -60,6 +66,7 @@ struct OverviewView: View {
         }
         .padding(Space.xxxl)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - Space.xxxl * 2) }) { contentWidth = $0 }
       }
       .task(id: projects.map(\.project.root)) {
         let roots = projects.map(\.project.root)
@@ -79,7 +86,9 @@ struct OverviewView: View {
   }
 
   private func runningSection(_ cards: [WallCard]) -> some View {
-    section("Active") {
+    let columns = WallCard.columns(forWidth: contentWidth)
+    let shown = showsAllActive ? cards : Array(cards.prefix(columns))
+    return section("Active") {
       if cards.isEmpty {
         Card {
           InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
@@ -90,23 +99,30 @@ struct OverviewView: View {
         }
       } else {
         WorkspaceCardGrid(
-          cards: cards, store: store, metrics: metrics,
+          cards: shown, store: store, metrics: metrics,
           open: { selection = .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
+        if cards.count > columns {
+          Button(showsAllActive ? "Show less" : "Show more (\(cards.count - shown.count))") {
+            withAnimation(.easeInOut(duration: 0.15)) { showsAllActive.toggle() }
+          }
+          .buttonStyle(.hoverRow(outset: Space.xs))
+          .foregroundStyle(Palette.primary)
+        }
       }
     }
   }
 
   private func idleSection(_ items: [IdleProject]) -> some View {
-    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle)
+    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle, limit: projectColumns)
     return section("Idle projects") {
       LazyVGrid(
-        columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: Space.lg, alignment: .top)],
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
         alignment: .leading, spacing: Space.lg
       ) {
         ForEach(shown) { idleCard($0) }
       }
       .finiteAccessibilityFrame()
-      if items.count > Overview.idleShown {
+      if items.count > projectColumns {
         Button(showsAllIdle ? "Show less" : "Show more (\(hidden))") {
           withAnimation(.easeInOut(duration: 0.15)) { showsAllIdle.toggle() }
         }
@@ -156,7 +172,7 @@ struct OverviewView: View {
   }
 
   private func archivedSection(_ items: [ArchivedWorkspace]) -> some View {
-    let shown = showsAllArchived ? items : Array(items.prefix(6))
+    let shown = showsAllArchived ? items : Array(items.prefix(projectColumns))
     return section("Recently archived") {
       LazyVGrid(
         columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
@@ -184,7 +200,7 @@ struct OverviewView: View {
         }
       }
       .finiteAccessibilityFrame()
-      if items.count > 6 {
+      if items.count > projectColumns {
         Button(showsAllArchived ? "Show less" : "Show more (\(items.count - shown.count))") {
           withAnimation(.easeInOut(duration: 0.15)) { showsAllArchived.toggle() }
         }
