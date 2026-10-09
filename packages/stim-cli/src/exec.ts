@@ -158,20 +158,26 @@ function outcomeOf(error: unknown): Record<string, unknown> {
   };
 }
 
+let executionId = 0;
+
 function timedSync<A extends unknown[]>(
   fn: (...args: A) => string,
   program: (...args: A) => string,
 ): (...args: A) => string {
   return (...args) => {
     if (!debugLog.enabled()) return fn(...args);
+    const id = ++executionId;
+    const name = program(...args);
     const started = performance.now();
+    debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = fn(...args);
-      debugLog.log('exec', { program: program(...args), ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
-        program: program(...args),
+        program: name,
+        executionId: id,
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });
@@ -189,14 +195,18 @@ const debugExecutor: Executor = {
   ),
   async runFileAsync(file, args, opts) {
     if (!debugLog.enabled()) return defaultExecutor.runFileAsync(file, args, opts);
+    const id = ++executionId;
+    const name = basename(file);
     const started = performance.now();
+    debugLog.log('exec.start', { program: name, executionId: id });
     try {
       const out = await defaultExecutor.runFileAsync(file, args, opts);
-      debugLog.log('exec', { program: basename(file), ms: Math.round(performance.now() - started), ok: true });
+      debugLog.log('exec', { program: name, executionId: id, ms: Math.round(performance.now() - started), ok: true });
       return out;
     } catch (error) {
       debugLog.log('exec', {
-        program: basename(file),
+        program: name,
+        executionId: id,
         ms: Math.round(performance.now() - started),
         ...outcomeOf(error),
       });
