@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, realpath } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 async function regularFiles(directory: string, resolveDirectory = false): Promise<string[]> {
   try {
@@ -47,4 +47,22 @@ export async function diagnosticArtifactFiles(artifactsDir: string): Promise<str
     .map((name) => join(artifactsDir, name));
   const logs = join(artifactsDir, 'logs');
   return [...files, ...(await regularFiles(logs)).filter(isLog).map((name) => join(logs, name))];
+}
+
+/** Lists build reports and a completed APK or app archive, excluding linked entries and partial exports. */
+export async function buildArtifactFiles(artifactsDir: string, artifactPath: string | null): Promise<string[]> {
+  const root = await realpath(artifactsDir);
+  const names = await regularFiles(root);
+  const files = await diagnosticArtifactFiles(root);
+  for (const name of ['build.json', 'artifact.stdout.log', 'artifact.stderr.log'])
+    if (names.includes(name)) files.push(join(root, name));
+  if (artifactPath !== null) {
+    const selected = ['app.apk', 'app.tar.gz'].find((name) =>
+      [join(root, name), join(resolve(artifactsDir), name)].includes(resolve(artifactPath)),
+    );
+    if (!selected || !names.includes(selected))
+      throw new Error('Build artifact must be a regular exported APK or app archive inside the results directory.');
+    files.push(join(root, selected));
+  }
+  return files;
 }

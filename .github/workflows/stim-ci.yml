@@ -85,6 +85,18 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
 
+      - name: Build and upload the app artifact
+        uses: ./.github/actions/stim-ci
+        with:
+          stage: build
+          cli-path: packages/ci/dist/stim-ci.mjs
+          platform: ${{ matrix.platform }}
+          project: ${{ matrix.project }}
+          artifacts: stim-ci-results/${{ matrix.platform }}/build
+          timeout: '2400'
+          artifact-name: stim-ci-${{ matrix.platform }}-build
+          retention-days: '7'
+
       - name: Build, launch, probe and stop
         uses: ./.github/actions/stim-ci
         with:

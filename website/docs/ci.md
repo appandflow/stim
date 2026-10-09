@@ -177,3 +177,16 @@ To try it with an agent:
 > Use @stim-cli/ci to run this app's existing test command on a dedicated
 > checkout. Use the exact target in STIM_CI_RUN_RESULT, save result.json and
 > diagnostics, and verify cleanup on both success and a deliberate test failure.
+
+### Separate GitHub build and run steps
+
+The TypeScript action accepts `stage: build` or `stage: run` (the default).
+Use the same project and platform for both steps. Build requires no test command,
+uploads the completed APK or tar.gz app archive, and exposes `build-artifact`.
+Run requires `command`, reuses eligible cached builds in the same job, and retains
+test and cleanup evidence. The default results directories differ by stage, so
+a build followed by a run needs no artifacts-path configuration.
+
+Apple build exports target the simulator or macOS; use `tar -xzf app.tar.gz`
+to retain app permissions and symlinks. Downloading a build export does not import
+it into Stim's cache or replace normal validation in a later job.

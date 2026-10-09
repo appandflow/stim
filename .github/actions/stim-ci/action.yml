@@ -1,6 +1,9 @@
-name: Run Stim CI
-description: Build and launch an app, run a test command, and retain diagnostics through stim-ci.
+name: Stim CI
+description: Build an app artifact or launch and test an app, retaining evidence through stim-ci.
 inputs:
+  stage:
+    description: build exports an app artifact; run builds, launches, tests and stops the app.
+    default: run
   platform:
     description: ios, android, macos, or web.
     required: true
@@ -8,15 +11,14 @@ inputs:
     description: App directory relative to the checked-out repository.
     default: '.'
   command:
-    description: Test command executed by Bash in the app directory.
-    required: true
+    description: Test command executed by Bash in the app directory. Required only for stage run.
   version:
     description: Exact published @stim-cli/ci version. Required unless cli-path is supplied.
   cli-path:
     description: Built stim-ci executable from the checkout, relative to the repository root.
   artifacts:
-    description: Empty diagnostics directory relative to the repository root. Use a different path for each run.
-    default: stim-ci-results
+    description: Empty results directory relative to the repository root. Defaults to stim-ci-build-results or stim-ci-run-results.
+
   home:
     description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
   build-cache:
@@ -25,7 +27,7 @@ inputs:
     description: Session timeout in seconds.
     default: '1800'
   upload-artifacts:
-    description: Upload result, test and diagnostic logs to GitHub, including on failure. Set false for local paths only.
+    description: Upload reports and diagnostics, including on failure, plus the completed app artifact for build.
     default: 'true'
   artifact-name:
     description: Unique GitHub artifact name. Defaults to a generated name for this invocation.
@@ -33,6 +35,8 @@ inputs:
     description: Artifact retention in days. Zero uses the repository default.
     default: '0'
 outputs:
+  build-artifact:
+    description: Absolute path to the completed APK or tar.gz app archive for stage build.
   result:
     description: Absolute path to result.json.
   artifacts:
