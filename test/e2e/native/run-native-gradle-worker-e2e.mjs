@@ -216,6 +216,17 @@ async function waitForWorkerCapacity(label) {
   } finally {
     connection.close();
     save(`${label}-capacity`, samples);
+    try {
+      const { stdout } = await exec('/bin/ps', ['-A', '-o', 'pid=,ppid=,state=,%cpu=,rss=,comm='], {
+        cwd: root,
+        env,
+        timeout: 5000,
+        maxBuffer: 512 * 1024,
+      });
+      save(`${label}-capacity-processes`, { at: new Date().toISOString(), processes: stdout });
+    } catch (error) {
+      summary.diagnostics.push(`${label} capacity process evidence: ${error.message}`);
+    }
   }
 }
 const declaration = {
