@@ -38,7 +38,8 @@ public struct TutorialEnvironment: Sendable {
   public static func select(_ workspaces: [Workspace], trackedPath: String?) -> Self? {
     let tours = workspaces.compactMap(Self.init)
     if let tracked = tours.first(where: { $0.path == trackedPath }) { return tracked }
-    return newest(tours)
+    let supported = tours.filter { TutorialSteps.supportedVersions.contains($0.version) }
+    return newest(supported.isEmpty ? tours : supported)
   }
 
   public static func newest(_ tours: [Self]) -> Self? {
@@ -425,7 +426,7 @@ public struct TutorialProgress: Sendable {
         return Checkpoint(failure: "Ask your agent to run the app again")
       }
       return Checkpoint(
-        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view, then tap Log an error.",
+        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view and tap around.",
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
     case "logs": return Checkpoint(detail: "Find the app output in Logs")
     case "agent":

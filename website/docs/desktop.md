@@ -99,7 +99,7 @@ a tiny Expo app, and shows:
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
 - **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
-- **Finish and Archive:** your agent stops both apps and removes only the two worktrees. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
+- **Finish and Archive:** your agent stops both apps and removes only the two worktrees, dropping their changes. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 - **Share Your Finish (optional, last):** a prompt you may paste to open a public pull request on the tutorial repo with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 
 When agent-device is not installed, **Make a Change** shows a card with

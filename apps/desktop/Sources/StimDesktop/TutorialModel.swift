@@ -61,7 +61,8 @@ final class TutorialModel: ObservableObject {
     if let cliFailure { return cliFailure }
     if restarting { return "Waiting for a restarted tutorial workspace..." }
     if let version = workspace?.tutorial?.version, !TutorialSteps.supportedVersions.contains(version) {
-      return "Update Stim Desktop to follow this tutorial"
+      return version < TutorialSteps.supportedVersions.min()!
+        ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
     }
     if snapshot?.currentStep == "begin" {
       return snapshot?.record.beginWaitTimedOut(now: now) == true

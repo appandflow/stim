@@ -520,3 +520,13 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(result.currentStep == "phone")
   #expect(result.steps.map(\.id) == stepIDs)
 }
+
+@Test func tutorialSelectPrefersASupportedVersionOverANewerOldOne() throws {
+  var current = try fixture("02-after-ios1").environments[0]
+  current.tutorial = TutorialMarker(version: 2)
+  var old = try fixture("03-after-rebuild").environments[0]
+  old.path = "/Users/example/old-tour"
+  old.tutorial = TutorialMarker(version: 1)
+  #expect(TutorialEnvironment.select([current, old], trackedPath: nil)?.path == current.path)
+  #expect(TutorialEnvironment.select([old], trackedPath: nil)?.path == old.path)
+}

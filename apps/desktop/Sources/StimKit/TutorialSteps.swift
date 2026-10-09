@@ -73,7 +73,7 @@ public enum TutorialSteps {
       ]),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
-      ask: "I'm done with these experiments in {base}. Clean them up: stop the apps and remove only the worktrees you made for them, never with --force, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
+      ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove only the worktrees you made for them, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
       commands: [
         "cd \"{tour}\"",
         "stim stop",

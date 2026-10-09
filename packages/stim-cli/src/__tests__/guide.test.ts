@@ -588,8 +588,9 @@ test('tutorial finish removes the tour worktree without forcing removal', () => 
   assert(finish);
   expect(finish).toMatch(/stim worktree remove "\{tour\}"\nstim worktree remove "\{second\}"/);
   expect(finish).toMatch(/authorizes removing the worktrees made for the\ntutorial's changes, and nothing else/i);
-  expect(finish).toMatch(/Never use --force/i);
-  expect(finish).not.toMatch(/stim worktree remove[^\n]*--force/);
+  expect(finish).toMatch(/Never use --force on another worktree or on the clone/i);
+  expect(finish).toMatch(/Use a plain remove first/i);
+  expect(finish).not.toMatch(/stim worktree remove "[^"]*" --force/);
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {

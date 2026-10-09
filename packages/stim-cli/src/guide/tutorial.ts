@@ -74,8 +74,12 @@ from its path, then remove it from the clone:
 
 ${commands('finish')}
 
-Never use --force. On a refusal, report it and stop. Keep the clone. Print
-these optional cleanup commands for the user; do not run them:
+Use a plain remove first. The user said they do not need the experiments'
+changes, so when it refuses one of these worktrees only because of uncommitted
+changes or commits found nowhere else, remove that worktree with --force.
+Never use --force on another worktree or on the clone, and on any other
+refusal report it and stop. Keep the clone. Print these optional cleanup
+commands for the user; do not run them:
 
   rm -rf "{base}"
 
@@ -137,7 +141,7 @@ repository, then run the app with stim guide agent.
 
 ${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.commands.length ? `\`\`\`sh\n${step.commands.join('\n')}\n\`\`\`` : 'Ask your agent in your own words, or observe this step in Stim Desktop.'}`).join('\n\n')}
 
-Finish removes only the tutorial worktrees. Never use --force; report a refusal.`,
+Finish removes only the tutorial worktrees. Use --force only when the plain remove refuses an experiment worktree you do not need; report any other refusal.`,
     },
   },
 };

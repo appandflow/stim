@@ -323,7 +323,7 @@ struct TutorialPanel: View {
         "Optional and public. If you paste this, your agent opens a pull request on appandflow/stim-tutorial: your GitHub name and change appear on that repo. It needs GitHub access (gh) for your agent, and a bot will reply and close it. Nothing depends on this step."
     case "finish":
       return
-        "Your agent stops the apps and removes the two worktrees. Their builds, logs and agent actions stay under Archived."
+        "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
     default: return ""
     }
   }

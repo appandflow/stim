@@ -14,7 +14,7 @@ export const TUTORIAL_ASKS = {
     'In {base}, use agent-device to open the app on the iOS simulator, take a screenshot and tap around, then tell me what you saw.',
   machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
-    "I'm done with these experiments in {base}. Clean them up: stop the apps and remove only the worktrees you made for them, never with --force, and keep the clone. Follow stim guide tutorial finish.",
+    "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove only the worktrees you made for them, and keep the clone. Follow stim guide tutorial finish.",
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
   retry: 'The first iOS build of the tutorial app in {base} failed. Find out why and run it on iOS again.',
 };
