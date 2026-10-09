@@ -425,6 +425,11 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
+  'android.offloadInputs': {
+    valid: { complete: true, ignored: [], outputs: ['app/build'] },
+    invalid: [],
+    expected: 'an object',
+  },
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
   'android.remote': {

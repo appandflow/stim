@@ -100,7 +100,7 @@ export function protocolJsonSchema(): JsonSchema {
           session: { type: 'string' },
           attempt: { type: 'string' },
           bundleId: { type: 'string' },
-          mode: { enum: ['development', 'release'] },
+          mode: { enum: ['development', 'release', 'process'] },
           devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
           arguments: {
             type: 'array',
@@ -1090,7 +1090,7 @@ export function protocolJsonSchema(): JsonSchema {
               {
                 attempt: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
                 bundleId: { type: 'string' },
-                mode: { enum: ['development', 'release'] },
+                mode: { enum: ['development', 'release', 'process'] },
                 devClientScheme: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9+.-]{0,127}$' },
                 arguments: {
                   type: 'array',
@@ -1448,6 +1448,7 @@ export function protocolJsonSchema(): JsonSchema {
               repo: buildRepo,
               lockfile: sha256,
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
+              native: { enum: ['xcode', 'gradle'] },
             },
           }),
           request('build.sync', {
@@ -1464,7 +1465,7 @@ export function protocolJsonSchema(): JsonSchema {
                   additionalProperties: false,
                   properties: {
                     path: { type: 'string', minLength: 1 },
-                    kind: { enum: ['file', 'exec', 'link'] },
+                    kind: { enum: ['file', 'exec', 'link', 'directory'] },
                     size: { type: 'integer', minimum: 0 },
                     sha256,
                   },
@@ -1475,6 +1476,10 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('build.start', {
             type: 'object',
+            if: { required: ['native'], properties: { native: { properties: { provider: { const: 'gradle' } } } } },
+            // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema uses then for conditional validation.
+            then: { properties: { platform: { const: 'android' }, fingerprint: { type: 'null' } } },
+            else: { properties: { fingerprint: { type: 'string', minLength: 1 } } },
             required: ['repo', 'project', 'platform', 'fingerprint', 'stimBuild'],
             additionalProperties: false,
             oneOf: [
@@ -1494,7 +1499,41 @@ export function protocolJsonSchema(): JsonSchema {
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
-              fingerprint: { type: 'string', minLength: 1 },
+              fingerprint: { type: ['string', 'null'], minLength: 1 },
+              native: {
+                oneOf: [
+                  {
+                    type: 'object',
+                    required: ['provider', 'sourceDigest', 'cacheKey', 'arch'],
+                    additionalProperties: false,
+                    properties: {
+                      provider: { const: 'xcode' },
+                      sourceDigest: sha256,
+                      cacheKey: { type: 'string', minLength: 1 },
+                      arch: { enum: ['arm64', 'x86_64', null] },
+                    },
+                  },
+                  {
+                    type: 'object',
+                    required: ['provider', 'sourceDigest', 'inputs'],
+                    additionalProperties: false,
+                    properties: {
+                      provider: { const: 'gradle' },
+                      sourceDigest: sha256,
+                      inputs: {
+                        type: 'object',
+                        required: ['complete', 'ignored', 'outputs'],
+                        additionalProperties: false,
+                        properties: {
+                          complete: { const: true },
+                          ignored: { type: 'array', items: { type: 'string', minLength: 1 } },
+                          outputs: { type: 'array', items: { type: 'string', minLength: 1 } },
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
               packageName: { type: ['string', 'null'] },
               isExpo: { type: 'boolean' },
               optimizations: { type: ['object', 'null'] },

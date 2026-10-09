@@ -112,7 +112,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  swapDir: string | null;
+  /** Removes only owned temporary copies; repeated calls are safe. */
+  release(): void;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
@@ -191,7 +192,8 @@ export async function acquireAndroidArtifact(
   const { variant, cache: cachePolicy } = buildPlan;
   const signal = runCancellationSignal() ?? new AbortController().signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
-  const useBuildCache = cachePolicy.read;
+  let useBuildCache = cachePolicy.read;
+  let cacheIneligible: string | null = null;
   let androidPackage = initialPackage;
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
   let phaseFailure: AndroidArtifactFailure | null = null;
@@ -264,6 +266,16 @@ export async function acquireAndroidArtifact(
       if (error instanceof ArtifactRefusal && error.missReason) record.missReason = error.missReason;
       throw error;
     }
+    if ('cacheIneligible' in computed) {
+      cacheIneligible = computed.cacheIneligible;
+      useBuildCache = false;
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = false;
+      record.cacheSkipped = true;
+      phase('fingerprint', `unavailable: ${cacheIneligible}`);
+      return true;
+    }
     hash = computed.hash;
     record.fingerprint = hash;
     cacheKey = computed.key;
@@ -302,7 +314,7 @@ export async function acquireAndroidArtifact(
   let uploadPending: Promise<RemoteUploadLike> | null = null;
 
   async function resolveRemoteArtifact(): Promise<void> {
-    if (!recipe.legacyCache) return;
+    if (cacheIneligible || !recipe.legacyCache) return;
 
     if (!apkPath) {
       const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
@@ -362,6 +374,7 @@ export async function acquireAndroidArtifact(
   let waitedForBuild: WaitedForBuild | null = null;
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
   async function awaitSharedBuild(): Promise<string | null> {
+    if (!useBuildCache) return null;
     const shared = await waitForSharedBuild({
       platform: PLATFORM,
       key: cacheKey,
@@ -396,6 +409,15 @@ export async function acquireAndroidArtifact(
   }
 
   let swapDir: string | null = null;
+  const releaseArtifact = () => {
+    if (!swapDir) return;
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+      swapDir = null;
+    } catch (error) {
+      out(phaseLine('cleanup', chalk.yellow(`could not remove the temporary APK: ${(error as Error).message}`)));
+    }
+  };
   const installableCachedApk = async (key: string, cachedPath: string): Promise<string | null> => {
     const prepared = await recipe.materialize(key, cachedPath);
     if (!prepared) {
@@ -422,6 +444,7 @@ export async function acquireAndroidArtifact(
         diff: null,
       };
     }
+    if (cacheIneligible) return { reason: skippedMissReason(cacheIneligible), diff: null };
     if (!useBuildCache) {
       return {
         reason: skippedMissReason(
@@ -480,6 +503,11 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
+    if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
+      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
+      hereReason = cacheIneligible;
+      return null;
+    }
     const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
@@ -515,9 +543,16 @@ export async function acquireAndroidArtifact(
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     let asked: PlacementCandidate[] = [];
+    let target: ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>;
+    try {
+      target = recipe.offload!.target();
+    } catch (error) {
+      fallBack((error as Error).message);
+      return null;
+    }
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: recipe.offload!.target(),
+      target,
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
@@ -546,7 +581,8 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    if (!storeKey || !storeHash) {
+    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
       else
@@ -561,9 +597,10 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    if (uncached) swapDir = stagingDir;
     const outcome = await offloadBuild({
       choice,
-      expectedFingerprint: storeHash,
+      expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
@@ -580,14 +617,27 @@ export async function acquireAndroidArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
-      if (!(await recipe.offload!.unchanged())) {
-        reason = 'the checkout here changed while it built';
+      let unchanged = false;
+      try {
+        unchanged = await recipe.offload!.unchanged();
+      } catch (error) {
+        reason = (error as Error).message;
+      }
+      if (!unchanged) {
+        reason ??= 'the checkout here changed while it built';
+      } else if (uncached) {
+        if (!outcome.androidPackage) reason = 'the worker returned no verified APK package';
+        else {
+          stored = outcome.artifactPath;
+          androidPackage = outcome.androidPackage;
+          swapDir = stagingDir;
+        }
       } else {
         try {
           stored =
             (await recipe
               .cache()
-              .store({ ...cacheTarget(storeKey), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
+              .store({ ...cacheTarget(storeKey!), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
             null;
         } catch (err) {
           reason = `could not store the APK: ${(err as Error)?.message || err}`;
@@ -595,7 +645,10 @@ export async function acquireAndroidArtifact(
       }
     }
     try {
-      rmSync(stagingDir, { recursive: true, force: true });
+      if (!uncached || !stored) {
+        rmSync(stagingDir, { recursive: true, force: true });
+        if (swapDir === stagingDir) swapDir = null;
+      }
     } catch {}
     step('compile');
     if (!outcome.ok || !stored) {
@@ -640,6 +693,13 @@ export async function acquireAndroidArtifact(
     if (preparation.androidPackage) {
       androidPackage = preparation.androidPackage;
       record.bundleId = androidPackage;
+    }
+    if (cacheIneligible || !identity) {
+      storeHash = '';
+      storeKey = '';
+      record.fingerprint = null;
+      record.cacheKey = null;
+      return null;
     }
     if (identity.key !== storeKey) {
       storeHash = identity.hash;
@@ -731,6 +791,10 @@ export async function acquireAndroidArtifact(
       throw new ArtifactRefusal(phaseFailure);
     }
     apkPath = built.apkPath;
+    if (built.androidPackage) {
+      androidPackage = built.androidPackage;
+      record.bundleId = androidPackage;
+    }
     stats.setBuildMs(built.durationMs);
     phase('build', `ok (${formatDuration(built.durationMs)})`);
     if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
@@ -739,6 +803,7 @@ export async function acquireAndroidArtifact(
   }
 
   async function validateCompiled(): Promise<'cacheable' | 'uncacheable'> {
+    if (cacheIneligible) return 'uncacheable';
     const identity = await recipe.validate();
     if (!identity) {
       record.fingerprint = null;
@@ -819,6 +884,7 @@ export async function acquireAndroidArtifact(
       },
     });
   } catch (error) {
+    releaseArtifact();
     if (error instanceof OffloadRefusal) {
       const { code, message, remedy } = error;
       return { ok: false, failure: fail(code, message, remedy, { lastBuildStatus: true }), ccache: ccacheActivity };
@@ -833,7 +899,7 @@ export async function acquireAndroidArtifact(
       apkPath,
       handoff,
       androidPackage,
-      swapDir,
+      release: releaseArtifact,
       waitedForBuild,
       ccache: ccacheActivity,
       uploadPending,

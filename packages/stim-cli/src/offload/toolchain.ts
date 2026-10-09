@@ -45,11 +45,12 @@ export interface WorkerToolchain extends IosToolchain {
 export type BuildTarget =
   | {
       platform: 'ios';
+      native?: 'xcode';
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
     }
-  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements }
+  | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -58,18 +59,18 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(root: string): IosToolchain {
-  return iosToolchainForRuby(readRubyVersion(root));
+export function iosToolchain(root: string, native?: 'xcode'): IosToolchain {
+  return iosToolchainForRuby(native ? null : readRubyVersion(root), native);
 }
 
-function iosToolchainForRuby(rubyVersion: string | null): IosToolchain {
+function iosToolchainForRuby(rubyVersion: string | null, native?: 'xcode'): IosToolchain {
   const xcode = quiet('xcodebuild', ['-version']);
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: cocoapodsVersion(rubyVersion),
+    cocoapods: native ? null : cocoapodsVersion(rubyVersion),
   };
 }
 
@@ -188,18 +189,29 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(rubyVersion: string | null = null): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
+  if (native === 'gradle')
+    return {
+      ...androidToolchain(),
+      xcode: null,
+      simulatorSdk: null,
+      cocoapods: null,
+      macosSdk: null,
+      bundler: null,
+      runtimes: [],
+      androidSdk: sdkPackages(),
+    };
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
   return {
-    ...iosToolchainForRuby(rubyVersion),
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
-    bundler: quiet('bundle', ['--version'])?.trim() || null,
+    ...iosToolchainForRuby(rubyVersion, native),
+    macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
+    bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
-    jdk: localJdk(),
-    androidSdk: sdkPackages(),
+    jdk: native ? null : localJdk(),
+    androidSdk: native ? null : sdkPackages(),
   };
 }
 
@@ -287,11 +299,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
-  if (target.cocoapodsPinned) {
+  if (!target.native && target.cocoapodsPinned) {
     if (!worker.bundler) {
       out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
     }
-  } else if (worker.cocoapods !== ios.cocoapods) {
+  } else if (!target.native && worker.cocoapods !== ios.cocoapods) {
     out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {

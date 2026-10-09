@@ -1116,10 +1116,10 @@ captured"  (in metro.ndjson, bare RN)
   \`--device-profile\` on an eas/proxy run (\`--remote\` or android.remote), a
   \`android --remote auto\`, a changed hosted placement, or hosted Debug
   with \`--no-metro-check\` (see lifecycle hosted-android), a working directory
-  with no package.json above it, or one whose nearest package.json does not
-  parse or depends on neither react-native nor expo, so the directory is not
-  an app (the refusal names that package.json and says which of the two it
-  is; \`doctor\` reports the same directory as a finding), a \`logs\` query in
+  with no supported app project, or a project whose integration refuses this
+  operation. React Native and Expo require a readable package.json that
+  declares react-native or expo; the refusal names the invalid file.
+  \`doctor\` reports project admission problems as findings. A \`logs\` query in
   a workspace that has never produced a log timeline (the refusal names the
   nearest registered descendant app with logs when one exists), an
   android/app/build.gradle that declares product flavors with
@@ -1146,7 +1146,7 @@ captured"  (in metro.ndjson, bare RN)
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
   carries the name; the remedy names the caches on this machine. \`gc\`
   refuses --cache together with --worktrees the same way.
-  A working directory with no package.json above it gets the same
+  A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
   is on stdout, except \`logs --json\`, whose stdout stays empty NDJSON; the

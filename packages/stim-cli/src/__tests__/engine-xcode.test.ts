@@ -1755,6 +1755,59 @@ describe('buildIos with a mocked executor', () => {
 });
 
 describe('buildXcode with explicit project inputs', () => {
+  test.each([true, false])(
+    'resolves only the selected project application when a scheme builds several apps (present: %s)',
+    async (present) => {
+      const project = { flag: '-workspace', path: join(tmp, 'Native.xcworkspace'), dir: tmp, name: 'Native' };
+      const selectedProject = join(tmp, 'Native.xcodeproj');
+      const otherProject = join(tmp, 'Other.xcodeproj');
+      mkdirSync(selectedProject);
+      mkdirSync(otherProject);
+      const selectedApp = join(tmp, 'products', 'Selected.app');
+      const otherApp = join(tmp, 'products', 'Other.app');
+      mkdirSync(selectedApp, { recursive: true });
+      mkdirSync(otherApp);
+      const product = (projectPath: string, name: string) => ({
+        buildSettings: {
+          TARGET_NAME: 'Native',
+          PROJECT_FILE_PATH: projectPath,
+          PRODUCT_TYPE: 'com.apple.product-type.application',
+          PLATFORM_NAME: 'iphonesimulator',
+          TARGET_BUILD_DIR: join(tmp, 'products'),
+          FULL_PRODUCT_NAME: name,
+        },
+      });
+      const child = fakeChild();
+      const promise = buildXcode({
+        root: tmp,
+        project,
+        scheme: 'Native',
+        applicationTarget: { name: 'Native', projectPath: selectedProject },
+        compilationCache: [],
+        udid: 'owned-simulator',
+        derivedDataPath: join(tmp, 'derived'),
+        logWriter: recordingWriter(),
+        exec: makeExecutor({
+          runFile(file, args = []) {
+            if (file === 'xcodebuild' && args.includes('-list')) return '{"workspace":{"schemes":["Native"]}}';
+            if (file === 'xcodebuild' && args.includes('-showBuildSettings'))
+              return JSON.stringify([
+                product(otherProject, 'Other.app'),
+                ...(present ? [product(selectedProject, 'Selected.app')] : []),
+              ]);
+            if (file === 'plutil') return '{"CFBundleIdentifier":"org.example.selected"}';
+            throw new Error(`unexpected tool ${file}`);
+          },
+          spawn: () => child as unknown as ChildProcess,
+        }),
+      });
+      child.emit('close', 0, null);
+      const result = await promise;
+      expect(result).toMatchObject(present ? { ok: true } : { ok: false, code: 'STIM_BUILD_FAILED' });
+      expect('appPath' in result ? result.appPath : null).toBe(present ? selectedApp : null);
+    },
+  );
+
   test('builds a root-level Debug project with explicit cache settings and resolves its product', async () => {
     const project = { flag: '-project', path: join(tmp, 'Native.xcodeproj'), dir: tmp, name: 'Native' };
     mkdirSync(project.path);

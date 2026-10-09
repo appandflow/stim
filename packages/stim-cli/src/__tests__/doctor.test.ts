@@ -1,3 +1,4 @@
+import { reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -32,15 +33,17 @@ import {
   checkRemoteDevice,
   checkSimSlim,
   checkMainCheckout,
-  runDoctor,
+  reactNativeDoctorFindings,
+  type DoctorInspectionOptions,
+  runDoctor as inspectDoctor,
   detectXcodeMajor,
   parseXcodeMajor,
   checkConcurrency,
   checkAndroidSdk,
+  type Finding,
 } from '../diagnostics/doctor.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
-import type { Finding } from '../diagnostics/doctor.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
@@ -51,6 +54,10 @@ import {
   inspectStimVersions,
   parseStimVersionOutput,
 } from '../diagnostics/stim-installations.ts';
+
+function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+}
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
 
@@ -1983,7 +1990,7 @@ test('doctor --json prints exactly one line of JSON on stdout', async () => {
 });
 
 test('doctor success output groups iOS checks and optional capabilities', () => {
-  const output = doctorSuccessLines('ios', testStimVersions).join('\n');
+  const output = doctorSuccessLines('ios', testStimVersions, null, reactNativeDoctorSuccessLines('ios')).join('\n');
 
   expect(output).toContain('Doctor (iOS)');
   expect(output).toContain('result      PASS');
@@ -2029,7 +2036,9 @@ test('doctor reports a missing Android SDK for an Android project, which stim an
 });
 
 test('doctor success output scopes native checks to Android', () => {
-  const output = doctorSuccessLines('android', testStimVersions).join('\n');
+  const output = doctorSuccessLines('android', testStimVersions, null, reactNativeDoctorSuccessLines('android')).join(
+    '\n',
+  );
 
   expect(output).toContain('Doctor (Android)');
   expect(output).toContain('Android');
@@ -2046,7 +2055,7 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
   const cwd = process.cwd();
   const logs: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'ios'));
   mkdirSync(join(project, 'android'));
@@ -2124,7 +2133,7 @@ test('doctor --platform android does not invoke Xcode tooling', async () => {
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'android'));
   setExecutor({
@@ -2174,7 +2183,7 @@ test.each(['win32', 'linux'] as const)('doctor --platform ios on a %s host runs 
   const logs: string[] = [];
   const calls: string[] = [];
   const originalLog = console.log;
-  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+  writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
   mkdirSync(join(project, 'node_modules'));
   mkdirSync(join(project, 'ios'));
   setExecutor({

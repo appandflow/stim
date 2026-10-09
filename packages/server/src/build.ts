@@ -110,7 +110,9 @@ function validBuildPath(path: unknown): path is string {
 
 function validFile(file: unknown): file is BuildFile {
   if (!isJsonObject(file) || !validBuildPath(file.path)) return false;
-  if (file.kind !== 'file' && file.kind !== 'exec' && file.kind !== 'link') return false;
+  if (file.kind !== 'file' && file.kind !== 'exec' && file.kind !== 'link' && file.kind !== 'directory') return false;
+  if (file.kind === 'directory' && (file.size !== 0 || file.sha256 !== createHash('sha256').update('').digest('hex')))
+    return false;
   const size = file.size;
   if (typeof size !== 'number' || !Number.isInteger(size) || size < 0 || size > MAX_FILE_BYTES) return false;
   return typeof file.sha256 === 'string' && /^[0-9a-f]{64}$/.test(file.sha256);
@@ -222,7 +224,7 @@ export class BuildHost {
   >();
   private closed = false;
   private draining: string | null = null;
-  private readonly toolchains = new Map<string | null, { at: number; value: Promise<BuildToolchain | null> }>();
+  private readonly toolchains = new Map<string, { at: number; value: Promise<BuildToolchain | null> }>();
   private readonly options: BuildHostOptions;
   private sweeping: Promise<void> = Promise.resolve();
   private queued: Promise<void> | null = null;
@@ -283,15 +285,17 @@ export class BuildHost {
     return join(this.root(), client);
   }
 
-  toolchain(rubyVersion: string | null = null): Promise<BuildToolchain | null> {
+  toolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): Promise<BuildToolchain | null> {
+    const key = JSON.stringify([native ?? null, native ? null : rubyVersion]);
     const now = Date.now();
     for (const [context, entry] of this.toolchains) {
       if (now - entry.at >= this.limits.toolchainTtlMs) this.toolchains.delete(context);
     }
-    const cached = this.toolchains.get(rubyVersion);
+    const cached = this.toolchains.get(key);
     if (cached) return cached.value;
     const value = new Promise<BuildToolchain | null>((resolve) => {
-      const child = spawn(process.execPath, [this.options.worker, 'offer', ...(rubyVersion ? [rubyVersion] : [])], {
+      const args = native ? [`offer-native-${native}`] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
+      const child = spawn(process.execPath, [this.options.worker, ...args], {
         env: this.options.env,
         stdio: ['ignore', 'pipe', 'ignore'],
       });
@@ -310,9 +314,9 @@ export class BuildHost {
         }
       });
     });
-    this.toolchains.set(rubyVersion, { at: now, value });
+    this.toolchains.set(key, { at: now, value });
     void value.then((result) => {
-      if (!result && this.toolchains.get(rubyVersion)?.value === value) this.toolchains.delete(rubyVersion);
+      if (!result && this.toolchains.get(key)?.value === value) this.toolchains.delete(key);
       return undefined;
     });
     return value;
@@ -328,7 +332,9 @@ export class BuildHost {
     ) {
       return refusal('bad-request', 'build.offer needs a Ruby installation name without path separators.');
     }
-    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null);
+    if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
+      return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
+    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
     if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -540,7 +546,10 @@ export class BuildHost {
       } else if (value.type === 'log' && isJsonObject(value.record)) {
         entry.send({ event: 'build.progress', job: id, record: value.record });
       } else if (value.type === 'result') {
-        entry.outcome = workerOutcome(value);
+        entry.outcome = workerOutcome(
+          value,
+          isJsonObject(job.native) && job.native.provider === 'gradle' ? 'gradle' : undefined,
+        );
       }
     });
     this.jobs.add(entry);
@@ -693,15 +702,25 @@ export class BuildHost {
   }
 }
 
-function workerOutcome(value: Record<string, unknown>): BuildJobOutcome {
+function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradle'): BuildJobOutcome {
   const timings = isJsonObject(value.timings) ? (value.timings as Record<string, number>) : {};
   if (value.ok === true && isJsonObject(value.artifact)) {
     const { name, size, sha256 } = value.artifact;
-    if (typeof name === 'string' && typeof size === 'number' && typeof sha256 === 'string') {
+    if (
+      typeof name === 'string' &&
+      typeof size === 'number' &&
+      typeof sha256 === 'string' &&
+      (native !== 'gradle' ||
+        (value.fingerprint === null &&
+          typeof value.androidPackage === 'string' &&
+          /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(value.androidPackage)))
+    ) {
       return {
         ok: true,
         artifact: { name, size, sha256 },
-        fingerprint: String(value.fingerprint),
+        fingerprint: native === 'gradle' ? null : String(value.fingerprint),
+        ...(native === 'gradle' ? { androidPackage: value.androidPackage as string } : {}),
+        ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
         timings,
       };
@@ -808,7 +827,7 @@ export class BuildSession {
   async start(params: unknown): Promise<{ result: { job: string } } | Refusal> {
     if (!isJsonObject(params) || !validRepo(params.repo))
       return refusal('bad-request', 'build.start needs params.repo.');
-    const strings = ['fingerprint', 'stimBuild'] as const;
+    const strings = ['stimBuild'] as const;
     if (strings.some((key) => typeof params[key] !== 'string' || !params[key])) {
       return refusal('bad-request', `build.start needs params.${strings.join(', params.')}.`);
     }
@@ -819,6 +838,52 @@ export class BuildSession {
     if (platform === 'ios' && (typeof params.runtime !== 'string' || !params.runtime)) {
       return refusal('bad-request', 'An ios build needs params.runtime.');
     }
+    let native: BuildStartParams['native'];
+    if (params.native !== undefined) {
+      const input = params.native;
+      if (!isJsonObject(input) || typeof input.sourceDigest !== 'string' || !/^[0-9a-f]{64}$/.test(input.sourceDigest))
+        return refusal('bad-request', 'A native build needs its source transfer digest.');
+      if (input.provider === 'gradle') {
+        const inputs = input.inputs;
+        if (
+          platform !== 'android' ||
+          params.fingerprint !== null ||
+          !isJsonObject(inputs) ||
+          inputs.complete !== true ||
+          Object.keys(inputs).some((key) => !['complete', 'ignored', 'outputs'].includes(key)) ||
+          !Array.isArray(inputs.ignored) ||
+          !inputs.ignored.every(validBuildPath) ||
+          !Array.isArray(inputs.outputs) ||
+          !inputs.outputs.every(validBuildPath)
+        )
+          return refusal(
+            'bad-request',
+            'A native Gradle build needs declared complete inputs and a null artifact fingerprint.',
+          );
+      } else {
+        const optimizations = params.optimizations;
+        if (
+          platform !== 'ios' ||
+          input.provider !== 'xcode' ||
+          typeof input.cacheKey !== 'string' ||
+          !input.cacheKey ||
+          ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
+          !isJsonObject(optimizations) ||
+          typeof optimizations.compilationCache !== 'boolean' ||
+          typeof optimizations.prefixMapping !== 'boolean' ||
+          (optimizations.swiftCompilationCache !== null && typeof optimizations.swiftCompilationCache !== 'boolean')
+        )
+          return refusal(
+            'bad-request',
+            'A native Xcode build needs its source digest, cache key, architecture and compiler options.',
+          );
+      }
+      native = input as unknown as NonNullable<BuildStartParams['native']>;
+    }
+    if (native?.provider !== 'gradle' && (typeof params.fingerprint !== 'string' || !params.fingerprint))
+      return refusal('bad-request', 'build.start needs params.fingerprint.');
+    if (!native && [...this.files.values()].some((file) => file.kind === 'directory'))
+      return refusal('bad-request', 'Directory entries require a native build request.');
     const android = platform === 'android' ? androidOptions(params.android) : null;
     if (platform === 'android' && !android) {
       return refusal(
@@ -878,7 +943,7 @@ export class BuildSession {
         return refusal('bad-request', `The blob of ${file.path} is missing; sync again.`);
       }
     }
-    const toolchain = await this.host.toolchain();
+    const toolchain = await this.host.toolchain(null, native?.provider);
     if (this.closed) return refusal('build-refused', 'The connection closed.');
     if (!toolchain || toolchain.stimBuild !== params.stimBuild) {
       return refusal('build-refused', `This Mac runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);
@@ -891,6 +956,7 @@ export class BuildSession {
       job: {
         manifest: [...this.files.values()],
         platform,
+        ...(native ? { native } : {}),
         android,
         macos,
         project: params.project,
@@ -899,7 +965,7 @@ export class BuildSession {
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
         runtime: optional(params.runtime),
-        expectedFingerprint: params.fingerprint,
+        expectedFingerprint: params.fingerprint as string | null,
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,
       },
     });

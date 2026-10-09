@@ -227,7 +227,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;
       } finally {
-        if (artifact?.swapDir) rmSync(artifact.swapDir, { recursive: true, force: true });
+        artifact?.release();
         if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
         writer.close();
         progress.clear();

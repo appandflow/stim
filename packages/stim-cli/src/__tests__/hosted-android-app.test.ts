@@ -218,3 +218,18 @@ test.each(['reused serial', 'lost ledger', 'changed record'])(
     ).toEqual([]);
   },
 );
+
+test.each([true, false])('native hosted readiness requires a live app process: %s', async (alive) => {
+  receipt('process');
+  const run = native.runFile.getMockImplementation()!;
+  native.runFile.mockImplementation((file, args = [], options) =>
+    args.includes('pidof') && !alive ? '' : run(file, args, options),
+  );
+  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(alive ? true : 'unverified');
+  expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual(
+    Array.from({ length: 2 }, () => ['-s', device.serial]),
+  );
+  expect(native.runFile.mock.calls.some(([, args]) => args?.includes('reverse') || args?.includes('run-as'))).toBe(
+    false,
+  );
+});

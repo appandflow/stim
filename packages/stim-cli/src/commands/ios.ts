@@ -1,5 +1,4 @@
 import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
-import { reactNativeIosSchemeProblem } from '../integrations/react-native-ios.ts';
 import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
@@ -134,7 +133,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .command('ios')
     .description(
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
+        'simulator. React Native and Expo Debug runs start the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -210,7 +209,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .action(async (opts: IosCommandOptions) => {
       if (opts.plan) {
         const d = { ...DEFAULT_DEPS, ...deps };
-        await planIos(opts, d, (root, scheme, isExpo) => reactNativeIosSchemeProblem(root, scheme, isExpo, d));
+        await planIos(opts, d);
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
@@ -393,7 +392,6 @@ async function runIos(
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
-  let useBuildCache = opts.buildCache !== false;
 
   const phase = writePhase;
   const note = writeNote;
@@ -584,12 +582,14 @@ async function runIos(
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
+  const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
+    integration.runtimeKind(configuration)
+  ];
   const cachePolicy = artifactCachePolicy(
     optimizations,
-    useBuildCache,
+    opts.buildCache !== false,
     integration.runtimeKind(configuration) === 'embedded-js',
   );
-  useBuildCache = cachePolicy.read;
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);
   const runtime = resolveRuntime(opts.runtime, settings);
@@ -628,7 +628,7 @@ async function runIos(
   };
 
   const isExpo = integration.isExpo;
-  const schemeRefusal = integration.schemeProblem(buildScheme);
+  const schemeRefusal = integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
   const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
   if (capabilityRefusal) return fail(capabilityRefusal);
@@ -639,6 +639,8 @@ async function runIos(
     settings,
     physical,
     release,
+    appMode,
+    supportsRemote: integration.targets.includes('remote'),
     metroCheck,
     d,
     deviceType,
@@ -692,7 +694,7 @@ async function runIos(
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
-  const connected = await connectIosTarget(remoteSelection, selectors, d);
+  const connected = await connectIosTarget(remoteSelection, selectors, d, appMode);
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
@@ -1093,6 +1095,7 @@ async function runIos(
           configuration,
           buildScheme,
           release,
+          appMode,
           isExpo,
           metroCheck,
           metroPort,

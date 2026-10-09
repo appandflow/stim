@@ -700,3 +700,17 @@ test('excluded local builds require a remote regardless of relative load and ref
     }).order,
   ).toEqual([0]);
 });
+
+test('native Xcode worker matching ignores CocoaPods while retaining Xcode, SDK, runtime and CPU requirements', () => {
+  const worker = offer({ toolchain: { cocoapods: null, bundler: null } }).toolchain;
+  expect(toolchainMismatches({ ...IOS, native: 'xcode', cocoapodsPinned: true }, worker)).toEqual([]);
+  expect(toolchainMismatches(IOS, worker)).toEqual([expect.objectContaining({ code: 'cocoapods' })]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, simulatorSdk: null, runtimes: [] })).toEqual([
+    expect.objectContaining({ code: 'simulator-sdk' }),
+    expect.objectContaining({ code: 'runtime' }),
+  ]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, xcode: 'another build', arch: 'x64' })).toEqual([
+    expect.objectContaining({ code: 'arch' }),
+    expect.objectContaining({ code: 'xcode' }),
+  ]);
+});

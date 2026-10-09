@@ -5,6 +5,7 @@ import type { IosProject } from './ios-project.ts';
 import type { AndroidProject } from './android-project.ts';
 import type { MacosProject } from './macos-project.ts';
 import type { WebProject } from './web-project.ts';
+import type { ProjectDoctor } from './project-doctor.ts';
 import type { SettingsObject } from '../workspace/settings.ts';
 
 export type ProjectPlatform = 'ios' | 'android' | 'macos' | 'web';
@@ -25,6 +26,7 @@ interface ProjectMatch {
   android?(): Promise<AndroidProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
+  doctor?(): Promise<ProjectDoctor>;
   validate?(operation: ProjectOperation): ProjectProblem | null | undefined;
 }
 
@@ -36,10 +38,18 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
-  selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
-  selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
+  selectIos(root: string): { id: string; load: () => Promise<IosProject> } | { problem: ProjectProblem };
+  selectAndroid(root: string): { id: string; load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
+  selectDoctor(
+    root: string,
+    platform?: 'ios' | 'android',
+  ): {
+    load: () => Promise<ProjectDoctor[]>;
+    platforms: ('ios' | 'android')[];
+    problem: ProjectProblem | null;
+  };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
   detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[];
@@ -137,7 +147,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     if (problem) return { problem };
     const selected = operationSelection(root, matches, 'android');
     if ('problem' in selected) return selected;
-    if (selected.match.android) return { load: selected.match.android };
+    if (selected.match.android) return { id: selected.match.id, load: selected.match.android };
     return {
       problem: {
         kind: 'not-an-app',
@@ -154,7 +164,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     if (problem) return { problem };
     const selected = operationSelection(root, matches, 'ios');
     if ('problem' in selected) return selected;
-    if (selected.match.ios) return { load: selected.match.ios };
+    if (selected.match.ios) return { id: selected.match.id, load: selected.match.ios };
     return {
       problem: {
         kind: 'not-an-app',
@@ -207,6 +217,39 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     );
   }
 
+  function selectDoctor(root: string, platform?: 'ios' | 'android'): ReturnType<ProjectRegistry['selectDoctor']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const operations: ProjectOperation[] = platform ? [platform] : ['ios', 'android', 'macos', 'dev-server'];
+    const selected = operations.map((operation) => ({
+      operation,
+      result: operationSelection(root, matches, operation),
+    }));
+    const accepted = selected.flatMap(({ operation, result }) =>
+      'match' in result && result.match.application ? [{ operation, match: result.match }] : [],
+    );
+    const invalid = selected.flatMap(({ result }) => ('problem' in result ? [result.problem] : []));
+    const problem =
+      ownedRootProblem(root, matches) ??
+      invalid.find((value) => value.kind === 'unreadable' || value.kind === 'ambiguous') ??
+      (accepted.length
+        ? null
+        : (invalid[0] ?? {
+            kind: 'not-an-app' as const,
+            message: `No project integration recognizes an application at ${root}.`,
+            remedy: 'Run this from the directory of a supported app.',
+          }));
+    const providers = [...new Map(accepted.map(({ match }) => [match.id, match])).values()];
+    return {
+      problem,
+      platforms: problem
+        ? []
+        : accepted.flatMap(({ operation }) => (operation === 'ios' || operation === 'android' ? [operation] : [])),
+      load: async () =>
+        problem ? [] : Promise.all(providers.flatMap((match) => (match.doctor ? [match.doctor()] : []))),
+    };
+  }
+
   function keepsWorkspace(root: string): boolean {
     const matches = inspect(root);
     return (
@@ -230,6 +273,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     selectIos,
     selectMacos,
     selectWeb,
+    selectDoctor,
     isMobileProject,
     keepsWorkspace,
     detectPlatforms,

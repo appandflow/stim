@@ -1,0 +1,98 @@
+import groovy.json.JsonOutput
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.provider.ListProperty
+import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputFile
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
+abstract class StimExportApk extends DefaultTask {
+    @InputDirectory @PathSensitive(PathSensitivity.ABSOLUTE)
+    abstract DirectoryProperty getApkDirectory()
+    @Internal abstract Property<Object> getArtifactLoader()
+    @Input abstract Property<String> getModulePath()
+    @Input abstract Property<String> getVariantName()
+    @Input abstract Property<String> getSdkDirectory()
+    @Input abstract ListProperty<String> getBuildDirectories()
+    @OutputFile abstract RegularFileProperty getModelFile()
+
+    @TaskAction
+    void exportModel() {
+        def artifacts = artifactLoader.get().load(apkDirectory.get())
+        if (artifacts == null) throw new GradleException("Stim could not load the selected variant's APK artifacts.")
+        def model = [
+            schema: 1,
+            module: modulePath.get(),
+            variant: variantName.get(),
+            applicationId: artifacts.applicationId,
+            sdkDirectory: sdkDirectory.get(),
+            buildDirectories: buildDirectories.get(),
+            elements: artifacts.elements.collect { artifact ->
+                [path: artifact.outputFile, filters: artifact.filters.collect { filter ->
+                    [type: filter.filterType.name(), value: filter.identifier]
+                }]
+            }
+        ]
+        def output = modelFile.get().asFile
+        output.parentFile.mkdirs()
+        output.text = JsonOutput.toJson(model)
+    }
+}
+
+gradle.rootProject { root ->
+    def configureOnDemand = gradle.startParameter.configureOnDemand
+    def requested = root.providers.gradleProperty("stim.native.variant").get()
+    def output = root.providers.gradleProperty("stim.native.model").get()
+    def modules = []
+    def variants = []
+    def selected = []
+    root.tasks.register("stimExportAndroidApk") {
+        dependsOn(root.providers.provider {
+            // https://docs.gradle.org/current/userguide/configuration_on_demand.html: subprojects may remain unconfigured.
+            if (configureOnDemand) {
+                throw new GradleException("Stim native Android cannot enumerate application modules with configuration-on-demand enabled. Set org.gradle.configureondemand=false in gradle.properties. Configuration cache remains supported.")
+            }
+            if (modules.size() != 1) {
+                throw new GradleException("Stim requires one Android application module; found: " + (modules ? modules.join(", ") : "none") + ".")
+            }
+            if (selected.size() != 1) {
+                throw new GradleException("Stim could not select variant '" + requested + "'. Available variants: " + variants.join(", ") + ". Pass --variant with an exact variant name.")
+            }
+            selected
+        })
+    }
+    root.allprojects { project ->
+        project.pluginManager.withPlugin("com.android.application") {
+            modules.add(project.path)
+            def components = project.extensions.getByName("androidComponents")
+            // AGP's public APK provider carries producer dependencies; the loader handles its metadata.
+            // https://github.com/android/gradle-recipes/tree/agp-8.13/listenToArtifacts
+            def apkType = project.plugins.getPlugin("com.android.application").class.classLoader
+                .loadClass('com.android.build.api.artifact.SingleArtifact$APK').getField("INSTANCE").get(null)
+            components.onVariants(components.selector().all(), { variant ->
+                variants.add(variant.name)
+                if (variant.name != requested) return
+                def module = project.path
+                def sdk = components.sdkComponents.sdkDirectory.map { it.asFile.absolutePath }
+                selected.add(project.tasks.register("stimExport${variant.name.capitalize()}Apk", StimExportApk) {
+                    apkDirectory.set(variant.artifacts.get(apkType))
+                    artifactLoader.set(variant.artifacts.getBuiltArtifactsLoader())
+                    modulePath.set(module)
+                    variantName.set(requested)
+                    sdkDirectory.set(sdk)
+                    root.allprojects.each { owner ->
+                        buildDirectories.add(owner.layout.buildDirectory.map { it.asFile.absolutePath })
+                    }
+                    modelFile.set(new File(output))
+                })
+            } as org.gradle.api.Action)
+        }
+    }
+}

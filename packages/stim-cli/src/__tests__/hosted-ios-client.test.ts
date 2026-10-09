@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildConnection } from '../offload/client.ts';
-import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement } from '@stim-cli/core/state';
+import { deviceHostMachinesFile, queryLogs, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { iosAgentRemoteConfig, prepareHostedIos, placeHostedIos, stopHostedIos } from '../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../device-host/ios-state.ts';
 import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
@@ -87,6 +87,7 @@ let manifest: { sha256: string; size: number };
 let hostFeatures: string[];
 let agentGrant: unknown;
 let features: boolean;
+let appLaunched: true | 'unverified';
 let logRecords: Record<string, unknown>[];
 let retained: Map<string, Buffer> | null;
 
@@ -101,6 +102,7 @@ beforeEach(async () => {
   methods = [];
   blobs = new Map();
   features = true;
+  appLaunched = true;
   logRecords = [];
   retained = null;
   sessionState = 'ready';
@@ -116,7 +118,8 @@ beforeEach(async () => {
   agentGrant = undefined;
   const connection = Object.create(BuildConnection.prototype) as BuildConnection;
   connection.close = vi.fn<() => void>();
-  connection.supports = (feature) => (feature === 'hosted-ios-agent' ? hostFeatures.includes(feature) : features);
+  connection.supports = (feature) =>
+    feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' ? hostFeatures.includes(feature) : features;
   connection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
@@ -171,7 +174,7 @@ beforeEach(async () => {
       return reply({ offset: bytes.length });
     }
     if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
-      return reply({ state: 'installed', launched: true, ...(agentGrant ? { agent: agentGrant } : {}) });
+      return reply({ state: 'installed', launched: appLaunched, ...(agentGrant ? { agent: agentGrant } : {}) });
     throw new Error(`Unexpected fixture method ${method}`);
   };
   open = vi.spyOn(BuildConnection, 'open').mockResolvedValue(connection);
@@ -192,11 +195,12 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false, slot = 'default') {
+async function deliver(release = false, slot = 'default', mode?: HostedAppOffer['mode']) {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
     readHostedIos(root)[slot],
+    mode,
   );
   try {
     return await placeHostedIos(target, {
@@ -205,11 +209,12 @@ async function deliver(release = false, slot = 'default') {
       bundle: join(root, 'Fixture.app'),
       bundleId: 'dev.fixture',
       release,
+      mode,
       selectors: { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
       devClientScheme: 'exp+fixture',
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
-      metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
+      ...(mode === 'process' ? {} : { metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }) }),
     });
   } finally {
     target.host.connection.close();
@@ -1029,13 +1034,14 @@ test('a timed-out handoff retries busy offers within the upload fallback', async
   }
 });
 
-const autoPlacement = (localLive = false) =>
+const autoPlacement = (localLive = false, appMode?: HostedAppOffer['mode']) =>
   automaticDevicePlacement(
     {
       root,
       slot: 'default',
       platform: 'ios',
       selectors: {},
+      appMode,
       noWait: true,
     },
     {
@@ -1221,6 +1227,91 @@ test.each([undefined, 'mini', 'local'])(
     expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
   },
 );
+
+test.each([true, 'unverified'] as const)(
+  'process delivery closes the previous Metro route without development routing and preserves %s readiness',
+  async (verdict) => {
+    appLaunched = verdict;
+    hostFeatures = ['hosted-ios-process'];
+    writeHostedIos(root, 'default', placement());
+    writeWorkspaceState(root, {
+      hostedMetroRequests: {
+        [sessionId]: {
+          id: sessionId,
+          machine: 'mini',
+          address: '100.64.0.2',
+          peer: '100.64.0.7',
+          secret: 'a'.repeat(64),
+        },
+      },
+    });
+    const run = await deliver(false, 'default', 'process');
+    expect(run.launched).toBe(verdict);
+    expect(run.placement.session).toBe(sessionId);
+    expect(methods.some(({ method }) => method === 'device-host.reserve' || method === 'device-host.metro.open')).toBe(
+      false,
+    );
+    expect(methods.find(({ method }) => method === 'device-host.metro.close')?.params).toEqual({ session: sessionId });
+    expect(readWorkspaceState(root)?.hostedMetroRequests).not.toHaveProperty(sessionId);
+    const offer = methods.find(({ method }) => method === 'device-host.app.offer')!.params;
+    expect(offer.mode).toBe('process');
+    expect(offer.devClientScheme).toBeUndefined();
+  },
+);
+
+test('an older host refuses process mode before offer, reservation, upload or recorded-state mutation', async () => {
+  const original = placement();
+  writeHostedIos(root, 'default', original);
+  await expect(deliver(false, 'default', 'process')).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+    remedy: expect.stringContaining('Update stim-server'),
+  });
+  expect(methods).toEqual([]);
+  expect(readHostedIos(root).default).toEqual(original);
+});
+
+test('a reconnect to an older host refuses process mode before reservation or upload', async () => {
+  hostFeatures = ['hosted-ios-process'];
+  const target = await prepareHostedIos('mini', {}, undefined, 'process');
+  hostFeatures = [];
+  methods = [];
+  const reserved = vi.fn<() => void>();
+  await expect(
+    placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: false,
+      mode: 'process',
+      selectors: {},
+      reserved,
+      note: () => {},
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED', remedy: expect.stringContaining('Update stim-server') });
+  expect(methods).toEqual([]);
+  expect(reserved).not.toHaveBeenCalled();
+  expect(readHostedIos(root)).toEqual({});
+  target.host.connection.close();
+});
+
+test('automatic process placement skips an older host but never replaces its recorded session', async () => {
+  const placed = await autoPlacement(false, 'process');
+  expect(placed.target).toBeNull();
+  expect(placed.skipped).toEqual([
+    expect.objectContaining({ machine: 'mini', reason: expect.stringContaining('process apps') }),
+  ]);
+  expect(methods).toEqual([]);
+  const original = placement();
+  writeHostedIos(root, 'default', original);
+  await expect(autoPlacement(false, 'process')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(methods).toEqual([]);
+  expect(readHostedIos(root).default).toEqual(original);
+  hostFeatures = ['hosted-ios-process'];
+  const resumed = await autoPlacement(false, 'process');
+  expect(resumed).toMatchObject({ sticky: true, target: { session: { id: sessionId } } });
+  expect(methods.some(({ method }) => method === 'device-host.offer' || method === 'device-host.reserve')).toBe(false);
+});
 
 test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
   const selected = await autoPlacement();

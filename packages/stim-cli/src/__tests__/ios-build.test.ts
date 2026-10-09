@@ -127,7 +127,7 @@ beforeEach(() => {
       };
     },
   };
-  vi.spyOn(projectRegistry, 'selectIos').mockReturnValue({ load: async () => project });
+  vi.spyOn(projectRegistry, 'selectIos').mockReturnValue({ id: 'fixture', load: async () => project });
   vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
