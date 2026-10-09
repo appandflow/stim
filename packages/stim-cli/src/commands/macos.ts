@@ -22,6 +22,7 @@ import { inspectProcessIdentity } from '../process-identity.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
 import { stopMacosAppHeld } from '../macos/stop.ts';
@@ -313,11 +314,37 @@ export default function macosCommand(program: Command): void {
       'Build on auto, local, or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
-    .option('--json', 'print one launch payload; build output goes to stderr')
+    .option('--json', 'print one launch or plan payload; build output goes to stderr')
+    .option('--plan', 'validate the next SwiftPM Debug build without building or launching')
     .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
-    .action(async (options: { json?: boolean; remote?: string; remoteBuild?: string }) => {
+    .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
+      if (options.plan) {
+        try {
+          if (options.remote !== undefined)
+            throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
+              code: 'STIM_BAD_ARG',
+            });
+          const plan = planMacos(root, options.remoteBuild);
+          if (options.json) console.log(JSON.stringify(plan));
+          else {
+            console.log(phaseLine('plan', `macos ${plan.product}: SwiftPM Debug build, then stage and launch`));
+            console.log(phaseLine('build', `selection: ${plan.buildMachine}; worker availability is not checked`));
+            console.log(phaseLine('expect', 'unknown: SwiftPM determines incremental work when the build runs'));
+          }
+        } catch (error) {
+          const failure = {
+            code: (error as { code?: string }).code ?? 'STIM_BAD_ARG',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: (error as { remedy?: string }).remedy ?? 'Check the macOS project settings in stim guide macos.',
+          };
+          console.error(failure.message);
+          if (options.json) console.log(JSON.stringify(failure));
+          process.exitCode = 1;
+        }
+        return;
+      }
       const record = await runMacos(root, console.error, options.remote, options.remoteBuild).catch((error) => {
         const remedy = (error as { remedy?: unknown }).remedy;
         if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);

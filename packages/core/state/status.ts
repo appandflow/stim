@@ -245,6 +245,22 @@ export interface BuildPlanPayload {
   placement?: string;
 }
 
+/** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
+export interface MacosBuildPlanPayload {
+  platform: 'macos';
+  product: string;
+  buildMachine: string;
+  fingerprint: null;
+  cacheKey: null;
+  cacheHit: false;
+  provider: null;
+  cacheSkipped: false;
+  prebuild: null;
+  outcome: null;
+  expectedMs: null;
+  basis: number;
+}
+
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';
 
 export interface ActivityDriver {

@@ -26,6 +26,7 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import { planMacos } from '../macos/plan.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
@@ -801,3 +802,80 @@ test.skipIf(process.platform !== 'darwin')(
     }
   },
 );
+
+describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
+  beforeEach(() => {
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+    writeFileSync(join(root, 'Info.plist'), '{}');
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }));
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile: (file) => {
+        if (file !== 'plutil') throw new Error(`Plan tried to run ${file}`);
+        return JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' });
+      },
+      spawn: () => {
+        throw new Error('Plan tried to spawn a build or app');
+      },
+    });
+  });
+  afterEach(() => resetExecutor());
+
+  it('validates packaging without creating state, acquiring build slots or contacting workers', () => {
+    const slot = vi.spyOn(slots, 'acquireBuildSlot');
+    const worker = vi.spyOn(offload, 'chooseBuildMachine');
+    const plan = planMacos(root, 'local');
+    expect(plan).toMatchObject({
+      platform: 'macos',
+      product: 'Sample',
+      buildMachine: 'local',
+      fingerprint: null,
+      cacheHit: false,
+      outcome: null,
+      expectedMs: null,
+    });
+    expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+    expect(slot).not.toHaveBeenCalled();
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing declared resource and an unconfigured named build machine', () => {
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({
+        macos: { product: 'Sample', infoPlist: 'Info.plist', resources: { 'icon.icns': 'missing' } },
+      }),
+    );
+    expect(() => planMacos(root, 'local')).toThrow('source does not exist');
+    expect(() => planMacos(root, 'missing-mini')).toThrow('not listed in remote.machines');
+    expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+  });
+
+  it('prints exactly one JSON plan or typed refusal without launching', async () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const previousExit = process.exitCode;
+    try {
+      const program = new Command();
+      macosCommand(program);
+      await program.parseAsync(['macos', '--plan', '--json', '--remote-build', 'local'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({ platform: 'macos', buildMachine: 'local' });
+      stdout.mockClear();
+      await program.parseAsync(['macos', '--plan', '--json', '--remote', 'mini'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('--remote'),
+      });
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+    } finally {
+      process.exitCode = previousExit;
+      cwd.mockRestore();
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+});

@@ -7,7 +7,7 @@ and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
 the CLI; reading stats never starts the server. An RPC failure is shown without
@@ -261,13 +261,15 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by `stim <platform> --plan --json`. **Check** refreshes the next plan;
-  **Run** starts the app. The next-build prediction keeps **Cache miss details**.
+  predicted by `stim <platform> --plan --json`. Plans check automatically while
+  visible, reusing a completed build or check for 60 seconds and skipping running
+  builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
-  history and logs use the selected app. Its macOS panel shows the product,
-  build state, duration, error and build logs. The sheet shows every phase with
+  history and logs use the selected app. macOS uses the same card layout and Run
+  action; its next plan validates packaging settings and reports a SwiftPM Debug
+  build without predicting incremental compile work, worker availability or duration. The sheet shows every phase with
   its timing, the wait holder, full cache miss reason,
   changed sources and baseline, remote Mac and offload fallback reason,
   compiler diagnostics, retained output, and the next-build plan. **Open in logs
