@@ -644,6 +644,9 @@ test('metroTunnelSettingError accepts the hosted overlay that clears the public 
       hostedMetroSettings({ metro: { tunnel: 'auto', ngrokUrl: 'https://stable.ngrok.app' } }, true),
     ),
   ).toBeNull();
+  expect(metroTunnelSettingError({ metro: { ngrokUrl: null } })).toBe(
+    'metro.ngrokUrl requires metro.tunnel to be "ngrok".',
+  );
 });
 
 test('resolveCacheProviderConfig reports no provider when nothing configures one', () => {
