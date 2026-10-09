@@ -325,7 +325,7 @@ try {
       file,
       original.replace(
         title,
-        `.navigationTitle("${revision}").onAppear { FileHandle.standardOutput.write(Data("stim-real-food-truck:${revision}\\n".utf8)) }`,
+        `.navigationTitle("${revision}").onAppear { NSLog("stim-real-food-truck:%@", "${revision}") }`,
       ),
     );
     await run('source-edit', 'git', ['diff', '--', 'App/Truck/TruckView.swift']);
