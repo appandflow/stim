@@ -121,13 +121,14 @@ test.skipIf(process.platform === 'win32')('preserves a command failure when outp
   expect(existsSync(active)).toBe(false);
 });
 
-it('preserves a test failure when the results directory becomes unwritable', async () => {
+it('preserves a test failure when the result file cannot be replaced', async () => {
   options.command = [
     process.execPath,
     '-e',
-    "const fs = require('node:fs'); const path = process.env.STIM_CI_ARTIFACTS_DIR; fs.renameSync(path, path + '-moved'); fs.writeFileSync(path, 'no longer a directory'); process.exitCode = 23;",
+    "require('node:fs').mkdirSync(require('node:path').join(process.env.STIM_CI_ARTIFACTS_DIR, 'result.json')); process.exitCode = 23;",
   ];
   const result = await runCI(options);
+  expect(result.test?.exitCode).toBe(23);
   expect(result.exitCode).toBe(23);
   expect(result.failure?.code).toBe('STIM_CI_TEST_FAILED');
   expect(result.reportingError).toBeDefined();
