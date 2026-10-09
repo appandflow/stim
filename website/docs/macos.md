@@ -78,8 +78,8 @@ stim stop`}
 Each `macos` run stops the previous owned app and rebuilds using that workspace's
 incremental outputs. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets
-`STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors.
-An app that activates itself at launch still takes focus. Hosted launches
+`STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors, including for reopen events from `open -g`.
+An app that activates itself at launch or on reopen still takes focus. Hosted launches
 (`macos --remote`) do not set it. A failed build keeps the compiler
 output in workspace logs and does not launch an app. Runtime stdout and stderr
 are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print`
