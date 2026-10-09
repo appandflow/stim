@@ -33,7 +33,7 @@ beforeEach(() => {
   executable(
     root,
     'login-shell',
-    "console.log('banner\\n@@ruby-env-begin@@\\nPATH=' + process.env.PATH + '\\nGEM_HOME=' + " +
+    "require('node:fs').writeFileSync(process.argv[5], 'banner\\n@@ruby-env-begin@@\\nPATH=' + process.env.PATH + '\\nGEM_HOME=' + " +
       JSON.stringify(join(root, 'login-gems')) +
       " + '\\nGEM_PATH=' + " +
       JSON.stringify(join(root, 'login-gems')) +

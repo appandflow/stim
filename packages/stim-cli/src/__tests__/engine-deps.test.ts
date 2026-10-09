@@ -159,10 +159,15 @@ describe('podEnv (#43, #44)', () => {
   });
 
   test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
-    const login = { PATH: '/login/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
-    const base = { env: { PATH: '/usr/bin:/agent/bin' }, home: '/home/u', exists: () => false, loginEnv: () => login };
+    const login = { PATH: '/gems/bin:/login/node:/ruby/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
+    const base = {
+      env: { PATH: '/usr/bin:/agent/bin' },
+      home: '/home/u',
+      exists: (p: string) => p === join('/ruby/bin', 'ruby'),
+      loginEnv: () => login,
+    };
     const env = podEnv('/nonexistent', base);
-    expect(env.PATH).toBe(`/login/bin${delimiter}/usr/bin${delimiter}/agent/bin`);
+    expect(env.PATH).toBe(['/gems/bin', '/ruby/bin', '/usr/bin', '/agent/bin'].join(delimiter));
     expect(env.GEM_HOME).toBe('/gems');
     expect(env.GEM_PATH).toBe('/gems:/more');
     const kept = podEnv('/nonexistent', { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });

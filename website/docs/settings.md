@@ -481,7 +481,7 @@ in that order:
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build. The comparison uses
-  `.ruby-version` when installed, otherwise the login shell's `PATH`, `GEM_HOME` and `GEM_PATH`, and the same UTF-8 locale defaults as `pod install`.
+  `.ruby-version` when installed, otherwise the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS

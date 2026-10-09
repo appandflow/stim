@@ -20,6 +20,8 @@ interface ExecOptions {
    * `runFile` and `runFileAsync`: reject nonempty stderr even when the command exits successfully.
    */
   rejectStderr?: boolean;
+  /** `runFile` only: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
+  detachedSilent?: boolean;
 }
 
 export interface Executor {
@@ -64,12 +66,17 @@ const defaultExecutor: Executor = {
   // refuses .cmd/.bat files and shebang scripts without a shell, and every
   // package bin (eas, agent-device) is one of those. The throw matches
   // execFileSync's, so callers keep reading status, stdout and stderr off it.
-  runFile(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr } = {}) {
-    const opts: Parameters<typeof spawn.sync>[2] = {
+  runFile(
+    file,
+    args = [],
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent } = {},
+  ) {
+    const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & { detached?: boolean } = {
       encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: detachedSilent ? 'ignore' : ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
     };
+    if (detachedSilent) opts.detached = true;
     if (timeoutMs) opts.timeout = timeoutMs;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
@@ -86,6 +93,7 @@ const defaultExecutor: Executor = {
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
       throw Object.assign(new Error(message), result);
     }
+    if (detachedSilent) return '';
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
   runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn } = {}) {

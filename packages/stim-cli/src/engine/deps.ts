@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -157,7 +157,7 @@ const LOGIN_ENV_BEGIN = '@@ruby-env-begin@@';
 const LOGIN_ENV_END = '@@ruby-env-end@@';
 const LOGIN_ENV_SCRIPT =
   `printf '\\n${LOGIN_ENV_BEGIN}\\nPATH=%s\\nGEM_HOME=%s\\nGEM_PATH=%s\\n${LOGIN_ENV_END}\\n' ` +
-  '"$PATH" "$GEM_HOME" "$GEM_PATH"';
+  '"$PATH" "$GEM_HOME" "$GEM_PATH" > "$1"';
 
 export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
   const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
@@ -183,15 +183,37 @@ function readLoginRubyEnv(
 ): LoginRubyEnv | null {
   if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
   if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
-  const output = getExecutor().runFileQuiet(shell, ['-lc', LOGIN_ENV_SCRIPT], { timeoutMs: 10_000 });
-  const parsed = output === null ? null : parseLoginRubyEnv(output);
+  const dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+  const file = join(dir, 'env');
+  let parsed: LoginRubyEnv | null = null;
+  try {
+    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+      detachedSilent: true,
+    });
+    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
+  } catch {
+    parsed = null;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
   loginRubyEnvByShell.set(shell, parsed);
   return parsed;
 }
 
-function mergePath(preferred: string, existing: string | undefined): string {
+function rubyPathEntries(login: LoginRubyEnv, exists: (p: string) => boolean): string[] {
+  const gemDirs = [login.GEM_HOME, ...(login.GEM_PATH ?? '').split(delimiter)].filter((dir): dir is string => !!dir);
+  return (login.PATH ?? '').split(delimiter).filter((entry) => {
+    if (!entry) return false;
+    if (gemDirs.some((gem) => entry === gem || entry.startsWith(gem + sep))) return true;
+    return exists(join(entry, 'ruby')) || exists(join(entry, 'pod'));
+  });
+}
+
+function prependPath(entries: string[], existing: string | undefined): string {
   const seen = new Set<string>();
-  return [...preferred.split(delimiter), ...(existing ?? '').split(delimiter)]
+  return [...entries, ...(existing ?? '').split(delimiter)]
     .filter((entry) => entry && !seen.has(entry) && seen.add(entry))
     .join(delimiter);
 }
@@ -240,7 +262,8 @@ export function podEnvForRuby(
   if (env.GEM_HOME) return out;
   const login = loginEnv();
   if (!login) return out;
-  if (login.PATH) out.PATH = mergePath(login.PATH, out.PATH);
+  const rubyPath = rubyPathEntries(login, exists);
+  if (rubyPath.length) out.PATH = prependPath(rubyPath, out.PATH);
   if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
   if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
