@@ -77,22 +77,23 @@ struct WallView: View {
 struct CardPressAppearance: ViewModifier {
   var pressed: Bool
   var tint: Color = Palette.accent
+  var radius: CGFloat = Radius.card
   @State private var hovering = false
 
   func body(content: Content) -> some View {
     content
       .overlay {
-        RoundedRectangle(cornerRadius: Radius.card)
+        RoundedRectangle(cornerRadius: radius)
           .fill(tint.opacity(pressed ? 0.06 : 0))
           .overlay {
-            RoundedRectangle(cornerRadius: Radius.card)
+            RoundedRectangle(cornerRadius: radius)
               .stroke(Palette.shadow.opacity(pressed ? 0.08 : 0), lineWidth: 4)
               .blur(radius: 2)
               .offset(y: 1)
-              .clipShape(RoundedRectangle(cornerRadius: Radius.card))
+              .clipShape(RoundedRectangle(cornerRadius: radius))
           }
           .overlay {
-            RoundedRectangle(cornerRadius: Radius.card)
+            RoundedRectangle(cornerRadius: radius)
               .strokeBorder(tint.opacity(pressed ? 0.35 : hovering ? 0.22 : 0), lineWidth: 1)
           }
           .allowsHitTesting(false)
@@ -118,7 +119,7 @@ struct CardPressStyle: ButtonStyle {
   func makeBody(configuration: Configuration) -> some View {
     if highlightsDevice {
       CardPressBody(configuration: configuration, reportsPress: false)
-        .modifier(CardPressAppearance(pressed: configuration.isPressed, tint: Palette.secondary))
+        .modifier(CardPressAppearance(pressed: configuration.isPressed, tint: Palette.secondary, radius: 0))
     } else {
       CardPressBody(configuration: configuration)
     }

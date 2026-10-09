@@ -47,7 +47,7 @@ struct TutorialPanel: View {
     .font(.stim(.callout))
     .foregroundStyle(Palette.text)
     .background(Palette.sidebar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .accessibilityLabel("Stim tutorial")
   }
 

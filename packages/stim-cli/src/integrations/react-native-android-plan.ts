@@ -17,7 +17,13 @@ import { planPrebuild } from '../engine/prebuild.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote } from '../engine/remote-cache.ts';
 import { statsProjectKey } from '../engine/stats.ts';
 import { getProject } from '../workspace/config.ts';
-import { resolveSettings } from '../workspace/settings.ts';
+import {
+  publicUrlSetting,
+  remoteEasFallbackSetting,
+  resolveSettings,
+  tunnelModeSetting,
+} from '../workspace/settings.ts';
+import { checkEasFallback } from '../engine/eas-fallback.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload } from '../commands/build-plan.ts';
 import { planHostedDevice } from '../device-host/plan-placement.ts';
@@ -114,9 +120,10 @@ export async function planReactNativeAndroid(
   const deps = { ...DEFAULT_PLAN_DEPS, ...overrides };
   const slot = validateDeviceSlot(opts.slot);
   const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
+  const settings = resolveSettings(settingsContext);
   const planned = resolveAndroidRunPlan(
     {
-      settings: resolveSettings(settingsContext),
+      settings,
       settingsContext,
       slot,
       easProfile: opts.easProfile,
@@ -202,6 +209,21 @@ export async function planReactNativeAndroid(
         if ('refusal' in local || !('systemImage' in choice)) return null;
         return androidSystemImageAbi(local.systemImage) === androidSystemImageAbi(choice.systemImage);
       },
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              checkEasFallback({
+                root,
+                platform: 'android',
+                slot,
+                release: build.release,
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                localOnlyFlags: typeof opts.systemImage === 'string' ? ['--system-image'] : [],
+              }),
+          }
+        : {}),
     });
     if (hostedPlan.kind === 'unknown') {
       return refuse({

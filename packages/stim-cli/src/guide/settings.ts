@@ -257,6 +257,20 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         remote.machines; "auto" places on an approved Mac when
                         this Mac is full or busy. Unset runs here.
                         See lifecycle hosted-android.
+  remote.easFallback    true lets "auto" (ios.remote, android.remote or
+                        --remote auto) run the simulator or emulator on a
+                        billed EAS Simulator when this Mac is at its
+                        concurrency.maxDevices cap (or has runs queued) and no
+                        remote.machines Mac takes the run, instead of waiting
+                        or refusing with STIM_AT_CAPACITY. Default false. A
+                        busy Mac with a free slot never uses it. Stim checks
+                        first that the run could use --remote eas (eas-cli
+                        with simulator commands, eas simulator:availability,
+                        agent-device, the default slot, a reachable Metro);
+                        otherwise it waits or refuses as before. Machine or
+                        project scope; a committed value opts in everyone who
+                        runs the app. Only the user enables it. See lifecycle
+                        hosted-ios.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
@@ -511,8 +525,9 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
   { "iosSimulatorApp": "stim-desktop" }
 
-Stim Desktop selects the workspace that owns the simulator and focuses that
-device. It only displays the simulator; it never boots or shuts it down.
+Stim Desktop keeps the current page and shows a launch card. Clicking Show
+opens the workspace that owns the simulator and focuses that device.
+It only displays the simulator; it never boots or shuts it down.
 When Stim Desktop is not running, Stim starts it without the command's
 \`STIM_HOME\`, so it reads the same Stim home as when you open it yourself.
 It shows only devices from that home: under another \`STIM_HOME\`, pick
@@ -541,7 +556,8 @@ headlessly and show it in Stim Desktop:
   { "androidEmulatorApp": "stim-desktop" }
 
 Stim then starts the emulator with \`-no-window -gpu host\` and opens
-\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop reads
+\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop shows a
+launch card and opens the emulator only when Show is clicked. It reads
 frames and sends input over the emulator's gRPC endpoint. The setting applies
 only when Stim boots the emulator: one that is already running keeps its
 current display until it next boots, and physical devices are unaffected.
@@ -623,6 +639,32 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
 
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
+
+Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
+use Automatic builds and Automatic simulators for this Mac or a configured remote.
+The equivalent machine settings list the excluded members; both default to []:
+
+  stim settings set remote.buildPoolDisabled '["local"]'
+  stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
+  stim settings unset remote.buildPoolDisabled
+
+Use local for this Mac and exact remote.machines entries for remotes, including
+case and port. Names are not trimmed; unmatched entries exclude nothing. Copy the
+configured name or use Desktop's switches. Each pool
+must retain local or at least one configured remote already approved for that role.
+Offline approved members count as configured members, but placement still requires
+an available compatible host. Settings refuses removing the last member, including
+removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+
+These settings apply only to new automatic work requested by this Mac. They do not
+change which work other requesters send to a host. Named placement and --remote-build
+local bypass membership; the default device placement without --remote auto remains
+local. Existing local and hosted device sessions keep their owner. Cache hits remain
+usable without compiling. If local is excluded, automatic placement cannot fall back
+to a local compile or boot; unavailable hosts and unsupported offloads refuse. Excluding
+local alone does not trigger billed EAS fallback; an existing explicit EAS opt-in still
+requires the physical device cap or queue condition. Restore membership before retrying or choose
+an explicit placement. Build and simulator memberships are independent.
 
 A remote Mac is used for a capability only after it grants that approval. Build
 and device-host approvals are separate: a Mac in the list that never granted
@@ -715,7 +757,7 @@ value is unset. Trimmed auto/local are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
-  auto   follows remote.buildMode and keeps its local fallback behavior
+  auto   follows remote.buildMode, considering only enabled automatic pool members
   local  builds only on this Mac for this invocation
   name   requires a matching entry in remote.machines, already paired and
          approved for builds; ignores remote.buildMode and this Mac's load/slot gating
@@ -754,7 +796,7 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
          Mac's. A Mac too old to report its load counts only while every
          slot here is busy.
   force  on a remote Mac whenever one accepts it
-  off    always here
+  off    here when local remains enabled in the automatic build pool
 
 Load per core is the 5-minute load average divided by the CPU count; a Mac's
 native builds are its Stim runs in prebuild, pods or compile on that Mac, not

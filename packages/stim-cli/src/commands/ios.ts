@@ -608,6 +608,7 @@ async function runIos(
   if ('failure' in wait) return fail(wait.failure);
   const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
   const deviceSlotWait = {
+    automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
@@ -652,6 +653,7 @@ async function runIos(
     log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  deviceSlotWait.automatic = Boolean(remoteSelection.auto);
   const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;

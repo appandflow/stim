@@ -554,6 +554,8 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('the Metro gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   afterEach(() => vi.unstubAllEnvs());
 
   test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
@@ -744,6 +746,8 @@ function tick() {
 }
 
 describe('the simulator boot gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('the fingerprint starts with the boot, and each line reports its own wall time', async () => {
     reserve();
     let clock = 1_000_000;
@@ -824,6 +828,8 @@ describe('the simulator boot gate', () => {
 });
 
 describe('parked simulator adoption', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
     reserve();
     const events: string[] = [];
@@ -1112,6 +1118,8 @@ describe('the boot this run performed', () => {
 });
 
 describe('Metro prefetch', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([null, '/custom.bundle?platform=ios&dev=true'])(
     'starts before native work without waiting for the bundle: %s',
     async (bundleUrl) => {
@@ -3578,6 +3586,34 @@ describe('--remote', () => {
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
     expect(calls.order.includes('installIosApp')).toBeFalsy();
+  });
+
+  test('auto on a full Mac with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
+    const remote = remoteStub();
+    reserve();
+    const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+    const { calls, exitCode } = await run(
+      { remote: 'auto' },
+      {
+        ...remote.deps,
+        resolveSettings: () => ({ remote: { easFallback: true } }),
+        checkEasFallback,
+        automaticDevicePlacement: (args) =>
+          automaticDevicePlacement(args, {
+            machines: () => [],
+            peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+            capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+            memory: () => 'normal',
+            budget: async () => null,
+          }),
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(checkEasFallback).toHaveBeenCalledOnce();
+    expect(remote.backends).toEqual(['eas']);
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
   });
 
   test.each([false, true])('host-memory recovery is limited to local launch failures (remote=%s)', async (isRemote) => {
@@ -8347,6 +8383,24 @@ describe('strict remote Mac selection', () => {
         machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
       }),
     );
+  });
+
+  test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
+    reserve();
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: offline');
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await run({ remoteBuild: 'auto', json: true }, { buildIos: build, acquireBuildSlot: slot });
+    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    const path = join(root, 'cached.app');
+    mkdirSync(path, { recursive: true });
+    const cached = await run({ remoteBuild: 'auto' }, { resolveBuild: () => path, buildIos: build });
+    expect(cached.exitCode).toBeNull();
+    expect(build).not.toHaveBeenCalled();
   });
 
   test.each(['sync failed'])('remote %s never falls back to xcodebuild', async (reason) => {

@@ -778,7 +778,9 @@ test('reserves once across reconnect and attempt replay, isolates clients, and s
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(true);
   expect((await reserve()).state).toBe('stopped');
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
-  expect((await reserve({ attempt: 'new' })).id).not.toBe(first.id);
+  const next = await reserve({ attempt: 'new' });
+  expect(next.id).not.toBe(first.id);
+  await state(next.id, 'ready');
 });
 
 test('rejects malformed client identities and selectors before reserving a worker area', async () => {
@@ -1647,12 +1649,21 @@ test('offer capacity counts unresolved sessions and preserves SDK failures as de
 
 test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
   const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
-  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  const pid = await vi.waitFor(() => {
+    expect(existsSync(join(home, 'probe-entered'))).toBe(true);
+    const recordedPid = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    expect(Number.isSafeInteger(recordedPid)).toBe(true);
+    expect(recordedPid).toBeGreaterThan(0);
+    return recordedPid;
+  });
   if (action === 'revoke') {
     allowed.delete('client');
     host.revoke();
   } else await host.close();
   expect(await pending).toHaveProperty('error.code', 'forbidden');
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), {
+    timeout: 5000,
+  });
   expect(existsSync(deviceHostRoot())).toBe(false);
 });
 
@@ -2298,7 +2309,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   await uploadManifest(app);
   await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
   expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
@@ -2323,7 +2336,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     [],
   );
   expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   host.stop('client', query);
   await state(session.id, 'stopped');
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(

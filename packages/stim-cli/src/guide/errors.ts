@@ -331,8 +331,13 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected remote Mac cannot build this app',
+      summary: 'the selected remote Mac or automatic build pool cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
+
+Automatic placement also refuses when local is excluded in remote.buildPoolDisabled
+and no enabled remote can finish this build, or when the build requires a local
+compiler. Enable local or choose an explicit --remote-build placement. Existing
+builds are not interrupted and a cache hit needs no compiler.
 
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval
@@ -779,7 +784,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. Waiting prints holder names and elapsed
+  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
+  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
   Stats records capacityWaits for waits and capacityRefusals for this code.
   See \`guide lifecycle concurrency\`.`,

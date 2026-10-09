@@ -7,7 +7,7 @@ and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
 It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
-`stim logs --json`, `stim settings --json`, `stim ios|android --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
+`stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
 the CLI; reading stats never starts the server. An RPC failure is shown without
@@ -261,13 +261,15 @@ It holds the workspace's details, in this order:
   phase or build tool step with counts, elapsed time over the estimate, a phase
   bar, the remote host, the wait holder, compile output and the cache miss summary.
   Otherwise it separates **Last Build**, with compiler errors, from **Next Build**,
-  predicted by `stim <platform> --plan --json`. **Check** refreshes the next plan;
-  **Run** starts the app. The next-build prediction keeps **Cache miss details**.
+  predicted by `stim <platform> --plan --json`. Plans check automatically while
+  visible, reusing a completed build or check for 60 seconds and skipping running
+  builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
-  history and logs use the selected app. Its macOS panel shows the product,
-  build state, duration, error and build logs. The sheet shows every phase with
+  history and logs use the selected app. macOS uses the same card layout and Run
+  action; its next plan validates packaging settings and reports a SwiftPM Debug
+  build without predicting incremental compile work, worker availability or duration. The sheet shows every phase with
   its timing, the wait holder, full cache miss reason,
   changed sources and baseline, remote Mac and offload fallback reason,
   compiler diagnostics, retained output, and the next-build plan. **Open in logs
@@ -1075,6 +1077,10 @@ and sets up a tailnet-only route through the authenticated loopback `route.setup
 request; it never enables Funnel. Tailscale and server checks update automatically.
 Cancelling before pairing turns serving back off only if the wizard turned it on.
 
+The installation step shows branded QR codes and App Store actions for Stim Mobile
+and Tailscale. Stim Mobile's destination uses its reserved Apple app ID; the public
+listing is not available yet.
+
 Codes come from `stim-server pair --json`, with `--control` for **View and
 control** (the default). Each single-use code expires after five minutes; the
 wizard replaces expired codes automatically up to three times, then offers
@@ -1468,9 +1474,8 @@ card stays until it is acted on or dismissed, with or without VoiceOver. Several
 cards stack, newest first, with a counter and previous and next buttons.
 Two things use them. When `stim ios` or `stim android` launches on a device
 Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop navigates straight to the device only when nothing would be replaced: no
-main window was open, or the window already shows that workspace or All
-devices. Another page keeps its selection. A newer `stim` shows a card with
+Desktop keeps the current page and opens the launched device only when **Show**
+is clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
 
@@ -1560,8 +1565,11 @@ that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer remote Macs, hosted simulators, cache review, or phone
-pairing when recent activity makes them useful. The X snoozes a suggestion for
+Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+recent activity makes them useful. A low-disk banner points to the Machine page,
+where caches are reviewed and cleared. Suggestions to add a Mac appear only
+while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
 build, and appear at most once per day.
@@ -1584,7 +1592,7 @@ until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Mac
 Tips and suggestions share state for remote Macs, phone pairing, and
 hosted simulators. A shown, permanently dismissed, or currently snoozed
 suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, slow cold builds, build slot waits, away
+matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
@@ -1744,7 +1752,7 @@ Stim Desktop checks for updates with Sparkle 2 against the appcast at `SUFeedURL
 
 ## Debug log
 
-Stim Desktop keeps a local debug log for finding out what happened when something goes wrong. It stays on this Mac: nothing is uploaded. Lines go to `~/Library/Logs/Stim/Desktop.log`, which rotates at 2 MB and keeps three older files (`Desktop.1.log` to `Desktop.3.log`, about 8 MB in all), and to `os.Logger` under the subsystem `dev.stim.desktop` with the categories `app`, `cli`, `server`, `decode`, `navigation`, `stall`, `sampler` and `stream`, so Console.app can filter them. Each line is `<time> <pid> <level> <category> <message>`; Desktop copies that run side by side append to the same file and are told apart by pid.
+Stim Desktop keeps a local debug log for finding out what happened when something goes wrong. It stays on this Mac: nothing is uploaded. Lines go to `~/Library/Logs/Stim/Desktop.log`, which rotates at 2 MB and keeps three older files (`Desktop.1.log` to `Desktop.3.log`, about 8 MB in all), and to `os.Logger` under the subsystem `dev.stim.desktop` with the categories `app`, `cli`, `server`, `decode`, `navigation`, `stall`, `sampler` and `stream`, so Console.app can filter them. Each line is `<time> <pid> <level> <category> <message>`. Only the released app (bundle id `dev.stim.desktop`) writes `Desktop.log`. Any other bundle id, such as a `stim macos` test copy, writes `Desktop-<suffix>.log` instead, where the suffix is the bundle id without its `dev.stim.desktop.` prefix (for example `Desktop-dev.log`), so copies do not add lines to the installed app's log; copies with one bundle id append to the same file and are told apart by pid.
 
 By default it records warnings and errors only: `stim` and `stim-server` runs that fail (exit status, `STIM_*` error code, last stderr lines), main-thread stalls, sampler gaps (why CPU, RAM or disk could not be measured), JSON decode failures (the type and coding path, never the payload), and device stream errors. A stall is a main-thread block of 250 ms or more; the line names the sidebar destination and the last CLI command. The watchdog is one utility-queue timer, four wakeups a second, and one empty block on the main queue per tick.
 

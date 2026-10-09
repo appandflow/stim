@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -23,6 +23,7 @@ import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import statusCommand from '../commands/status.ts';
+import macosCommand from '../commands/macos.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
@@ -174,6 +175,24 @@ test('status and gc JSON remain a single payload while their preAction hook star
   expect(spawn).toHaveBeenCalledTimes(2);
   for (const call of spawn.mock.calls)
     expect(call[2]).toMatchObject({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] });
+});
+
+test('a macOS plan preAction hook never starts maintenance or writes its attempt and log', async () => {
+  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
+  setExecutor({ spawn });
+  vi.spyOn(process, 'cwd').mockReturnValue(home);
+  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const argv = ['macos', '--plan', '--json'];
+  const program = new Command();
+  macosCommand(program);
+  program.hook('preAction', (_command, action) => triggerMaintenance(action.name(), { argv }));
+  await program.parseAsync(argv, { from: 'user' });
+  expect(out).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ code: 'STIM_BAD_ARG' });
+  expect(spawn).not.toHaveBeenCalled();
+  expect(existsSync(maintenanceAttemptFile())).toBe(false);
+  expect(existsSync(maintenanceChildLogFile())).toBe(false);
 });
 
 test('GC maintenance preview uses cached sizes and never calls du for a size scan', async () => {

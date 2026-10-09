@@ -208,6 +208,7 @@ async function runCheck(id, fn) {
   } catch (e) {
     if (!ledger.get(id).status) c.fail(`threw: ${e?.message || e}`);
     else log(`  (after reporting: ${e?.message || e})`);
+    if (e?.preserveNativeState) throw e;
   }
   const entry = ledger.get(id);
   if (!entry.status) finish(entry, 'fail', 'the check finished without reporting a verdict');

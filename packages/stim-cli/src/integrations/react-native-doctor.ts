@@ -54,7 +54,11 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
 }
 
 export function reactNativeDoctorSuccessLines(platform: DoctorPlatform | undefined): string[] {
-  const lines = ['', 'Project', phaseLine('project', 'source checkout, dependencies, local upstream')];
+  const lines = [
+    '',
+    'Project',
+    phaseLine('project', 'source checkout, dependencies, local upstream, nested worktrees Watchman would crawl'),
+  ];
 
   if (platform !== 'android') {
     lines.push('', 'iOS');

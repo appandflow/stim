@@ -117,6 +117,22 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+Doctor reports a checkout that holds linked worktrees inside it, such as
+`.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
+`ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started
+there registers, crawls every worktree's files, `node_modules`, and build output,
+which grows the shared Watchman daemon's memory and its recrawls. The finding
+says when Watchman watches the checkout now. `--fix` merges the worktrees' shared
+parent directory (such as `.worktrees`) when Git tracks nothing in it, otherwise
+each worktree path, into that `.watchmanconfig`, keeping every other key and
+entry. It refuses a file that is not a JSON object or whose `ignore_dirs` is not
+an array, and names the entries to add by hand. Watchman matches entries
+literally, so `.worktrees/` or `./.worktrees` ignores nothing. Commit
+the file: Watchman reads `ignore_dirs` only from a root's `.watchmanconfig`, with
+no global equivalent. It reads the file only when it adds a root, so for a root
+it already watches run `watchman watch-del <checkout>`, then restart Watchman to
+free its memory now. Doctor never runs either command.
+
 When [`remote.machines`](./settings.md#machine-settings) names remote Macs,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and

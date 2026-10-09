@@ -35,8 +35,10 @@ import {
   metroPortSetting,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
+  remoteEasFallbackSetting,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
+import { checkEasFallback } from '../engine/eas-fallback.ts';
 import {
   waitFlagConflict,
   acquireRunLease,
@@ -299,6 +301,7 @@ interface RunAndroidOptions {
   projectRegistry?: Pick<ProjectRegistry, 'selectAndroid'>;
   runtimePlan?: AndroidRuntimePlan;
   automaticDevicePlacement?: typeof automaticDevicePlacement;
+  checkEasFallback?: typeof checkEasFallback;
   prepareHostedAndroid?: typeof prepareHostedAndroid;
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
@@ -835,6 +838,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       'Use its local Android build recipe.',
     );
   const deviceSlotWait = {
+    automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
@@ -860,6 +864,24 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
     automatic: options.automaticDevicePlacement,
+    ...(remoteEasFallbackSetting(settings)
+      ? {
+          eas: () =>
+            (options.checkEasFallback ?? checkEasFallback)({
+              root,
+              platform: PLATFORM,
+              slot,
+              release,
+              isExpo,
+              tunnelMode: tunnelModeSetting(settings),
+              publicUrl: publicUrlSetting(settings),
+              localOnlyFlags: [
+                ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
+                ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
+              ],
+            }),
+        }
+      : {}),
     localSelectors: (target) =>
       androidDeviceSelectorRefusal(
         {

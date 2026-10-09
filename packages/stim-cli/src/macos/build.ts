@@ -18,7 +18,7 @@ import {
   type BuildHandoff,
   type OffloadChoice,
 } from '../offload/client.ts';
-import { namedBuildMachine, OffloadRefusal } from '../offload/selection.ts';
+import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../offload/selection.ts';
 import { getConcurrencyLimits } from '../workspace/config.ts';
 import { macosDir } from './state.ts';
 
@@ -76,6 +76,7 @@ export async function buildMacosBundle({
       }),
     );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+    requireLocalBuild(buildMachine);
     offloadFallback = reason;
     if (record) record.offloadFallback = reason;
     writer.write({ src: 'build', platform: 'macos', level: 'warn', event: 'offload_failed', msg: reason });
@@ -98,10 +99,11 @@ export async function buildMacosBundle({
   let choice: OffloadChoice | null = null;
   try {
     try {
-      const { mode, machines } = buildPlacementCandidates(buildMachine);
+      const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
       const here = machineCapacity();
       const placement = offloadPlacement({
         mode,
+        localEnabled,
         machines: machines.length,
         here,
         unsupported: null,
@@ -170,12 +172,14 @@ export async function buildMacosBundle({
     let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
     try {
       slot = await acquireBuildSlot({
+        automatic: buildMachine === 'auto',
         max: getConcurrencyLimits().maxBuilds,
         root,
         logFile: writer.file,
         out: note,
         waitingFor: (info) => progress.waitingFor(info, 'build-slot'),
       });
+      requireLocalBuild(buildMachine);
       if (record) record.builtOn = 'here';
       progress.step('compile');
       const bin = await recipe.compile({ scratch, writer, note });

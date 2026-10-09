@@ -29,9 +29,9 @@ controls placement:
 - `auto` (default) builds here while this Mac has capacity. When it is busy,
   Stim considers accepting workers and their load.
 - `force` prefers a remote Mac when one accepts the build.
-- `off` builds here.
+- `off` builds here when local remains enabled in the automatic build pool.
 
-Automatic selection falls back to a local build when offloading fails.
+Automatic selection considers enabled pool members and falls back locally only when local remains enabled.
 `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD`, which
 also overrides `remote.build`. `STIM_REMOTE_BUILD_MODE` overrides `remote.buildMode`
 for automatic selection. A named worker ignores that mode and local capacity;
@@ -78,6 +78,36 @@ creating a session. Those targets prepare remote Metro exposure, as
 `--remote auto` places iOS or Android on an approved Mac when this Mac is full
 or busy; see [automatic device placement](#automatic-device-placement).
 Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
+
+## Automatic machine pools
+
+In **Settings > Remote Macs**, **Automatic builds** and **Automatic simulators**
+control this Mac and each configured remote independently. All members start enabled.
+Turning a switch off keeps pairing and active builds or sessions intact. It only
+changes new automatic work requested by this Mac; other requesters keep their own policy.
+
+The same controls are machine settings listing excluded members:
+
+<StimTabs code={`stim settings set remote.buildPoolDisabled '["local"]'
+stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
+stim settings unset remote.buildPoolDisabled`} />
+
+Use `local` for this Mac. Remote entries match `remote.machines` exactly, including
+case and port; whitespace is not normalized. An unmatched entry excludes nothing,
+so copy the configured entry or use Desktop's switches. Both lists default to `[]`.
+Each pool must retain local or at least one configured remote already approved for
+that role. An offline approved member still counts as configured, but must be
+reachable and compatible to take a run. Settings also refuses removing the last
+member from `remote.machines`.
+
+Named placement and `--remote-build local` bypass membership. Devices stay local
+by default unless `--remote auto` or the matching platform setting requests automatic
+placement. Existing local and hosted sessions retain their owner. A cache hit needs
+no compiler; remote build preparation still follows the normal local prebuild and
+Pods flow. If local is excluded and no enabled Mac can take the work, Stim refuses
+instead of compiling or booting here. Disabling local alone never triggers billed
+EAS fallback; an existing `remote.easFallback` opt-in still needs the physical device
+cap or queue condition.
 
 ## Hosted parking and restart
 
@@ -590,11 +620,35 @@ then `remote.build`. A named preference ranks first, followed by lowest load,
 most free memory and configuration order. Automatic
 build offload resolves later, using the device's offered architecture.
 
-If none admits, the run stays local and may wait in the FIFO device slot queue.
+If none admits and this Mac is at its `concurrency.maxDevices` cap (or runs are
+queued ahead), the opt-in `remote.easFallback` setting runs the device on an EAS
+Simulator, exactly as `--remote eas` would. EAS Simulator is billed, so the
+setting defaults to `false`; set it per machine or per project:
+
+```sh
+stim settings set remote.easFallback true --scope machine
+```
+
+The build still runs here and Stim never starts an EAS cloud build. `stim stop`
+ends the session, and `stim status` reports it like any `--remote eas` session.
+A Mac that is busy but has a free device slot never uses EAS. Before choosing
+it, Stim checks without starting a session that eas-cli has the simulator
+commands, `eas simulator:availability` accepts this project's account,
+agent-device is on PATH, the run uses the default slot and no `--runtime`,
+`--system-image` or `--device-profile` flag, no EAS Simulator session of this
+workspace runs another platform or model, and a Debug run's Metro can be
+reached (not `metro.tunnel` `off`; with an Expo tunnel, run
+`stim start --remote` first). A recorded EAS session is not sticky: once this
+Mac has room, auto runs locally and the session bills until `stim stop`. When a check
+fails, the run continues as below and the placement record says why.
+
+If none admits and EAS is off or unusable, the run stays local and may wait in
+the FIFO device slot queue.
 `--no-wait` or `--wait 0` refuses with `STIM_AT_CAPACITY`; an admitted host can
 still take those runs. The `placement:` line reports the decision and skipped
 hosts; JSON mode sends it to stderr. Run facts and each status slot include
-`devicePlacement: { decision, reason, machine? }`. Hosted status also preserves
+`devicePlacement: { decision, reason, machine? }`, where `decision` is `local`,
+`hosted`, `waited-locally` or `eas`. Hosted status also preserves
 `host.selected: "auto"` and `host.reason`.
 
 A reservation can be refused after a successful offer because another run
@@ -613,4 +667,12 @@ Run this workspace's iOS app with stim ios --remote auto using the approved
 remote.machines. Report the placement reason and verify the launched app on
 the reported device. Keep using any recorded session, then stop this workspace
 when finished.
+```
+
+```text
+This Mac is often at its simulator cap. Explain what remote.easFallback costs
+and give me the stim settings command to enable it; I will run it myself. Once
+it is on, run stim ios --remote auto, report
+the placement line from stim logs --source placement, and stop this workspace
+when finished so the EAS Simulator session ends.
 ```

@@ -21,7 +21,7 @@ import { applyHostedIosProbe } from '../device-host/hosted-ios-status.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { gatewayAddresses, clearHostedMetro } from '../device-host/metro-gateway.ts';
 import { reconcileHostedMetro, watchHostedMetro } from '../supervisor/hosted-metro.ts';
-import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
+import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
 import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
@@ -1069,6 +1069,42 @@ test('auto reports a declined offer and falls to the local path without reservin
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
 });
 
+test('remote.easFallback asks EAS only when this Mac is full and no host admits', async () => {
+  const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+  const place = (count: number) =>
+    automaticDevicePlacement(
+      { root, slot: 'default', platform: 'ios', selectors: {}, noWait: true, eas },
+      {
+        peek: () => ({ count, max: 3, queued: 0, localLive: false }),
+        capacity: () => ({ cpus: 4, loadPerCore: 5, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+        memory: () => 'normal',
+        budget: async () => null,
+      },
+    );
+  expect((await place(3)).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+  declined = 'All configured hosted device reservations are occupied';
+  expect((await place(1)).placement).toMatchObject({ decision: 'local' });
+  expect(eas).not.toHaveBeenCalled();
+  expect(await place(3)).toMatchObject({
+    target: null,
+    code: 'eas-fallback',
+    placement: { decision: 'eas', machine: 'eas', reason: expect.stringContaining('no host admits') },
+  });
+  expect(eas).toHaveBeenCalledOnce();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['local']);
+  eas.mockClear();
+  await expect(place(1)).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(eas).not.toHaveBeenCalled();
+  expect((await place(3)).placement).toMatchObject({ decision: 'eas' });
+  expect(eas).toHaveBeenCalledOnce();
+  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
+  writeFileSync(getConfigPath(), JSON.stringify({}));
+  expect((await place(3)).placement).toMatchObject({
+    decision: 'eas',
+    reason: expect.stringContaining('no remote Macs'),
+  });
+});
+
 test('a recorded session wins regardless of the current load and unknown sessions refuse', async () => {
   writeHostedIos(root, 'default', placement());
   const result = await autoPlacement();
@@ -1185,3 +1221,26 @@ test.each([undefined, 'mini', 'local'])(
     expect(closes.map((close) => close.mock.calls.length)).toEqual([1, 1]);
   },
 );
+
+test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
+  const selected = await autoPlacement();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['mini']);
+  methods = [];
+  expect((await autoPlacement()).placement.decision).toBe('local');
+  expect(methods).toEqual([]);
+  await expect(
+    placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      note: () => {},
+      reserved: () => {},
+    }),
+  ).rejects.toThrow('disabled');
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  writeHostedIos(root, 'default', placement());
+  expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+});

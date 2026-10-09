@@ -51,7 +51,7 @@ import {
   type OffloadChoice,
   type BuildHandoff,
 } from '../../offload/client.ts';
-import { namedBuildMachine, OffloadRefusal } from '../../offload/selection.ts';
+import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
 import type { AndroidRunPlan } from './plan.ts';
@@ -184,6 +184,7 @@ export async function acquireAndroidArtifact(
       }),
     );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
+    requireLocalBuild(buildMachine);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
   };
@@ -458,9 +459,11 @@ export async function acquireAndroidArtifact(
   }
 
   async function takeBuildSlot(): Promise<boolean> {
+    requireLocalBuild(buildMachine);
     if (!maxBuilds) return true;
     try {
       buildSlot = await acquireSlot({
+        automatic: buildMachine === 'auto',
         max: maxBuilds,
         root,
         logFile: buildLog,
@@ -469,6 +472,7 @@ export async function acquireAndroidArtifact(
       });
       slotWaitMs = buildSlot.slotWaitMs;
     } catch (err) {
+      requireLocalBuild(buildMachine);
       const refusal = claimFailure(err, 'stim android');
       if (refusal) {
         phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
@@ -494,13 +498,21 @@ export async function acquireAndroidArtifact(
       hereReason = cacheIneligible;
       return null;
     }
-    const { mode, machines } = buildPlacementCandidates(buildMachine);
-    if (machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local') return null;
+    const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
+    if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
+      return null;
     const unsupported =
       targetOffloadRefusal ??
       (recipe.offload ? recipe.offload.unsupported : 'this project integration does not support offloaded builds');
     const here = machineCapacity();
-    const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
+    const placement = offloadPlacement({
+      mode,
+      localEnabled,
+      machines: machines.length,
+      here,
+      unsupported,
+      selected: buildMachine,
+    });
     if (!placement.offload) {
       hereReason = placement.reason;
       writer.write(
@@ -720,6 +732,7 @@ export async function acquireAndroidArtifact(
         deviceSlotWaitMs: stats.deviceSlotWaitMs(),
       });
     }
+    requireLocalBuild(buildMachine);
     record.builtOn = 'here';
     phase('build', `compiling ${variant || 'debug'} with Gradle`);
     const built = await recipe.compile();

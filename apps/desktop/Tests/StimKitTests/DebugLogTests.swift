@@ -75,6 +75,14 @@ import Testing
     }
   }
 
+  @Test func onlyTheReleaseBundleWritesDesktopLog() {
+    #expect(DebugLog.logFileName(bundleIdentifier: "dev.stim.desktop") == "Desktop.log")
+    #expect(DebugLog.logFileName(bundleIdentifier: nil) == "Desktop.log")
+    #expect(DebugLog.logFileName(bundleIdentifier: "dev.stim.desktop.dev") == "Desktop-dev.log")
+    #expect(DebugLog.logFileName(bundleIdentifier: "dev.stim.desktop.minitest2") == "Desktop-minitest2.log")
+    #expect(DebugLog.logFileName(bundleIdentifier: "com.example/app") == "Desktop-com.example-app.log")
+  }
+
   @Test func rotationKeepsBoundedFiles() throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("debuglog-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
