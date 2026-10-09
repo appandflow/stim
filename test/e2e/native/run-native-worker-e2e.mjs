@@ -87,7 +87,9 @@ const hostEnv = {
 for (const path of [source, home, hostHome, join(root, 'bin')]) mkdirSync(path, { recursive: true });
 Object.assign(process.env, env);
 const { createStim } = await import('../../../packages/stim-cli/dist/api.mjs');
-const { inspectBuildMachines } = await import('../../../packages/stim-cli/src/offload/build-machines.ts');
+const { inspectBuildMachines, pinnedEndpoint } =
+  await import('../../../packages/stim-cli/src/offload/build-machines.ts');
+const { BuildConnection } = await import('../../../packages/stim-cli/src/offload/client.ts');
 const { readBuildMachines, readWorkspaceState } = await import('../../../packages/core/state/index.ts');
 const { readClaimSet } = await import('../../../packages/core/ownership-claim.ts');
 let host;
@@ -164,7 +166,37 @@ function claimsFree() {
     for (const entry of existsSync(directory) ? readdirSync(directory) : []) paths.push(join(directory, entry));
   for (const path of paths) assert.deepEqual(readClaimSet(path), { live: [], dead: [], unresolved: [], orphans: [] });
 }
+async function waitForWorkerCapacity(label) {
+  const target = pinnedEndpoint(credential);
+  assert.notEqual(typeof target, 'string');
+  const connection = await BuildConnection.open(target, credential.deviceToken, 10_000);
+  assert(connection instanceof BuildConnection, 'Approved worker must accept the capacity connection.');
+  const samples = [];
+  const deadline = Date.now() + 5 * 60_000;
+  try {
+    assert(connection.supports('native-xcode-build'));
+    while (Date.now() < deadline) {
+      const reply = await connection.request(
+        'build.offer',
+        { repo: 'native-worker-capacity' },
+        Math.min(20_000, Math.max(1, deadline - Date.now())),
+      );
+      assert('result' in reply, JSON.stringify(reply));
+      const capacity = reply.result.capacity;
+      samples.push({ at: new Date().toISOString(), ...capacity });
+      assert(Date.now() <= deadline, 'Worker capacity observation exceeded its deadline.');
+      if (capacity.declined === null) return;
+      assert.match(capacity.declined, /^load at or above /);
+      await sleep(Math.min(15_000, Math.max(0, deadline - Date.now())));
+    }
+    assert.fail('Worker load did not settle within the capacity observation window.');
+  } finally {
+    connection.close();
+    save(`${label}-capacity`, samples);
+  }
+}
 async function build(label, revision, workerHit) {
+  await waitForWorkerCapacity(label);
   const output = [];
   let parentClaim;
   const api = createStim({
