@@ -87,7 +87,28 @@ are client logs, and Stim runs the app with `NSUnbufferedIO=YES` so Swift `print
 output arrives per line instead of when the app exits; unexpected exits are errors. `macos --json` prints one launch
 record on stdout, with progress on stderr. `status --json` reports
 `environments[].macos`, its build and process state. This command does not
-support `--plan`, `--slot` or `reload`.
+support `--slot` or `reload`.
+
+Use `stim macos --plan --json` to validate the next build's declared configuration
+without building, signing, staging, stopping or launching an app, writing
+workspace state, or claiming a build slot. Planning checks the package directory,
+settings, development plist and declared resources. It does not execute
+`Package.swift`, so it cannot validate the executable product or dependencies.
+`--remote-build` is supported, including named-machine setup refusals, but no
+worker is contacted and live worker availability remains unknown. `--remote`
+is launch-only and refuses during a plan. SwiftPM determines incremental compile
+work during a build: the plan predicts neither a cache hit nor a duration.
+The JSON plan reports `platform: "macos"`, `product` and `buildMachine`, with
+null fingerprint, cache key, provider, prebuild, outcome and timing fields.
+
+Desktop's macOS Build card has the same **Details**, **Run**, **Last Build** and
+**Next Build** layout as iOS and Android. Build details check automatically while
+visible, reusing a completed build or check for 60 seconds and skipping running
+builds. There is no manual Check button.
+
+Try this agent prompt: “Check my next macOS Swift Package build with
+`stim macos --plan --json`, explain any refused settings, and leave the running
+app untouched.”
 
 SwiftPM scratch outputs and dependencies in `macos/build`, the staged
 `macos/<Product>.app` and interrupted-build `macos/staging-*` directories can
@@ -111,7 +132,10 @@ or `--remote-build local`.
 
 With `auto`, `remote.buildMode` also places these SwiftPM Debug builds: `auto` builds here while
 this Mac has capacity, `force` uses an approved remote Mac when one accepts,
-and `off` always builds here. Configure `remote.machines` and approve build
+and `off` builds here when local remains in the automatic build pool.
+[`remote.buildPoolDisabled`](./remote-machines.md#automatic-machine-pools) excludes
+members from automatic placement and its local fallback; explicit local or named
+placement bypasses membership. Configure `remote.machines` and approve build
 access as described in [settings](./settings.md). The worker needs matching Stim,
 CPU architecture, Xcode and macOS SDK, and network access to fetch package
 dependencies the first time. It keeps SwiftPM dependencies per client and

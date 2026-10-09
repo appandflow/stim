@@ -1,6 +1,7 @@
 import type { HostedAndroidChoice, HostedIosChoice } from '@stim-cli/core/state';
 
 export interface PlacementHere {
+  localEnabled?: boolean;
   loadPerCore: number;
   maxLoadPerCore: number;
   memoryPressure: 'normal' | 'warning' | 'critical' | null;
@@ -22,13 +23,23 @@ export interface PlacementSkip {
   code: string;
   reason: string;
 }
+/** Whether an EAS Simulator can take this run, checked only when remote.easFallback is on and this Mac is full. */
+export type EasFallbackCheck = { usable: true } | { usable: false; code: string; reason: string };
+
 export type DevicePlacementDecision = (
-  | { kind: 'local'; reason: string }
+  | { kind: 'local'; reason: string; atCapacity?: true }
   | { kind: 'host'; machines: { machine: string; reason: string }[]; reason: string }
+  | { kind: 'eas'; reason: string }
+  | { kind: 'refused'; reason: string; atCapacity?: true }
 ) & { code: string; skipped: PlacementSkip[] };
 
-function local(code: string, reason: string, skipped: PlacementSkip[] = []): DevicePlacementDecision {
-  return { kind: 'local', code, reason, skipped };
+function local(
+  code: string,
+  reason: string,
+  skipped: PlacementSkip[] = [],
+  atCapacity = false,
+): DevicePlacementDecision {
+  return { kind: 'local', code, reason, skipped, ...(atCapacity ? { atCapacity: true as const } : {}) };
 }
 
 export function decideDevicePlacement(
@@ -40,6 +51,7 @@ export function decideDevicePlacement(
         offers: PlacementProbe[];
         buildMachine?: string;
         noWait: boolean;
+        eas?: EasFallbackCheck;
       },
 ): DevicePlacementDecision {
   if ('sticky' in inputs) {
@@ -55,13 +67,16 @@ export function decideDevicePlacement(
     }
     return { kind: 'local', code: 'sticky', reason: "this workspace's device runs here", skipped: [] };
   }
-  const { platform, here, offers, buildMachine, noWait } = inputs;
+  const { platform, here, offers, buildMachine, noWait, eas } = inputs;
   const { count, max, queued } = here.devices;
   const room = max === 0 || (count !== null && count < max);
-  const cannotTake = !room || queued > 0;
+  const localEnabled = here.localEnabled !== false;
+  const cannotTake = !localEnabled || !room || queued > 0;
+  const atCapacity = count !== null && (!room || queued > 0);
   const usage = max > 0 ? `${count} of ${max} devices in use` : `${count} devices in use, no device cap`;
-  const localReason =
-    count === null
+  const localReason = !localEnabled
+    ? 'local is disabled in remote.devicePoolDisabled'
+    : count === null
       ? 'cannot tell how many devices run here; local boot admission decides'
       : cannotTake
         ? `${usage}${queued ? `, ${queued} runs queued ahead` : ''}`
@@ -69,8 +84,23 @@ export function decideDevicePlacement(
           (here.memoryPressure !== 'normal'
             ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
             : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
-  if (!offers.length) return local('no-remote-mac', 'no remote Macs configured; ' + localReason);
-  if (count === null) return local('device-count-unknown', localReason);
+  const nowhere = (
+    code: string,
+    reason: string,
+    skipped: PlacementSkip[] = [],
+    waiting = '',
+  ): DevicePlacementDecision => {
+    if (!localEnabled && !atCapacity) return { kind: 'refused', code: 'pool-unavailable', reason, skipped };
+    if (!cannotTake || count === null) return local(code, reason + waiting, skipped);
+    if (eas?.usable)
+      return { kind: 'eas', code: 'eas-fallback', reason: `${reason}; EAS Simulator (remote.easFallback)`, skipped };
+    const why = eas ? [...skipped, { machine: 'eas', code: eas.code, reason: eas.reason }] : skipped;
+    return localEnabled
+      ? local(code, reason + waiting, why, true)
+      : { kind: 'refused', code: 'pool-unavailable', reason, skipped: why, atCapacity: true };
+  };
+  if (!offers.length) return nowhere('no-remote-mac', 'no remote Macs configured; ' + localReason);
+  if (localEnabled && count === null) return local('device-count-unknown', localReason);
   if (!cannotTake && here.memoryPressure === 'normal' && !here.budgetRefusal && here.loadPerCore < here.maxLoadPerCore)
     return local('this-mac-free', localReason);
   const skipped: PlacementSkip[] = [];
@@ -106,10 +136,11 @@ export function decideDevicePlacement(
       a.index - b.index,
   );
   if (!admitted.length)
-    return local(
+    return nowhere(
       'no-host-admits',
-      `${localReason}; no host admits${cannotTake && !noWait ? '; waiting locally if needed' : ''}`,
+      `${localReason}; no host admits`,
       skipped,
+      localEnabled && cannotTake && !noWait ? '; waiting locally if needed' : '',
     );
   const machines = admitted.map(({ machine, offer }) => ({
     machine,

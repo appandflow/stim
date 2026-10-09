@@ -6,9 +6,12 @@ import { statsProjectKey } from '../engine/stats.ts';
 import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../optimizations.ts';
 import {
   cacheProviderSettingError,
+  publicUrlSetting,
+  remoteEasFallbackSetting,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
+  tunnelModeSetting,
 } from '../workspace/settings.ts';
 import { planCachedBuild, planPayload } from '../commands/build-plan.ts';
 import { planHostedDevice } from '../device-host/plan-placement.ts';
@@ -149,6 +152,22 @@ export async function planReactNativeIos(
         resolveRuntime(opts.runtime, settings),
       ),
       sameKey: (choice) => keyArch('runtime' in choice ? choice.architecture : null) === arch,
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              d.checkEasFallback({
+                root,
+                platform: 'ios',
+                slot,
+                release: isReleaseConfiguration(configuration),
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                deviceTypeFlag: opts.deviceType,
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
+              }),
+          }
+        : {}),
     });
     if (planned.kind === 'unknown') {
       return refuse({

@@ -97,7 +97,13 @@ export interface StimConfig {
     workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;
   };
-  remote?: { machines?: unknown; build?: unknown; buildMode?: unknown };
+  remote?: {
+    machines?: unknown;
+    build?: unknown;
+    buildMode?: unknown;
+    buildPoolDisabled?: unknown;
+    devicePoolDisabled?: unknown;
+  };
   [key: string]: unknown;
 }
 export type Config = StimConfig;

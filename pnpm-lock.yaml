@@ -361,6 +361,19 @@ importers:
 
   packages/cache: {}
 
+  packages/ci:
+    dependencies:
+      cross-spawn:
+        specifier: ^7.0.6
+        version: 7.0.6
+      stim:
+        specifier: workspace:^
+        version: link:../stim-cli
+    devDependencies:
+      '@types/cross-spawn':
+        specifier: ^6.0.6
+        version: 6.0.6
+
   packages/core:
     dependencies:
       unique-pid:

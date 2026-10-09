@@ -29,6 +29,12 @@ import { inspectBuildMachines } from '../offload/build-machines.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory } from './gc/memory.ts';
+import {
+  inspectNestedWorktrees,
+  nestedWorktreeFinding,
+  watchedCheckouts,
+  writeIgnoreDirs,
+} from '../diagnostics/doctor-watchman.ts';
 
 interface DoctorOptions {
   json?: boolean;
@@ -193,7 +199,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());
@@ -218,6 +224,36 @@ export default function doctorCommand(
           } catch (error) {
             console.error(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
             process.exitCode = 1;
+          }
+        }
+        const nestedToFix = inspectNestedWorktrees(root);
+        const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
+        for (const entry of nestedToFix) {
+          let result: ReturnType<typeof writeIgnoreDirs>;
+          try {
+            result = writeIgnoreDirs(entry);
+          } catch (error) {
+            result = {
+              status: 'refused',
+              reason: `${entry.configPath} could not be written: ${(error as Error).message}`,
+            };
+          }
+          if (result.status === 'refused') {
+            console.error(
+              phaseLine('checkout', `kept ${result.reason}; add ${entry.add.join(', ')} to ignore_dirs by hand`),
+            );
+            process.exitCode = 1;
+          } else {
+            console.error(
+              phaseLine('checkout', `${result.status} ${entry.configPath}: ignore_dirs ${entry.add.join(', ')}`),
+            );
+            if (watchedToFix.has(entry.checkout))
+              console.error(
+                phaseLine(
+                  'checkout',
+                  `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
+                ),
+              );
           }
         }
       }
@@ -261,6 +297,9 @@ export default function doctorCommand(
       findings.push(...budget.findings);
       const watchman = await inspectWatchmanMemory();
       if (watchman) findings.push(watchman);
+      const nestedWorktrees = inspectNestedWorktrees(root);
+      const watched = await watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout));
+      for (const entry of nestedWorktrees) findings.push(nestedWorktreeFinding(entry, watched.has(entry.checkout)));
       const targetInspectors = doctors.flatMap((doctor) => {
         const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root));
         return inspect ? [inspect] : [];

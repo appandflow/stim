@@ -1,4 +1,10 @@
-import type { HostedAndroidChoice, HostedDeviceSelectors, HostedIosChoice } from '@stim-cli/core/state';
+import {
+  automaticMachineEnabled,
+  type HostedAndroidChoice,
+  type HostedDeviceSelectors,
+  type HostedIosChoice,
+} from '@stim-cli/core/state';
+import type { EasFallbackCheck } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
 import { readHostedNative } from './ios-state.ts';
 import { hostingMachines } from './machines.ts';
@@ -23,6 +29,7 @@ export async function planHostedDevice({
   machine,
   selectors,
   sameKey,
+  eas,
   deps = {},
 }: {
   root: string;
@@ -32,6 +39,7 @@ export async function planHostedDevice({
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this Mac's own device would; null when this Mac's key is unknown. */
   sameKey: (choice: Choice) => boolean | null;
+  eas?: () => Promise<EasFallbackCheck>;
   deps?: { automatic?: typeof automaticDevicePlacement; probe?: typeof probeHost; machines?: typeof hostingMachines };
 }): Promise<PlannedDevice> {
   const { automatic = automaticDevicePlacement, probe = probeHost, machines = hostingMachines } = deps;
@@ -52,16 +60,21 @@ export async function planHostedDevice({
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
     const placed = await automatic(
-      { root, slot, platform, selectors, noWait: false },
+      { root, slot, platform, selectors, noWait: false, ...(eas ? { eas } : {}) },
       { read: () => ({}), write: () => {} },
     );
+    if (placed.placement.decision === 'eas')
+      return {
+        kind: 'unknown',
+        reason: `auto would run on an EAS Simulator now (${placed.placement.reason}), which --plan cannot read without a session`,
+      };
     if (placed.target)
       return {
         kind: 'hosted',
         choice: placed.target.choice,
         placement: `on ${placed.target.host.machine}, as auto would now`,
       };
-    const names = machines() ?? [];
+    const names = (machines() ?? []).filter((name) => automaticMachineEnabled('device', name));
     const offers = await Promise.all(names.map((name) => probe(name, platform, selectors)));
     const differs = offers.flatMap(({ probe: each }) =>
       'offer' in each && each.offer.choice && sameKey(each.offer.choice) === false ? [each.machine] : [],

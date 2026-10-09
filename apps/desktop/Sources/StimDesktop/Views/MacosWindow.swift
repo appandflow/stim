@@ -1,5 +1,4 @@
 import AppKit
-import CoreImage
 import Darwin
 import ScreenCaptureKit
 import StimKit
@@ -23,23 +22,27 @@ import SwiftUI
 struct MacosLocalScreen: View {
   var app: MacosApp
   var choice: MacosWindowChoice
+  /// The device viewer shows the window large and live; a preview tile shows it small and slower.
+  var viewer: Bool
   var onPointSizeChange: (CGSize) -> Void
   @ObservedObject private var permissions = NativeViewerPermissions.shared
   @StateObject private var capture = MacosWindowCapture()
   @State private var previewRequest = 0
-  @Environment(\.displayScale) private var displayScale
 
   var body: some View {
     ZStack {
-      if let image = capture.image {
-        MacosWindowCanvas(image: image)
-          .accessibilityLabel("\(app.name) owned window")
-      } else if let error = capture.error {
-        ScreenMessage(text: error)
-      } else {
-        ScreenMessage(text: "Connecting to \(app.name)")
+      MacosWindowCanvas(capture: capture)
+        .opacity(capture.hasFrame ? 1 : 0)
+        .accessibilityLabel("\(app.name) owned window")
+        .accessibilityHidden(!capture.hasFrame)
+      if !capture.hasFrame {
+        if let error = capture.error {
+          ScreenMessage(text: error)
+        } else {
+          ScreenMessage(text: "Connecting to \(app.name)")
+        }
       }
-      if capture.image != nil, permissionsMissing {
+      if capture.hasFrame, permissionsMissing {
         VStack {
           Spacer()
           Button {
@@ -68,11 +71,10 @@ struct MacosLocalScreen: View {
       choice.canOpen = current != nil
     }
     .onChange(of: capture.pinned, initial: true) { _, pinned in choice.pinned = pinned != nil }
-    .onChange(of: capture.image.map { CGSize(width: $0.width, height: $0.height) }, initial: true) { _, pixels in
-      guard let pixels else { return }
-      onPointSizeChange(
-        capture.current?.frame.size ?? CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale))
+    .onChange(of: capture.current?.frame.size, initial: true) { _, size in
+      if let size { onPointSizeChange(size) }
     }
+    .onChange(of: viewer, initial: true) { _, viewer in capture.viewer = viewer }
     .onAppear { choice.canSelect = true }
     .onDisappear {
       choice.windows = []
@@ -89,18 +91,62 @@ struct MacosLocalScreen: View {
 }
 
 @MainActor private final class MacosWindowCapture: NSObject, ObservableObject, SCStreamDelegate, SCStreamOutput {
-  @Published var image: CGImage?
+  @Published var hasFrame = false
   @Published var error: String?
   @Published var windows: [OwnedAppWindows.Window] = []
   @Published var current: OwnedAppWindows.Window?
   /// The window the preview stays on until it closes or the menu follows the front window again.
   @Published var pinned: UInt32?
+  let layer = CALayer()
+  var viewer = false {
+    didSet { if viewer != oldValue { refollow() } }
+  }
+  private var shown = Shown()
   private var stream: SCStream?
+  private var filter: SCContentFilter?
+  private var plan: MacosCapturePlan?
+  private var displayed: Frame?
   private var app: MacosApp?
   private var window: SCWindow?
   private var follower: Task<Void, Never>?
+  private var pending: Task<Void, Never>?
+  private var following = false
+  private var followAgain = false
   private var retryAt: ContinuousClock.Instant?
-  private let context = CIContext()
+  private let frames = DispatchQueue(label: "dev.stim.desktop.macos-window-frames", qos: .userInteractive)
+
+  private struct Shown: Equatable {
+    var size = CGSize.zero
+    var scale: CGFloat = 2
+    var visible = true
+  }
+
+  private struct Frame: @unchecked Sendable {
+    var buffer: CVPixelBuffer
+    var surface: IOSurfaceRef
+    var source: SCStream
+  }
+
+  override init() {
+    super.init()
+    layer.contentsGravity = .resizeAspect
+  }
+
+  func show(size: CGSize, scale: CGFloat, visible: Bool) {
+    let next = Shown(size: size, scale: scale, visible: visible)
+    guard next != shown else { return }
+    shown = next
+    refollow()
+  }
+
+  private func refollow() {
+    pending?.cancel()
+    pending = Task { [weak self] in
+      try? await Task.sleep(for: .milliseconds(250))
+      guard !Task.isCancelled, let self, let app = self.app else { return }
+      await self.follow(app)
+    }
+  }
 
   func start(_ app: MacosApp) async {
     await stop()
@@ -130,15 +176,41 @@ struct MacosLocalScreen: View {
   }
 
   private func follow(_ app: MacosApp) async {
+    guard !following else {
+      followAgain = true
+      return
+    }
+    following = true
+    var next: MacosApp? = app
+    while let app = next {
+      followAgain = false
+      await followOnce(app)
+      next = followAgain ? self.app : nil
+    }
+    following = false
+  }
+
+  private func followOnce(_ app: MacosApp) async {
     guard self.app?.launchId == app.launchId, let pid = app.app?.pid else { return }
+    guard shown.visible else {
+      await pause()
+      return
+    }
     if stream == nil, let retryAt, ContinuousClock.now < retryAt { return }
     let read = await Task.detached { Result { try OwnedAppWindowReader.selection(pid: pid) } }.value
-    guard self.app?.launchId == app.launchId, matches(app) else { return }
+    guard self.app?.launchId == app.launchId else { return }
+    guard matches(app) else {
+      if stream != nil || hasFrame {
+        error = "The owned app process changed or exited."
+        await stop()
+      }
+      return
+    }
     guard case .success(let read) = read else { return }
     guard let found = read else {
       windows = []
       current = nil
-      image = nil
+      clearFrame()
       error =
         AXIsProcessTrusted()
         ? "The app has no open window."
@@ -154,6 +226,7 @@ struct MacosLocalScreen: View {
       window.frame.size == selection.current.frame.size
     {
       if current != selection.current { current = selection.current }
+      await updatePlan()
       return
     }
     do {
@@ -164,28 +237,25 @@ struct MacosLocalScreen: View {
         })
       else { return }
       let filter = SCContentFilter(desktopIndependentWindow: next)
-      let configuration = SCStreamConfiguration()
-      let scale = min(CGFloat(filter.pointPixelScale), 1280 / max(filter.contentRect.width, 1))
-      configuration.width = Int((filter.contentRect.width * scale).rounded(.up))
-      configuration.height = Int((filter.contentRect.height * scale).rounded(.up))
-      configuration.ignoreShadowsSingleWindow = true
-      configuration.minimumFrameInterval = CMTime(value: 1, timescale: 5)
-      configuration.queueDepth = 3
-      configuration.showsCursor = false
+      guard let plan = plan(for: filter) else { return }
+      let configuration = Self.configuration(plan)
       if let stream {
         try await stream.updateContentFilter(filter)
         try await stream.updateConfiguration(configuration)
         guard self.app?.launchId == app.launchId, self.stream === stream else { return }
       } else {
         let stream = SCStream(filter: filter, configuration: configuration, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: .main)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frames)
         try await stream.startCapture()
-        guard self.app?.launchId == app.launchId else {
+        guard self.app?.launchId == app.launchId, shown.visible else {
           try? await stream.stopCapture()
           return
         }
         self.stream = stream
       }
+      self.filter = filter
+      self.plan = plan
+      retryAt = nil
       window = next
       current = selection.current
       error = nil
@@ -195,6 +265,44 @@ struct MacosLocalScreen: View {
         retryAt = .now.advanced(by: .seconds(5))
       }
     }
+  }
+
+  private func plan(for filter: SCContentFilter) -> MacosCapturePlan? {
+    MacosCapturePlan.make(
+      window: filter.contentRect.size, nativeScale: CGFloat(filter.pointPixelScale), shown: shown.size,
+      backingScale: shown.scale, viewer: viewer, maxFramesPerSecond: AppPreferences.maxFramesPerSecond)
+  }
+
+  private static func configuration(_ plan: MacosCapturePlan) -> SCStreamConfiguration {
+    let configuration = SCStreamConfiguration()
+    configuration.width = plan.width
+    configuration.height = plan.height
+    configuration.ignoreShadowsSingleWindow = true
+    configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(plan.framesPerSecond))
+    configuration.queueDepth = 3
+    configuration.showsCursor = false
+    return configuration
+  }
+
+  private func updatePlan() async {
+    guard let stream, let filter, let next = plan(for: filter), next != plan else { return }
+    guard (try? await stream.updateConfiguration(Self.configuration(next))) != nil, self.stream === stream else { return }
+    plan = next
+  }
+
+  private func pause() async {
+    guard let old = stream else { return }
+    stream = nil
+    filter = nil
+    plan = nil
+    window = nil
+    try? await old.stopCapture()
+  }
+
+  private func clearFrame() {
+    hasFrame = false
+    displayed = nil
+    layer.contents = nil
   }
 
   /// Pins the preview to window `id` and brings it to the front among the app's windows, or with nil follows the
@@ -224,11 +332,15 @@ struct MacosLocalScreen: View {
   func stop() async {
     follower?.cancel()
     follower = nil
+    pending?.cancel()
+    pending = nil
     let old = stream
     stream = nil
+    filter = nil
+    plan = nil
     app = nil
     window = nil
-    image = nil
+    clearFrame()
     windows = []
     current = nil
     pinned = nil
@@ -240,7 +352,9 @@ struct MacosLocalScreen: View {
       try? await Task.sleep(for: .milliseconds(500))
       guard self.stream === stream, let pid = self.app?.app?.pid else { return }
       self.stream = nil
-      self.image = nil
+      self.filter = nil
+      self.plan = nil
+      self.clearFrame()
       if let id = self.window?.windowID, OwnedAppWindowReader.screen(pid: pid)?.contains(where: { $0.id == id }) == true {
         self.retryAt = .now.advanced(by: .seconds(5))
         self.error = error.localizedDescription
@@ -249,19 +363,33 @@ struct MacosLocalScreen: View {
   }
 
   nonisolated func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-    MainActor.assumeIsolated {
-      guard self.stream === stream, type == .screen, let app else { return }
-      guard matches(app) else {
-        error = "The owned app process changed or exited."
-        Task { await self.stop() }
-        return
-      }
-      guard let buffer = sampleBuffer.imageBuffer
-      else { return }
-      image = context.createCGImage(
-        CIImage(cvPixelBuffer: buffer),
-        from: CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(buffer), height: CVPixelBufferGetHeight(buffer)))
+    guard type == .screen, Self.isComplete(sampleBuffer), let buffer = sampleBuffer.imageBuffer,
+      let surface = CVPixelBufferGetIOSurface(buffer)?.takeUnretainedValue()
+    else { return }
+    let frame = Frame(buffer: buffer, surface: surface, source: stream)
+    DispatchQueue.main.async {
+      MainActor.assumeIsolated { self.display(frame) }
     }
+  }
+
+  // ScreenCaptureKit marks frames that repeat the previous content as idle, without new pixels.
+  private nonisolated static func isComplete(_ sampleBuffer: CMSampleBuffer) -> Bool {
+    guard
+      let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false)
+        as? [[SCStreamFrameInfo: Any]],
+      let raw = attachments.first?[.status] as? Int
+    else { return false }
+    return SCFrameStatus(rawValue: raw) == .complete
+  }
+
+  private func display(_ frame: Frame) {
+    guard stream === frame.source else { return }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    layer.contents = frame.surface
+    CATransaction.commit()
+    displayed = frame
+    if !hasFrame { hasFrame = true }
   }
 
   // NSRunningApplication(processIdentifier:) returns nil for 1-2 ms at a time on macOS 27 while the process runs.
@@ -315,24 +443,64 @@ struct MacosLocalScreen: View {
 }
 
 private struct MacosWindowCanvas: NSViewRepresentable {
-  var image: CGImage
+  var capture: MacosWindowCapture
 
-  func makeNSView(context: Context) -> Canvas { Canvas() }
-  func updateNSView(_ view: Canvas, context: Context) {
-    view.image = image
-    view.needsDisplay = true
+  func makeNSView(context: Context) -> Canvas {
+    let view = Canvas()
+    view.capture = capture
+    return view
   }
 
+  func updateNSView(_ view: Canvas, context: Context) { view.capture = capture }
+
   final class Canvas: NSView {
-    var image: CGImage?
-    override var isFlipped: Bool { true }
-    override func draw(_ dirtyRect: NSRect) {
-      guard let image, let context = NSGraphicsContext.current?.cgContext else { return }
-      context.saveGState()
-      context.translateBy(x: 0, y: bounds.height)
-      context.scaleBy(x: 1, y: -1)
-      context.draw(image, in: bounds)
-      context.restoreGState()
+    weak var capture: MacosWindowCapture? {
+      didSet {
+        guard capture !== oldValue else { return }
+        oldValue?.layer.removeFromSuperlayer()
+        if let capture { layer?.addSublayer(capture.layer) }
+        needsLayout = true
+      }
+    }
+
+    override init(frame: NSRect) {
+      super.init(frame: frame)
+      wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func layout() {
+      super.layout()
+      CATransaction.begin()
+      CATransaction.setDisableActions(true)
+      capture?.layer.frame = bounds
+      CATransaction.commit()
+      report()
+    }
+
+    override func viewDidMoveToWindow() {
+      super.viewDidMoveToWindow()
+      NotificationCenter.default.removeObserver(self, name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+      if let window {
+        NotificationCenter.default.addObserver(
+          self, selector: #selector(occlusionChanged), name: NSWindow.didChangeOcclusionStateNotification, object: window)
+      }
+      report()
+    }
+
+    override func viewDidChangeBackingProperties() {
+      super.viewDidChangeBackingProperties()
+      report()
+    }
+
+    @objc private func occlusionChanged() { report() }
+
+    private func report() {
+      guard let capture else { return }
+      let visible =
+        window.map { !AppPreferences.pausesHiddenFrames || $0.occlusionState.contains(.visible) } ?? false
+      capture.show(size: bounds.size, scale: window?.backingScaleFactor ?? 2, visible: visible)
     }
   }
 }

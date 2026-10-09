@@ -120,7 +120,7 @@ export type BuildCacheHit = 'local' | 'remote' | false;
 
 /** A platform's most recent `ios` or `android` run in one workspace. */
 export interface DevicePlacement {
-  decision: 'local' | 'hosted' | 'waited-locally';
+  decision: 'local' | 'hosted' | 'waited-locally' | 'eas';
   reason: string;
   machine?: string;
 }
@@ -243,6 +243,22 @@ export interface BuildPlanPayload {
   refusal?: { code: string; message: string; remedy: string };
   /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this Mac; auto may use janics-mac-mini`. */
   placement?: string;
+}
+
+/** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
+export interface MacosBuildPlanPayload {
+  platform: 'macos';
+  product: string;
+  buildMachine: string;
+  fingerprint: null;
+  cacheKey: null;
+  cacheHit: false;
+  provider: null;
+  cacheSkipped: false;
+  prebuild: null;
+  outcome: null;
+  expectedMs: null;
+  basis: number;
 }
 
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';

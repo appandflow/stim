@@ -2093,7 +2093,7 @@ test.each(['win32', 'linux'] as const)(
       writeFileSync(join(project, 'package-lock.json'), '{}');
       writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { name: 'fixture' } }));
       writeFileSync(join(project, '.stimrc.json'), JSON.stringify({ ios: { simslimProfile: 'lean' } }));
-      mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
+      mkdirSync(join(project, 'ios'), { recursive: true });
       writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
       mkdirSync(join(project, 'android'));
       const options = {

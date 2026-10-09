@@ -1,4 +1,4 @@
-import { writeConfigSetting } from '../workspace/config.ts';
+import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -27,6 +27,7 @@ import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { projectRegistry } from '../integrations/projects.ts';
+import { planMacos } from '../macos/plan.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
@@ -332,6 +333,17 @@ describe('macOS build placement and promotion', () => {
     expect(calls).toContainEqual(['plutil', ['-replace', 'CFBundleName', '-string', 'Sample \u00b7 wt', infoPlist]]);
     expect(order.indexOf('codesign --force')).toBeGreaterThan(order.lastIndexOf('plutil -replace'));
     expect(order.indexOf('codesign --verify')).toBeGreaterThan(order.indexOf('codesign --force'));
+  });
+
+  it('automatic placement never falls back to Swift when local is excluded', async () => {
+    const config = loadConfig()!;
+    config.remote = { ...config.remote, buildPoolDisabled: ['local'] };
+    saveConfig(config);
+    vi.mocked(offload.chooseBuildMachine).mockResolvedValue('mini: offline');
+    await expect(build()).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    expect(localBuilds).toBe(0);
+    expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
+    expect(readFileSync(join(bundle, 'previous'), 'utf8')).toBe('old');
   });
 
   it.each(['no-machine', 'worker-failed', 'bad-bundle', 'verification-failed'])(
@@ -861,3 +873,93 @@ test.skipIf(process.platform !== 'darwin')(
     }
   },
 );
+
+describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
+  beforeEach(() => {
+    writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
+    writeFileSync(join(root, 'Info.plist'), '{}');
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos: { product: 'Sample', infoPlist: 'Info.plist' } }));
+    setExecutor({
+      runFileQuiet: () => null,
+      runFile: (file) => {
+        if (file !== 'plutil') throw new Error(`Plan tried to run ${file}`);
+        return JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' });
+      },
+      spawn: () => {
+        throw new Error('Plan tried to spawn a build or app');
+      },
+    });
+  });
+  afterEach(() => resetExecutor());
+
+  it('validates packaging without creating state, acquiring build slots or contacting workers', () => {
+    const slot = vi.spyOn(slots, 'acquireBuildSlot');
+    const worker = vi.spyOn(offload, 'chooseBuildMachine');
+    const plan = planMacos(root, 'local');
+    expect(plan).toMatchObject({
+      platform: 'macos',
+      product: 'Sample',
+      buildMachine: 'local',
+      fingerprint: null,
+      cacheHit: false,
+      outcome: null,
+      expectedMs: null,
+    });
+    expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+    expect(slot).not.toHaveBeenCalled();
+    expect(worker).not.toHaveBeenCalled();
+  });
+
+  it('refuses a missing declared resource and an unconfigured named build machine', () => {
+    writeFileSync(
+      join(root, '.stim.json'),
+      JSON.stringify({
+        macos: { product: 'Sample', infoPlist: 'Info.plist', resources: { 'icon.icns': 'missing' } },
+      }),
+    );
+    expect(() => planMacos(root, 'local')).toThrow('source does not exist');
+    expect(() => planMacos(root, 'missing-mini')).toThrow('not listed in remote.machines');
+    expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+  });
+
+  it('prints exactly one JSON plan or typed refusal without launching', async () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(root);
+    const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const previousExit = process.exitCode;
+    try {
+      const program = new Command();
+      macosCommand(program);
+      await program.parseAsync(['macos', '--plan', '--json', '--remote-build', 'local'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({ platform: 'macos', buildMachine: 'local' });
+      stdout.mockClear();
+      await program.parseAsync(['macos', '--plan', '--json', '--remote', 'mini'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('--remote'),
+      });
+      expect(process.exitCode).toBe(1);
+      expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+      cwd.mockReturnValue(dir);
+      stdout.mockClear();
+      await program.parseAsync(['macos', '--plan', '--json'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: 'Run stim macos from the Swift Package directory.',
+      });
+      stdout.mockClear();
+      await expect(program.parseAsync(['macos'], { from: 'user' })).rejects.toThrow(
+        'Run stim macos from the Swift Package directory.',
+      );
+      expect(stdout).not.toHaveBeenCalled();
+    } finally {
+      process.exitCode = previousExit;
+      cwd.mockRestore();
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  });
+});

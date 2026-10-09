@@ -39,6 +39,9 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var summary: String {
     let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
     guard status == "ok" else { return "Failed (\(errorCode ?? "error"))\(took)" }
+    if platform == "macos" {
+      return offloadedTo.map { "Built on \(machineName($0))\(took)" } ?? "Built\(took)"
+    }
     switch cacheHit {
     case .local: return "Local cache\(took)"
     case .remote: return "Remote cache\(took)"
@@ -201,10 +204,10 @@ public struct BuildHistory: Decodable, Hashable, Sendable {
   }
 }
 
-/// The payload of `stim ios --plan --json` or `stim android --plan --json`.
+/// The payload of `stim ios|android|macos --plan --json`.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String
-  public var fingerprint: String
+  public var fingerprint: String?
   public var cacheHit: CacheSource
   public var provider: String?
   public var cacheSkipped: Bool
@@ -212,6 +215,8 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var outcome: String?
   public var expectedMs: Double?
   public var basis: Int
+  public var product: String?
+  public var buildMachine: String?
   public var missReason: BuildMissReason?
   public var refusal: CommandRefusal?
   /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
@@ -220,6 +225,7 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
     if let refusal { return "would refuse (\(refusal.code))" }
+    if platform == "macos" { return "SwiftPM Debug build" }
     let took = expectedMs.map { ", ~\(Format.elapsed(ms: $0))" } ?? ""
     switch cacheHit {
     case .local: return "cache hit (local)\(took)"
@@ -233,6 +239,10 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
 
   /// The remote provider and the runs behind the estimate.
   public var detail: String? {
+    if platform == "macos", refusal == nil {
+      return
+        "Build selection: \(buildMachine ?? "auto"). Worker availability is not checked. SwiftPM determines incremental work when the build runs; macOS has no artifact cache or timing prediction."
+    }
     guard refusal == nil, let outcome else { return nil }
     let runs =
       expectedMs == nil

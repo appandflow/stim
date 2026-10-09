@@ -24,6 +24,7 @@ export function triggerMaintenance(
     const env = process.env;
     if (
       ['guide', 'settings', 'help'].includes(argv[0] ?? '') ||
+      argv.includes('--plan') ||
       (argv[0] === 'gc' && argv.includes('--delete')) ||
       argv.some((arg) => ['--help', '-h', '--version', '-V'].includes(arg))
     )

@@ -259,7 +259,10 @@ function devicePlacement(value: unknown): DevicePlacement | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
-    (record.decision !== 'local' && record.decision !== 'hosted' && record.decision !== 'waited-locally') ||
+    (record.decision !== 'local' &&
+      record.decision !== 'hosted' &&
+      record.decision !== 'waited-locally' &&
+      record.decision !== 'eas') ||
     typeof record.reason !== 'string'
   )
     return null;
