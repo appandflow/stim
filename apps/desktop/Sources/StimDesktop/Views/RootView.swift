@@ -47,6 +47,7 @@ struct RootView: View {
   @StateObject private var navigation = NavigationController()
   @State private var replacesHistory = false
   @State private var restoredProject = false
+  @State private var lastResolvedWorkspace: String?
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.lastProjectPath) private var lastProjectPath = ""
   @State private var projectFilter: Project?
@@ -343,6 +344,18 @@ struct RootView: View {
       navigate(.environment(path), .request("workspace path"))
     }
     .onReceive(store.$payload) { payload in
+      if let payload, case .environment(let path) = selection {
+        if WorktreePage(path: path, environments: payload.environments) != nil {
+          lastResolvedWorkspace = path
+        } else if lastResolvedWorkspace == path
+          || WorktreePage(path: path, environments: store.payload?.environments ?? []) != nil,
+          let archive = ArchivedWorkspace.newest(removedFrom: path, in: payload.archived ?? [])
+        {
+          lastResolvedWorkspace = nil
+          navigate(.archived(archive.id), .automatic("workspace removed, opening its archive"))
+          return
+        }
+      }
       guard let payload, case .archived(let id) = selection,
         !(payload.archived ?? []).contains(where: { $0.id == id })
       else { return }
@@ -362,6 +375,7 @@ struct RootView: View {
         archivedLogQuery = LogQuery()
         if case .archived = old {} else { previousSelection = old }
       }
+      if case .environment(let path) = item, path == lastResolvedWorkspace {} else { lastResolvedWorkspace = nil }
       restoredProject = true
       if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
@@ -431,7 +445,7 @@ struct RootView: View {
   }
 
   private var showsWorkspace: Bool {
-    if case .environment = selection { return true }
+    if case .environment = selection { return selectedPage != nil }
     if case .archived = selection { return true }
     return false
   }
@@ -816,7 +830,9 @@ struct RootView: View {
           host
         }
       } else {
-        EmptyState(title: "Workspace Gone", message: "stim status no longer reports this workspace.")
+        EmptyState(
+          title: "Workspace Gone", message: "stim status no longer reports this workspace.",
+          actionTitle: "Go to Overview", action: { navigate(.overview, .click("workspace gone overview")) })
       }
     case .archived(let id):
       if let archive = store.payload?.archived?.first(where: { $0.id == id }) {
