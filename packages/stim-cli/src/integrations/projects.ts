@@ -99,18 +99,20 @@ const swiftPackage: ProjectIntegration = {
   },
 };
 
-const configuredWeb: ProjectIntegration = {
-  id: 'configured-web',
-  inspect() {
+const browserWeb: ProjectIntegration = {
+  id: 'browser-web',
+  inspect(root) {
     return {
       root: false,
       application: false,
       platforms: (settings) => (webSettings(settings).url !== null ? ['web'] : []),
+      validate: (operation) => (operation === 'web' ? null : undefined),
+      web: async () => (await import('./browser-web.ts')).browserWebProject(root),
     };
   },
 };
 
-export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, configuredWeb];
+export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 
