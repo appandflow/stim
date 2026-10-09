@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -124,6 +124,16 @@ async function verifyUi(label, facts, revision) {
   ]);
   assert(facts.agentDevice?.stateDir, 'Stim must expose the workspace agent-device directory.');
   activeAgentEnv = { ...env, AGENT_DEVICE_STATE_DIR: facts.agentDevice.stateDir };
+  await agent(`${label}-prepare-runner`, [
+    'prepare',
+    'ios-runner',
+    '--platform',
+    'ios',
+    '--udid',
+    facts.udid,
+    '--json',
+    '--debug',
+  ]);
   await agent(`${label}-open`, ['open', facts.bundleId, '--platform', 'ios', '--udid', facts.udid, '--foreground']);
   assert.equal(
     await appPid(`${label}-pid-after-ui`, facts),
@@ -349,6 +359,19 @@ try {
 } catch (error) {
   summary.failure = error.stack ?? String(error);
   process.exitCode = 1;
+  if (activeAgentEnv) {
+    for (const [path, name] of [
+      [join(activeAgentEnv.AGENT_DEVICE_STATE_DIR, 'sessions', 'native-xcode-acceptance'), 'agent-session'],
+      [join(activeAgentEnv.AGENT_DEVICE_STATE_DIR, 'daemon.log'), 'agent-daemon.log'],
+      [join(homedir(), '.agent-device', 'logs', 'native-xcode-acceptance'), 'agent-diagnostics'],
+    ]) {
+      try {
+        if (existsSync(path)) cpSync(path, join(evidence, name), { recursive: true });
+      } catch (diagnosticError) {
+        summary.diagnostics.push(diagnosticError.message);
+      }
+    }
+  }
 } finally {
   const cleanupFailures = [];
   try {
