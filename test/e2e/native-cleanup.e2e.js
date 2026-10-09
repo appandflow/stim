@@ -26,6 +26,7 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
     gc: '',
     failure: null,
     processReads: 0,
+    harnessVisible: true,
   };
   const h = {
     env: { STIM_HOME: home },
@@ -42,6 +43,7 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
       else if (file === 'ps') {
         output.processReads++;
         stdout = output.processes;
+        if (output.harnessVisible) stdout += `\n${process.pid} Sat Sep 5 00:00:00 2026 node native-cleanup`;
       } else if (file === 'git' && argv.includes('status')) stdout = output.porcelain;
       else if (file === 'git' && argv.includes('worktree')) stdout = output.worktrees;
       else assert.fail(`unexpected command: ${file} ${argv.join(' ')}`);
@@ -266,6 +268,12 @@ for (const [platform, tool] of [
     await assert.rejects(() => f.verify(), new RegExp(`could not inspect ${tool}: fixture inspection failed`));
   });
 }
+
+test('native cleanup refuses empty successful process inspection', async (t) => {
+  const f = fixture(t);
+  f.output.harnessVisible = false;
+  await assert.rejects(() => f.verify(), /process inspection did not include the live harness/);
+});
 
 for (const setting of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
   test(`native cleanup finds the emulator through ${setting} without PATH`, (t) => {
