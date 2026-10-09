@@ -82,6 +82,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
 
       - name: Build, launch, probe and stop

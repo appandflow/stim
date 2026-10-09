@@ -11,6 +11,7 @@ import {
   completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
+  recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
   type ActiveBuildRecord,
@@ -436,6 +437,18 @@ describe('macOS builds', () => {
     startedAt: '2026-09-24T10:00:00.000Z',
   };
 
+  test('recording a phase for a run the history does not hold changes nothing, and a bad step total is dropped', () => {
+    writeWorkspaceState(root, {
+      buildHistory: {
+        macos: [{ ...macosFinished, result: 'succeeded', slot: 'default', phases: {}, compileSteps: -3 }],
+      },
+    });
+    recordBuildPhase(root, 'macos', '2026-01-01T00:00:00.000Z', 'launch', 5);
+    const [entry] = readBuildHistory(readWorkspaceState(root)).macos!;
+    expect(entry!.phases).toEqual({});
+    expect(entry!.compileSteps).toBeUndefined();
+  });
+
   test('a run reports its phases and SwiftPM counts without a cache outcome, and keeps only history', () => {
     vi.useFakeTimers({ now: T0 });
     try {
@@ -462,7 +475,11 @@ describe('macOS builds', () => {
       now += 60_000;
       progress.step('install');
       now += 3_000;
-      recordFinishedBuild(root, macosFinished, { now: () => now });
+      expect(progress.steps()).toBe(40);
+      recordFinishedBuild(root, { ...macosFinished, compileSteps: progress.steps() }, { now: () => now });
+      progress.step('launch');
+      now += 1_500;
+      recordBuildPhase(root, 'macos', macosFinished.startedAt, 'launch', progress.durations().launch!);
       progress.clear();
       releaseClaim(claim);
 
@@ -473,7 +490,8 @@ describe('macOS builds', () => {
         expect.objectContaining({
           platform: 'macos',
           result: 'succeeded',
-          phases: { prepare: 2_000, compile: 60_000, install: 3_000 },
+          phases: { prepare: 2_000, compile: 60_000, install: 3_000, launch: 1_500 },
+          compileSteps: 40,
         }),
       ]);
     } finally {

@@ -52,7 +52,7 @@ extension Workspace {
     switch device {
     case .ios(_, let d): reported = d.physical ? nil : d.appPresence
     case .android(_, let d): reported = d.physical ? nil : d.appPresence
-    case .web, .remote: reported = nil
+    case .web, .remote, .macos: reported = nil
     }
     switch reported {
     case "none": return AppPresence.none
@@ -68,7 +68,7 @@ extension Workspace {
     guard device.isRunning, !device.isPhysical, device.app?.state != "running" else { return nil }
     switch device {
     case .ios, .android: break
-    case .web, .remote: return nil
+    case .web, .remote, .macos: return nil
     }
     let history = device.platform == "ios" ? builds?.ios : builds?.android
     let everBuilt = history.map { $0.contains { $0.result == "succeeded" } } ?? true
@@ -175,7 +175,7 @@ extension DeviceRef {
     switch self {
     case .ios(_, let d): return d.disk?.bytes
     case .android(_, let d): return d.disk?.bytes
-    case .remote, .web: return nil
+    case .remote, .web, .macos: return nil
     }
   }
 }
@@ -211,7 +211,7 @@ extension Workspace {
     case .ios: kind = .simulator
     case .android: kind = .emulator
     case .web: kind = .browser
-    case .remote: return nil
+    case .remote, .macos: return nil
     }
     return machine?.owners(of: path).first { $0.kind == kind && ($0.slot ?? DeviceRef.defaultSlot) == device.slot }
   }
@@ -438,6 +438,8 @@ public struct PhaseStep: Equatable, Sendable {
   public var elapsedMs: Double?
   public var expectedMs: Double?
   public var fraction: Double?
+  /// A fact about a finished phase, such as `428 steps`.
+  public var note: String? = nil
 
   public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
 

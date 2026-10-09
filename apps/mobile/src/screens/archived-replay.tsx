@@ -37,7 +37,7 @@ export function ArchivedReplay({
   const now = useNow(30_000);
   const expired = entry ? archivedPage(entry, null, now).recordingsExpired : false;
   const range = useReplayRangeState({ archive, platform, slot }, focused && foreground);
-  const title = t`Archived replay`;
+  const title = t`Archived Replay`;
   return (
     <SafeAreaView edges={['bottom', 'left', 'right']} style={styles.replay}>
       <Stack.Screen options={{ title }} />

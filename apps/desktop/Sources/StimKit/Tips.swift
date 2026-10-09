@@ -5,24 +5,24 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .buildMachine: "Build on another Mac"
-    case .phone: "See your workspaces on your phone"
-    case .tutorial: "Take the Stim tutorial"
-    case .hideWorkspaces: "Hide workspaces you don't need"
-    case .statusFilter: "Filter by status"
-    case .replay: "Replay what an agent did"
-    case .hostedSimulators: "Run simulators on another Mac"
+    case .buildMachine: "Build on Another Mac"
+    case .phone: "See Your Workspaces on Your Phone"
+    case .tutorial: "Take the Stim Tutorial"
+    case .hideWorkspaces: "Hide Workspaces You Don't Need"
+    case .statusFilter: "Filter by Status"
+    case .replay: "Replay What an Agent Did"
+    case .hostedSimulators: "Run Simulators on Another Mac"
     }
   }
 
   public var actionTitle: String {
     switch self {
-    case .buildMachine: "Add a remote Mac"
-    case .phone: "Pair a phone"
-    case .tutorial: "Open tutorial"
-    case .hideWorkspaces, .statusFilter: "View options"
-    case .replay: "Open workspace"
-    case .hostedSimulators: "Add a hosting Mac"
+    case .buildMachine: "Add a Remote Mac"
+    case .phone: "Pair a Phone"
+    case .tutorial: "Open Tutorial"
+    case .hideWorkspaces, .statusFilter: "View Options"
+    case .replay: "Open Workspace"
+    case .hostedSimulators: "Add a Hosting Mac"
     }
   }
 
@@ -41,7 +41,7 @@ public enum NudgeTopic: Sendable {
 
   public var discoveryTypes: [DiscoveryType] {
     switch self {
-    case .buildMachine: [.slowCold, .newMac, .slotWait]
+    case .buildMachine: [.newMac, .slotWait]
     case .phone: [.away]
     case .hostedSimulators: [.capHit]
     }
@@ -152,14 +152,18 @@ public enum Tips {
 
   public static func applicable(_ topic: TipTopic, inputs: TipInputs) -> Bool {
     switch topic {
-    case .buildMachine: inputs.machines?.isEmpty == true && inputs.macs?.isEmpty == false
+    case .buildMachine: noMacPaired(inputs) && inputs.macs?.isEmpty == false
     case .phone: inputs.phoneApp && inputs.pairedPhones == 0
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: inputs.workspaces.contains { $0.recording?.enabled == true }
-    case .hostedSimulators: inputs.hosting?.isEmpty == true && inputs.macs?.isEmpty == false
+    case .hostedSimulators: noMacPaired(inputs) && inputs.macs?.isEmpty == false
     }
+  }
+
+  private static func noMacPaired(_ inputs: TipInputs) -> Bool {
+    inputs.machines?.isEmpty == true && inputs.hosting?.isEmpty == true
   }
 
   public static func taken(_ topic: TipTopic, states: [DiscoveryType: DiscoveryState], now: Date) -> Bool {

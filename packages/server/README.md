@@ -112,8 +112,9 @@ GUI login session.
 
 Running setup on the worker is the worker-side approval. It pre-approves at
 most one request per chosen capability, from this node, carrying this ticket,
-until this expiry. A terminal asks y/N for each grant (default No); use `--yes`
-to approve without those questions, including without a terminal. Without
+until this expiry. A terminal asks Y/n for each grant (default Yes: Enter, `y` and `yes` approve;
+`n`, `no` and any other answer decline); use `--yes` to approve without those
+questions, including without a terminal. Without
 a terminal or `--yes`, setup refuses before installing anything unless every
 chosen capability already has a matching approval. A person on
 the worker still approves; an SSH-driven run is not offered. Build and
@@ -155,7 +156,7 @@ nothing. Android and CocoaPods checks are not needed for hosting alone.
 In a terminal, setup prints a banner, then one line per step with a green check,
 a yellow arrow while a step runs, or a red cross; `NO_COLOR`, `TERM=dumb` and a
 non-terminal give plain `[ok]`, `[failed]` and `[pending]` marks, no colors and no
-in-place line. The y/N questions stay, one line each. The run ends with a
+in-place line. The Y/n questions stay, one line each. The run ends with a
 headline such as "janics-mac-mini is ready to build for Janic's MacBook Pro", one
 line per approved capability, a `Fix` line for each skipped permission or missing
 tool, and one `To undo` line. `--verbose` prints every step with its detail, the
@@ -1182,7 +1183,8 @@ closes its connections and cancels its builds.
   average per CPU), `builds` (this Mac's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
-  `server.maxLoadPerCore`, default 2), and `declined`: why it would refuse a
+  `server.maxLoadPerCore`, default 2), `memoryUsedBytes` (Activity Monitor's
+  Memory Used) and `memoryTotalBytes`, and `declined`: why it would refuse a
   build now, or null. It declines while it runs its limit of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
@@ -1894,8 +1896,10 @@ after. With a `stim` whose status has no `activity.recent`, every app log
 record counts as activity, so an app that keeps logging never looks stuck or
 finished.
 
-Each workspace notifies once per episode: a stuck agent notifies again only
-after new activity and a new quiet stretch, a loop only after a success or a
+Each workspace notifies once per episode: an agent stop pushes `finished` once
+per run, which ends when the workspace goes idle, and a workspace pushes
+`attention` once per run, which starts over when the workspace stops being idle
+or has no item left; a stuck agent notifies again only after new activity and a new quiet stretch, a loop only after a success or a
 different failure. A push carries a collapse id for its workspace and
 category, so a later one replaces the earlier notification on the phone
 instead of stacking. What is already true when the server starts or a device

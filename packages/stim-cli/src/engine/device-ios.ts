@@ -11,6 +11,7 @@ import {
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
   listAllIosSims,
+  type IosSimSnapshot,
   listIosDeviceTypes,
   listIosRuntimes,
   ownedSimName,
@@ -83,6 +84,7 @@ export async function ensureOwnedIosDevice({
   note,
   out,
   reconcileIosSimulator,
+  simSnapshot,
 }: {
   record: OwnedDeviceRecord | null;
   projectPath: string;
@@ -94,13 +96,14 @@ export async function ensureOwnedIosDevice({
   note: Notify;
   out: Notify;
   reconcileIosSimulator: typeof reconcileSimSlim;
+  simSnapshot?: IosSimSnapshot;
 }): Promise<OwnedDeviceRecord> {
   const memoryAdvice = hostMemoryPressureAdvice(readHostMemoryPressure());
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {
     if (record.owned) {
-      const listed = listAllIosSims({ includeUnavailable: true });
+      const listed = simSnapshot ? simSnapshot.read() : listAllIosSims({ includeUnavailable: true });
       const resolved = resolveOwnedIosSim(record.deviceUdid, listed);
       if (resolved.notOwned) {
         note(

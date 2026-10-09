@@ -17,7 +17,7 @@ struct NowBand: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       Label {
-        Text("Resource usage").font(.stim(.headline))
+        Text("Resource Usage").font(.stim(.headline))
       } icon: {
         Image(systemName: "memorychip").iconFont(IconSize.small)
           .accessibilityHidden(true)
@@ -28,7 +28,7 @@ struct NowBand: View {
       }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
         let actionWidth = actionWidth(machine.owners)
-        CollapsibleSection("machine.processes", title: "Memory and CPU by process group", items: machine.ranked) { shown in
+        CollapsibleSection("machine.processes", title: "Memory and CPU by Process Group", items: machine.ranked) { shown in
           Text("Only the listed process groups are shown; they do not add up to this Mac's total memory.")
             .font(.stim(.footnote))
             .foregroundStyle(Palette.secondary)
@@ -63,7 +63,7 @@ struct NowBand: View {
       }
     }
     .confirmationDialog(
-      "Reclaim memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
+      "Reclaim Memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
       titleVisibility: .visible, presenting: reclaiming
     ) { item in
       Button("Run stim gc --delete --cache \(item.offer.cacheKind)", role: .destructive) {
@@ -96,7 +96,7 @@ struct NowBand: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
         Text(value).font(.stim(.headline)).monospacedDigit()
-        Text("Recent history").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        Text("Recent History").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
           .accessibilityHidden(true)
         Sparkline(values: values, minimumPeak: peak).frame(height: 28)
           .accessibilityElement(children: .ignore)

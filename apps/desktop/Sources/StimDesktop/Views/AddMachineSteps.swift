@@ -56,7 +56,7 @@ struct AddMachineSteps: View {
 
   @ViewBuilder private var test: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      Text("Test build").font(.stim(.title))
+      Text("Test Build").font(.stim(.title))
       Text("Expo blank (SDK 58), in Stim Desktop's own folder.").foregroundStyle(Palette.secondary)
       if let sample = model.sample {
         Text(abbreviatingHome(sample.folder)).font(.stim(.caption, mono: true)).textSelection(.enabled)
@@ -95,7 +95,7 @@ struct AddMachineSteps: View {
               }
             }.disabled(sample.running || !model.wizard.capabilities.contains(.build))
           }
-          Button("Skip test") { Task { await sample.skip() } }
+          Button("Skip Test") { Task { await sample.skip() } }
         }
       }
       if !model.wizard.capabilities.contains(.build) {
@@ -134,26 +134,28 @@ struct AddMachineSteps: View {
       }
       if model.wizard.capabilities.contains(.build), let machine = model.machineEntry {
         tryIt(machine)
-        choice("Builds", detail: "Auto: when this Mac is busy. Always: prefer \(name). Never: build here.") {
-          ForEach(WizardMode.allCases, id: \.self) { choice in
-            radio(choice.title, selected: model.mode == choice) { model.mode = choice }
+        card("Builds", detail: "Auto: when this Mac is busy. Always: prefer \(name). Never: build here.") {
+          Picker("Builds", selection: $model.mode) {
+            ForEach(WizardMode.allCases, id: \.self) { Text($0.title).tag($0) }
           }
+          .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
         }
       }
       if model.choosesSimulators, let machine = model.machineEntry {
-        choice(
-          "Simulators", detail: "Auto: on \(name) when this Mac is full."
-        ) {
-          ForEach(SimulatorPlacement.allCases, id: \.self) { choice in
-            radio(choice.title(machine: name), selected: model.simulators == choice) { model.simulators = choice }
-              .help(
-                choice.value(machine: machine).map { "ios.remote and android.remote = \($0)" }
-                  ?? "Unsets ios.remote and android.remote")
+        card("Simulators", detail: "Auto: on \(name) when this Mac is full.") {
+          Picker("Simulators", selection: $model.simulators) {
+            ForEach(SimulatorPlacement.allCases, id: \.self) { choice in
+              Text(choice.title(machine: name)).tag(Optional(choice))
+                .help(
+                  choice.value(machine: machine).map { "ios.remote and android.remote = \($0)" }
+                    ?? "Unsets ios.remote and android.remote")
+            }
           }
-        }
-        if model.simulators == nil {
-          Text("Done keeps the current ios.remote and android.remote unless you choose.").font(.stim(.footnote))
-            .foregroundStyle(Palette.secondary)
+          .pickerStyle(.radioGroup).horizontalRadioGroupLayout().labelsHidden()
+          if model.simulators == nil {
+            Text("Done keeps the current ios.remote and android.remote unless you choose.").font(.stim(.footnote))
+              .foregroundStyle(Palette.secondary)
+          }
         }
       }
       Text("You can remove \(name) later in Settings > Remote Macs > Remove.")
@@ -161,21 +163,17 @@ struct AddMachineSteps: View {
     }
   }
 
-  private func choice<Options: View>(_ title: String, detail: String, @ViewBuilder options: () -> Options) -> some View {
-    VStack(alignment: .leading, spacing: Space.sm) {
+  private func card<Content: View>(_ title: String, detail: String, @ViewBuilder content: () -> Content) -> some View {
+    VStack(alignment: .leading, spacing: Space.md) {
       Text(title).font(.stim(.headline))
-      HStack(spacing: Space.lg) { options() }
+      content()
       Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
-  }
-
-  private func radio(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-    Button(action: action) {
-      Label(title, systemImage: selected ? "largecircle.fill.circle" : "circle")
-        .foregroundStyle(selected ? Palette.accent : Palette.secondary)
-    }
-    .buttonStyle(.plain)
-    .accessibilityAddTraits(selected ? .isSelected : [])
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(Space.lg)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   private func tryIt(_ machine: String) -> some View {
@@ -183,19 +181,20 @@ struct AddMachineSteps: View {
       "Build and run this project on iOS with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
     return VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        Label("Try it", systemImage: "sparkles").font(.stim(.headline))
+        Label("Try It", systemImage: "sparkles").font(.stim(.headline))
         Spacer()
-        CopyButton(prompt, title: "Copy prompt", help: "Copy the agent prompt")
+        CopyButton(prompt, title: "Copy Prompt", help: "Copy the agent prompt")
       }
       Text(prompt).font(.stim(.callout)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       Text("Or run it yourself in a project:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
       CopyableCommand(command: "stim ios --remote-build \(machine)")
       if model.sample != nil {
-        Button("Run a test build with a sample app") { model.openTest() }
+        Button("Run a Test Build with a Sample App") { model.openTest() }
           .buttonStyle(.stim(.plain))
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
     .padding(Space.lg)
     .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
     .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))

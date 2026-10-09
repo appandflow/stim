@@ -75,7 +75,7 @@ test('an older server gets fixed shortcuts but no unsupported modified letter', 
   expect(text).not.toHaveBeenCalled();
   expect(screen.getByText(/Update Stim on the Mac/)).toBeTruthy();
   expect(screen.getByLabelText('Command').props.accessibilityState.selected).toBe(true);
-  await fireEvent.press(screen.getByLabelText('Select all'));
+  await fireEvent.press(screen.getByLabelText('Select All'));
   expect(key).toHaveBeenCalledWith('a', ['command']);
   expect(screen.getByLabelText('Command').props.accessibilityState.selected).toBe(false);
 });

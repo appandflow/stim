@@ -41,6 +41,9 @@ test.each([
   ['-V'],
   ['gc', '--delete'],
   ['gc', '--delete', '--json'],
+  ['ios', '--plan'],
+  ['android', '--plan', '--json'],
+  ['macos', '--plan', '--json'],
 ])('excluded command %s never spawns maintenance', (...argv) => {
   triggerMaintenance('command', { argv });
   expect(spawned).not.toHaveBeenCalled();
@@ -74,7 +77,7 @@ test('fresh stamps suppress spawning, while a due check starts one detached chil
     maintenanceStateFile(),
     JSON.stringify({
       version: 1,
-      lastAt: { pressure: Date.now(), size: Date.now() },
+      lastAt: { pressure: Date.now(), size: Date.now(), worktree: Date.now(), sweep: Date.now() },
       pressure: null,
       sizes: [],
       lastPass: null,

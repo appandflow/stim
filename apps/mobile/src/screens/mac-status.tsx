@@ -140,7 +140,7 @@ export function MacStatus({ id }: { id: string }) {
       {pairingScope(state) === 'read' ? (
         <Banner
           message={t`This phone is read-only: it cannot reload or stop workspaces, or control devices.`}
-          action={{ label: t`Allow control`, onPress: () => explainReadOnly(mac.name, state, connection) }}
+          action={{ label: t`Allow Control`, onPress: () => explainReadOnly(mac.name, state, connection) }}
         />
       ) : null}
 
@@ -168,7 +168,7 @@ export function MacStatus({ id }: { id: string }) {
       {status ? (
         <CollapsibleSection
           id="machine.owners"
-          title={t`CPU and memory`}
+          title={t`CPU and Memory`}
           rows={owners}
           rowKey={(owner) => `${owner.kind}\n${owner.workspace ?? ''}\n${owner.slot ?? ''}\n${owner.id ?? owner.name}`}
           renderRow={(owner) => <OwnerRow owner={owner} status={status} />}
@@ -203,7 +203,7 @@ export function MacStatus({ id }: { id: string }) {
       {gcSections ? (
         <CollapsibleSection
           id="machine.free"
-          title={t`Safe to free now`}
+          title={t`Safe to Free Now`}
           rows={report.free}
           rowKey={(row) => row.id}
           renderRow={(row) => <FreeItemRow row={row} home={home} />}
@@ -233,7 +233,7 @@ export function MacStatus({ id }: { id: string }) {
       {status ? (
         <CollapsibleSection
           id="machine.devices"
-          title={t`Simulators and emulators`}
+          title={t`Simulators and Emulators`}
           rows={report.devices}
           rowKey={(device) => device.id}
           renderRow={(device) => <DeviceItemRow device={device} />}
@@ -258,7 +258,7 @@ export function MacStatus({ id }: { id: string }) {
       {status && status.deviceLeases.length > 0 ? (
         <CollapsibleSection
           id="machine.leases"
-          title={t`Leased devices`}
+          title={t`Leased Devices`}
           rows={status.deviceLeases}
           rowKey={(lease) => `${lease.platform}\n${lease.id ?? lease.path}\n${lease.slot ?? ''}`}
           renderRow={(lease) => <LeaseRow lease={lease} status={status} now={now} />}
@@ -268,7 +268,7 @@ export function MacStatus({ id }: { id: string }) {
       {gcSections && report.inventory ? (
         <CollapsibleSection
           id="machine.runtimes"
-          title={t`Runtimes and system images`}
+          title={t`Runtimes and System Images`}
           rows={report.runtimes}
           rowKey={(runtime) => runtime.id}
           renderRow={(runtime) => <RuntimeItemRow runtime={runtime} />}
@@ -299,7 +299,7 @@ export function MacStatus({ id }: { id: string }) {
       {report.archived ? (
         <CollapsibleSection
           id="machine.archived"
-          title={t`Archived workspaces`}
+          title={t`Archived Workspaces`}
           rows={report.archived.rows}
           rowKey={(row) => row.id}
           renderRow={(row) => <SizedItemRow row={row} />}
@@ -333,7 +333,7 @@ export function MacStatus({ id }: { id: string }) {
       {builds.length > 0 ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Native builds</Trans>
+            <Trans>Native Builds</Trans>
           </Text>
           <Card>
             {builds.map((row, index) => (
@@ -359,7 +359,7 @@ export function MacStatus({ id }: { id: string }) {
       {placements && placements.placements.length > 0 ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Where builds ran</Trans>
+            <Trans>Where Builds Ran</Trans>
           </Text>
           <Text variant="footnote" tone="secondary">
             {todayLine(placements.today)}
@@ -388,7 +388,7 @@ export function MacStatus({ id }: { id: string }) {
       {machines.length > 0 || machinesError || machinesPending ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Build machines</Trans>
+            <Trans>Build Machines</Trans>
           </Text>
           {machinesPending && machines.length === 0 && !machinesError ? (
             <View style={styles.legendRow}>
@@ -442,7 +442,7 @@ export function MacStatus({ id }: { id: string }) {
       {clients.length > 0 ? (
         <View style={styles.block}>
           <Text variant="headline" accessibilityRole="header">
-            <Trans>Builds for other Macs</Trans>
+            <Trans>Builds for Other Macs</Trans>
           </Text>
           <Card>
             {clients.map((client, index) => (
@@ -485,7 +485,7 @@ export function MacStatus({ id }: { id: string }) {
       {attention.length > 0 ? (
         <CollapsibleSection
           id="machine.attention"
-          title={t`Needs attention`}
+          title={t`Needs Attention`}
           rows={attention}
           rowKey={(group) => group.path}
           renderRow={(group) => <AttentionRows group={group} home={home} status={status} />}
@@ -977,7 +977,7 @@ function AttentionRows({
               <Text variant="caption" mono style={styles.grow} selectable numberOfLines={2}>
                 {item.remedy}
               </Text>
-              <CopyButton text={item.command} accessibilityLabel={t`Copy command`} filled={false} />
+              <CopyButton text={item.command} accessibilityLabel={t`Copy Command`} filled={false} />
             </View>
           ) : null}
         </View>

@@ -513,7 +513,11 @@ export function protocolJsonSchema(): JsonSchema {
           client: {
             type: 'object',
             required: ['name', 'version'],
-            properties: { name: { type: 'string' }, version: { type: 'string' } },
+            properties: {
+              name: { type: 'string' },
+              version: { type: 'string' },
+              runId: { type: 'string', pattern: '^[A-Za-z0-9._-]{1,64}$' },
+            },
           },
           auth: {
             oneOf: [

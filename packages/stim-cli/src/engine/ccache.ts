@@ -2,8 +2,10 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
+import { machineNumber } from '../budget.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { getExecutor } from '../exec.ts';
+import { loadConfig, type Config } from '../workspace/config.ts';
 import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
 import type { CcacheActivity } from './build-facts.ts';
 
@@ -40,16 +42,23 @@ export function ccacheStatsLog(root: string): string {
   return join(workspaceLogsDir(root), STATS_LOG_FILE);
 }
 
+export function ccacheMaxSize(config: Config | null = loadConfig(), env: NodeJS.ProcessEnv = process.env): string {
+  const { value, error } = machineNumber('caches.ccacheMaxGb', config, env);
+  return error || value === undefined ? CCACHE_MAX_SIZE : `${value}G`;
+}
+
 export function ccacheEnvironment({
   binary,
   dir,
   workspaceRoot,
   statsLog,
+  maxSize = CCACHE_MAX_SIZE,
 }: {
   binary: string;
   dir: string;
   workspaceRoot: string;
   statsLog: string;
+  maxSize?: string;
 }): Record<string, string> {
   return {
     CMAKE_C_COMPILER_LAUNCHER: binary,
@@ -60,7 +69,7 @@ export function ccacheEnvironment({
     // spelling only; CCACHE_HASHDIR=false is not honored.
     CCACHE_NOHASHDIR: 'true',
     CCACHE_SLOPPINESS,
-    CCACHE_MAXSIZE: CCACHE_MAX_SIZE,
+    CCACHE_MAXSIZE: maxSize,
     CCACHE_STATSLOG: statsLog,
   };
 }
@@ -178,6 +187,6 @@ export function resolveCcache({
   return {
     dir,
     statsLog,
-    env: ccacheEnvironment({ binary, dir, workspaceRoot: canonical(root), statsLog }),
+    env: ccacheEnvironment({ binary, dir, workspaceRoot: canonical(root), statsLog, maxSize: ccacheMaxSize() }),
   };
 }

@@ -66,7 +66,7 @@ struct SimulatorOptionsView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
-        Text("Simulator options").font(.stim(.headline))
+        Text("Simulator Options").font(.stim(.headline))
         Spacer()
         if busy || (!loaded && canControl) { ProgressView().controlSize(.small) }
       }

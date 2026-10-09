@@ -22,6 +22,8 @@ export function maintenanceStatus(): MaintenanceStatus {
     lastChecks: {
       pressure: state?.lastAt.pressure ?? null,
       size: state?.lastAt.size ?? null,
+      worktree: state?.lastAt.worktree ?? null,
+      sweep: state?.lastAt.sweep ?? null,
     },
     pressure: state?.pressure ?? null,
     sizes: state?.sizes ?? [],
@@ -46,13 +48,16 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
       })
     : null;
   const outputs = status.plan.filter((action) => action.kind === 'would-clear-outputs');
-  const summary = outputs.length
-    ? `would clear build outputs of ${outputs.length} ${outputs.length === 1 ? 'workspace' : 'workspaces'} (${(outputs.reduce((sum, action) => sum + action.bytes, 0) / 1024 ** 3).toFixed(1)} GB)`
-    : `${status.plan.length} planned actions`;
+  const summary =
+    status.mode === 'on' && status.lastPass
+      ? `${status.lastPass.actions} actions, ${(status.lastPass.freedBytes / 1024 ** 3).toFixed(1)} GB freed`
+      : outputs.length
+        ? `would clear build outputs of ${outputs.length} ${outputs.length === 1 ? 'workspace' : 'workspaces'} (${(outputs.reduce((sum, action) => sum + action.bytes, 0) / 1024 ** 3).toFixed(1)} GB)`
+        : `${status.plan.length} planned actions`;
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
-  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : 'off'}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

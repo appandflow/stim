@@ -56,6 +56,8 @@ final class AddMachineModel {
   var selectedId: String?
   var manualPort = ""
   var isFixture = false
+  private var tailscaleRead = false
+  var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
   @ObservationIgnored private let dependencies: Dependencies
   @ObservationIgnored private var polling: Task<Void, Never>?
@@ -249,6 +251,7 @@ final class AddMachineModel {
     statusJSON = await dependencies.status()
     tailscaleInstall = await dependencies.tailscaleInstall()
     peers = statusJSON.map(Tailnet.peers) ?? []
+    tailscaleRead = true
     applyPreselection()
     selfNode = statusJSON.flatMap(Tailnet.selfNode)
     await withTaskGroup(of: (String, Tailnet.Health?).self) { group in
@@ -318,6 +321,20 @@ final class AddMachineModel {
       }
       if wizard.phase == .approved { await openTools() }
     } catch { self.error = error.localizedDescription }
+  }
+
+  /// Not once the remote stim-server answered 503: setup is already running there.
+  var canGoBack: Bool { page == .setup && !busy && !cancelling && !checkingJournal && !serverNotReady && wizard.canGoBack }
+
+  /// Steps back one step. A command that was shown is dropped and a fresh ticket drafted, so it can no longer
+  /// match this wizard.
+  func goBack() {
+    guard canGoBack else { return }
+    _ = wizard.apply(.back, now: now)
+    error = nil
+    manualPort = ""
+    commandKnown = nil
+    draftTicket = dependencies.ticket(dependencies.now())
   }
 
   func newCommand() async {

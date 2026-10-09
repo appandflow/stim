@@ -124,6 +124,26 @@ export function listAllIosSims({
   return parseSimctlList(out, { includeUnavailable });
 }
 
+export interface IosSimSnapshot {
+  /** All simulators, unavailable ones included (filter on `available`); one `simctl list` until `invalidate`. */
+  read(): IosSimRecord[];
+  /** Drop the cached listing after Stim changes device state, so the next `read` lists again. */
+  invalidate(): void;
+}
+
+export function createIosSimSnapshot(): IosSimSnapshot {
+  let cached: IosSimRecord[] | null = null;
+  return {
+    read() {
+      cached ??= listAllIosSims({ includeUnavailable: true });
+      return cached;
+    },
+    invalidate() {
+      cached = null;
+    },
+  };
+}
+
 export async function listAllIosSimsAsync({ timeoutMs = 30000 }: { timeoutMs?: number } = {}): Promise<IosSimRecord[]> {
   const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
   return parseSimctlList(out);

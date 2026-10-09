@@ -177,7 +177,7 @@ function scopeLine(cacheScope: string): string {
 function maintenanceReportLines(maintenance: MaintenancePreview | undefined): string[] {
   const lines: string[] = [];
   if (maintenance) {
-    lines.push(`Automatic maintenance (${maintenance.mode === 'report' ? 'report only' : 'off'}):`);
+    lines.push(`Automatic maintenance (${maintenance.mode === 'report' ? 'report only' : maintenance.mode}):`);
     if (maintenance.note) lines.push(`  ${maintenance.note}`);
     for (const action of maintenance.actions)
       lines.push(`  ${action.kind}: ${action.target} (${formatBytes(action.bytes)}): ${action.reason}`);

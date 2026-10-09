@@ -15,14 +15,13 @@ struct PhoneAppsArt: View {
           Capsule().fill(Palette.brand).frame(width: 24, height: 5).padding(.top, Space.sm)
         }
       VStack(spacing: Space.sm) {
-        BrandBadge(systemImage: "sparkles", size: 34)
-        Image(systemName: "circle.grid.3x3.fill")
-          .font(.system(size: 18, weight: .semibold)).foregroundStyle(Palette.secondary)
-          .frame(width: 34, height: 34)
-          .background(Palette.background, in: RoundedRectangle(cornerRadius: Radius.small))
-          .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.border))
+        ForEach([PhoneInstallApp.stim, .tailscale], id: \.self) { app in
+          app.logo.frame(width: 24, height: 24).frame(width: 34, height: 34)
+            .background(.white, in: RoundedRectangle(cornerRadius: Radius.small))
+            .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.border))
+        }
       }.padding(.top, Space.sm)
-      Text("TestFlight").font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
+      Label("App Store", systemImage: "arrow.down.app").font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
         .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
         .background(Capsule().fill(Palette.surface)).overlay(Capsule().strokeBorder(Palette.border))
         .shadow(color: Palette.shadow.opacity(0.08), radius: 4, y: 2)
@@ -70,7 +69,7 @@ struct PhoneServeArt: View {
       BrandBadge(systemImage: "antenna.radiowaves.left.and.right")
         .symbolEffect(.pulse, isActive: !reduceMotion)
       HStack(spacing: Space.xs) {
-        Image(systemName: "lock.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.brand)
+        Image(systemName: "lock.fill").font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.primary)
         Text("Tailnet only").font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
       }
       .padding(.horizontal, Space.md).padding(.vertical, Space.xs)

@@ -14,7 +14,7 @@ struct TipCard: View {
       Text(topic.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: Space.xs) {
         Button(topic.actionTitle, action: perform).buttonStyle(.stim(.primary, .small))
-        if hasNext { Button("Next tip", action: next).buttonStyle(.stim(.plain, .small)) }
+        if hasNext { Button("Next Tip", action: next).buttonStyle(.stim(.plain, .small)) }
       }
       .padding(.top, Space.xxs)
     }

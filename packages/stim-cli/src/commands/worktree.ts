@@ -13,6 +13,7 @@ import {
 import { getProject, isPathPrefix, loadConfig, removeProject, upsertProject } from '../workspace/config.ts';
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
+import { relocatePods } from '../workspace/pods-relocate.ts';
 import { appProjectProblem, findProjectRoot } from '../workspace/project.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
@@ -64,6 +65,53 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
     command = 'bun install';
   else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
   return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
+}
+
+function relocateCarriedPods(root: string, target: string, copied: string[]): void {
+  const canRelocate = depsOutOfSync(root, target, copied).length === 0;
+  for (const rel of copied) {
+    if (rel !== 'Pods' && !rel.endsWith('/Pods')) continue;
+    const iosDir = rel === 'Pods' ? '' : rel.slice(0, -'/Pods'.length);
+    try {
+      const result = relocatePods({
+        podsDir: join(target, rel),
+        podfileLockPath: join(target, iosDir, 'Podfile.lock'),
+        sourceRoot: root,
+        targetRoot: target,
+        canRelocate,
+      });
+      if (result.ok) {
+        console.error(
+          chalk.dim(
+            phaseLine(
+              'carry',
+              result.pods.length > 0
+                ? `moved ${rel} to this checkout's path; ${result.pods.join(', ')} checksum depends on the checkout path, so pod install is not needed`
+                : `moved ${rel} to this checkout's path; the locks match, so pod install is not needed`,
+            ),
+          ),
+        );
+      } else if (result.withheld) {
+        console.error(
+          chalk.yellow(
+            phaseLine(
+              'carry',
+              `${rel} names the source checkout's path; removed ${rel}/Manifest.lock so pod install runs`,
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      console.error(
+        chalk.yellow(
+          phaseLine(
+            'carry',
+            `could not move ${rel} to this checkout's path: ${(error as Error).message}. pod install will run`,
+          ),
+        ),
+      );
+    }
+  }
 }
 
 function reportCarriedStateHealth(root: string, target: string, copied: string[]): void {
@@ -170,6 +218,7 @@ export function registerWarm(worktree: Command): void {
         const app = findProjectRoot(process.cwd());
         if (app) recordWorkspaceUse(app);
         workspace = warmedWorkspace(root, target, process.cwd());
+        if (workspace && workspace !== app) recordWorkspaceUse(workspace);
         if (!workspace) {
           console.error(
             chalk.dim(
@@ -224,6 +273,7 @@ export function registerWarm(worktree: Command): void {
           }
           if (result.copied.length) {
             console.error(chalk.dim(phaseLine('carry', `copied ${carriedFileList(result.copied)} from ${root}`)));
+            relocateCarriedPods(root, target, result.copied);
             reportCarriedStateHealth(root, target, result.copied);
           }
           console.error(

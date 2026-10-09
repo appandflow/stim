@@ -504,14 +504,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   {
     key: 'maintenance.mode',
-    type: { kind: 'choice', choices: ['off', 'report'] },
+    type: { kind: 'choice', choices: ['off', 'report', 'on'] },
     scopes: MACHINE,
-    default: 'report',
+    default: 'on',
     env: 'STIM_MAINTENANCE',
     scopedHomeValue: 'off',
     ciValue: 'off',
     description:
-      'Automatic resource maintenance. report measures, plans and logs what it would do and never deletes or stops anything; off disables it. Off under STIM_HOME or CI unless STIM_MAINTENANCE is set',
+      'Automatic resource maintenance. on removes what gc would remove under the caps and floors below and logs every action; report measures, plans and logs what it would do and never deletes anything; off disables it. Off under STIM_HOME or CI unless STIM_MAINTENANCE is set',
   },
   {
     key: 'maintenance.pressureCheckMinutes',
@@ -593,6 +593,53 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Plan toward this percentage of each size cap',
   },
   {
+    key: 'maintenance.worktreeCheckMinutes',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 15,
+    env: 'STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES',
+    description: 'Finished-worktree check interval in minutes',
+  },
+  {
+    key: 'maintenance.sweepHours',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 24,
+    env: 'STIM_MAINTENANCE_SWEEP_HOURS',
+    description: 'Age sweep interval in hours; 0 turns the age sweep off',
+  },
+  {
+    key: 'maintenance.olderThanDays',
+    type: { kind: 'number', integer: true, minimum: 1 },
+    scopes: MACHINE,
+    default: 7,
+    env: 'STIM_MAINTENANCE_OLDER_THAN_DAYS',
+    description: 'Age in days for the age sweep: unused workspace build outputs and shared cache entries',
+  },
+  {
+    key: 'maintenance.protectRecentHours',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: MACHINE,
+    default: 2,
+    env: 'STIM_MAINTENANCE_PROTECT_RECENT_HOURS',
+    description: 'Cache entries used within this many hours are never evicted',
+  },
+  {
+    key: 'maintenance.removeFinishedWorktrees',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: true,
+    env: 'STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES',
+    description: 'Remove clean linked worktrees whose branch or pull request finished, under gc.worktreeGraceMinutes',
+  },
+  {
+    key: 'maintenance.keep',
+    type: BOOLEAN,
+    scopes: PROJECT,
+    default: false,
+    description: 'Pin this workspace: automatic maintenance never clears its build outputs or removes its worktree',
+  },
+  {
     key: 'maintenance.workspaceOutputsMaxGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
@@ -625,6 +672,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Swift compilation-cache cap in GiB; planned emptying is whole; 0 means no cap',
   },
   {
+    key: 'caches.ccacheMaxGb',
+    type: { kind: 'number', exclusiveMinimum: 0 },
+    scopes: MACHINE,
+    default: 5,
+    env: 'STIM_CACHES_CCACHE_MAX_GB',
+    description: 'ccache size limit in GiB, passed to ccache as CCACHE_MAXSIZE; ccache evicts by itself',
+  },
+  {
     key: 'gc.worktreeGraceMinutes',
     type: CAPACITY,
     scopes: MACHINE,
@@ -652,6 +707,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'debug.logs',
+    type: { kind: 'boolean' },
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_DEBUG',
+    description:
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+  },
+  {
     key: 'hosting.agentDriver',
     type: { kind: 'choice', choices: HOSTED_AGENT_DRIVERS },
     scopes: MACHINE,
@@ -673,6 +737,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+  },
+  {
+    key: 'remote.easFallback',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description:
+      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
   },
   {
     key: 'remote.build',

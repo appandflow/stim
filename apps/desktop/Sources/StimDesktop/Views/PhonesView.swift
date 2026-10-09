@@ -62,7 +62,7 @@ struct PhonesView: View {
             BrandBadge(systemImage: "iphone", size: 64)
           }
           .accessibilityHidden(true)
-          Text("No paired phones").font(.stim(.headline))
+          Text("No Paired Phones").font(.stim(.headline))
           Text("See this Mac's workspaces, devices and logs on your phone.")
             .foregroundStyle(Palette.secondary)
             .multilineTextAlignment(.center)

@@ -286,6 +286,11 @@ Ask the user before these actions:
   nothing else.
 - gc --delete --worktrees, because it runs worktree remove on every clean,
   idle linked worktree Stim manages, across projects.
+- settings set maintenance.mode on in a home where it is off or report, because
+  it lets Stim itself clear build outputs, trim caches and remove finished
+  worktrees later, with no command from you. It is on by default outside CI
+  and scoped STIM_HOME homes. maintenance.keep true pins a workspace against
+  that; maintenance.mode report or off stops it.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when

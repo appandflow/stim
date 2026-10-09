@@ -550,7 +550,7 @@ leased until <time>" for each one.`,
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,
-                  maxLoadPerCore?, declined? }; an older stim-server omits the
+                  maxLoadPerCore?, memoryUsedBytes?, memoryTotalBytes?, declined? }; an older stim-server omits the
                   optional fields
   findings        the diagnostic findings; a lower resolved Stim is a
                   costs-time finding with a PATH or installation remedy
@@ -808,7 +808,7 @@ RULES
                     cannot read. A macOS privacy denial (EPERM) names the
                     Privacy & Security setting to grant
   maintenance     top-level { mode, pressure, actions, blocked,
-                  skips, note, invalid? }, the next report-only maintenance plan
+                  skips, note, invalid? }, the next maintenance plan
                   from live pressure and cached sizes. note says when no
                   pass has run yet. No du runs for this preview.
   sections        one array per report section, in the text order. Every key
@@ -1298,7 +1298,8 @@ RULES
                    with detail), install (staging the bundle, or fetching
                    it from a build machine) and launch. It has no cache
                    lookup: outcome is null, plannedPhases is null, and
-                   builds.macos holds its finished runs and their phases.
+                   builds.macos holds its finished runs, their phases and
+                   compileSteps.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1563,13 +1564,15 @@ RULES
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
-  maintenance { mode, lastChecks: { pressure, size }, pressure, sizes,
+  maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
-    Report-only observations; every plan action's kind starts with would-.
+    mode is off, report or on. Plan actions start with would-; the records
+    of actions taken drop the prefix (clear-outputs, trim-cache, empty-cache,
+    remove-worktree, remove-orphan, unregister-cache).
     lastChecks are epoch milliseconds or null. running comes only from a
     live maintenance/run.claims owner, never from a check stamp.
-    lastPass carries startedAt, durationMs, trigger, mode, freedBytes (0),
-    actions, stopped (0), blocked. recent holds the last 20 action, failure
+    lastPass carries startedAt, durationMs, trigger, mode, freedBytes
+    (0 in report mode), actions, stopped (0), blocked. recent holds the last 20 action, failure
     and blocked NDJSON records from maintenance/maintenance.ndjson.
     invalid names invalid settings; invalid cache caps use their defaults,
     while invalid maintenance settings disable passes. claim contains an
@@ -1624,7 +1627,7 @@ RULES
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
     cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?,
-    refusal? }
+    placement?, refusal? }
 
   fingerprint   the fingerprint the run would look up first; with
                 --eas-profile, the one EAS CLI computes
@@ -1650,6 +1653,9 @@ RULES
                 plan does not, so changes compare the fingerprint before that
                 prebuild; changeCount 0 then means those inputs match the
                 baseline. rekeyedBy is empty.
+  placement     with ios.remote or android.remote set to auto or a Mac,
+                where the plan assumes the device runs: "on <machine>" or
+                "this Mac; auto may use <machines>"; absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -1788,8 +1794,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 DEVICE PLACEMENT (\`ios|android --remote auto\`)
   Auto runs include devicePlacement: { decision, reason, machine? } in the run
-  facts, lastBuilds and build history. decision is "local", "hosted" or
-  "waited-locally" (the local run actually waited for a device slot). The same
+  facts, lastBuilds and build history. decision is "local", "hosted",
+  "waited-locally" (the local run actually waited for a device slot) or "eas"
+  (remote.easFallback put it on an EAS Simulator, reported like --remote eas). The same
   optional devicePlacement appears on the status device entry for each slot.
   Hosted host facts include selected: "auto" or the named machine, and reason
   for automatic placement. Plain status prints (auto: <reason>) after the host.

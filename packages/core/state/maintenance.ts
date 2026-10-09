@@ -2,14 +2,17 @@ import { readJsonObject, isJsonObject } from './json-file.ts';
 import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
-export type MaintenanceMode = 'off' | 'report';
-export type MaintenanceCheck = 'pressure' | 'size';
+export type MaintenanceMode = 'off' | 'report' | 'on';
+export type MaintenanceCheck = 'pressure' | 'size' | 'worktree' | 'sweep';
 export type MaintenanceActionKind =
   | 'would-clear-outputs'
   | 'would-trim-cache'
   | 'would-empty-cache'
   | 'would-shutdown-device'
-  | 'would-stop-workspace';
+  | 'would-stop-workspace'
+  | 'would-remove-worktree'
+  | 'would-remove-orphan'
+  | 'would-unregister-cache';
 
 export interface MaintenanceAction {
   kind: MaintenanceActionKind;
@@ -17,6 +20,9 @@ export interface MaintenanceAction {
   bytes: number;
   reason: string;
   workspace?: string;
+  dir?: string;
+  olderThanDays?: number;
+  check?: 'worktree' | 'sweep' | 'disk';
 }
 
 export interface MaintenanceSize {
@@ -44,8 +50,8 @@ export interface MaintenancePass {
   startedAt: number;
   durationMs: number;
   trigger: string;
-  mode: 'report';
-  freedBytes: 0;
+  mode: 'report' | 'on';
+  freedBytes: number;
   actions: number;
   stopped: 0;
   blocked: string[];
@@ -59,10 +65,9 @@ export interface MaintenanceRecord extends NdjsonRecord {
   event: 'maintenance_pass' | 'maintenance_action' | 'maintenance_skip' | 'maintenance_failure' | 'maintenance_check';
   pass: string;
   trigger: string;
-  mode: 'report';
+  mode: 'report' | 'on';
 }
 
-/** Version 1 contains report-only observations; every action is a plan and no resource was reclaimed. */
 export interface MaintenanceState {
   version: 1;
   lastAt: Partial<Record<MaintenanceCheck, number>>;
@@ -79,7 +84,7 @@ export interface MaintenanceStatus {
   mode: MaintenanceMode;
   invalid?: string;
   claim?: { unresolved: string; removeCommand: string };
-  lastChecks: { pressure: number | null; size: number | null };
+  lastChecks: { pressure: number | null; size: number | null; worktree: number | null; sweep: number | null };
   pressure: MaintenancePressure | null;
   sizes: MaintenanceSize[];
   lastPass: MaintenancePass | null;
@@ -97,6 +102,9 @@ const KINDS: readonly string[] = [
   'would-empty-cache',
   'would-shutdown-device',
   'would-stop-workspace',
+  'would-remove-worktree',
+  'would-remove-orphan',
+  'would-unregister-cache',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
@@ -136,7 +144,10 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         typeof action.target === 'string' &&
         finite(action.bytes) &&
         typeof action.reason === 'string' &&
-        (action.workspace === undefined || typeof action.workspace === 'string'),
+        (action.workspace === undefined || typeof action.workspace === 'string') &&
+        (action.dir === undefined || typeof action.dir === 'string') &&
+        (action.olderThanDays === undefined || finite(action.olderThanDays)) &&
+        (action.check === undefined || ['worktree', 'sweep', 'disk'].includes(String(action.check))),
     )
   )
     return null;
@@ -158,7 +169,7 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         ].includes(String(record.event)) &&
         typeof record.pass === 'string' &&
         typeof record.trigger === 'string' &&
-        record.mode === 'report',
+        (record.mode === 'report' || record.mode === 'on'),
     )
   )
     return null;
@@ -168,8 +179,8 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
       !finite(value.lastPass.startedAt) ||
       !finite(value.lastPass.durationMs) ||
       typeof value.lastPass.trigger !== 'string' ||
-      value.lastPass.mode !== 'report' ||
-      value.lastPass.freedBytes !== 0 ||
+      (value.lastPass.mode !== 'report' && value.lastPass.mode !== 'on') ||
+      !finite(value.lastPass.freedBytes) ||
       value.lastPass.stopped !== 0 ||
       !finite(value.lastPass.actions) ||
       !strings(value.lastPass.blocked))

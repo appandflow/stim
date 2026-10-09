@@ -45,7 +45,8 @@ struct SidebarWorktreeRow: View {
       summary.problems = []
       summary.subtitle = "\(archives[0].removedLabel(now: now)), \(Format.fileSize(archives.reduce(0) { $0 + $1.bytes.total }))"
       for index in summary.apps.indices {
-        summary.apps[index].label = (WorktreePage.project(page.apps[index]) as NSString).lastPathComponent
+        summary.apps[index].name = (WorktreePage.project(page.apps[index]) as NSString).lastPathComponent
+        summary.apps[index].platforms = []
         summary.apps[index].status = summary.status
       }
     }
@@ -97,7 +98,7 @@ struct SidebarWorktreeRow: View {
       .accessibilityLabel(summary.label)
       .accessibilityActions {
         if archives.isEmpty, let app = page.apps.first(where: { ($0.logs?.errorsSinceMarker ?? 0) > 0 }) {
-          Button("Show errors") { openLogs(app.path) }
+          Button("Show Errors") { openLogs(app.path) }
         }
       }
     }
@@ -121,19 +122,30 @@ private struct AppBadges: View {
   var apps: [WorktreeRowSummary.App]
 
   var body: some View {
+    let shown = apps.filter { $0.name != nil || !$0.platforms.isEmpty }
     ViewThatFits(in: .horizontal) {
-      HStack(spacing: Space.md) { badges }.fixedSize()
-      VStack(alignment: .leading, spacing: Space.xs) { badges }
+      HStack(spacing: Space.lg) { groups(shown) }.fixedSize()
+      VStack(alignment: .leading, spacing: Space.xs) { groups(shown) }
     }
     .font(.stim(.caption))
   }
 
-  private var badges: some View {
+  private func groups(_ apps: [WorktreeRowSummary.App]) -> some View {
     ForEach(apps.indices, id: \.self) { index in
       let app = apps[index]
-      HStack(spacing: Space.xs) {
-        StatusDot(color: Color(app.status.tone), filled: app.active)
-        Text(app.label).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
+      HStack(spacing: Space.md) {
+        if let name = app.name {
+          HStack(spacing: Space.xs) {
+            if app.platforms.isEmpty { StatusDot(color: Color(app.status.tone), filled: app.active) }
+            Text(name).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.tail)
+          }
+        }
+        ForEach(app.platforms, id: \.platform) { state in
+          HStack(spacing: Space.xs) {
+            StatusDot(color: Color(state.tone), filled: state.filled)
+            Text(state.label).foregroundStyle(Palette.secondary).lineLimit(1)
+          }
+        }
       }
     }
   }

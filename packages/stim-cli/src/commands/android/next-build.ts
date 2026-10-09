@@ -3,6 +3,7 @@ import { loadCacheProvider } from '@stim-cli/cache';
 import { buildCacheKey, fingerprintProject } from '../../cache/build-cache.ts';
 import { phaseLine } from '../../command-output.ts';
 import {
+  androidSystemImageAbi,
   hostSystemImageArch,
   listAvds,
   listInstalledSystemImages,
@@ -17,9 +18,16 @@ import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/r
 import { statsProjectKey } from '../../engine/stats.ts';
 import { getProject } from '../../workspace/config.ts';
 import { appProjectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
-import { resolveSettings } from '../../workspace/settings.ts';
+import {
+  publicUrlSetting,
+  remoteEasFallbackSetting,
+  resolveSettings,
+  tunnelModeSetting,
+} from '../../workspace/settings.ts';
+import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
+import { planHostedDevice } from '../../device-host/plan-placement.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import { resolveAndroidRunPlan } from './plan.ts';
 import { androidBuildOptions, NO_DEVICE, NO_FINGERPRINT, PLATFORM } from './support.ts';
@@ -136,9 +144,10 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
 
   const slot = validateDeviceSlot(opts.slot);
   const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
+  const settings = resolveSettings(settingsContext);
   const planned = resolveAndroidRunPlan(
     {
-      settings: resolveSettings(settingsContext),
+      settings,
       settingsContext,
       slot,
       easProfile: opts.easProfile,
@@ -190,11 +199,11 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     );
   }
 
-  if (target.kind !== 'emulator') {
-    if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
+  if (target.kind === 'physical') return refuse(planFlagRefusal('--device'));
+  if (target.kind === 'remote') {
     return refuse({
       code: 'STIM_BAD_ARG',
-      message: `android.remote routes this workspace's runs to a ${target.kind === 'hosted' ? target.machine : target.backend} device, whose ABI --plan cannot read without a session.`,
+      message: `android.remote is ${target.backend}, whose ABI --plan cannot read without a session.`,
       remedy: 'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
     });
   }
@@ -205,8 +214,60 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
       remedy: 'Run `stim android` to build with the CAS, or set optimizations.android.compilerCache to ccache.',
     });
   }
-  const image =
-    build.targetAbiOnly && !build.release ? emulatorImage(root, slot, target.systemImage, deps) : { systemImage: null };
+  const abiKeyed = build.targetAbiOnly && !build.release;
+  const localImage = () => (abiKeyed ? emulatorImage(root, slot, target.systemImage, deps) : { systemImage: null });
+  let image: EmulatorImage;
+  let hostedAbi: string | null = null;
+  let placement: string | undefined;
+  if (target.kind === 'hosted') {
+    const hostedPlan = await planHostedDevice({
+      root,
+      slot,
+      platform: 'android',
+      machine: target.machine,
+      selectors: {
+        ...(target.systemImage ? { systemImage: target.systemImage } : {}),
+        ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
+      },
+      sameKey: (choice) => {
+        if (build.targetAbiOnly && build.release) return !('architecture' in choice && choice.architecture);
+        if (!abiKeyed) return true;
+        const local = localImage();
+        if ('refusal' in local || !('systemImage' in choice)) return null;
+        return androidSystemImageAbi(local.systemImage) === androidSystemImageAbi(choice.systemImage);
+      },
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              checkEasFallback({
+                root,
+                platform: 'android',
+                slot,
+                release: build.release,
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                localOnlyFlags: typeof opts.systemImage === 'string' ? ['--system-image'] : [],
+              }),
+          }
+        : {}),
+    });
+    if (hostedPlan.kind === 'unknown') {
+      return refuse({
+        code: 'STIM_BAD_ARG',
+        message: `android.remote is ${target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
+        remedy:
+          'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
+      });
+    }
+    placement = hostedPlan.placement;
+    if (hostedPlan.kind === 'hosted' && 'architecture' in hostedPlan.choice)
+      hostedAbi = hostedPlan.choice.architecture ?? null;
+    image =
+      hostedPlan.kind === 'hosted'
+        ? { systemImage: abiKeyed && 'systemImage' in hostedPlan.choice ? hostedPlan.choice.systemImage : null }
+        : localImage();
+  } else image = localImage();
   if ('refusal' in image) return refuse(image.refusal);
   const { abi, runOptions, remoteRunOptions } = androidBuildOptions({
     release: build.release,
@@ -216,6 +277,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     deviceAbi: () => null,
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,
+    hostedAbi,
   });
 
   let fingerprint;
@@ -248,5 +310,5 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
     },
     { ...deps, note },
   );
-  printPlan(plan, json);
+  printPlan(placement ? { ...plan, placement } : plan, json);
 }

@@ -6,7 +6,7 @@ import { phaseLine } from './command-output.ts';
 import { formatBytes, measuredDirectorySize, volumeRootFor } from './fs-util.ts';
 import { capacity, environmentState, formatSpace, type AndroidRuntimeFacts } from './status.ts';
 import { discoverCaches } from './cache/caches.ts';
-import { planCacheEmptying, trimCaches } from './commands/gc/caches.ts';
+import { planCacheEmptying, trimCaches, type GcCache } from './commands/gc/caches.ts';
 import { deviceSweepIsScoped } from './commands/gc/devices.ts';
 import {
   collectIdleDevices,
@@ -22,7 +22,7 @@ import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/wo
 import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolver } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from './devices/ios.ts';
+import { listAllIosSims, type IosSimRecord, type IosSimSnapshot } from './devices/ios.ts';
 import { stopOwnedMetro, type OwnedMetroStop } from './supervisor/cache-reset.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './engine/workspace-process-lock.ts';
 import { resolveSupervisorTarget } from './supervisor/ownership.ts';
@@ -35,7 +35,7 @@ import { readWorkspaceState } from './workspace/workspace-state.ts';
 const MB = 1024 * 1024;
 const GB_IN_MB = 1024;
 const COMMITTED_MEMORY_SHARE = 0.6;
-const STALE_CACHE_DAYS = 14;
+export const STALE_CACHE_DAYS = 14;
 const DEVICE_LIST_TIMEOUT_MS = 10_000;
 const USAGE_TIMEOUT_MS = 10_000;
 
@@ -186,6 +186,14 @@ function listSims(): IosSimRecord[] | null {
   }
 }
 
+function snapshotSims(snapshot: IosSimSnapshot): IosSimRecord[] | null {
+  try {
+    return snapshot.read().filter((sim) => sim.available);
+  } catch {
+    return null;
+  }
+}
+
 function runningSupervisorPid(path: string, project: ProjectRecord): number | null {
   const target = resolveSupervisorTarget({
     state: readWorkspaceState(path)?.supervisor,
@@ -195,11 +203,11 @@ function runningSupervisorPid(path: string, project: ProjectRecord): number | nu
   return target.status === 'ours' ? (target.pid ?? null) : null;
 }
 
-function readMemoryUse(): MemoryUse {
+function readMemoryUse(simSnapshot?: IosSimSnapshot): MemoryUse {
   const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
   return estimateMemoryUse({
     config: loadConfig(),
-    sims: listSims(),
+    sims: simSnapshot ? snapshotSims(simSnapshot) : listSims(),
     androidSerial: (avdName) => {
       try {
         return resolve(avdName).serial ?? null;
@@ -401,14 +409,18 @@ async function reclaimWorkspaceOutputs({ root, dryRun, now, diskRecovered }: Ste
   return { targets, failures };
 }
 
-function cacheLabel(cache: { name: string; dir: string }): string {
+export function cacheLabel(cache: { name: string; dir: string }): string {
   return `${cache.name} ${cache.dir}`;
 }
 
-function reclaimStaleCacheEntries({ dryRun }: StepContext): StepResult {
-  const caches = planCacheEmptying(discoverCaches(), false).filter(
+export function trimmableCaches(): GcCache[] {
+  return planCacheEmptying(discoverCaches(), false).filter(
     (cache) => cache.prune !== 'report-only' && cache.prune !== 'atomic' && !cache.machineGlobal,
   );
+}
+
+function reclaimStaleCacheEntries({ dryRun }: StepContext): StepResult {
+  const caches = trimmableCaches();
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
   return { targets: trimCaches(caches, STALE_CACHE_DAYS).map(cacheLabel), failures: 0 };
 }
@@ -445,7 +457,7 @@ async function runStep(step: ReclaimStepName, context: StepContext): Promise<Ste
 
 export interface BudgetDeps {
   volumes: (paths: readonly string[]) => VolumeSpace[];
-  memory: () => MemoryUse;
+  memory: (simSnapshot?: IosSimSnapshot) => MemoryUse;
   step: (step: ReclaimStepName, context: StepContext) => Promise<StepResult>;
   usage: () => string[];
   now: () => number;
@@ -519,7 +531,8 @@ export async function enforceBudget(
     note,
     dryRun = false,
     budget: resolved,
-  }: { root: string; note: (line: string) => void; dryRun?: boolean; budget?: Budget },
+    simSnapshot,
+  }: { root: string; note: (line: string) => void; dryRun?: boolean; budget?: Budget; simSnapshot?: IosSimSnapshot },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
   const deps = { ...DEFAULT_DEPS, ...overrides };
@@ -536,7 +549,7 @@ export async function enforceBudget(
   const paths = [root, getConfigDir()];
   const measureNow = (): BudgetMeasure => ({
     volumes: budget.minFreeDiskMb > 0 || budget.hardFloorDiskMb > 0 ? deps.volumes(paths) : [],
-    memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? deps.memory() : null,
+    memory: budget.maxCommittedMemoryMb > 0 || budget.maxLiveWorkspaces > 0 ? deps.memory(simSnapshot) : null,
   });
   let measure = measureNow();
   let short = budgetShortfalls(budget, measure);
@@ -563,6 +576,7 @@ export async function enforceBudget(
       diskRecovered: () => budgetShortfalls(budget, { volumes: deps.volumes(paths), memory: null }).disk.length === 0,
     });
     if (!dryRun) {
+      simSnapshot?.invalidate();
       measure = measureNow();
       short = budgetShortfalls(budget, measure);
     }
@@ -609,7 +623,7 @@ export async function peekBudget(root: string, overrides: Partial<BudgetDeps> = 
 }
 
 export async function budgetGate(
-  args: { root: string; note: (line: string) => void },
+  args: { root: string; note: (line: string) => void; simSnapshot?: IosSimSnapshot },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<{ reclaimed: ReclaimedStep[]; refusal: BudgetRefusal | null }> {
   const outcome = await enforceBudget(args, overrides);

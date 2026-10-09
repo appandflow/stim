@@ -23,6 +23,12 @@ export function validateInfoPlist(
   return { bundleId: plist.CFBundleIdentifier, minimumSystemVersion: plist.LSMinimumSystemVersion };
 }
 
+export function setBundleName(plistPath: string, name: string): void {
+  const exec = getExecutor();
+  for (const key of ['CFBundleDisplayName', 'CFBundleName'])
+    exec.runFile('plutil', ['-replace', key, '-string', name, plistPath]);
+}
+
 export interface BundleExtras {
   resources: Record<string, string>;
   assetCatalog?: string;
@@ -104,6 +110,7 @@ export function stageBundle(
   bundle: string,
   bundleId: string,
   extras: BundleExtras = { resources: {} },
+  displayName?: string,
 ): void {
   const { minimumSystemVersion } = validateInfoPlist(root, product, infoPlist);
   for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
@@ -122,6 +129,7 @@ export function stageBundle(
   cpSync(join(bin, product), executable);
   cpSync(resolve(root, infoPlist), join(contents, 'Info.plist'));
   exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')]);
+  if (displayName !== undefined) setBundleName(join(contents, 'Info.plist'), displayName);
   for (const entry of readdirSync(bin)) {
     if (entry.endsWith('.framework')) {
       const target = join(contents, 'Frameworks', entry);

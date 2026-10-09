@@ -827,10 +827,10 @@ describe('budgetRows', () => {
       ],
     };
     expect(budgetRows(settings)).toEqual([
-      { label: 'Reclaims disk', value: 'below 20 GB free' },
-      { label: 'Refuses to run', value: 'never' },
-      { label: 'Memory budget', value: '60% of memory' },
-      { label: 'Active workspaces', value: '4' },
+      { label: 'Reclaims Disk', value: 'below 20 GB free' },
+      { label: 'Refuses to Run', value: 'never' },
+      { label: 'Memory Budget', value: '60% of memory' },
+      { label: 'Active Workspaces', value: '4' },
     ]);
     expect(budgetRows({ settings: 'nope' })).toEqual([]);
   });

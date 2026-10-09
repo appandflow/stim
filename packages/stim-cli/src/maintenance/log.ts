@@ -1,7 +1,12 @@
 import { statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
-import { maintenanceNdjsonFile, workspaceLogsDir, type MaintenanceRecord } from '@stim-cli/core/state';
+import {
+  MAINTENANCE_LOG_NAME,
+  maintenanceNdjsonFile,
+  workspaceLogsDir,
+  type MaintenanceRecord,
+} from '@stim-cli/core/state';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
@@ -43,14 +48,14 @@ export function maintenanceLogger(settings: MaintenanceSettings, pass: string, t
         event,
         pass,
         trigger,
-        mode: 'report',
+        mode: settings.mode === 'on' ? 'on' : 'report',
       };
       if (!writer.write(record)) throw writer.lastError ?? new Error(`Could not append ${file}`);
       if (
         typeof fields.workspace === 'string' &&
         ['maintenance_action', 'maintenance_failure', 'maintenance_skip'].includes(event)
       ) {
-        const workspace = createNdjsonWriter(join(workspaceLogsDir(fields.workspace), 'maintenance.ndjson'), {
+        const workspace = createNdjsonWriter(join(workspaceLogsDir(fields.workspace), MAINTENANCE_LOG_NAME), {
           maxBytes: LOG_ROTATE_BYTES,
         });
         try {

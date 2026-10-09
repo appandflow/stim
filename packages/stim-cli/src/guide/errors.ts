@@ -24,6 +24,9 @@ Branch on the code, never on the message.`,
   an unavailable choice. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
+  To see why a host was slow or refused: stim logs --source placement (hosts checked and
+  reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
+  and the host's stim-server service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
   on the host to enable handoff and native logs (hello features hosted-ios-data
@@ -776,7 +779,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. Waiting prints holder names and elapsed
+  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
+  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
   Stats records capacityWaits for waits and capacityRefusals for this code.
   See \`guide lifecycle concurrency\`.`,
@@ -1417,7 +1422,12 @@ not on any remote"  (worktree remove)
   Warm copied ignored Pods from the source checkout, but their Manifest.lock
   differs from the tracked Podfile.lock in this worktree. Warm does not change
   tracked files. Run the printed pod-install command before building directly.
-  \`stim ios\` detects a mismatch and runs \`pod install\` for you.
+  \`stim ios\` detects a mismatch and runs \`pod install\` for you. A mismatch
+  limited to checksums of podspecs that embed the source checkout's path is
+  resolved by warm itself ("carry moved <dir>/Pods to this checkout's path")
+  and does not print this line. When the locks match but Pods still name the
+  source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
+  so pod install runs" and \`stim ios\` runs \`pod install\`.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

@@ -128,7 +128,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
             }}
           />
         ) : null}
-        <NavRow icon="plus" title={t`Pair a machine`} selected={false} onPress={() => router.push('/pair')} />
+        <NavRow icon="plus" title={t`Pair a Machine`} selected={false} onPress={() => router.push('/pair')} />
         {recentRows.length > 0 ? (
           <>
             <Text
@@ -138,7 +138,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
               accessibilityRole="header"
               style={styles.sectionTitle}
             >
-              <Trans>Recent workspaces</Trans>
+              <Trans>Recent Workspaces</Trans>
             </Text>
             {recentRows.map((recent) => {
               const { title } = recent;

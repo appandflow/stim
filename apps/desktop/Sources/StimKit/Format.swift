@@ -89,6 +89,13 @@ public enum Format {
     return "\(seconds / 60):\(String(format: "%02d", seconds % 60))"
   }
 
+  /// " / ~0:49" after an elapsed time while the run is within its estimate; empty with no estimate or once the run
+  /// has taken longer than it.
+  public static func estimateSuffix(elapsedMs: Double, expectedMs: Double?) -> String {
+    guard let expectedMs, elapsedMs <= expectedMs else { return "" }
+    return " / ~\(clock(ms: expectedMs))"
+  }
+
   /// "3m 5s", or "1h 2m" from an hour up, for how long a run took.
   public static func elapsed(ms: Double) -> String {
     let s = Int(ms / 1000)

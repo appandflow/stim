@@ -12,19 +12,31 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { cacheBlocked, measurePressure } from './measure.ts';
+import { projectMaintenancePinned } from '../workspace/settings.ts';
+import type { WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
+import { recentUse } from './protect.ts';
+import { planSweep, planWorktrees } from './sweep.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
-function triggeringRoot(): string {
+export function triggeringRoot(): string {
   return canonicalPath(findProjectRoot(process.cwd()) ?? join(configDir(), 'maintenance', 'no-project'));
+}
+
+export interface PlannedMaintenance extends MaintenancePlan {
+  worktreeSweep?: WorktreeSweep;
 }
 
 export async function plannedMaintenance(
   pressure: MaintenancePressure | null,
   sizes: readonly MaintenanceSize[],
   settings: MaintenanceSettings,
-  { devices = true }: { devices?: boolean } = {},
-): Promise<MaintenancePlan> {
+  {
+    devices = true,
+    sweep = false,
+    worktrees = false,
+  }: { devices?: boolean; sweep?: boolean; worktrees?: boolean } = {},
+): Promise<PlannedMaintenance> {
   const resolved = resolveBudget();
   if (resolved.error) throw new Error(resolved.error);
   const budget = {
@@ -64,7 +76,23 @@ export async function plannedMaintenance(
     protectedRoot: root,
     scoped: Boolean(process.env.STIM_HOME),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
-  });
+    pinned: projectMaintenancePinned,
+    recentlyUsed: (workspace) => recentUse(workspace, settings),
+  }) as PlannedMaintenance;
+  const merge = (extra: MaintenancePlan) => {
+    for (const action of extra.actions)
+      if (!result.actions.some((entry) => entry.kind === action.kind && entry.target === action.target))
+        result.actions.push(action);
+    result.blocked.push(...extra.blocked);
+    result.skips.push(...extra.skips);
+  };
+  if (sweep)
+    merge(planSweep({ settings, sizes, protectedRoot: root, pinned: projectMaintenancePinned, now: Date.now() }));
+  if (worktrees) {
+    const planned = await planWorktrees({ protectedRoot: root, pinned: projectMaintenancePinned, now: Date.now() });
+    merge(planned);
+    result.worktreeSweep = planned.sweep;
+  }
   if (low) {
     result.skips.push(
       ...outputs.workspaces
@@ -111,7 +139,7 @@ export async function previewMaintenance({ devices = true }: { devices?: boolean
         note: 'maintenance.mode is off',
       };
     const pressure = measurePressure(settings, state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices });
+    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, { devices, sweep: true });
     return {
       ...result,
       mode: settings.mode,

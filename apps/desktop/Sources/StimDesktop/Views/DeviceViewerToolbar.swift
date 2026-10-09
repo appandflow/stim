@@ -13,6 +13,7 @@ struct DeviceViewerToolbar: View {
   var showsActions: Binding<Bool>?
   @Binding var scalingMode: DeviceScalingMode
   var scalingModes: [DeviceScalingMode]
+  var windowChoice: MacosWindowChoice
   var close: () -> Void
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
@@ -152,12 +153,13 @@ struct DeviceViewerToolbar: View {
     case .android(_, let d): return d.physical ? "Android device" : "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
+    case .macos: return "macOS app"
     }
   }
 
   @ViewBuilder private var commands: some View {
     let busy = actions.active(for: env.path) != nil
-    if device.appStopped {
+    if device.appStopped || (device.platform == "macos" && !device.isRunning) {
       DeviceRunButton(
         device: device, workspace: env.path, title: "Run", native: true,
         disabled: busy || env.runningBuild(for: device) != nil)
@@ -167,6 +169,10 @@ struct DeviceViewerToolbar: View {
       remoteStop(busy: busy)
     } else if case .web(let browser) = device {
       webControls(browser, busy: busy)
+    } else if case .macos = device {
+      DeviceTileMenu(
+        device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
+        openBuildLogs: nil)
     } else if device.isRunning, !device.isPhysical {
       Button("Stop") {
         actions.run("Stop \(device.slot)", steps: [stopCommand(for: device, cwd: env.path)], present: false)
@@ -186,11 +192,11 @@ struct DeviceViewerToolbar: View {
         || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
     {
       if takenOver {
-        Button("Release control", systemImage: "hand.raised.fill") { takenOver = false }
+        Button("Release Control", systemImage: "hand.raised.fill") { takenOver = false }
           .nativeIconStyle()
           .fixedSize()
           .help("Release control so an agent can drive this device again (Escape).")
-          .accessibilityLabel("Release control")
+          .accessibilityLabel("Release Control")
       } else {
         Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
           .tutorialAnchor(.viewerControl, workspace: env.path)
@@ -213,7 +219,7 @@ struct DeviceViewerToolbar: View {
       .fixedSize()
       .disabled(busy)
       .help("stim stop: ends the remote session with the rest of the workspace")
-      .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
         Button("Run stim stop", role: .destructive) {
           actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
         }
@@ -226,7 +232,7 @@ struct DeviceViewerToolbar: View {
 
   @ViewBuilder private func webControls(_ browser: WebBrowser, busy: Bool) -> some View {
     if let url = URL(string: browser.currentURL), ["http", "https"].contains(url.scheme) {
-      Button("Open in browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
+      Button("Open in Browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
         .labelStyle(.iconOnly)
         .nativeIconStyle()
         .help("Open \(browser.currentURL) in your default browser. Stim's Chrome and its profile are not involved.")
