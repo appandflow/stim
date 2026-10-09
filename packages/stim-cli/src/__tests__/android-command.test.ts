@@ -4447,6 +4447,57 @@ describe('release skips Metro entirely', () => {
 describe('the release APK swap', () => {
   const cached = '/cache/android/entry/app-production-release.apk';
 
+  test.each(['success', 'cancel', 'device', 'install', 'throw'] as const)(
+    'temporary APK ownership survives until use and releases on %s',
+    async (outcome) => {
+      const cache = join(root, 'cached.apk');
+      const unrelated = join(root, 'unrelated.apk');
+      writeFileSync(cache, 'cached bytes');
+      writeFileSync(unrelated, 'unrelated bytes');
+      let directory: string | undefined;
+      const h = harness({
+        variant: 'productionRelease',
+        resolveCached: () => cache,
+        build: never('the build'),
+        swapApk: async () => {
+          directory = mkdtempSync(join(root, 'prepared-apk-'));
+          const apkPath = join(directory, 'app.apk');
+          writeFileSync(apkPath, 'prepared bytes');
+          if (outcome === 'cancel') {
+            const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+            assert(claim);
+            requestNativeRunCancel(root, claim.claimId);
+            process.emit('SIGINT');
+          }
+          return { ok: true, apkPath, tmpDir: directory, hermes: true, durationMs: 1 };
+        },
+        ensureDeviceBooted: async () =>
+          outcome === 'device'
+            ? { failed: true, reason: 'fixture boot refused' }
+            : { ok: true, serial: 'emulator-5584' },
+        install: ({ apkPath }: InstallArgs = {}) => {
+          assert(apkPath);
+          expect(readFileSync(apkPath, 'utf8')).toBe('prepared bytes');
+          if (outcome === 'throw') throw new Error('fixture installer threw');
+          return outcome === 'install' ? { failed: true, reason: 'fixture install refused' } : { ok: true, apkPath };
+        },
+      });
+      const run = () =>
+        withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), { write: () => {} });
+      const completed = await run().then(
+        (result) => ({ result, error: null }),
+        (error: unknown) => ({ result: null, error }),
+      );
+      expect(completed.error).toEqual(outcome === 'throw' ? new Error('fixture installer threw') : null);
+      expect(completed.result?.ok).toBe(outcome === 'throw' ? undefined : outcome === 'success');
+      expect(completed.result?.error?.code === 'STIM_CANCELLED').toBe(outcome === 'cancel');
+      assert(directory);
+      expect(existsSync(directory)).toBe(false);
+      expect(readFileSync(cache, 'utf8')).toBe('cached bytes');
+      expect(readFileSync(unrelated, 'utf8')).toBe('unrelated bytes');
+    },
+  );
+
   test('a release cache hit re-packs: cached APK in, temp copy out, THAT copy installed', async () => {
     const h = harness({
       variant: 'productionRelease',

@@ -1,4 +1,3 @@
-import { rmSync } from 'node:fs';
 import { hostedAndroidStatus, type HostedDeviceSelectors } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroid } from '../../device-host/ios-state.ts';
@@ -161,7 +160,5 @@ export async function finishHostedAndroidRun({
       (error as Error).message,
       `Retry stim android --remote ${target.host.machine}, or run stim stop to reconcile the recorded placement.`,
     );
-  } finally {
-    if (artifact.swapDir) rmSync(artifact.swapDir, { recursive: true, force: true });
   }
 }

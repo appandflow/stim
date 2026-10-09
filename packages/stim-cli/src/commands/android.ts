@@ -124,7 +124,7 @@ import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifact } from './android/artifact.ts';
+import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
@@ -1173,6 +1173,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.systemImage = device.systemImage;
   record.deviceProfile = device.deviceProfile;
 
+  let preparedArtifact: PreparedAndroidArtifact | undefined;
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
     if (metroCheck && metroPort !== null && plan.metroWarmup)
       void prewarmMetro({
@@ -1250,6 +1251,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const { artifact } = acquiredArtifact;
+    preparedArtifact = artifact;
     const { apkPath } = artifact;
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
@@ -1392,7 +1394,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         bootDuration: () => bootDuration,
         apkPath,
         androidPackage,
-        swapDir: artifact.swapDir,
         record,
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,
@@ -1450,5 +1451,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } catch (error) {
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
+  } finally {
+    preparedArtifact?.release();
   }
 }
