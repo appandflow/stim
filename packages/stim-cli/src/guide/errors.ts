@@ -779,7 +779,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. Waiting prints holder names and elapsed
+  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
+  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
   Stats records capacityWaits for waits and capacityRefusals for this code.
   See \`guide lifecycle concurrency\`.`,

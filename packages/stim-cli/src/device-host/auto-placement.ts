@@ -18,7 +18,13 @@ import { hostingMachines } from './machines.ts';
 import { call, connectHost, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { readHostedNative, writeHostedNative } from './ios-state.ts';
-import { decideDevicePlacement, type PlacementHere, type PlacementProbe, type PlacementSkip } from './placement.ts';
+import {
+  decideDevicePlacement,
+  type EasFallbackCheck,
+  type PlacementHere,
+  type PlacementProbe,
+  type PlacementSkip,
+} from './placement.ts';
 
 export async function probeHost(
   machine: string,
@@ -97,6 +103,10 @@ function local(code: string, reason: string, skipped: PlacementSkip[] = []) {
   return { target: null, placement: { decision: 'local' as const, reason }, code, skipped };
 }
 
+function viaEas(code: string, reason: string, skipped: PlacementSkip[]) {
+  return { target: null, placement: { decision: 'eas' as const, machine: 'eas', reason }, code, skipped };
+}
+
 export async function automaticDevicePlacement(
   {
     root,
@@ -105,6 +115,7 @@ export async function automaticDevicePlacement(
     selectors,
     buildMachine,
     noWait,
+    eas,
   }: {
     root: string;
     slot: string;
@@ -112,6 +123,8 @@ export async function automaticDevicePlacement(
     selectors: HostedDeviceSelectors;
     buildMachine?: string;
     noWait: boolean;
+    /** Present when remote.easFallback is on; asked only when this Mac is full and no Mac takes the run. */
+    eas?: () => Promise<EasFallbackCheck>;
   },
   {
     machines = hostingMachines,
@@ -178,22 +191,18 @@ export async function automaticDevicePlacement(
     devices,
     budgetRefusal: await budget(root),
   };
-  const early = decideDevicePlacement({
-    platform,
-    here,
-    offers: entries.map((machine) => ({ machine, failure: 'not probed' })),
-    buildMachine,
-    noWait,
-  });
-  if (early.kind === 'local' && early.skipped.length === 0) return local(early.code, early.reason);
-  const probes = await Promise.all(entries.map((machine) => probe(machine, platform, selectors)));
-  const decision = decideDevicePlacement({
-    platform,
-    here,
-    offers: probes.map((each) => each.probe),
-    buildMachine,
-    noWait,
-  });
+  const inputs = (offers: PlacementProbe[]) => ({ platform, here, offers, buildMachine, noWait });
+  const notProbed = entries.map((machine) => ({ machine, failure: 'not probed' }));
+  const early = decideDevicePlacement(inputs(notProbed));
+  const probes =
+    early.kind === 'local' && early.skipped.length === 0
+      ? []
+      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors)));
+  const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
+  let decision = decideDevicePlacement(inputs(offers));
+  if (decision.kind === 'local' && decision.atCapacity && eas)
+    decision = decideDevicePlacement({ ...inputs(offers), eas: await eas() });
+  if (decision.kind === 'eas') return viaEas(decision.code, decision.reason, decision.skipped);
   if (decision.kind === 'local') return local(decision.code, decision.reason, decision.skipped);
   const target = probes.find((each) => each.probe.machine === decision.machines[0]!.machine)!.target!;
   return hosted(target, decision.code, decision.reason, decision.skipped);

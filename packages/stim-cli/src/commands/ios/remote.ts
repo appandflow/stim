@@ -8,6 +8,7 @@ import { phaseLine } from '../../command-output.ts';
 import { type DevicePlacement, type HostedIosPlacement } from '@stim-cli/core/state';
 import {
   parseIosRemote,
+  remoteEasFallbackSetting,
   remoteIosSetting,
   publicUrlSetting,
   tunnelModeSetting,
@@ -140,6 +141,7 @@ export async function selectIosPlacement(
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = args.validateSelectors();
   if (refusal) return { failure: refusal };
+  const easFallback = remoteEasFallbackSetting(args.settings);
   try {
     const placed = await d.automaticDevicePlacement({
       root,
@@ -148,9 +150,34 @@ export async function selectIosPlacement(
       selectors: hostedIosSelectors(deviceType, runtime),
       buildMachine: opts.remoteBuild,
       noWait,
+      ...(easFallback
+        ? {
+            eas: () =>
+              d.checkEasFallback({
+                root,
+                platform: 'ios',
+                slot,
+                release,
+                isExpo: d.detectIsExpo(root),
+                tunnelMode: tunnelModeSetting(args.settings),
+                publicUrl: publicUrlSetting(args.settings),
+                deviceTypeFlag: opts.deviceType,
+                localOnlyFlags: opts.runtime !== undefined ? ['--runtime'] : [],
+              }),
+          }
+        : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
-    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, placed }));
+    log?.(devicePlacementRecord({ platform: 'ios', fromFlag: opts.remote !== undefined, easFallback, placed }));
+    if (placed.placement.decision === 'eas')
+      return {
+        ...selection,
+        machine: null,
+        backend: 'eas',
+        recorded: undefined,
+        auto: { target: null },
+        devicePlacement: placed.placement,
+      };
     if (placed.target && !release && !metroCheck)
       return {
         failure: {

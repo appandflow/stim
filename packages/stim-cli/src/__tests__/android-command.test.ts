@@ -1062,6 +1062,48 @@ describe('explicit remote backend behavior', () => {
     expect(h.calls.ensureDevice.length).toBe(1);
   });
 
+  test('auto on a full Mac with remote.easFallback creates the EAS Simulator session --remote eas would', async () => {
+    const backends: unknown[] = [];
+    const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+    const h = harness({
+      remoteDevice: 'auto',
+      resolveSettingsFor: () => ({ remote: { easFallback: true } }),
+      checkEasFallback,
+      automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+        automaticDevicePlacement(args, {
+          machines: () => [],
+          peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+          capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+          memory: () => 'normal',
+          budget: async () => null,
+        }),
+      resolveRemoteDeviceContext: async (args: { backend: unknown }) => {
+        backends.push(args.backend);
+        return {
+          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        };
+      },
+      ensureMetroReachable: async () => ({ ok: true as const }),
+      remoteDeviceDeps: () => ({
+        ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        checkCapacity: () => null,
+        ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
+        ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
+        install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
+        launch: () => ({ ok: true, mode: 'remote' }),
+        createdSessionId: () => 'drs_42',
+        webPreviewUrl: () => null,
+      }),
+      resolveEasBin: () => ({ file: '/bin/eas', args: [] }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(checkEasFallback).toHaveBeenCalledOnce();
+    expect(backends).toEqual(['eas']);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
+  });
+
   test('remote debug validates local and public Metro before creating a session', async () => {
     const order: string[] = [];
     const h = harness({

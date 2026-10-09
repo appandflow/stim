@@ -1,4 +1,5 @@
 import type { HostedAndroidChoice, HostedDeviceSelectors, HostedIosChoice } from '@stim-cli/core/state';
+import type { EasFallbackCheck } from './placement.ts';
 import { automaticDevicePlacement, probeHost } from './auto-placement.ts';
 import { readHostedNative } from './ios-state.ts';
 import { hostingMachines } from './machines.ts';
@@ -23,6 +24,7 @@ export async function planHostedDevice({
   machine,
   selectors,
   sameKey,
+  eas,
   deps = {},
 }: {
   root: string;
@@ -32,6 +34,8 @@ export async function planHostedDevice({
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this Mac's own device would; null when this Mac's key is unknown. */
   sameKey: (choice: Choice) => boolean | null;
+  /** Present when remote.easFallback is on. */
+  eas?: () => Promise<EasFallbackCheck>;
   deps?: { automatic?: typeof automaticDevicePlacement; probe?: typeof probeHost; machines?: typeof hostingMachines };
 }): Promise<PlannedDevice> {
   const { automatic = automaticDevicePlacement, probe = probeHost, machines = hostingMachines } = deps;
@@ -52,9 +56,14 @@ export async function planHostedDevice({
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
     const placed = await automatic(
-      { root, slot, platform, selectors, noWait: false },
+      { root, slot, platform, selectors, noWait: false, ...(eas ? { eas } : {}) },
       { read: () => ({}), write: () => {} },
     );
+    if (placed.placement.decision === 'eas')
+      return {
+        kind: 'unknown',
+        reason: `auto would run on an EAS Simulator now (${placed.placement.reason}), which --plan cannot read without a session`,
+      };
     if (placed.target)
       return {
         kind: 'hosted',

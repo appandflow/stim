@@ -18,7 +18,13 @@ import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/r
 import { statsProjectKey } from '../../engine/stats.ts';
 import { getProject } from '../../workspace/config.ts';
 import { appProjectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
-import { resolveSettings } from '../../workspace/settings.ts';
+import {
+  publicUrlSetting,
+  remoteEasFallbackSetting,
+  resolveSettings,
+  tunnelModeSetting,
+} from '../../workspace/settings.ts';
+import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
 import { planHostedDevice } from '../../device-host/plan-placement.ts';
@@ -138,9 +144,10 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
 
   const slot = validateDeviceSlot(opts.slot);
   const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
+  const settings = resolveSettings(settingsContext);
   const planned = resolveAndroidRunPlan(
     {
-      settings: resolveSettings(settingsContext),
+      settings,
       settingsContext,
       slot,
       easProfile: opts.easProfile,
@@ -229,6 +236,21 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
         if ('refusal' in local || !('systemImage' in choice)) return null;
         return androidSystemImageAbi(local.systemImage) === androidSystemImageAbi(choice.systemImage);
       },
+      ...(remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              checkEasFallback({
+                root,
+                platform: 'android',
+                slot,
+                release: build.release,
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                localOnlyFlags: opts.systemImage !== undefined ? ['--system-image'] : [],
+              }),
+          }
+        : {}),
     });
     if (hostedPlan.kind === 'unknown') {
       return refuse({

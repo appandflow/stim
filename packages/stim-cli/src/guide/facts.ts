@@ -1794,8 +1794,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 DEVICE PLACEMENT (\`ios|android --remote auto\`)
   Auto runs include devicePlacement: { decision, reason, machine? } in the run
-  facts, lastBuilds and build history. decision is "local", "hosted" or
-  "waited-locally" (the local run actually waited for a device slot). The same
+  facts, lastBuilds and build history. decision is "local", "hosted",
+  "waited-locally" (the local run actually waited for a device slot) or "eas"
+  (remote.easFallback put it on an EAS Simulator, reported like --remote eas). The same
   optional devicePlacement appears on the status device entry for each slot.
   Hosted host facts include selected: "auto" or the named machine, and reason
   for automatic placement. Plain status prints (auto: <reason>) after the host.
