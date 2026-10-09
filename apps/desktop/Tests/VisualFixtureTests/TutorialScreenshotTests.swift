@@ -94,14 +94,14 @@
           step.ask.map {
             tutorialAsk(
               $0, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
-              machine: "Studio")
+              machine: "Studio", second: snapshot.record.secondPath)
           }
         },
         commands: { step in
           tutorialCommands(
             step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
             stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio",
-            udid: "tutorial-simulator")
+            udid: "tutorial-simulator", second: "/Users/example/stim-tutorial-second")
         }
       )
       .defaultAppStorage(storage)
@@ -128,6 +128,7 @@
       var record = TutorialRecord(
         version: 2, startedAt: now, step: id, done: done)
       if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
+      if name.hasPrefix("finish") { record.secondPath = "/Users/example/stim-tutorial-second" }
       let skippedOptional = TutorialSteps.all.prefix { $0.id != id }.filter(\.optional).map(\.id)
       if name != "done" {
         record.done.removeAll { skippedOptional.contains($0) }
