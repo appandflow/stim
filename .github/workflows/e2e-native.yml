@@ -69,6 +69,10 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      hosted_native_ios_only:
+        description: 'Run only ephemeral hosted native Xcode acceptance'
+        type: boolean
+        default: false
       native_ios_only:
         description: 'Run only the native Xcode acceptance fixture'
         type: boolean
@@ -124,7 +128,7 @@ permissions:
 jobs:
   plan:
     name: plan
-    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.hosted_native_ios_only)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -627,7 +631,7 @@ jobs:
 
   native-xcode:
     name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
-    if: github.event_name == 'workflow_dispatch' && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_ios_only && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
     runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -677,7 +681,7 @@ jobs:
 
   native-gradle:
     name: native Gradle Android
-    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
+    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle && !inputs.hosted_native_ios_only
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -735,3 +739,42 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
             ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  hosted-native-xcode:
+    name: hosted native Xcode acceptance
+    if: github.event_name == 'workflow_dispatch' && inputs.hosted_native_ios_only == true
+    runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_HOSTED_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/hosted-native-xcode
+      NATIVE_XCODE_VERSION: ${{ inputs.native_ios_runner == 'ga-large' && '26.6' || '27.0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '24'
+      - name: Select hosted fixture Xcode
+        shell: bash
+        run: sudo xcode-select -s "/Applications/Xcode_${NATIVE_XCODE_VERSION}.app/Contents/Developer"
+      - name: Install pinned UI driver
+        shell: bash
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check task-only harness
+        run: pnpm run format:check && pnpm run lint
+      - name: Hosted Debug lifecycle, view, control and scoped cleanup
+        shell: bash
+        run: |
+          mkdir -p artifacts/hosted-native-xcode
+          node test/e2e/native/run-hosted-native-xcode-e2e.mjs 2>&1 | tee artifacts/hosted-native-xcode/driver.log
+      - name: Upload hosted native Xcode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-native-xcode-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/hosted-native-xcode
+          if-no-files-found: warn
