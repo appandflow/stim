@@ -331,8 +331,13 @@ Branch on the code, never on the message.`,
   works. See stim guide macos.`,
     },
     STIM_OFFLOAD_REFUSED: {
-      summary: 'the selected remote Mac cannot build this app',
+      summary: 'the selected remote Mac or automatic build pool cannot build this app',
       body: () => `STIM_OFFLOAD_REFUSED
+
+Automatic placement also refuses when local is excluded in remote.buildPoolDisabled
+and no enabled remote can finish this build, or when the build requires a local
+compiler. Enable local or choose an explicit --remote-build placement. Existing
+builds are not interrupted and a cache hit needs no compiler.
 
 A named --remote-build selection is strict. The message names the machine
 and why it cannot take or finish the build: not configured or paired, approval

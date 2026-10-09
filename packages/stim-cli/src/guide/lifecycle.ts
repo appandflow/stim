@@ -456,7 +456,10 @@ there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto is local. An unknown local device count also stays local; boot admission
-still decides. The default without a flag or setting stays local.
+still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
+members from new automatic placement only; an excluded local member is never a
+fallback. Existing sessions keep their owner and named placement bypasses the pool.
+See stim guide settings for separate build/device membership controls.
 
 Otherwise Stim asks every approved remote.machines host in parallel, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.

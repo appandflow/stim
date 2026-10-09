@@ -192,6 +192,27 @@ final class BuildMachinesModel {
     settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
   }
 
+  var poolDisabled: [String: [String]]? {
+    guard let build = settings.entry("remote.buildPoolDisabled")?.value.strings,
+      let device = settings.entry("remote.devicePoolDisabled")?.value.strings
+    else { return nil }
+    return ["build": build, "device": device]
+  }
+
+  func setPool(_ role: String, machine: String, enabled: Bool) async {
+    guard !isBusy, let disabled = poolDisabled?[role] else { return }
+    working = machine
+    defer { working = nil }
+    let value = enabled ? OffloadMachines.removing(machine, from: disabled) : OffloadMachines.adding(machine, to: disabled)
+    let result = await settings.write("remote.\(role)PoolDisabled", value: value, scope: .machine, cwd: NSHomeDirectory())
+    switch result {
+    case .success(.written): writeFailure = nil
+    case .success(.refused(let refusal)):
+      writeFailure = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
+    case .failure(let error): writeFailure = error.localizedDescription
+    }
+  }
+
   func addMachine(checkout: String?) -> AddMachineModel {
     let model = AddMachineModel(cli: cli, settings: settings, checkout: checkout)
     model.machines = self

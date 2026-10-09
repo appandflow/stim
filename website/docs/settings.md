@@ -348,6 +348,14 @@ excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
+from this requester's automatic build and simulator/emulator placement. Both default
+to `[]`; use `local` or exact `remote.machines` entries, including case and port.
+Names are not trimmed; unmatched entries exclude nothing. The settings preserve
+pairing, running work and explicit placement, and refuse disabling or removing the
+last configured, approved member of either pool. Excluding local prevents local
+fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
+
 `remote.machines` names the remote Macs this Mac may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
 Name each node and port once. Set it with
@@ -401,7 +409,7 @@ is unset. Trimmed `auto`/`local` are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
-- `auto` follows `remote.buildMode`, with the existing local fallback on failure.
+- `auto` follows `remote.buildMode` within enabled pool members, with local fallback only while local is enabled.
 - `local` keeps the build on this Mac for this run.
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores `remote.buildMode` and this Mac's load and slots.
@@ -446,7 +454,7 @@ compiles a SwiftPM Debug build:
   the load here is high. A remote Mac too old to report its load is used
   only while every slot here is busy.
 - `force` builds on a remote Mac whenever one accepts the build.
-- `off` always builds here.
+- `off` builds here when local remains enabled in the automatic build pool.
 
 Load per core is the 5-minute load average divided by the CPU count.
 `server.maxLoadPerCore` (default 2) is also the busy threshold for automatic

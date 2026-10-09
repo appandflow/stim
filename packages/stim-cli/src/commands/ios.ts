@@ -71,7 +71,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { appProjectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import { projectProblem, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { ensureDevServer, isPhysicalDeviceRequest } from './native-runtime.ts';
 import {
   PLATFORM,
@@ -348,8 +348,8 @@ async function runIos(
   };
   if (!projectRoot) return refuseProject(NO_PROJECT_REFUSAL);
   const root = projectRoot;
-  const projectProblem = appProjectProblem(root);
-  if (projectProblem) return refuseProject(projectProblem);
+  const problem = projectProblem(root, 'ios');
+  if (problem) return refuseProject(problem);
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -548,6 +548,7 @@ async function runIos(
   if ('failure' in wait) return fail(wait.failure);
   const { waitSeconds, noWait, deviceSlotWaitMs, checkCapacity } = wait;
   const deviceSlotWait = {
+    automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
     ...deviceWaitRun.policy,
@@ -590,6 +591,7 @@ async function runIos(
     log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
+  deviceSlotWait.automatic = Boolean(remoteSelection.auto);
   devicePlacement = remoteSelection.devicePlacement;
   writeDevicePlacement(root, slot, PLATFORM, devicePlacement);
   const { machine: hostedMachine, backend: remoteBackend } = remoteSelection;

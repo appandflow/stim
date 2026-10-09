@@ -100,7 +100,10 @@ refuse before stopping the app or changing its build record. See stim guide erro
 
 With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off always builds here. Configure remote.machines
+machine when one accepts, and off builds here when local remains in the automatic
+build pool. remote.buildPoolDisabled excludes members from automatic placement,
+including its local fallback. Explicit local or named placement bypasses membership.
+Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
 matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
