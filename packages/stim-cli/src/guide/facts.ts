@@ -1291,7 +1291,10 @@ RULES
                    once the app is ready and covers waiting for the
                    device: its boot, adoption cleanup, or a physical
                    device's lease and connection check. A boot that
-                   finishes during the build adds no device time. An
+                   finishes during the build adds no device time. For a
+                   device hosted on another Mac, device covers reserving
+                   and preparing it there, install covers delivering the
+                   app, and launch starts when the host launches it. An
                    --eas-profile run has no cache lookup, so its outcome
                    stays the project's most recent one until install.
                    A stim macos run enters only prepare, compile (SwiftPM,

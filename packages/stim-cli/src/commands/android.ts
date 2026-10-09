@@ -1333,6 +1333,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         record,
         fail,
         phase,
+        enterPhase: progress.step,
         out,
         json,
         useBuildCache,

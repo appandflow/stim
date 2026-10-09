@@ -192,7 +192,11 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false, slot = 'default') {
+async function deliver(
+  release = false,
+  slot = 'default',
+  enterPhase?: (phase: 'device' | 'install' | 'launch') => void,
+) {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
@@ -209,6 +213,7 @@ async function deliver(release = false, slot = 'default') {
       devClientScheme: 'exp+fixture',
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
+      enterPhase,
       metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
     });
   } finally {
@@ -238,6 +243,21 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
   expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
+});
+
+test('placement moves the build to device before reserving, install before delivery and launch before launching', async () => {
+  await deliver(false, 'default', (phase) => methods.push({ method: `phase:${phase}`, params: {} }));
+  const order = methods.map((entry) => entry.method);
+  expect(order.filter((method) => method.startsWith('phase:'))).toEqual([
+    'phase:device',
+    'phase:install',
+    'phase:launch',
+  ]);
+  expect(order.indexOf('phase:device')).toBeLessThan(order.indexOf('device-host.reserve'));
+  expect(order.indexOf('phase:install')).toBeGreaterThan(order.lastIndexOf('device-host.metro.open'));
+  expect(order.indexOf('phase:install')).toBeLessThan(order.indexOf('device-host.app.offer'));
+  expect(order.indexOf('phase:launch')).toBeGreaterThan(order.lastIndexOf('device-host.app.chunk'));
+  expect(order.indexOf('phase:launch')).toBeLessThan(order.indexOf('device-host.app.launch'));
 });
 
 test.each(['declined', 'capacity', 'pressure', 'changed-node'])(
