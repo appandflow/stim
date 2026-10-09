@@ -232,6 +232,7 @@ struct LogsView: View {
         Button("Reveal Log Folder") {
           if let dir = env?.logs?.dir { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir) }
         }
+        .buttonStyle(.stim())
         .disabled(env?.logs?.dir == nil)
       }
     }
