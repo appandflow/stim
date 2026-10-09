@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,7 +28,7 @@ it.each([
   ['chained wait', "'Offline maps'; echo complete", 0, false],
   ['newline', "\n'Offline maps'", 0, false],
 ])('collects screen and recording evidence only for successful standalone %s', async (_name, text, exitCode, valid) => {
-  root = mkdtempSync(join(tmpdir(), 'benchmark-proof-'));
+  root = realpathSync.native(mkdtempSync(join(tmpdir(), 'benchmark-proof-')));
   const runDir = join(root, 'run');
   const proofDir = join(runDir, 'proof');
   mkdirSync(proofDir, { recursive: true });
@@ -97,9 +97,10 @@ it.each([
   vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
   await import('./driver.mjs');
   const result = JSON.parse(readFileSync(join(runDir, 'run.json'), 'utf8'));
+  const missingCommand = expect.stringContaining('missing-successful-command:');
+  expect(result.screen.reason).toEqual(valid ? undefined : missingCommand);
   expect(result.screen.valid).toBe(valid);
   expect(result.recording.valid).toBe(valid);
-  const missingCommand = expect.stringContaining('missing-successful-command:');
   expect(result.screen).toMatchObject(
     valid ? { waitCommandId: 'proof-2', screenshotCommandId: 'proof-3' } : { reason: missingCommand },
   );
