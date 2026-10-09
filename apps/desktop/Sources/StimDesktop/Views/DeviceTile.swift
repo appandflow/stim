@@ -328,6 +328,8 @@ struct DeviceTile: View {
           Label(action.rawValue, systemImage: action == .control ? "cursorarrow.rays" : "arrow.up.right")
             .font(.stim(.callout, weight: .semibold))
             .foregroundStyle(Palette.primary)
+            .lineLimit(1)
+            .fixedSize()
             .accessibilityHidden(true)
         }
         if case .remote = device {
