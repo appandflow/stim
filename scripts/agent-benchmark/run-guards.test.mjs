@@ -369,6 +369,8 @@ describe('compiler cache health', () => {
 
   const noMetro =
     '  error       STIM_NO_METRO: No Metro port is reserved for this workspace.\n  remedy      Run `stim start` first.';
+  const supervisorExited =
+    "  error       STIM_SUPERVISOR_EXITED: Could not start this workspace's dev server: The supervisor exited (code 1).";
   const artifactHit = build(
     'fingerprint abcdef.. hit (1s)\ncompilation cache not run; artifact cache supplied the app',
   );
@@ -416,16 +418,17 @@ describe('compiler cache health', () => {
     ).toContain('ccache-hit-rate-below-target');
   });
 
-  it('does not blame the compiler cache for a STIM_NO_METRO refusal that precedes an artifact hit', () => {
-    expect(benchmarkCcache(meta, [...refusal(noMetro), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
-    const structured = JSON.stringify({ code: 'STIM_NO_METRO', message: 'Port 8082 is not held.', remedy: null });
-    expect(benchmarkCcache(meta, [...refusal(structured), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
+  it.each([
+    ['STIM_NO_METRO', noMetro],
+    ['STIM_SUPERVISOR_EXITED', supervisorExited],
+  ])('does not blame the compiler cache for a %s refusal that precedes an artifact hit', (code, output) => {
+    const structured = JSON.stringify({ code, message: 'The dev server is unavailable.', remedy: null });
+    for (const evidence of [output, structured]) {
+      expect(benchmarkCcache(meta, [...refusal(evidence), ...artifactHit])).toMatchObject({
+        status: 'artifact-hit',
+        invalidReasons: [],
+      });
+    }
   });
 
   it('still flags a failed build that reports no compiler statistics', () => {
@@ -433,10 +436,17 @@ describe('compiler cache health', () => {
     expect(benchmarkCcache(meta, [...refusal(failed), ...artifactHit]).invalidReasons).toContain(
       'ccache-evidence-missing',
     );
-    expect(
-      benchmarkCcache(meta, [...refusal(`${noMetro}\n  build       compiling debug with Gradle`), ...artifactHit])
-        .invalidReasons,
-    ).toContain('ccache-evidence-missing');
+    for (const output of [noMetro, supervisorExited]) {
+      for (const buildEvidence of [
+        'build       compiling debug with Gradle',
+        'compilation cache unavailable',
+        JSON.stringify({ ccache: { status: 'unavailable' } }),
+      ]) {
+        expect(
+          benchmarkCcache(meta, [...refusal(`${output}\n${buildEvidence}`), ...artifactHit]).invalidReasons,
+        ).toContain('ccache-evidence-missing');
+      }
+    }
   });
 
   it('still flags an interrupted, killed, or crashed command that could have compiled', () => {
@@ -451,17 +461,23 @@ describe('compiler cache health', () => {
       benchmarkCcache(meta, [...refusal('TypeError: boom\n    at runAndroid (android.ts:1)'), ...artifactHit])
         .invalidReasons,
     ).toContain('ccache-evidence-missing');
-    expect(benchmarkCcache(meta, [...refusal(noMetro, 0), ...artifactHit]).invalidReasons).toContain(
-      'ccache-evidence-missing',
-    );
+    for (const output of [noMetro, supervisorExited]) {
+      for (const exitCode of [0, null, 137]) {
+        expect(benchmarkCcache(meta, [...refusal(output, exitCode), ...artifactHit]).invalidReasons).toContain(
+          'ccache-evidence-missing',
+        );
+      }
+    }
   });
 
   it('still flags a refusal that is the only platform run', () => {
-    expect(benchmarkCcache(meta, refusal(noMetro))).toMatchObject({
-      status: 'investigate',
-      builds: [],
-      invalidReasons: ['ccache-evidence-missing'],
-    });
+    for (const output of [noMetro, supervisorExited]) {
+      expect(benchmarkCcache(meta, refusal(output))).toMatchObject({
+        status: 'investigate',
+        builds: [],
+        invalidReasons: ['ccache-evidence-missing'],
+      });
+    }
   });
 
   it('measures structured Stim output for both collection and immediate alerts', () => {

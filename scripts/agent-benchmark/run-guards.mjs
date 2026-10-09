@@ -470,7 +470,7 @@ function artifactCacheHit(entry) {
   );
 }
 
-const preBuildRefusalCodes = ['STIM_NO_METRO'];
+const preBuildRefusalCodes = ['STIM_NO_METRO', 'STIM_SUPERVISOR_EXITED'];
 
 function preBuildRefusal(entry) {
   return (
