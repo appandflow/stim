@@ -86,6 +86,7 @@ beforeEach(() => {
     runQuiet: run,
     runFileQuiet: (file) => (file === 'ps' ? '' : null),
     runFile(file, args = []) {
+      if (args[0] === '-list-avds' || args[0] === 'devices') return run([file, ...args].join(' '));
       calls.push([file, ...args].join(' '));
       if (args.includes('list')) return packageOutput;
       if (args.includes('clear') || args.includes('uninstall')) return cleanupResult;
@@ -286,12 +287,12 @@ test('an AVD parked between failed creation and recovery cannot bypass adoption'
       }
       return previous.spawn(file, args, options);
     },
-    run(cmd) {
-      if (cmd === 'emulator -list-avds' && creationFailed) {
+    runFile(file, args = [], options) {
+      if (args[0] === '-list-avds' && creationFailed) {
         creationFailed = false;
         park();
       }
-      return previous.run(cmd);
+      return previous.runFile(file, args, options);
     },
   });
   await expect(
