@@ -21,6 +21,7 @@ const cli = fileURLToPath(new URL('../../../packages/stim-cli/dist/cli.mjs', imp
 const env = {
   ...process.env,
   CI: '1',
+  STIM_DEBUG: '1',
   STIM_HOME: home,
   STIM_BUILD_CACHE: join(temporary, 'build-cache'),
   STIM_POOL_IOS_PARKED_MAX: '0',
@@ -176,7 +177,19 @@ async function lifecycle(configuration, phase, revision, expectedHit) {
     if (!buildFailure) throw error;
     summary.diagnostics.push(error.stack ?? String(error));
   }
-  if (buildFailure) throw buildFailure;
+  if (buildFailure) {
+    try {
+      await run(
+        `${label}-schemes-after-failure`,
+        'xcodebuild',
+        ['-project', join(app, 'NativeAcceptance.xcodeproj'), '-list', '-json'],
+        { timeout: 180_000 },
+      );
+    } catch (error) {
+      summary.diagnostics.push(error.message);
+    }
+    throw buildFailure;
+  }
   cleanup.recordBuild(facts);
   assert.equal(facts.platform, 'ios');
   assert.equal(facts.configuration, configuration);
@@ -284,6 +297,12 @@ try {
     } catch (error) {
       cleanupFailures.push(error.message);
     }
+  }
+  try {
+    const debugLogs = join(home, 'logs', 'debug');
+    if (existsSync(debugLogs)) cpSync(debugLogs, join(evidence, 'debug-logs'), { recursive: true });
+  } catch (error) {
+    summary.diagnostics.push(error.message);
   }
   summary.cleanup = { ok: cleanupFailures.length === 0, failures: cleanupFailures };
   writeFileSync(join(evidence, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
