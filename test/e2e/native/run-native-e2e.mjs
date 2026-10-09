@@ -116,7 +116,7 @@ async function main() {
   if (args.smoke) {
     log('smoke: one worktree built, launched and verified. Skipping the cache proof and named slots.');
     cleanup.recordWorkspace(wt1);
-    cli(['stop'], { cwd: wt1 });
+    stop(wt1);
     worktreeRemove(wt1);
     await verifyCleanup({ h, cleanup, appDir, created });
     return;
@@ -135,13 +135,17 @@ async function main() {
   log('CACHE PROOF: second worktree installed from cache without compiling.');
 
   cleanup.recordWorkspace(wt2);
-  cli(['stop'], { cwd: wt2 });
+  stop(wt2);
   verifyDeviceSlots(wt1, build1, flags);
   cleanup.recordWorkspace(wt1);
-  cli(['stop'], { cwd: wt1 });
+  stop(wt1);
   worktreeRemove(wt2);
   worktreeRemove(wt1);
   await verifyCleanup({ h, cleanup, appDir, created });
+}
+
+function stop(cwd) {
+  cli(['stop'], { cwd, env: { ...ENV, STIM_DEBUG: '1' } });
 }
 
 function verifyDeviceSlots(cwd, original, thirdFlags) {

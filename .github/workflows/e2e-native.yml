@@ -610,7 +610,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-android-${{ matrix.suite }}-logs
-          path: D:\e\stim-home\workspaces\**\logs\*
+          path: |
+            D:\e\stim-home\workspaces\**\logs\*
+            D:\e\stim-home\logs\debug\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
