@@ -60,15 +60,18 @@ export function worktreePage({
     (best, env) => (!best || stageRank(env, now) < stageRank(best, now) ? env : best),
     null,
   );
-  const labels = apps.map((env) =>
-    PLATFORMS.filter(
+  const labels = apps.map((env) => {
+    const used = PLATFORMS.filter(
       (platform) =>
         supportedPlatforms(env).includes(platform) ||
         entries.some((entry) => entry.path === env.path && entry.platform === platform),
-    )
-      .map(platformName)
-      .join(' \u00B7 '),
-  );
+    );
+    const native = used.includes('ios') || used.includes('android');
+    return [
+      ...(native ? ['React Native'] : []),
+      ...used.filter((platform) => !native || (platform !== 'ios' && platform !== 'android')).map(platformName),
+    ].join(' \u00B7 ');
+  });
   return {
     apps: apps.map((env) => env.path),
     projects,

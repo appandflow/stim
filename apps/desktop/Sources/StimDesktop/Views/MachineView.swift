@@ -467,6 +467,7 @@ struct MachineView: View {
               }
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }
@@ -651,6 +652,7 @@ struct MachineView: View {
               deviceRow(device)
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }
@@ -763,6 +765,7 @@ struct MachineView: View {
               runtimeRow(runtime)
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }

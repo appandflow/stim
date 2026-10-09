@@ -120,7 +120,7 @@ export type BuildCacheHit = 'local' | 'remote' | false;
 
 /** A platform's most recent `ios` or `android` run in one workspace. */
 export interface DevicePlacement {
-  decision: 'local' | 'hosted' | 'waited-locally';
+  decision: 'local' | 'hosted' | 'waited-locally' | 'eas';
   reason: string;
   machine?: string;
 }
@@ -178,6 +178,8 @@ export interface BuildHistoryEntry extends LastBuildReport {
   configuration: string | null;
   cacheKey: string | null;
   phases: Partial<Record<BuildPhase, number>>;
+  /** A `stim macos` run's SwiftPM step total; absent for other runs and when the build reported none. */
+  compileSteps?: number;
 }
 
 /** One compiler error from a failed build: where it is, when the tool said, and its message. */
@@ -241,6 +243,22 @@ export interface BuildPlanPayload {
   refusal?: { code: string; message: string; remedy: string };
   /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this Mac; auto may use janics-mac-mini`. */
   placement?: string;
+}
+
+/** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
+export interface MacosBuildPlanPayload {
+  platform: 'macos';
+  product: string;
+  buildMachine: string;
+  fingerprint: null;
+  cacheKey: null;
+  cacheHit: false;
+  provider: null;
+  cacheSkipped: false;
+  prebuild: null;
+  outcome: null;
+  expectedMs: null;
+  basis: number;
 }
 
 type ActivityState = 'driven' | 'active' | 'idle' | 'unknown';

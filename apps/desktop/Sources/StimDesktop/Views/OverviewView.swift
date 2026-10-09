@@ -11,13 +11,21 @@ struct OverviewView: View {
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
   var openIdleProject: (Project) -> Void
+  @State private var showsAllActive = false
   @State private var showsAllIdle = false
+  @State private var showsAllArchived = false
+  @State private var contentWidth: CGFloat = 1000
   @State private var capabilities: [String: ProjectCapabilities] = [:]
   @State private var capabilitiesLoaded = false
   @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
   @State private var tipState = TryThisStore(defaults: .standard).state
 
   private static let cardWidth: CGFloat = 340
+  private static let projectCardMinimum: CGFloat = 220
+
+  private var projectColumns: Int {
+    max(1, Int((contentWidth + Space.lg) / (Self.projectCardMinimum + Space.lg)))
+  }
 
   var body: some View {
     if store.payload == nil {
@@ -41,7 +49,7 @@ struct OverviewView: View {
     let running = running
     let idle = Overview.idleProjects(
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
-    let archived = Overview.recentlyArchived(store.payload?.archived ?? [])
+    let archived = ArchivedWorkspace.newestFirst(store.payload?.archived ?? [])
     let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
@@ -58,6 +66,7 @@ struct OverviewView: View {
         }
         .padding(Space.xxxl)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - Space.xxxl * 2) }) { contentWidth = $0 }
       }
       .task(id: projects.map(\.project.root)) {
         let roots = projects.map(\.project.root)
@@ -77,7 +86,9 @@ struct OverviewView: View {
   }
 
   private func runningSection(_ cards: [WallCard]) -> some View {
-    section("Active") {
+    let columns = WallCard.columns(forWidth: contentWidth)
+    let shown = showsAllActive ? cards : Array(cards.prefix(columns))
+    return section("Active") {
       if cards.isEmpty {
         Card {
           InlineEmpty("Active projects will appear here when an agent or you start one, for example with `stim start`.")
@@ -88,22 +99,30 @@ struct OverviewView: View {
         }
       } else {
         WorkspaceCardGrid(
-          cards: cards, store: store, metrics: metrics,
+          cards: shown, store: store, metrics: metrics,
           open: { selection = .environment($0.id) }, openDevice: openDevice, openLogs: openLogs)
+        if cards.count > columns {
+          Button(showsAllActive ? "Show less" : "Show more (\(cards.count - shown.count))") {
+            withAnimation(.easeInOut(duration: 0.15)) { showsAllActive.toggle() }
+          }
+          .buttonStyle(.hoverRow(outset: Space.xs))
+          .foregroundStyle(Palette.primary)
+        }
       }
     }
   }
 
   private func idleSection(_ items: [IdleProject]) -> some View {
-    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle)
+    let (shown, hidden) = Overview.visibleIdle(items, expanded: showsAllIdle, limit: projectColumns)
     return section("Idle projects") {
       LazyVGrid(
-        columns: [GridItem(.adaptive(minimum: 220, maximum: 320), spacing: Space.lg, alignment: .top)],
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
         alignment: .leading, spacing: Space.lg
       ) {
         ForEach(shown) { idleCard($0) }
       }
-      if items.count > Overview.idleShown {
+      .finiteAccessibilityFrame()
+      if items.count > projectColumns {
         Button(showsAllIdle ? "Show less" : "Show more (\(hidden))") {
           withAnimation(.easeInOut(duration: 0.15)) { showsAllIdle.toggle() }
         }
@@ -114,30 +133,32 @@ struct OverviewView: View {
   }
 
   private func idleCard(_ item: IdleProject) -> some View {
-    Button {
+    let metadata =
+      [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
+      .compactMap { $0 }.joined(separator: " \u{00B7} ")
+    let pullRequest = item.pullRequest.map { "PR #\(String($0.number)) \u{00B7} \($0.state)" }
+    let failedBuild = item.failedBuild.map { "\($0.platform == "ios" ? "iOS" : "Android") build failed" }
+    let errors = item.errors > 0 ? countLabel(item.errors, "error") : nil
+    return Button {
       openIdleProject(item.project)
     } label: {
       Card {
         VStack(alignment: .leading, spacing: Space.xs) {
           Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-          FlowLayout(spacing: Space.sm, lineSpacing: Space.xs) {
-            Text(
-              [countLabel(item.workspaces, "worktree"), item.lastActivity.map { Format.age(Date().timeIntervalSince($0)) }]
-                .compactMap { $0 }.joined(separator: " \u{00B7} ")
-            )
-            .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
-            if let pullRequest = item.pullRequest {
-              Pill(tone: pullRequest.state == "draft" ? .neutral : .brand, size: .small) {
-                Text("PR #\(String(pullRequest.number)) \u{00B7} \(pullRequest.state)")
-              }
+          HStack(spacing: Space.sm) {
+            Text(metadata).foregroundStyle(Palette.tertiary)
+            if let pullRequest {
+              Text(pullRequest).foregroundStyle(Color(item.pullRequest?.state == "draft" ? Tone.neutral : Tone.brand))
             }
-            if let failed = item.failedBuild {
-              Pill(tone: .error, size: .small) { Text("\(failed.platform == "ios" ? "iOS" : "Android") build failed") }
+            if let failedBuild {
+              Text(failedBuild).foregroundStyle(Palette.error)
             }
-            if item.errors > 0 {
-              Pill(tone: .error, size: .small) { Text(countLabel(item.errors, "error")) }
+            if let errors {
+              Text(errors).foregroundStyle(Palette.error)
             }
           }
+          .font(.stim(.caption)).lineLimit(1)
+          .help([metadata, pullRequest, failedBuild, errors].compactMap { $0 }.joined(separator: " \u{00B7} "))
         }
         .padding(.horizontal, Space.lg)
         .padding(.vertical, Space.md)
@@ -151,21 +172,40 @@ struct OverviewView: View {
   }
 
   private func archivedSection(_ items: [ArchivedWorkspace]) -> some View {
-    section("Recently archived") {
-      FlowLayout(spacing: Space.md, lineSpacing: Space.md) {
-        ForEach(items) { archive in
+    let shown = showsAllArchived ? items : Array(items.prefix(projectColumns))
+    return section("Recently archived") {
+      LazyVGrid(
+        columns: [GridItem(.adaptive(minimum: Self.projectCardMinimum, maximum: 320), spacing: Space.lg, alignment: .top)],
+        alignment: .leading, spacing: Space.lg
+      ) {
+        ForEach(shown) { archive in
           Button {
             selection = .archived(archive.id)
           } label: {
-            Pill {
-              Text(archive.title)
-              Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
-                .foregroundStyle(Palette.tertiary)
+            Card {
+              VStack(alignment: .leading, spacing: Space.xs) {
+                Text(archive.title).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
+                Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
+                  .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
+              }
+              .padding(.horizontal, Space.lg)
+              .padding(.vertical, Space.md)
+              .frame(maxWidth: .infinity, alignment: .leading)
+              .contentShape(Rectangle())
             }
           }
-          .buttonStyle(.hoverRow())
+          .buttonStyle(CardPressStyle())
+          .hoverHighlight(radius: Radius.card)
           .help("Open the archive of \(archive.title)")
         }
+      }
+      .finiteAccessibilityFrame()
+      if items.count > projectColumns {
+        Button(showsAllArchived ? "Show less" : "Show more (\(items.count - shown.count))") {
+          withAnimation(.easeInOut(duration: 0.15)) { showsAllArchived.toggle() }
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .foregroundStyle(Palette.primary)
       }
     }
   }
@@ -207,39 +247,37 @@ struct OverviewView: View {
   }
 
   private func tipSection(_ tip: TryThisTip) -> some View {
-    section("Try this") {
-      let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
-      let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
-      Card {
-        VStack(alignment: .leading, spacing: Space.md) {
-          HStack(alignment: .top) {
-            Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
-            Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
-              TryThisStore(defaults: .standard).dismiss(tip)
-              dismissedTips.insert(tip)
-            }
-          }
-          Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-          Text(prompt)
-            .font(.stim(.caption, mono: true))
-            .foregroundStyle(Palette.secondary)
-            .lineLimit(6)
-            .padding(Space.md)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
-          HStack {
-            if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
-            Spacer(minLength: 0)
-            CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+    let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
+    let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
+    return Card {
+      VStack(alignment: .leading, spacing: Space.md) {
+        HStack(alignment: .top) {
+          Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
+          Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+          Spacer(minLength: 0)
+          IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
+            TryThisStore(defaults: .standard).dismiss(tip)
+            dismissedTips.insert(tip)
           }
         }
-        .padding(Space.xl)
+        Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        Text(prompt)
+          .font(.stim(.caption, mono: true))
+          .foregroundStyle(Palette.secondary)
+          .lineLimit(6)
+          .padding(Space.md)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
+        HStack {
+          if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
+          Spacer(minLength: 0)
+          CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
+        }
       }
-      .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
-      .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
+      .padding(Space.xl)
     }
+    .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
+    .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
   }
 }

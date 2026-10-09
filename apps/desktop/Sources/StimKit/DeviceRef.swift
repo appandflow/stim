@@ -5,6 +5,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   case android(slot: String, AndroidDevice)
   case remote(RemoteDevice)
   case web(WebBrowser)
+  case macos(MacosApp)
 
   public static let defaultSlot = "default"
   /// The slot `stim stop --slot web` names to close only the workspace's Chrome.
@@ -19,6 +20,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.host.map { "android:\(slot):hosted:\($0.session)" } ?? "android:\(slot):\(d.name)"
     case .remote(let d): return "remote:\(d.sessionId)"
     case .web(let d): return "web:\(d.profile)"
+    case .macos(let d): return "macos:\(d.host.map { "hosted:\($0.session)" } ?? "local")"
     }
   }
 
@@ -32,6 +34,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d): return d.host?.machine
     case .android(_, let d): return d.host?.machine
     case .remote, .web: return nil
+    case .macos(let d): return d.host?.machine
     }
   }
 
@@ -47,6 +50,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       reason = device.host?.reason ?? device.devicePlacement?.reason
       selected = device.host?.selected
     case .remote, .web: return nil
+    case .macos:
+      reason = nil
+      selected = nil
     }
     return DevicePlacementLabel(
       machine: machineName(machine), reason: reason.map { selected == "auto" ? "auto: " + $0 : $0 })
@@ -65,7 +71,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   public var slot: String {
     switch self {
     case .ios(let s, _), .android(let s, _): return s
-    case .remote, .web: return DeviceRef.defaultSlot
+    case .remote, .web, .macos: return DeviceRef.defaultSlot
     }
   }
 
@@ -75,6 +81,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .android: return "android"
     case .remote(let d): return d.platform ?? ""
     case .web: return "web"
+    case .macos: return "macos"
     }
   }
 
@@ -84,6 +91,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .android(_, let d): return d.state
     case .remote(let d): return d.state
     case .web(let d): return d.running ? "running" : "closed"
+    case .macos(let d): return d.host != nil && d.state == "running" ? "ready" : d.state
     }
   }
 
@@ -92,7 +100,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d): return d.activity
     case .android(_, let d): return d.activity
     case .web(let d): return d.activity
-    case .remote: return nil
+    case .remote, .macos: return nil
     }
   }
 
@@ -100,7 +108,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return d.app
     case .android(_, let d): return d.app
-    case .remote, .web: return nil
+    case .remote, .web, .macos: return nil
     }
   }
 
@@ -110,7 +118,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): return d.physical
     case .android(_, let d): return d.physical
-    case .remote, .web: return false
+    case .remote, .web, .macos: return false
     }
   }
 
@@ -120,7 +128,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios(_, let d): text = d.leaseExpiresAt
     case .android(_, let d): text = d.leaseExpiresAt
-    case .remote, .web: text = nil
+    case .remote, .web, .macos: text = nil
     }
     return text.flatMap { try? Date($0, strategy: .iso8601.year().month().day().time(includingFractionalSeconds: true)) }
   }
@@ -141,6 +149,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .ios(_, let d): return d.host == nil && !d.udid.isEmpty ? d.udid : nil
     case .android: return localEmulatorSerial
     case .web(let d): return d.targetId
+    case .macos(let d): return d.launchId
     case .remote: return nil
     }
   }
@@ -154,6 +163,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.host != nil ? d.state == "ready" : d.state == "detected" || (d.physical && d.state == "connected")
     case .remote: return true
     case .web(let d): return d.running
+    case .macos(let d):
+      return d.state == "running"
     }
   }
 
@@ -173,6 +184,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.platform == "android" ? "Android" : "iOS"
     case .web:
       return "Chrome"
+    case .macos:
+      return "macOS app"
     }
   }
 
@@ -210,6 +223,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.deviceProfile.map(DeviceRef.readableDeviceProfile) ?? "Android emulator"
     case .remote(let d): return "\(d.backend.uppercased()) \(model)"
     case .web: return "Web"
+    case .macos(let d): return d.name
     }
   }
 
@@ -230,6 +244,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     case .android: return "\(own) \u{00B7} Android"
     case .remote: return "\(own) \u{00B7} remote"
     case .web: return "\(own) \u{00B7} Chrome"
+    case .macos: return "\(own) \u{00B7} macOS"
     }
   }
 
@@ -246,6 +261,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return d.owned ? d.name : nil
     case .web(let d): return DeviceRef.shortURL(d.currentURL)
     case .remote: return nil
+    case .macos: return "macOS app"
     }
   }
 
@@ -290,7 +306,7 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
     switch self {
     case .ios: return "ios.\(iosModel.name)"
     case .android(_, let d): return "android.\(d.deviceProfile ?? d.name)"
-    case .web, .remote: return "other"
+    case .web, .remote, .macos: return "other"
     }
   }
 
@@ -302,6 +318,8 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
       return .phone
     case .web(let d):
       return d.viewport == "phone" ? .phone : .desktop
+    case .macos:
+      return .desktop
     case .android, .remote:
       return .phone
     }

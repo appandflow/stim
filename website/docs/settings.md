@@ -94,42 +94,43 @@ Explicit machine project/repository overrides keep their existing precedence.
 
 `.stim.json` supports these keys:
 
-| Key                           | Purpose                                                                                                    |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `ios.deviceType`              | iOS Simulator device type                                                                                  |
-| `ios.runtime`                 | iOS Simulator runtime                                                                                      |
-| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                          |
-| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                            |
-| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                      |
-| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                           |
-| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                              |
-| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                                                       |
-| `android.systemImage`         | Android SDK system image                                                                                   |
-| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`                                               |
-| `android.dataPartitionSizeGb` | AVD data partition size                                                                                    |
-| `android.avdConfigFile`       | Additional AVD config file                                                                                 |
-| `android.avdConfig`           | Validated AVD config values                                                                                |
-| `android.variant`             | Gradle build variant                                                                                       |
-| `android.keystore`            | Release keystore path                                                                                      |
-| `android.keystorePassword`    | Release keystore password source                                                                           |
-| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                            |
-| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only) |
-| `metro.ngrokUrl`              | Existing ngrok URL                                                                                         |
-| `metro.publicUrl`             | Existing public Metro URL                                                                                  |
-| `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                            |
-| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                             |
-| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                         |
-| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                       |
-| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 30                                      |
-| `devices.reclaimIdleMinutes`  | Minutes idle before a waiting run reclaims an owned device slot; `0` disables, default 10                  |
-| `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                       |
-| `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                            |
-| `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                      |
-| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                                                                   |
-| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on                                            |
-| `cache.provider`              | Optional second-tier cache provider module                                                                 |
-| `cache.options`               | Options passed to that provider                                                                            |
-| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                       |
+| Key                           | Purpose                                                                                                                           |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `ios.deviceType`              | iOS Simulator device type                                                                                                         |
+| `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
+| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
+| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
+| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
+| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
+| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                                                                              |
+| `android.systemImage`         | Android SDK system image                                                                                                          |
+| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`                                                                      |
+| `android.dataPartitionSizeGb` | AVD data partition size                                                                                                           |
+| `android.avdConfigFile`       | Additional AVD config file                                                                                                        |
+| `android.avdConfig`           | Validated AVD config values                                                                                                       |
+| `android.variant`             | Gradle build variant                                                                                                              |
+| `android.keystore`            | Release keystore path                                                                                                             |
+| `android.keystorePassword`    | Release keystore password source                                                                                                  |
+| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
+| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
+| `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |
+| `metro.publicUrl`             | Existing public Metro URL                                                                                                         |
+| `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                                                   |
+| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                                                    |
+| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                                                |
+| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                                              |
+| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 30                                                             |
+| `devices.reclaimIdleMinutes`  | Minutes idle before a waiting run reclaims an owned device slot; `0` disables, default 10                                         |
+| `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                                              |
+| `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                                                   |
+| `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                                             |
+| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                                                                                          |
+| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on                                                                   |
+| `cache.provider`              | Optional second-tier cache provider module                                                                                        |
+| `cache.options`               | Options passed to that provider                                                                                                   |
+| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                                              |
 
 `metro.port` and `STIM_METRO_PORT` pin Metro for `stim start`, `stim ios`,
 `stim android` and pages using Metro in `stim web`. Changing the pin while
@@ -306,8 +307,8 @@ including ones it never opened a window for and ones other workspaces or
 agents are using; never quit it to free memory or clean up. Set
 `"siniulator"` to use an installed
 [Siniulator](https://github.com/kmagiera/Siniulator) instead. Set
-`"stim-desktop"` to open no simulator window and show the device in Stim
-Desktop, which selects the workspace that owns it. This is a
+`"stim-desktop"` to open no simulator window and show a launch card in Stim
+Desktop. Clicking **Show** opens the workspace that owns the device. This is a
 machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator or Stim Desktop before selecting it.
@@ -320,9 +321,10 @@ only applies to local simulators.
 `androidEmulatorApp` chooses how an owned Android emulator that Stim boots on
 macOS is displayed. It defaults to `"stim-desktop"` while Stim Desktop is
 installed and to `"emulator"` otherwise. `"emulator"` opens the emulator's own window.
-`"stim-desktop"` boots it with `-no-window -gpu host` and opens it in Stim
-Desktop, which renders frames and sends input through the emulator's gRPC
-endpoint. It applies only when Stim boots the emulator: an emulator that is
+`"stim-desktop"` boots it with `-no-window -gpu host` and shows a launch card in
+Stim Desktop. Clicking **Show** opens the emulator view. Desktop renders frames
+and sends input through the emulator's gRPC endpoint. It applies only when Stim
+boots the emulator: an emulator that is
 already running keeps its current display until it next boots, and physical
 devices are unaffected. It has no effect on Linux or Windows. An invalid value
 refuses before boot. There is no per-run flag.
@@ -691,26 +693,32 @@ recordings are otherwise cleaned up.
 
 ## Environment variables
 
-| Variable                              | Purpose                                                                                                     |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                      |
-| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                  |
-| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                  |
-| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                       |
-| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                            |
-| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                |
-| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb` |
-| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`          |
-| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                              |
-| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                            |
-| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                           |
-| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                   |
-| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`  |
-| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                             |
-| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                     |
-| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)    |
-| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                     |
-| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                  |
+| Variable                              | Purpose                                                                                                                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                                                                                           |
+| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                                                                                       |
+| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                                                                                       |
+| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                                                                                            |
+| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                                                                                                 |
+| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                                                                                     |
+| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb`                                                                      |
+| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`                                                                               |
+| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                                                                                                   |
+| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                                                                                                 |
+| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                                                                                                |
+| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                                                                                        |
+| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`                                                                       |
+| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                                                                                                  |
+| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                                                                                          |
+| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)                                                                         |
+| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
+| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                                                                                       |
+| `STIM_RUN_ID`                         | Id for this run, stamped as `runId` on its log records and sent to stim-server                                                                                                   |
+| `STIM_RUN_ID`                         | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
+
+Processes a run starts, such as the Metro supervisor, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
+
+Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
 `STIM_HOME`, `STIM_BUILD_CACHE`, and `STIM_METRO_CACHE` must be absolute paths.
 A relative value would resolve against each process's working directory, so
@@ -802,3 +810,25 @@ passed to ccache, which evicts by itself. `maintenance.sweepHours` and
 cache entries; `maintenance.removeFinishedWorktrees` controls the worktree
 check. Memory pressure is recorded; a pass never shuts down idle devices or dev servers (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
+
+## Debug logs
+
+`debug.logs` is a machine setting, off by default, with the environment
+override `STIM_DEBUG` (`1` or `0` for one command). While it is on, the CLI
+writes debug records to `$STIM_HOME/logs/debug/cli.ndjson`: each run's start and
+end, every child process with its program name, duration and exit status, and
+every request to another Mac with its duration and result code. stim-server
+writes `server.ndjson` there and logs every request with its timings to its
+service log. Records never carry arguments,
+environment values, tokens or tickets, nothing is sent anywhere, and the file
+rotates at about 8 MiB with one previous generation kept.
+
+<StimTabs code="stim settings set debug.logs true --scope machine" />
+
+Try this with your agent:
+
+```text
+Turn on debug.logs, rerun the command that stalled, then read
+~/.stim/logs/debug/cli.ndjson and tell me which child process or remote request
+took the time.
+```

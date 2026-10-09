@@ -3,7 +3,7 @@ import { t } from '@lingui/core/macro';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { I18nProvider } from '@lingui/react';
 import * as Sentry from '@sentry/react-native';
-import { DarkTheme, DefaultTheme, Stack, ThemeProvider, type ErrorBoundaryProps } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useSegments, type ErrorBoundaryProps } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { NavigationBar } from 'expo-navigation-bar';
 import { StatusBar } from 'expo-status-bar';
@@ -15,6 +15,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Button } from '@/components/button';
 import { EmptyState } from '@/components/empty-state';
 import { SplashOverlay } from '@/components/splash-overlay';
+import { addNavigationBreadcrumb } from '@/lib/diagnostics';
 import { useForegroundUpdateCheck } from '@/hooks/app-update';
 import { DevPairing } from '@/hooks/dev-pairing';
 import { HomeFiltersProvider } from '@/hooks/home-filters';
@@ -62,6 +63,8 @@ export default function RootLayout() {
 
 function RootLayoutContent() {
   useForegroundUpdateCheck();
+  const route = useSegments().join('/');
+  useEffect(() => addNavigationBreadcrumb(route), [route]);
   const { theme: current, rt } = useUnistyles();
   const scheme = rt.themeName === 'dark' ? 'dark' : 'light';
   const colors = current.colors;

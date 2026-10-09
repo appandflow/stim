@@ -257,6 +257,20 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         remote.machines; "auto" places on an approved Mac when
                         this Mac is full or busy. Unset runs here.
                         See lifecycle hosted-android.
+  remote.easFallback    true lets "auto" (ios.remote, android.remote or
+                        --remote auto) run the simulator or emulator on a
+                        billed EAS Simulator when this Mac is at its
+                        concurrency.maxDevices cap (or has runs queued) and no
+                        remote.machines Mac takes the run, instead of waiting
+                        or refusing with STIM_AT_CAPACITY. Default false. A
+                        busy Mac with a free slot never uses it. Stim checks
+                        first that the run could use --remote eas (eas-cli
+                        with simulator commands, eas simulator:availability,
+                        agent-device, the default slot, a reachable Metro);
+                        otherwise it waits or refuses as before. Machine or
+                        project scope; a committed value opts in everyone who
+                        runs the app. Only the user enables it. See lifecycle
+                        hosted-ios.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
@@ -462,6 +476,17 @@ overrides the file:
 budget is off. A value of the wrong shape refuses start, ios and android with
 STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
 
+DEBUG LOGS ARE MACHINE-LEVEL AND OFF BY DEFAULT
+debug.logs STIM_DEBUG  default false. STIM_DEBUG=1 (or 0) overrides the setting
+for one command. While on, the CLI writes debug records to
+STIM_HOME/logs/debug/cli.ndjson (run_start, run_end, exec with the program name,
+duration and exit status but never arguments, remote_connect and
+remote_request with durations and codes); stim-server writes server.ndjson there
+and logs every request with its timings to its service log. The file rotates at about 8 MiB and keeps one previous
+generation, and nothing is sent anywhere. Keys named like a secret are redacted.
+  stim settings set debug.logs true --scope machine
+See \`guide logs\` for reading the files.
+
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 maintenance.mode on (the default) removes what gc would under the caps and
 floors below; report measures and plans and deletes nothing; off disables it.
@@ -500,8 +525,9 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
   { "iosSimulatorApp": "stim-desktop" }
 
-Stim Desktop selects the workspace that owns the simulator and focuses that
-device. It only displays the simulator; it never boots or shuts it down.
+Stim Desktop keeps the current page and shows a launch card. Clicking Show
+opens the workspace that owns the simulator and focuses that device.
+It only displays the simulator; it never boots or shuts it down.
 When Stim Desktop is not running, Stim starts it without the command's
 \`STIM_HOME\`, so it reads the same Stim home as when you open it yourself.
 It shows only devices from that home: under another \`STIM_HOME\`, pick
@@ -530,7 +556,8 @@ headlessly and show it in Stim Desktop:
   { "androidEmulatorApp": "stim-desktop" }
 
 Stim then starts the emulator with \`-no-window -gpu host\` and opens
-\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop reads
+\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop shows a
+launch card and opens the emulator only when Show is clicked. It reads
 frames and sends input over the emulator's gRPC endpoint. The setting applies
 only when Stim boots the emulator: one that is already running keeps its
 current display until it next boots, and physical devices are unaffected.

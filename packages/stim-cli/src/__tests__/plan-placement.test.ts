@@ -68,7 +68,12 @@ test('a named Mac that cannot be reached or has no device is unknown, not an err
 
 test('auto staying on this Mac names the Macs it may use and flags a differing architecture', async () => {
   const stayLocal = {
-    automatic: async () => ({ target: null, placement: { decision: 'local' as const, reason: '' }, skipped: [] }),
+    automatic: async () => ({
+      target: null,
+      placement: { decision: 'local' as const, reason: '' },
+      code: 'this-mac-free',
+      skipped: [],
+    }),
   };
   const same = await planHostedDevice({
     ...base,

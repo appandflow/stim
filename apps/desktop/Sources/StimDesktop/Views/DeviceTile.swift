@@ -39,6 +39,15 @@ struct DeviceTile: View {
   /// A physical device's stream stopped taking input.
   var onControlLost: () -> Void = {}
   var onInput: (() -> Void)?
+  /// The window choice a macOS app's tile menu shares with the viewer's toolbar; the tile keeps its own when nil.
+  var windowChoice: MacosWindowChoice? = nil
+  /// Shows a macOS app's build logs.
+  var onBuildLogs: (() -> Void)? = nil
+  /// The tile sits over a button that opens its viewer: clicks go through to it, except on the stopped bar and the
+  /// "..." menu, which only such a tile has.
+  var clickThrough = false
+  @StateObject private var ownWindowChoice = MacosWindowChoice()
+  @Environment(\.displayScale) private var displayScale
   @State private var isOnscreen = false
   @State private var hovering = false
   @State private var pixelSizes: [UInt32: CGSize] = [:]
@@ -204,7 +213,7 @@ struct DeviceTile: View {
     switch device {
     case .ios: return device.isRunning && device.localSimulatorUDID != nil
     case .android: return device.isRunning && !device.isPhysical && device.hostedMachine == nil
-    case .web, .remote: return false
+    case .web, .remote, .macos: return false
     }
   }
 
@@ -251,6 +260,16 @@ struct DeviceTile: View {
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
         cardMedia
+      }
+    }
+    .allowsHitTesting(!clickThrough || showsStoppedBar)
+    .overlay(alignment: .topTrailing) {
+      if hasMenu, let workspace {
+        DeviceTileMenu(
+          device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
+        )
+        .padding(.trailing, Space.lg)
+        .padding(.top, Space.md + 2)
       }
     }
     .overlay {
@@ -315,6 +334,9 @@ struct DeviceTile: View {
         if case .remote = device {
           Pill(tone: .warning) { Text("billable") }
             .help("This remote session is billed while it runs.")
+        }
+        if hasMenu {
+          Color.clear.frame(width: 24, height: 20)
         }
       }
       DevicePlacementView(device: device)
@@ -428,7 +450,7 @@ struct DeviceTile: View {
           hardwareButton("Back", systemImage: "chevron.backward") { emulatorButtons.press(.back) }
           hardwareButton("Apps", systemImage: "square.on.square") { emulatorButtons.press(.apps) }
           hardwareButton("Lock", systemImage: "lock") { emulatorButtons.press(.lock) }
-        case .web, .remote:
+        case .web, .remote, .macos:
           EmptyView()
         }
       }
@@ -478,6 +500,10 @@ struct DeviceTile: View {
   }
 
   private var isPhysical: Bool { device.isPhysical }
+
+  private var hasMenu: Bool {
+    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
+  }
 
   @ViewBuilder private var screenCover: some View {
     if !showsCovers || interactive {
@@ -545,7 +571,8 @@ struct DeviceTile: View {
       if let run {
         DeviceRunButton(
           device: device, workspace: run.cwd,
-          title: viewer ? "Run" : device.platform == "web" ? "Open" : "Boot", present: !viewer && device.platform == "web")
+          title: viewer || device.platform == "macos" ? "Run" : device.platform == "web" ? "Open" : "Boot",
+          present: !viewer && device.platform == "web")
       }
     }
     .frame(minHeight: viewer ? nil : 24)
@@ -573,7 +600,7 @@ struct DeviceTile: View {
         case .android:
           guard let serial = device.localEmulatorSerial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
-        case .remote, .web: break
+        case .remote, .web, .macos: break
         }
       }
     } label: {
@@ -907,6 +934,13 @@ struct DeviceTile: View {
     let availableHeight =
       screenHeight - (viewer && (interactive && Self.hasButtons(device) || frameOption != nil) ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
+    if case .macos = device, let size = pixelSizes[1], size.width > 0, size.height > 0 {
+      let padding = screenPadding * 2
+      return nativeFittedSize(
+        pointSize: size, maxWidth: max(0, (maxWidth ?? .greatestFiniteMagnitude) - padding),
+        maxHeight: max(0, screenHeight - padding)
+      ).height + padding
+    }
     guard let maxWidth else { return screenHeight }
     if replaying, let size = replaySize, size.width > 0, size.height > 0 {
       return min(screenHeight, (maxWidth - screenPadding * 2) * size.height / size.width + screenPadding * 2)
@@ -934,6 +968,7 @@ struct DeviceTile: View {
     case .android(_, let d): return d.physical ? "Android device" : "Android Emulator"
     case .remote(let d): return d.backend == "eas" ? "EAS Simulator" : "Remote device"
     case .web(let d): return d.headless ? "Chrome, headless" : "Chrome"
+    case .macos: return "macOS app"
     }
   }
 
@@ -965,14 +1000,18 @@ struct DeviceTile: View {
       } else if let workspace {
         PhysicalDeviceScreen(
           device: device, workspace: workspace, interactive: interactive,
-          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost
+          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
         )
-        .id(device.id)
+        .id([device.id, device.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
+    case .macos(let app) where device.hostedMachine == nil:
+      MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
     case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:
       HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
@@ -1057,6 +1096,14 @@ struct DeviceTile: View {
     }
   }
 
+  private var choice: MacosWindowChoice { windowChoice ?? ownWindowChoice }
+
+  /// A macOS window is sized in points, so its tile fits it at native size; other screens only use the aspect.
+  private func pointSize(_ pixels: CGSize) -> CGSize {
+    guard case .macos = device else { return pixels }
+    return CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
+  }
+
   private func placeholder(_ text: String) -> some View {
     ScreenMessage(text: text)
   }
@@ -1085,6 +1132,7 @@ extension DeviceRef {
     case .android(_, let avd):
       return hostedMachine != nil ? state != "stopped" : isRunning && (avd.owned || avd.physical) && localEmulatorSerial != nil
     case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
+    case .macos: return hostedMachine != nil && state != "stopped"
     case .remote: return false
     }
   }
@@ -1243,7 +1291,7 @@ private struct BuildCover: View {
   }
 }
 
-private struct ScreenMessage: View {
+struct ScreenMessage: View {
   var text: String
 
   var body: some View {

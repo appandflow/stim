@@ -20,7 +20,7 @@ struct Inspector: View {
         if let archive {
           ArchiveStatusSection(page: archive)
         }
-        if archive != nil || env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
+        if archive != nil || env.runPlatforms.contains(where: { ["ios", "android", "macos"].contains($0) }) || env.macos != nil {
           BuildSection(
             cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
@@ -421,16 +421,9 @@ struct WorktreeInspector: View {
   }
 
   @ViewBuilder private func buildEntry(_ entry: WorktreePage.Entry, app: Workspace) -> some View {
-    let section = BuildSection(
+    BuildSection(
       cli: cli, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
       projectSubtitle: page.subtitle(for: entry, among: page.buildEntries))
-    if entry.platform == "macos" {
-      Card(radius: Radius.control, border: nil, clipsContent: false) {
-        section.padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
-      }
-    } else {
-      section
-    }
   }
 }
 

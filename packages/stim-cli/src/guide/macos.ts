@@ -19,7 +19,14 @@ macos.arguments is an array of arguments passed directly to the executable:
 
 The plist must contain CFBundleIdentifier and CFBundleExecutable matching the
 product. Use a development plist without shared URL schemes or an update feed.
-Stim gives the copied bundle a workspace-specific identifier. SwiftPM resource
+Stim gives the copied bundle a workspace-specific identifier and name: it sets
+CFBundleDisplayName and CFBundleName on the copy to "<product> \u00b7 <label>",
+where label is the owned-device label (worktree and app directory names, cleaned
+to letters, digits, . _ -; at most 24 characters, cut with an ellipsis). The Dock,
+Cmd-Tab and lsappinfo show it, so several runs tell apart; the process name in
+System Events stays the executable. The project plist and the app's window titles
+are untouched. The name is displayName in the launch payload and status. Hosted
+(--remote) and offloaded builds get the same name. SwiftPM resource
 bundles and frameworks in the reported build directory are copied into it;
 macos.resources maps destinations under Contents/Resources to file or directory
 sources relative to the Swift Package directory, for example:
@@ -43,6 +50,7 @@ executables, including Stim Desktop's sim-fold helper, are not built.
 
   stim macos              # fixed SwiftPM Debug build, then launch
   stim macos --json       # one launch record; progress goes to stderr
+  stim macos --plan --json # validate the next build without running it
   stim status --json      # environments[].macos and build state
   stim logs --source build
   stim logs --errors
@@ -54,15 +62,28 @@ Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors. An app that activates itself at launch still takes focus.
 Hosted launches (macos --remote) do not set it.
-macOS artifacts are not cached. This prototype has no --plan, --slot, or reload command.
+macOS artifacts are not cached. This prototype has no --slot or reload command.
+--plan validates the Swift Package directory, macos settings, development plist
+and declared resources without building, signing, staging, stopping or launching
+an app, writing workspace state or claiming a build slot. It does not execute
+Package.swift, so it cannot validate the executable product or package dependencies.
+--remote-build is respected, including named-machine setup refusals; no worker
+is contacted and live worker availability is unknown. --remote is launch-only
+and refuses with --plan. The JSON plan has platform "macos", product and
+buildMachine; fingerprint, cacheKey, provider, prebuild, outcome and expectedMs
+are null, cacheHit and cacheSkipped are false, and basis is 0. SwiftPM decides
+incremental compile work when a build runs; the plan predicts no cache outcome
+or duration. Desktop checks automatically while build details are visible,
+reusing a completed build or check for 60 seconds and skipping running builds.
 A failed build records its error and compiler output without launching an app.
 While it runs, stim status --json reports it as environments[].build with
 platform "macos": phase prepare, compile, install, then launch, and during
 compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
 planning are detail.step "configure"). It has no cache lookup, so outcome and
 plannedPhases are null; finished runs and their phase times are in
-environments[].builds.macos. An offloaded build reports the worker's steps the
-same way.
+environments[].builds.macos, where phases includes launch once the launch step finishes
+and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
+steps the same way.
 Runtime stdout and stderr become client records; build output becomes build
 records, all with platform "macos". Unexpected app exits are error records.
 Stim runs the app with NSUnbufferedIO=YES, so Swift print output arrives per

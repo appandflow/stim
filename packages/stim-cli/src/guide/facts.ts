@@ -1298,7 +1298,8 @@ RULES
                    with detail), install (staging the bundle, or fetching
                    it from a build machine) and launch. It has no cache
                    lookup: outcome is null, plannedPhases is null, and
-                   builds.macos holds its finished runs and their phases.
+                   builds.macos holds its finished runs, their phases and
+                   compileSteps.
   startedAt        when the run started; phaseStartedAt when its phase did
   outcome          "cold" after the local/provider lookups resolve a miss;
                    "hit" after a cached artifact is ready to reuse, including
@@ -1793,8 +1794,9 @@ HOW A RUN IS COUNTED (\`stats\`)
 
 DEVICE PLACEMENT (\`ios|android --remote auto\`)
   Auto runs include devicePlacement: { decision, reason, machine? } in the run
-  facts, lastBuilds and build history. decision is "local", "hosted" or
-  "waited-locally" (the local run actually waited for a device slot). The same
+  facts, lastBuilds and build history. decision is "local", "hosted",
+  "waited-locally" (the local run actually waited for a device slot) or "eas"
+  (remote.easFallback put it on an EAS Simulator, reported like --remote eas). The same
   optional devicePlacement appears on the status device entry for each slot.
   Hosted host facts include selected: "auto" or the named machine, and reason
   for automatic placement. Plain status prints (auto: <reason>) after the host.

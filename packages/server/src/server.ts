@@ -26,10 +26,12 @@ import {
   parseNdjsonLine,
   RECORDING_PLATFORMS,
   stimBuildDigest,
+  validRunId,
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
 } from '@stim-cli/core/state';
+import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
@@ -202,6 +204,7 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
+  requestLog?: RequestLog;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
@@ -431,7 +434,10 @@ function take(bucket: { tokens: number; at: number }, cost: number, perSecond: n
   return true;
 }
 
+const trackers = new WeakMap<WebSocket, RequestTracker>();
+
 function send(socket: WebSocket, message: ServerMessage | string): void {
+  if (typeof message !== 'string') trackers.get(socket)?.reply(message);
   if (socket.readyState === socket.OPEN) socket.send(typeof message === 'string' ? message : JSON.stringify(message));
 }
 
@@ -557,6 +563,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return hostProbe;
   };
+  const requestLog = options.requestLog ?? createRequestLog();
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
@@ -866,7 +873,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
   const relays = new Map<WebSocket, HostedRelay>();
   const hostConnections = new HostConnections(
-    options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) },
+    {
+      ...(options.hostedRelay ?? { status: () => readRawTailscaleStatus(tailscaleNow().binary, options.env) }),
+      log: requestLog.host,
+    },
     options.serverVersion,
   );
   let revocationCheck: NodeJS.Timeout | null = null;
@@ -932,6 +942,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const commands = new Set<() => Promise<void>>();
     let nextSubscription = 1;
     let device: PairedDevice | null = null;
+    const tracker = requestLog.track();
+    trackers.set(socket, tracker);
+    let runId: string | null = null;
     let buildSession: BuildSession | null = null;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
@@ -980,7 +993,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         );
       }
       clearTimeout(timer);
+      runId = validRunId(params.client.runId);
+      tracker.identify({ id: null, runId });
+      const probing = hostHealth();
+      const whoisStarted = Date.now();
       const identity = await identify();
+      tracker.step(id, 'whois', Date.now() - whoisStarted);
       if (socket.readyState !== socket.OPEN) return;
       if (!identity) {
         return refuse(id, 'identity-unavailable', `tailscale whois did not identify ${peer}.`, CLOSE_UNAUTHORIZED);
@@ -1034,12 +1052,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return void socket.close(CLOSE_UNAUTHORIZED, 'approval-pending');
       }
       device = outcome.device;
+      tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
       sampler.start();
+      const probeWaited = Date.now();
+      const host = options.host ? await probing : undefined;
+      if (options.host) tracker.step(id, 'probe', Date.now() - probeWaited);
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
         server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
-        ...(options.host ? { host: await hostHealth() } : {}),
+        ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
         features: [...FEATURES],
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -2333,6 +2355,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           return send(socket, { id, error: { code: 'bad-request', message: 'Expected {id, method, params}.' } });
         return refuse(id, 'bad-request', 'Expected {id, method, params}.', CLOSE_BAD_REQUEST);
       }
+      tracker.begin(id, message.method);
       if (message.method === 'hello') return hello(id, message.params);
       if (!device) return refuse(id, 'unauthorized', 'Send hello first.', CLOSE_UNAUTHORIZED);
       if ((DEVICE_HOST_METHODS as readonly string[]).includes(message.method)) {

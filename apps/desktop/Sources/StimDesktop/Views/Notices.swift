@@ -18,7 +18,6 @@ struct Notice: Identifiable {
     var perform: @MainActor () -> Void
   }
   var secondaryAction: Action?
-  var alternateAction: Action?
 }
 
 @MainActor
@@ -122,7 +121,7 @@ private struct NoticeCard: View {
     .accessibilityElement(children: .contain)
   }
 
-  private var secondaries: [Notice.Action] { [notice.alternateAction, notice.secondaryAction].compactMap { $0 } }
+  private var secondaries: [Notice.Action] { [notice.secondaryAction].compactMap { $0 } }
 
   @ViewBuilder private var actions: some View {
     if secondaries.isEmpty {

@@ -400,7 +400,7 @@ function gitRepoWithWorktrees(names: string[]) {
     git(`commit -q -m ${name}`, path);
     git(`push -q origin ${name}`, path);
     heads[name] = git('rev-parse HEAD', path);
-    worktrees[name] = realpathSync(path);
+    worktrees[name] = realpathSync.native(path);
     upsertProject(path, { metroPort: null });
   }
   return { repo, worktrees, heads };

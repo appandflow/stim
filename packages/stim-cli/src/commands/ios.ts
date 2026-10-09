@@ -65,6 +65,7 @@ import { chooseLanAddress, lanOriginUrlFor } from '../engine/ios-lan.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
+import { setRemoteLogSink } from '../remote-log.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
@@ -376,6 +377,7 @@ async function runIos(
       progress,
     ));
 
+  setRemoteLogSink((record) => logWriter().write(record));
   let leaseHandle: RunLease | null = null;
   let stopLeaseSignals: (() => void) | null = null;
   const releaseLease = () => {
@@ -585,6 +587,7 @@ async function runIos(
     noWait: deviceSlotWaitMs === 0,
     note,
     phase,
+    log: (entry) => logWriter().write(entry),
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   devicePlacement = remoteSelection.devicePlacement;

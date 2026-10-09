@@ -54,10 +54,17 @@ struct WallCardTests {
   let ios = #""ios":{"udid":"i","name":"iPhone 17","owned":false,"state":"Booted"}"#
   let android = #""android":{"name":"Pixel","owned":true,"physical":false,"state":"detected","deviceProfile":"pixel_9"}"#
 
-  @Test func offersDevicesThenMacAppsAndLabelsThemByAppOnlyWhenThereAreSeveral() throws {
+  @Test func namesAMacAppByItsDisplayNameWhenTheRecordHasOne() throws {
+    let named = macosApp.replacingOccurrences(
+      of: "\"product\":\"Stim\",", with: "\"product\":\"Stim\",\"displayName\":\"Stim \u{00B7} wt\",")
+    let card = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: named)])[0]
+    #expect(card.options.map(\.label) == ["Stim \u{00B7} wt"])
+  }
+
+  @Test func offersDevicesIncludingTheMacAppAndLabelsThemByAppOnlyWhenThereAreSeveral() throws {
     let single = WallCard.cards(environments: [try devices("/w/a", worktree: "/w/a", body: "\(android),\(ios),\(macosApp)")])[0]
-    #expect(single.options.map(\.label) == ["iPhone 17", "Pixel 9", "Mac app"])
-    #expect(single.options.map(\.id) == ["/w/a|ios:i", "/w/a|android:default:Pixel", "/w/a|macos"])
+    #expect(single.options.map(\.label) == ["iPhone 17", "Pixel 9", "Stim"])
+    #expect(single.options.map(\.id) == ["/w/a|ios:i", "/w/a|android:default:Pixel", "/w/a|macos:local"])
 
     let several = WallCard.cards(environments: [
       try devices("/w/a/apps/mobile", worktree: "/w/a", body: "\(ios),\(android)"),
@@ -65,7 +72,7 @@ struct WallCardTests {
     ])[0]
     #expect(
       several.options.map(\.label) == [
-        "apps/mobile \u{00B7} iPhone 17", "apps/mobile \u{00B7} Pixel 9", "apps/desktop \u{00B7} Mac app",
+        "apps/desktop \u{00B7} Stim", "apps/mobile \u{00B7} iPhone 17", "apps/mobile \u{00B7} Pixel 9",
       ])
   }
 
@@ -102,7 +109,7 @@ struct WallCardTests {
     ])
     #expect(cards.count == 1)
     #expect(cards[0].apps.map(\.label) == ["apps/desktop", "apps/mobile"])
-    #expect(cards[0].options.map(\.label) == ["apps/desktop \u{00B7} Mac app"])
+    #expect(cards[0].options.map(\.label) == ["apps/desktop \u{00B7} Stim"])
     #expect(cards[0].selected(choice: nil)?.isStreamable == true)
   }
 
