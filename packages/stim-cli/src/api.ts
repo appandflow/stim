@@ -2,7 +2,14 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
-import type { StimClient, StimFailure, StimOptions, WorkerRequest, WorkerResponse } from './api/types.ts';
+import type {
+  StimClient,
+  StimFailure,
+  StimOptions,
+  StimRunOptions,
+  WorkerRequest,
+  WorkerResponse,
+} from './api/types.ts';
 
 export type {
   StimClient,
@@ -66,9 +73,8 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
-    run({ signal, ...request }) {
-      return invoke(context, { operation: 'run', options: request }, signal) as ReturnType<StimClient['run']>;
-    },
+    run: (({ signal, ...request }: StimRunOptions) =>
+      invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
     stop({ signal, ...request } = {}) {
       return invoke(context, { operation: 'stop', options: request }, signal) as ReturnType<StimClient['stop']>;
     },
