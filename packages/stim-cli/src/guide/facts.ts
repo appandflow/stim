@@ -1006,6 +1006,9 @@ RULES
               of the Stim tutorial app (stim guide tutorial). Status
               reports whatever version it finds; Desktop decides which
               versions it supports. Static app.json only.
+  doctorRuns  { ios?: { at }, android?: { at } }: when stim doctor last
+              ran in the workspace, per platform, as ISO timestamps;
+              absent until it has run.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
 
