@@ -24,6 +24,11 @@
       "types": "./dist/index.d.mts",
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts.d.mts",
+      "module-sync": "./dist/artifacts.mjs",
+      "default": "./dist/artifacts.mjs"
     }
   },
   "scripts": {

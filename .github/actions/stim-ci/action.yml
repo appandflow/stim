@@ -1,0 +1,46 @@
+name: Run Stim CI
+description: Build and launch an app, run a test command, and retain diagnostics through stim-ci.
+inputs:
+  platform:
+    description: ios, android, macos, or web.
+    required: true
+  project:
+    description: App directory relative to the checked-out repository.
+    default: '.'
+  command:
+    description: Test command executed by Bash in the app directory.
+    required: true
+  version:
+    description: Exact published @stim-cli/ci version. Required unless cli-path is supplied.
+  cli-path:
+    description: Built stim-ci executable from the checkout, relative to the repository root.
+  artifacts:
+    description: Empty diagnostics directory relative to the repository root. Use a different path for each run.
+    default: stim-ci-results
+  home:
+    description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
+  build-cache:
+    description: Optional local build cache directory restored by the workflow.
+  timeout:
+    description: Session timeout in seconds.
+    default: '1800'
+  upload-artifacts:
+    description: Upload result, test and diagnostic logs to GitHub, including on failure. Set false for local paths only.
+    default: 'true'
+  artifact-name:
+    description: Unique GitHub artifact name. Defaults to a generated name for this invocation.
+  retention-days:
+    description: Artifact retention in days. Zero uses the repository default.
+    default: '0'
+outputs:
+  result:
+    description: Absolute path to result.json.
+  artifacts:
+    description: Absolute diagnostics directory.
+  artifact-id:
+    description: Uploaded GitHub artifact ID, when an upload succeeds.
+  artifact-url:
+    description: Uploaded GitHub artifact URL, when an upload succeeds.
+runs:
+  using: node24
+  main: dist/main.mjs

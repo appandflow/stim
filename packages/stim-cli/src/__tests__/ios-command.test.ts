@@ -80,7 +80,7 @@ import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
 import {
@@ -163,6 +163,12 @@ let tmpHome: string;
 let root: string;
 
 beforeEach(() => {
+  const realExecutor = getExecutor();
+  setExecutor(
+    makeExecutor({
+      runFile: (file, args, options) => (file === 'cp' ? realExecutor.runFile(file, args, options) : ''),
+    }),
+  );
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   recordCreatedDevice('ios', UDID);
@@ -1179,6 +1185,8 @@ describe('Metro prefetch', () => {
 });
 
 describe('the device preparation step', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('a slow preparation gets its own timed line, so the elapsed total is accounted for', async () => {
     reserve();
     let clock = 1_000_000;
@@ -6675,6 +6683,8 @@ describe('--simulator-app', () => {
 });
 
 describe('the simulator model and runtime flags', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([
     { opts: { remote: 'eas', runtime: '18.6' }, settings: {}, given: '--runtime' },
     {
@@ -7984,6 +7994,22 @@ describe('iOS placement on a hosting Mac', () => {
       expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'local' } });
     },
   );
+  test.each(['flag', 'setting'])('local overrides a machine ios.remote auto and asks no Mac: %s', async (via) => {
+    reserve();
+    writeConfigSetting({ scope: 'machine' }, 'ios.remote', 'auto');
+    if (via === 'setting') writeConfigSetting({ scope: 'workspace', projectPath: root }, 'ios.remote', 'local');
+    const automatic = vi.fn<typeof automaticDevicePlacement>();
+    const hosted = vi.fn<typeof prepareHostedIos>();
+    const { exitCode, calls } = await run(
+      { ...(via === 'flag' ? { remote: 'local' } : {}), json: true },
+      { automaticDevicePlacement: automatic, prepareHostedIos: hosted },
+    );
+    expect(exitCode).toBe(null);
+    expect(automatic).not.toHaveBeenCalled();
+    expect(hosted).not.toHaveBeenCalled();
+    expect(calls.order).toContain('ensureOwnedDevice');
+  });
+
   test.each([false, true])('missing hosting approval is a coded command refusal in JSON mode %s', async (json) => {
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     writeFileSync(deviceHostMachinesFile(), JSON.stringify({ version: 1, machines: [] }));
