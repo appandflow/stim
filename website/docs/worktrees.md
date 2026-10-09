@@ -17,7 +17,10 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 Use Git to choose the branch, path, and starting commit. Prefer a sibling
 worktree directory: nested worktrees can confuse Metro, TypeScript, and other
-filesystem scanners even when Git ignores them.
+filesystem scanners even when Git ignores them. When worktrees do live inside
+the checkout, such as under `.worktrees/`, `stim doctor` reports that a
+Watchman root at the checkout would crawl them, and `stim doctor --fix` adds
+them to the checkout's `.watchmanconfig` `ignore_dirs`.
 
 <StimTabs
 code={`git worktree add -b feature-x ../feature-x HEAD
