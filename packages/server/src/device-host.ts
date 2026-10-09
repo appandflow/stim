@@ -14,7 +14,12 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
+import {
+  captureProcessIdentity,
+  inspectProcessIdentity,
+  processStartMicros,
+  type ProcessRecord,
+} from '@stim-cli/core/process-identity';
 import {
   assertHostedDeviceLedger,
   createDebugLog,
@@ -73,6 +78,34 @@ export interface DeviceHostLimits {
   stopMs: number;
   logsMs: number;
   killGraceMs: number;
+}
+
+function workerGroupMembers(group: number) {
+  try {
+    const output = execFileSync('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid=,comm='], {
+      encoding: 'utf8',
+      timeout: 500,
+      killSignal: 'SIGKILL',
+      maxBuffer: 512 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const members = output.split(/\r?\n/).flatMap((line) => {
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      if (!match || Number(match[3]) !== group) return [];
+      return [{ pid: Number(match[1]), ppid: Number(match[2]), pgid: group, name: basename(match[4]!) }];
+    });
+    return {
+      truncated: members.length > 16,
+      members: members.slice(0, 16).map((member) =>
+        Object.assign(member, {
+          birth: processStartMicros(member.pid),
+          parentBirth: processStartMicros(member.ppid),
+        }),
+      ),
+    };
+  } catch (error) {
+    return { unavailable: true, code: (error as NodeJS.ErrnoException).code };
+  }
 }
 
 interface WorkerRun {
@@ -1668,6 +1701,7 @@ export class DeviceHost {
     let finished = false;
     let cancelling = false;
     let closed = false;
+    let groupObserved = false;
     let killTimer: NodeJS.Timeout | undefined;
     let finishTimer: NodeJS.Timeout | undefined;
     let groupTimer: NodeJS.Timeout | undefined;
@@ -1723,6 +1757,10 @@ export class DeviceHost {
       if (finished) return;
       if (!child.pid || !processGroupAlive(child.pid)) finish();
       else {
+        if (!groupObserved && this.debug.enabled()) {
+          groupObserved = true;
+          diagnostic('group', workerGroupMembers(child.pid));
+        }
         cancel('group-after-close');
         groupTimer = setTimeout(finishGroup, 25);
       }
