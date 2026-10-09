@@ -25,6 +25,9 @@ let avd: string;
 let calls: { file: string; args: string[] }[];
 let head: string;
 let clock: number;
+let gate: Promise<void> | null;
+let duFails: boolean;
+let kilobytes: Record<string, number>;
 const realHome = process.env.HOME;
 const realUserProfile = process.env.USERPROFILE;
 
@@ -44,7 +47,9 @@ beforeEach(() => {
   calls = [];
   head = HEAD;
   clock = Date.parse('2026-09-27T10:00:00.000Z');
-  const kilobytes: Record<string, number> = {
+  gate = null;
+  duFails = false;
+  kilobytes = {
     [app]: 1000,
     [join(app, 'node_modules')]: 400,
     [workspaceDir(app)]: 200,
@@ -56,7 +61,14 @@ beforeEach(() => {
     findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
     runFileAsync: async (file, args = []) => {
       calls.push({ file, args });
-      if (file === 'du') return `${kilobytes[args.at(-1)!]}\t${args.at(-1)}\n`;
+      if (file === 'nice') {
+        await gate;
+        if (duFails) throw new Error('Command timed out after 120000ms: du');
+        return args
+          .slice(4)
+          .map((path: string) => `${kilobytes[path] ?? 1}\t${path}\n`)
+          .join('');
+      }
       if (file === 'git') return `${head}\n`;
       if (file === 'gh') return GRAPHQL;
       throw new Error(`unexpected ${file}`);
@@ -74,6 +86,10 @@ afterEach(() => {
   delete process.env.ANDROID_AVD_HOME;
   rmSync(home, { recursive: true, force: true });
 });
+
+function duWalks(): string[][] {
+  return calls.filter((call) => call.file === 'nice').map((call) => call.args.slice(4));
+}
 
 function environment(): EnvironmentState {
   return {
@@ -121,7 +137,10 @@ test('measures stale folders and pull requests in the background, then status re
     reviewDecision: null,
     checkedAt: measuredAt,
   });
-  expect(calls.filter((call) => call.file === 'du')).toHaveLength(4);
+  expect(duWalks()).toHaveLength(4);
+  expect(
+    calls.filter((call) => call.file === 'nice').every((call) => call.args.join(' ').startsWith('-n 19 du -sk ')),
+  ).toBe(true);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
   expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 2))).toEqual([
     ['-C', join(home, 'repo')],
@@ -141,6 +160,82 @@ test('measures stale folders and pull requests in the background, then status re
   measurer.schedule([state], [state.worktree!]);
   await vi.waitFor(() => expect(readPullRequestCache(app)?.head).toBe(head));
   expect(calls.map((call) => call.file)).toEqual(['git', 'gh']);
+});
+
+test('a checkout is measured without the linked worktrees nested under it', async () => {
+  const common = join(app, '.git');
+  const nested = join(app, '.worktrees', 'feature');
+  mkdirSync(join(common, 'worktrees', 'feature'), { recursive: true });
+  mkdirSync(nested, { recursive: true });
+  mkdirSync(join(app, '.worktrees', 'plain'));
+  mkdirSync(join(app, 'src'));
+  writeFileSync(join(common, 'HEAD'), 'ref: refs/heads/main\n');
+  writeFileSync(join(common, 'worktrees', 'feature', 'HEAD'), 'ref: refs/heads/feature\n');
+  writeFileSync(join(common, 'worktrees', 'feature', 'gitdir'), `${join(nested, '.git')}\n`);
+  const root = realpathSync(app);
+  const state = environment();
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  measurer.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(app)).not.toBeNull());
+
+  const checkoutWalk = duWalks().find((targets) => targets.some((path) => path.startsWith(root)))!;
+  expect(checkoutWalk.toSorted()).toEqual(
+    [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'node_modules'), join(root, 'src')].toSorted(),
+  );
+  expect(readDiskUsage(app)?.bytes).toBe(4 * 1024);
+});
+
+test('a measured folder is reused until its age limit, then measured again', async () => {
+  const measurer = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const state = environment();
+  const settled = async () => {
+    await vi.waitFor(() => expect(readDiskUsage(app)?.measuredAt).toBe(new Date(clock).toISOString()));
+    await vi.waitFor(() => expect(readDiskUsage(avd)?.measuredAt).toBe(new Date(clock).toISOString()));
+  };
+  measurer.schedule([state], []);
+  await settled();
+  expect(duWalks()).toHaveLength(4);
+
+  clock += 4 * 60_000;
+  measurer.schedule([state], []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(4);
+
+  clock += 60_000;
+  measurer.schedule([state], []);
+  await settled();
+  expect(duWalks()).toHaveLength(8);
+});
+
+test('watchers in separate processes share one walk and one failure', async () => {
+  let release!: () => void;
+  gate = new Promise((resolve) => (release = resolve));
+  const state = environment();
+  const first = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  const second = createStatusMeasurer({ updated: () => {}, now: () => clock });
+  first.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(1));
+  second.schedule([state], []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(1);
+  release();
+  await vi.waitFor(() => expect(readDiskUsage(avd)).not.toBeNull());
+  expect(duWalks()).toHaveLength(4);
+
+  duFails = true;
+  calls = [];
+  clock += 5 * 60_000;
+  first.schedule([state], []);
+  await vi.waitFor(() => expect(duWalks()).toHaveLength(4));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  second.schedule([state], []);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(duWalks()).toHaveLength(4);
+
+  clock += 5 * 60_000;
+  duFails = false;
+  second.schedule([state], []);
+  await vi.waitFor(() => expect(readDiskUsage(app)?.measuredAt).toBe(new Date(clock).toISOString()));
 });
 
 test('a session that stops running stays listed as ended with its links for 3 days, and running again wins', async () => {
