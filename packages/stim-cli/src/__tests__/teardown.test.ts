@@ -2,10 +2,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { ensureConfig, getProject, saveConfig, upsertProject } from '../workspace/config.ts';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { eraseParkedIosSim, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 
 function seedCreatedDevices(): void {
   for (const udid of ['U0', 'U1']) recordCreatedDevice('ios', udid);
@@ -783,6 +783,108 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
     exec.calls.findIndex((c) => /delete avd -n/.test(c)),
   );
 });
+
+test.each(['emulator -list-avds', 'adb devices'])(
+  'teardown bounds a blocked %s child and keeps ownership for recovery',
+  (blocked) => {
+    const real = getExecutor();
+    const fake = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
+    const before = readCreatedDevices();
+    const onRemoved = vi.fn<() => void>();
+    const shutdown = vi.fn<() => void>();
+    let childPid: number | undefined;
+    const inventory = (file: string, args: string[], options: Parameters<typeof real.runFile>[2]) => {
+      const command = [file, ...args].join(' ');
+      if (command !== blocked) return fake.runFile(file, args);
+      const output = blocked.startsWith('emulator') ? 'stim-app\n' : 'List of devices attached\n';
+      try {
+        return real.runFile(
+          process.execPath,
+          ['-e', `process.on('SIGTERM', () => {}); setTimeout(() => console.log(${JSON.stringify(output)}), 15000)`],
+          options,
+        );
+      } catch (error) {
+        childPid = (error as { pid?: number }).pid;
+        throw error;
+      }
+    };
+    setExecutor({
+      ...fake,
+      run: (command, options) => {
+        const [file, ...args] = command.split(' ');
+        return inventory(file!, args, options);
+      },
+      runFile: inventory,
+    });
+    const result = teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
+    expect(result.status).toBe('failed');
+    expect(result.reason).toMatch(/Command timed out/);
+    expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
+    expect(() => process.kill(childPid!, 0)).toThrow(/ESRCH/);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(onRemoved).not.toHaveBeenCalled();
+    expect(fake.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
+    expect(readCreatedDevices()).toEqual(before);
+    setExecutor(fake);
+    expect(teardownOwnedAvd('stim-app', { waitForShutdown: shutdown }).status).toBe('torn-down');
+    expect(shutdown).toHaveBeenCalledOnce();
+  },
+  20000,
+);
+
+test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', () => {
+  const real = getExecutor();
+  const exec = androidExecutor({
+    avds: ['stim-app'],
+    adb: 'List of devices attached\nemulator-5554\tdevice\n',
+    avdName: 'stim-app',
+  });
+  const repo = join(avdHome, 'repo');
+  const workspace = join(repo, 'app');
+  mkdirSync(workspace, { recursive: true });
+  const before = readCreatedDevices();
+  const onRemoved = vi.fn<() => void>();
+  let stopped = false;
+  let childPid: number | undefined;
+  const inventory = (file: string, args: string[] = [], options?: Parameters<typeof real.runFile>[2]) => {
+    if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
+    if (stopped && file === 'adb' && args[0] === 'devices') {
+      try {
+        return real.runFile(
+          process.execPath,
+          ['-e', "process.on('SIGTERM', () => {}); setTimeout(() => console.log('List of devices attached'), 15000)"],
+          options,
+        );
+      } catch (error) {
+        childPid = (error as { pid?: number }).pid;
+        throw error;
+      }
+    }
+    return exec.runFile(file, args);
+  };
+  setExecutor({
+    ...exec,
+    findExecutable: () => '/bin/agent-device',
+    runFileQuiet: (file, args = []) => (file === 'git' && args.includes('--show-toplevel') ? repo : null),
+    run: (command, options) => {
+      const [file, ...args] = command.split(' ');
+      return inventory(file!, args, options);
+    },
+    runFile: inventory,
+  });
+  const shutdown = vi.fn<() => void>(() => {
+    stopped = true;
+  });
+  const result = teardownOwnedAvd('stim-app', { del: true, workspace, onRemoved, waitForShutdown: shutdown });
+  expect(result.status).toBe('failed');
+  expect(result.reason).toMatch(/Command timed out/);
+  expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
+  expect(() => process.kill(childPid!, 0)).toThrow(/ESRCH/);
+  expect(shutdown).toHaveBeenCalledOnce();
+  expect(onRemoved).not.toHaveBeenCalled();
+  expect(exec.calls.some((command) => /delete avd|agent-device close/.test(command))).toBe(false);
+  expect(readCreatedDevices()).toEqual(before);
+}, 20000);
 
 test('teardownOwnedAvd refuses an AVD that this Stim home did not record', () => {
   const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
