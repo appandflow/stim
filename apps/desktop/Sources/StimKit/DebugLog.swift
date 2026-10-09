@@ -27,9 +27,26 @@ public enum DebugLog {
   public static let subsystem = "dev.stim.desktop"
   private static let pid = ProcessInfo.processInfo.processIdentifier
 
+  public static let releaseBundleIdentifier = "dev.stim.desktop"
+
   public static var logURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stim/Desktop.log")
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Logs/Stim/\(logFileName(bundleIdentifier: Bundle.main.bundleIdentifier))")
   }
+
+  /// The release app writes `Desktop.log`. Any other bundle id (a `stim macos` test copy, a dev bundle) writes
+  /// `Desktop-<id without the release prefix>.log`, so the installed app's log holds only its own lines.
+  public static func logFileName(bundleIdentifier: String?) -> String {
+    guard let bundleIdentifier, bundleIdentifier != releaseBundleIdentifier else { return "Desktop.log" }
+    let suffix =
+      bundleIdentifier.hasPrefix(releaseBundleIdentifier + ".")
+      ? String(bundleIdentifier.dropFirst(releaseBundleIdentifier.count + 1)) : bundleIdentifier
+    let safe = String(suffix.unicodeScalars.map { Self.fileNameCharacters.contains($0) ? Character($0) : "-" })
+    return safe.isEmpty ? "Desktop.log" : "Desktop-\(safe).log"
+  }
+
+  private static let fileNameCharacters = CharacterSet(
+    charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
   /// Whether the verbose level is on.
   public static var isVerbose: Bool { UserDefaults.standard.bool(forKey: AppPreferences.Key.debugLogging) }
