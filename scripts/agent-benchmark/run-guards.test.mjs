@@ -558,6 +558,44 @@ describe('benchmark run guards', () => {
     ).toThrow(/at least platformCommandSeconds/);
   });
 
+  it.each([
+    'stim guide agent && git status --short --branch && git worktree list --porcelain',
+    'stim guide agent&&git status --short',
+    'stim guide agent && printf "%s" "literal && text"',
+  ])('accepts a completed guide-first AND chain without changing warm ordering: %s', (command) => {
+    const guide = { command: `/bin/zsh -lc '${command}'`, exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, endEventOffset: 2 };
+    const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, warm, start])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, start])).toEqual([
+      'stim-worktree-warm-missing-or-failed',
+    ]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
+  });
+
+  it.each([
+    ['stim guide agent && git status --short', 1],
+    ['stim guide agent && git status --short', null],
+    ['stim guide agent; git status --short', 0],
+    ['stim guide agent || git status --short', 0],
+    ['stim guide agent | cat', 0],
+    ['stim guide agent & git status --short', 0],
+    ['stim guide agent\ngit status --short', 0],
+    ['stim guide agent && git status --short; true', 0],
+    ['stim guide agent && git status --short || true', 0],
+    ['stim guide agent > /tmp/guide && git status --short', 0],
+    ['stim guide agent && eval "$NEXT"', 0],
+    ['echo "stim guide agent" && git status --short', 0],
+    ['exit 0 && stim guide agent && git status --short', 0],
+    ['exec true && stim guide agent && git status --short', 0],
+  ])('does not infer guide success from ambiguous or unsuccessful chain %s (%s)', (command, exitCode) => {
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [{ command, exitCode }])).toContain(
+      'stim-guide-agent-missing-or-failed',
+    );
+  });
+
   it('finds commands in shell chains without splitting quoted operators', () => {
     expect(shellCommandSegments(`/bin/zsh -lc 'cd "$WT" && echo "a && b"; stim guide agent'`)).toEqual([
       'cd "$WT"',
