@@ -94,7 +94,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     options = {
       ...options,
       home: join(directory, 'home'),
-      buildCache: options.buildCache || process.env.STIM_BUILD_CACHE || join(directory, 'build-cache'),
+      buildCache: options.buildCache || (process.env.STIM_BUILD_CACHE ? undefined : join(directory, 'build-cache')),
     };
   }
   const projectRoot = realpathSync(options.projectRoot);
