@@ -29,6 +29,7 @@ import {
   readHostedSessions,
   readHostedMacosApp,
   readHostedDeviceLedger,
+  readNdjsonGenerations,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -1609,6 +1610,8 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
   test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
     await host.close();
     hostEnv.LOCAL_COUNT = 'hang';
+    hostEnv.STIM_DEBUG = '1';
+    hostEnv.WORKER_TEST_SECRET = 'private-worker-environment';
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: hostEnv,
@@ -1627,6 +1630,26 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
     expect(readHostedSessions()).toEqual([]);
     await groupGone(pid);
+    const debugFile = join(home, 'logs', 'debug', 'server.ndjson');
+    const records = readNdjsonGenerations(debugFile).filter((record) => record.workerPid === pid);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'device-host.worker.start', mode: 'count' }),
+        expect.objectContaining({
+          event: 'device-host.worker.cancel',
+          reason: ending === 'deadline' ? 'deadline' : 'requested',
+        }),
+        expect.objectContaining({ event: 'device-host.worker.close', code: null, signal: 'SIGKILL' }),
+        expect.objectContaining({
+          event: 'device-host.worker.settled',
+          closed: true,
+          groupAlive: false,
+          settled: true,
+        }),
+      ]),
+    );
+    for (const record of records) expect(record.ms).toEqual(expect.any(Number));
+    expect(readFileSync(debugFile, 'utf8')).not.toContain(hostEnv.WORKER_TEST_SECRET);
   });
 });
 
