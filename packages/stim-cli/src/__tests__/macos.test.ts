@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import {
+  constants,
+  copyFileSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -34,7 +36,9 @@ import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { macosDir, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { bundleCandidates, lsofNamesBundleExecutable } from '../macos/instances.ts';
+import { reclaimProject } from '../devices/reclaim.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
@@ -176,6 +180,82 @@ test('a device-slot stop preserves the recorded macOS app and supervisor', async
   expect(inspectProcessIdentity(app)).toBe('same');
   expect(inspectProcessIdentity(supervisor)).toBe('same');
   expect(readMacosRecord(root)?.app).toEqual(app);
+});
+
+test('bundle instances are the executables of app bundles directly in the workspace macos directory', () => {
+  const dirs = ['/home/workspaces/app--1/macos', '/private/home/workspaces/app--1/macos'];
+  const ps = [
+    '  101 /home/workspaces/app--1/macos/Sample.app/Contents/MacOS/Sample',
+    '  102 /private/home/workspaces/app--1/macos/My App.app/Contents/MacOS/My App',
+    '  103 /home/workspaces/app--2/macos/Sample.app/Contents/MacOS/Sample',
+    '  104 /home/workspaces/app--1/macos/build/debug/Sample',
+    '  105 /home/workspaces/app--1/macos/Sample.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper',
+    '  106 /home/workspaces/app--1/mac',
+    '  107 /Applications/Sample.app/Contents/MacOS/Sample',
+  ].join('\n');
+  expect(bundleCandidates(ps, dirs)).toEqual([101, 102]);
+  const lsof = (executable: string) => `p101\nftxt\nn${executable}\nftxt\nn/usr/lib/dyld\n`;
+  expect(lsofNamesBundleExecutable(lsof(`${dirs[1]}/Sample.app/Contents/MacOS/Sample`), dirs)).toBe(true);
+  expect(lsofNamesBundleExecutable(lsof('/bin/sleep'), dirs)).toBe(false);
+});
+
+describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned bundle', () => {
+  function bundleCopy(script: string): ChildProcess {
+    const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
+    mkdirSync(join(executable, '..'), { recursive: true });
+    if (!existsSync(executable)) copyFileSync(process.execPath, executable, constants.COPYFILE_FICLONE);
+    const child = getExecutor().spawn(executable, ['-e', `${script}; setInterval(() => {}, 1000)`], {
+      stdio: 'ignore',
+    });
+    children.push(child);
+    return child;
+  }
+
+  async function started(child: ChildProcess): Promise<MacosProcess> {
+    await new Promise<void>((done, reject) => {
+      child.once('spawn', done);
+      child.once('error', reject);
+    });
+    return { pid: child.pid!, processToken: captureProcessToken(child.pid!)!, startedAtMicros: 1 };
+  }
+
+  test('stop terminates every copy, escalating to SIGKILL, and only then reports success', async () => {
+    const cooperative = await started(bundleCopy(''));
+    const stubborn = await started(bundleCopy("process.on('SIGTERM', () => {})"));
+    const bystander = await ownedProcess();
+    writeWorkspaceState(root, { macos: record() });
+    const inUse = workspaceInUse(root).join('\n');
+    expect(inUse).toContain(`${cooperative.pid}`);
+    expect(inUse).toContain(`${stubborn.pid}`);
+    expect(await stopMacosApp(root)).toBe(true);
+    expect(inspectProcessIdentity(cooperative)).toBe('gone');
+    expect(inspectProcessIdentity(stubborn)).toBe('gone');
+    expect(inspectProcessIdentity(bystander)).toBe('same');
+    expect(workspaceInUse(root)).toEqual([]);
+  }, 20_000);
+
+  test('workspace removal stops an unrecorded copy before emptying the workspace', async () => {
+    const copy = await started(bundleCopy(''));
+    writeWorkspaceState(root, { macos: record() });
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(false);
+    expect(inspectProcessIdentity(copy)).toBe('gone');
+    expect(existsSync(macosDir(root))).toBe(false);
+  });
+
+  test('workspace removal keeps the workspace when its macOS app cannot be stopped', async () => {
+    mkdirSync(macosDir(root), { recursive: true });
+    const bystander = await ownedProcess();
+    writeWorkspaceState(root, { macos: record({ app: { ...bystander, processToken: 'invalid' } }) });
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+    expect(result.keptEntry).toBe(true);
+    expect(result.failedDevices[0]).toMatchObject({
+      name: 'macOS app',
+      reason: expect.stringContaining('Cannot verify'),
+    });
+    expect(inspectProcessIdentity(bystander)).toBe('same');
+    expect(existsSync(macosDir(root))).toBe(true);
+  });
 });
 
 describe('macOS build placement and promotion', () => {
