@@ -319,9 +319,9 @@ export default function macosCommand(program: Command): void {
     .option('--remote <machine>', 'run it on this approved remote Mac from remote.machines')
     .action(async (options: { json?: boolean; plan?: boolean; remote?: string; remoteBuild?: string }) => {
       const root = findProjectRoot(process.cwd());
-      if (!root) throw new Error('Run stim macos from the Swift Package directory.');
       if (options.plan) {
         try {
+          if (!root) throw new Error('Run stim macos from the Swift Package directory.');
           if (options.remote !== undefined)
             throw Object.assign(new Error('--remote selects a launch host and does not apply to --plan.'), {
               code: 'STIM_BAD_ARG',
@@ -345,6 +345,7 @@ export default function macosCommand(program: Command): void {
         }
         return;
       }
+      if (!root) throw new Error('Run stim macos from the Swift Package directory.');
       const record = await runMacos(root, console.error, options.remote, options.remoteBuild).catch((error) => {
         const remedy = (error as { remedy?: unknown }).remedy;
         if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);

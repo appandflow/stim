@@ -871,6 +871,19 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
       });
       expect(process.exitCode).toBe(1);
       expect(existsSync(process.env.STIM_HOME!)).toBe(false);
+      cwd.mockReturnValue(dir);
+      stdout.mockClear();
+      await program.parseAsync(['macos', '--plan', '--json'], { from: 'user' });
+      expect(stdout).toHaveBeenCalledTimes(1);
+      expect(JSON.parse(stdout.mock.calls[0]![0])).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: 'Run stim macos from the Swift Package directory.',
+      });
+      stdout.mockClear();
+      await expect(program.parseAsync(['macos'], { from: 'user' })).rejects.toThrow(
+        'Run stim macos from the Swift Package directory.',
+      );
+      expect(stdout).not.toHaveBeenCalled();
     } finally {
       process.exitCode = previousExit;
       cwd.mockRestore();
