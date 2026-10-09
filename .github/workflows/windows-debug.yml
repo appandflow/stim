@@ -18,6 +18,10 @@ name: Windows debug host
 on:
   workflow_dispatch:
     inputs:
+      lifecycle_only:
+        description: 'Run the owned AVD removal diagnostic without opening a remote session'
+        type: boolean
+        default: false
       tunnel:
         description: 'How to reach the runner'
         required: false
@@ -45,6 +49,7 @@ permissions:
 
 jobs:
   host:
+    if: ${{ !inputs.lifecycle_only }}
     name: windows debug host
     runs-on: windows-latest
     timeout-minutes: 360
@@ -110,3 +115,35 @@ jobs:
           $deadline = (Get-Date).AddHours([math]::Min([double]"${{ inputs.hours }}", 5.8))
           "holding until $deadline; create $env:GITHUB_WORKSPACE\stop to end early"
           while ((Get-Date) -lt $deadline -and -not (Test-Path "$env:GITHUB_WORKSPACE\stop")) { Start-Sleep -Seconds 30 }
+
+  lifecycle:
+    if: inputs.lifecycle_only
+    name: owned AVD removal diagnostic
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      TEMP: D:\e
+      TMP: D:\e
+    steps:
+      - uses: actions/checkout@v4
+      - run: New-Item -ItemType Directory -Force -Path "D:\e"
+      - uses: ./.github/actions/setup-stim
+      - uses: ./.github/actions/windows-android-sdk
+      - name: Create, boot, stop and remove one owned AVD
+        run: node --experimental-strip-types test/e2e/native/run-avd-removal-diagnostic.mjs
+      - name: Retain lifecycle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-avd-removal
+          path: |
+            D:\e\windows-avd-diagnostic\diagnostic.ndjson
+            D:\e\windows-avd-diagnostic\*-source.properties
+            D:\e\windows-avd-diagnostic\java-version.txt
+            D:\e\windows-avd-diagnostic\emulator.log
+            D:\e\windows-avd-diagnostic\home\config.json
+            D:\e\windows-avd-diagnostic\home\created-devices.json
+            D:\e\windows-avd-diagnostic\home\logs\debug\*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
