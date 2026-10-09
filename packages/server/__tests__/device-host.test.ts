@@ -855,20 +855,46 @@ test.each(['stop', 'revoke'])('releases a preflight refusal when %s precedes its
   await state((next as { result: { id: string } }).result.id, 'ready');
 });
 
-test.skipIf(process.platform === 'win32')(
-  'terminates a TERM-resistant descendant after the worker leader exits before releasing its claim',
-  async () => {
+test.each([false, true])(
+  'terminates a TERM-resistant descendant before releasing its claim with debug %s',
+  { skip: process.platform === 'win32' },
+  async (debug) => {
+    hostEnv.STIM_DEBUG = debug ? '1' : '0';
+    hostEnv.WORKER_TEST_SECRET = 'private-worker-environment';
     const first = await reserve({ deviceType: 'descendant' });
     const area = join(deviceHostArea(first.id), 'home');
     await vi.waitFor(() => expect(existsSync(join(area, 'descendant'))).toBe(true));
     const leader = Number(readFileSync(join(area, 'entered'), 'utf8'));
     const descendant = Number(readFileSync(join(area, 'descendant'), 'utf8'));
+    const birth = processIdentity.processStartMicros(descendant);
     try {
+      process.kill(leader, 'SIGTERM');
+      await state(first.id, 'unknown');
+      expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toHaveLength(1);
       host.stop('client', { session: first.id });
       await state(first.id, 'stopped');
       expect(processGroupAlive(leader)).toBe(false);
       expect(() => process.kill(descendant, 0)).toThrow('ESRCH');
       expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
+      const records = readNdjsonGenerations(join(home, 'logs', 'debug', 'server.ndjson'));
+      const groups = records.filter(
+        (record) => record.event === 'device-host.worker.group' && record.workerPid === leader,
+      );
+      const expected = {
+        truncated: false,
+        members: [
+          expect.objectContaining({
+            pid: descendant,
+            ppid: expect.any(Number),
+            pgid: leader,
+            birth,
+            parentBirth: expect.objectContaining({ status: expect.any(String) }),
+          }),
+        ],
+      };
+      expect(groups).toMatchObject(debug ? [expected] : []);
+      expect(JSON.stringify(groups)).not.toContain(hostEnv.WORKER_TEST_SECRET);
+      expect(JSON.stringify(groups)).not.toContain('setInterval');
     } finally {
       if (processGroupAlive(leader)) process.kill(-leader, 'SIGKILL');
     }
