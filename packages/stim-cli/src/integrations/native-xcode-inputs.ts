@@ -10,6 +10,16 @@ export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
 }
 
+function nativeXcodeMetadataDirectories(selection: NativeXcodeSelection): string[] {
+  const workspaces = selection.projects.map((project) => join(project.path, 'project.xcworkspace'));
+  if (selection.container.kind === 'workspace') workspaces.push(selection.container.path);
+  return workspaces.flatMap((workspace) => [
+    join(workspace, 'xcshareddata'),
+    join(workspace, 'xcshareddata', 'swiftpm'),
+    join(workspace, 'xcshareddata', 'swiftpm', 'configuration'),
+  ]);
+}
+
 export function nativeXcodeHasPackages(selection: NativeXcodeSelection): boolean {
   return selection.projects.some((project) =>
     [...project.objects.values()].some(
@@ -273,6 +283,7 @@ export function nativeXcodeInputSnapshot(
     for (const [name, path] of dependencyRoots) inputs.push({ name, path: realpathSync(path) });
     const snapshot = fingerprintNativeInputs(inputs, {
       excluded,
+      ignoredDirectoryMarkers: nativeXcodeMetadataDirectories(selection),
       parameters: {
         recipe: 'native-xcode-v1',
         application: relative(sourceRoot, root),
