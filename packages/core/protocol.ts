@@ -49,6 +49,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
+ * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -72,6 +73,7 @@ export const FEATURES = [
   'hosted-ios-data',
   'hosted-ios-process',
   'native-xcode-build',
+  'native-xcode-toolchain',
   'hosted-android-data',
   'hosted-android-process',
   'server-update',

@@ -294,7 +294,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         platform: 'ios',
         native: 'xcode',
         local: {
-          ...iosToolchain(root),
+          ...iosToolchain(root, 'xcode'),
           ...(context.target.hostedArchitecture
             ? {
                 arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',

@@ -889,6 +889,7 @@ describe('pairing', () => {
           'hosted-ios-data',
           'hosted-ios-process',
           'native-xcode-build',
+          'native-xcode-toolchain',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -1372,6 +1373,42 @@ test('build.start rejects escaping or oversized macOS resources before probing t
   }
 });
 
+test('native and general toolchain reports cache independently from each Ruby context', async () => {
+  const worker = join(root, 'toolchain-context.mjs');
+  const toolchainCalls = join(root, 'toolchain-context.calls');
+  writeFileSync(
+    worker,
+    `
+import { appendFileSync } from 'node:fs';
+const context = process.argv.slice(2);
+appendFileSync(${JSON.stringify(toolchainCalls)}, JSON.stringify(context) + '\\n');
+const native = context[0] === 'offer-native-xcode';
+console.log(JSON.stringify({ stimBuild: 'b1', xcode: 'Xcode 27.0', simulatorSdk: '27.0', runtimes: ['iOS-27-0'], cocoapods: native ? null : (context[1] ?? 'default'), macosSdk: native ? null : '26.6' }));
+`,
+  );
+  const host = new BuildHost({ worker, env: process.env });
+  try {
+    for (const context of [undefined, 'ruby-3.3.4']) {
+      expect(await host.toolchain(context, 'xcode')).toMatchObject({
+        cocoapods: null,
+        macosSdk: null,
+        runtimes: ['iOS-27-0'],
+      });
+      expect(await host.toolchain(context)).toMatchObject({ cocoapods: context ?? 'default', macosSdk: '26.6' });
+      expect(await host.toolchain(context, 'xcode')).toMatchObject({ cocoapods: null, macosSdk: null });
+      expect(await host.toolchain(context)).toMatchObject({ cocoapods: context ?? 'default' });
+    }
+    expect(
+      readFileSync(toolchainCalls, 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    ).toEqual([['offer-native-xcode'], ['offer'], ['offer', 'ruby-3.3.4']]);
+  } finally {
+    await host.close();
+  }
+});
+
 test('native build admission rejects invalid provider identity before toolchain or worker work', async () => {
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
   const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
@@ -1422,10 +1459,20 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(await session.start({ ...base, native: undefined })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, platform: 'android' })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, optimizations: null })).toHaveProperty('error.code', 'bad-request');
+    expect(await host.offer('client', { repo: 'app-1', native: 'gradle' })).toHaveProperty('error.code', 'bad-request');
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'gradle' } })).toBe(false);
     expect(toolchain).not.toHaveBeenCalled();
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'xcode' } })).toBe(true);
+    expect(await host.offer('client', { repo: 'app-1', native: 'xcode' })).toHaveProperty(
+      'error.code',
+      'build-refused',
+    );
+    expect(toolchain).toHaveBeenLastCalledWith(null, 'xcode');
+    toolchain.mockClear();
     expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
     expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
     expect(toolchain).toHaveBeenCalledOnce();
+    expect(toolchain).toHaveBeenCalledWith(null, 'xcode');
   } finally {
     toolchain.mockRestore();
     await host.close();
