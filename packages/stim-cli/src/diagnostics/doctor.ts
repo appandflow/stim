@@ -31,13 +31,14 @@ import {
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { ccacheEnabled, COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
 import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
@@ -1134,6 +1135,7 @@ export function checkAndroidSdk(projectRoot: string, platform: DoctorPlatform | 
     sdkPath,
     sdkExists: existsSync(sdkPath),
     hasLocalProperties: existsSync(join(androidDir, 'local.properties')),
+    localPropertiesPath: 'android/local.properties',
   });
   if (!refusal) return null;
   return {
