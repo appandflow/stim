@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { AndroidRuntimeKind } from './launch.ts';
 import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
 import type { AndroidFacts, CcacheActivity, DevServerStart, WaitedForBuild } from '../../engine/build-facts.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
@@ -224,6 +225,7 @@ export interface ReportAndroidResultArgs {
   useBuildCache: boolean;
   variant: string | null;
   release: boolean;
+  runtimeKind?: AndroidRuntimeKind;
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string | null;
@@ -256,6 +258,7 @@ export function reportAndroidResult({
   useBuildCache,
   variant,
   release,
+  runtimeKind = release ? 'embedded-js' : 'metro',
   metroCheck,
   metroPort,
   logsDir,
@@ -323,7 +326,7 @@ export function reportAndroidResult({
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${host ? `${host.device?.name ?? 'Android emulator'} on ${host.machine}` : serial}, ` +
-      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
+      `${runtimeKind === 'process' ? `${variant ?? 'debug'} (native process, no Metro)` : runtimeKind === 'embedded-js' ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
       `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName, offloadedTo)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
@@ -336,19 +339,22 @@ export function reportAndroidResult({
     const cacheResult = useBuildCache
       ? cacheOutcome(record.cacheHit, remote?.name ?? providerName, offloadedTo)
       : `bypassed; ${cacheOutcome(false, null, offloadedTo)}`;
-    const metroResult = release
-      ? `embedded (${variant})`
-      : !metroCheck
-        ? `check skipped on port ${metroPort}`
-        : launchState === LAUNCH_UNVERIFIED
-          ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
+    const metroResult =
+      runtimeKind === 'process'
+        ? 'native process (no Metro)'
+        : runtimeKind === 'embedded-js'
+          ? `embedded (${variant})`
+          : !metroCheck
+            ? `check skipped on port ${metroPort}`
+            : launchState === LAUNCH_UNVERIFIED
+              ? `state unverified on port ${metroPort}`
+              : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
     emit(
       [
         outcome,
         phaseLine('device', host ? `${deviceName} on ${host.machine}` : `${deviceName} (${serial})`),
         phaseLine('app', androidPackage),
-        phaseLine('metro', metroResult),
+        phaseLine(runtimeKind === 'process' ? 'runtime' : 'metro', metroResult),
         phaseLine('cache', cacheResult),
         ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),

@@ -128,6 +128,7 @@ export interface AndroidPlanDependencies {
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   validateAvdConfig?: typeof androidAvdConfigSettingError;
   readFlavors?: typeof readProductFlavors;
+  variantProblem?: (variant: string | null) => ReturnType<typeof productFlavorRefusal>;
   detectExpo?: typeof detectIsExpo;
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: typeof listAvdDeviceProfiles;
@@ -204,6 +205,7 @@ export function resolveAndroidRunPlan(
     resolveCacheProvider = resolveCacheProviderConfig,
     validateAvdConfig = androidAvdConfigSettingError,
     readFlavors = readProductFlavors,
+    variantProblem = (variant) => productFlavorRefusal({ flavors: readFlavors(settingsContext.projectPath), variant }),
     detectExpo = detectIsExpo,
     listSystemImages = listInstalledSystemImages,
     listDeviceProfiles = listAvdDeviceProfiles,
@@ -255,7 +257,7 @@ export function resolveAndroidRunPlan(
   const systemImage = resolveSystemImage(systemImageFlag, settings);
   const deviceProfile = resolveDeviceProfile(deviceProfileFlag, settings);
   const variant = easProfile !== undefined ? 'debug' : resolveVariant(variantFlag, settings);
-  const flavorRefusal = productFlavorRefusal({ flavors: readFlavors(root), variant });
+  const flavorRefusal = variantProblem(variant);
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
   const cachePolicy = artifactCachePolicy(optimizations, requestedBuildCache, release);
