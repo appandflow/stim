@@ -159,7 +159,7 @@ struct RootView: View {
           navigation: navigation, canGoBack: navigation.canGoBack, canGoForward: navigation.canGoForward)
         if #available(macOS 26.0, *) {
           ToolbarItem(placement: .navigation) {
-            history.padding(.horizontal, Space.xs).frame(height: 40)
+            history.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
               .glassEffect(.regular, in: Capsule())
           }
           .sharedBackgroundVisibility(.hidden)
@@ -176,16 +176,30 @@ struct RootView: View {
           navigate(.machine, .click("machine summary"))
         }
         if summary.hasContent {
-          ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
+          let summaryItem =
             summary
-              .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
-              .clipped()
+            .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+            .frame(height: ToolbarMetrics.glassHeight)
+            .clipped()
+          if #available(macOS 26.0, *) {
+            ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
+              summaryItem.glassEffect(.regular, in: Capsule())
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) { summaryItem }
           }
         }
         ToolbarItem(placement: .primaryAction) { Spacer() }
         if !controlsBesideInspector {
-          ToolbarItem(id: "notifications", placement: .primaryAction) {
-            notificationButton
+          let bell = notificationButton.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(id: "notifications", placement: .primaryAction) {
+              bell.glassEffect(.regular, in: Capsule())
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(id: "notifications", placement: .primaryAction) { notificationButton }
           }
           if showsWorkspace, #available(macOS 26.0, *) {
             ToolbarSpacer(.fixed, placement: .primaryAction)
@@ -197,7 +211,7 @@ struct RootView: View {
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
           }
           .padding(.horizontal, Space.md + Space.xxs)
-          .frame(height: 40)
+          .frame(height: ToolbarMetrics.glassHeight)
           .accessibilityElement(children: .contain)
           if #available(macOS 26.0, *) {
             ToolbarItem(placement: .primaryAction) {
@@ -543,7 +557,7 @@ struct RootView: View {
     } label: {
       Image(systemName: "sidebar.left")
         .font(.system(size: 17))
-        .frame(width: 40, height: 40)
+        .frame(width: ToolbarMetrics.glassHeight, height: ToolbarMetrics.glassHeight)
     }
     .buttonStyle(.plain)
     .foregroundStyle(Palette.secondary)
@@ -562,7 +576,7 @@ struct RootView: View {
 
   @ViewBuilder private var inspectorSideControls: some View {
     if controlsBesideInspector {
-      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: 40)
+      let controls = notificationButton.padding(.horizontal, Space.xs).frame(height: ToolbarMetrics.glassHeight)
       Group {
         if #available(macOS 26.0, *) {
           controls.glassEffect(.regular, in: Capsule())
@@ -607,7 +621,7 @@ struct RootView: View {
     .help("Open notifications")
   }
 
-  private static let bellWidth: CGFloat = 56
+  private static let bellWidth: CGFloat = 72
   private static let historyButtonsWidth: CGFloat = 64
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
