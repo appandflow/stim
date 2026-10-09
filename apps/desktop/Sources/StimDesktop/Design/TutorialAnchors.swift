@@ -79,23 +79,13 @@ private struct TutorialHighlights: ViewModifier {
             }
           let rect = match.map { geometry[$0.value] }
           let onPage = hint.path == hint.selectedPath || spec?.anchor == .sidebarRow || spec?.anchor == .archivedFilter
-          if let spec, let rect, onPage, rect.intersects(CGRect(origin: .zero, size: geometry.size)) {
-            RoundedRectangle(cornerRadius: Radius.control)
-              .stroke(Palette.accent, lineWidth: 2)
-              .frame(width: rect.width + 6, height: rect.height + 6)
-              .position(x: rect.midX, y: rect.midY)
-              .allowsHitTesting(false)
-            Text(spec.callout).font(.stim(.footnote, weight: .semibold))
-              .foregroundStyle(Palette.text)
-              .padding(.horizontal, Space.md).padding(.vertical, Space.sm)
-              .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
-              .fixedSize(horizontal: true, vertical: false)
-              .position(
-                x: max(140, min(geometry.size.width - 140, rect.midX)),
-                y: rect.maxY + 38 < geometry.size.height ? rect.maxY + 22 : max(20, rect.minY - 22)
-              )
-              .allowsHitTesting(false)
-          } else if showFallback, hint.offersShowMe, hint.path != nil, hint.path != hint.selectedPath {
+          let target = rect.flatMap { onPage && $0.intersects(CGRect(origin: .zero, size: geometry.size)) ? $0 : nil }
+          if let spec {
+            TutorialGlow(
+              rect: target, bounds: geometry.size, callout: spec.callout,
+              restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")")
+          }
+          if target == nil, showFallback, hint.offersShowMe, hint.path != nil, hint.path != hint.selectedPath {
             Button("Show Me", action: hint.showMe)
               .buttonStyle(.stim(.secondary))
               .accessibilityLabel("Show the tutorial workspace")
@@ -104,6 +94,87 @@ private struct TutorialHighlights: ViewModifier {
           }
         }
       }
+    }
+  }
+}
+
+private struct TutorialGlow: View {
+  static let visibleSeconds = 4.0
+  static let fadeSeconds = 0.6
+  static let pulsePeriod = 1.4
+  static let reshowAfterAbsence = 1.0
+
+  var rect: CGRect?
+  var bounds: CGSize
+  var callout: String
+  var restartKey: String
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @State private var alive = false
+  @State private var faded = false
+  @State private var present = false
+  @State private var absentSince: Date?
+  @State private var epoch = 0
+
+  var body: some View {
+    Group {
+      if alive, let rect {
+        TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
+          let phase = reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
+          glow(rect, phase: phase)
+        }
+        .opacity(faded ? 0 : 1)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+      }
+    }
+    .onChange(of: rect == nil, initial: true) { _, absent in
+      present = !absent
+      if absent {
+        absentSince = Date()
+      } else {
+        if let absentSince, Date().timeIntervalSince(absentSince) > Self.reshowAfterAbsence { epoch += 1 }
+        absentSince = nil
+      }
+    }
+    .task(id: "\(restartKey)|\(epoch)") {
+      alive = false
+      faded = false
+      while !present {
+        try? await Task.sleep(for: .milliseconds(100))
+        if Task.isCancelled { return }
+      }
+      alive = true
+      try? await Task.sleep(for: .seconds(Self.visibleSeconds))
+      if Task.isCancelled { return }
+      withAnimation(.easeOut(duration: Self.fadeSeconds)) { faded = true }
+      try? await Task.sleep(for: .seconds(Self.fadeSeconds))
+      if !Task.isCancelled { alive = false }
+    }
+  }
+
+  private func glow(_ rect: CGRect, phase: Double) -> some View {
+    let size = CGSize(width: rect.width + 6, height: rect.height + 6)
+    let aboveY = rect.minY - 18
+    return ZStack {
+      RoundedRectangle(cornerRadius: Radius.control + 3)
+        .stroke(Palette.accent.opacity(0.45 + 0.25 * phase), lineWidth: 4 + 2 * phase)
+        .blur(radius: 6 + 2 * phase)
+        .frame(width: size.width, height: size.height)
+        .position(x: rect.midX, y: rect.midY)
+      RoundedRectangle(cornerRadius: Radius.control + 3)
+        .strokeBorder(Palette.accent.opacity(0.4), lineWidth: 1)
+        .frame(width: size.width, height: size.height)
+        .position(x: rect.midX, y: rect.midY)
+      Text(callout).font(.stim(.footnote, weight: .semibold))
+        .foregroundStyle(Palette.onPrimary)
+        .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
+        .background(Capsule().fill(Palette.accent))
+        .shadow(color: Palette.accent.opacity(0.4), radius: 6)
+        .fixedSize(horizontal: true, vertical: false)
+        .position(
+          x: max(140, min(bounds.width - 140, rect.midX)),
+          y: aboveY >= 14 ? aboveY : min(rect.maxY + 18, bounds.height - 14)
+        )
     }
   }
 }
