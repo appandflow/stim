@@ -7,7 +7,7 @@ import { getExecutor } from './exec.ts';
 export async function readListeningPorts(platform: NodeJS.Platform = process.platform): Promise<ReadonlySet<number>> {
   switch (platform) {
     case 'darwin':
-      return parseDarwinPorts(await readNetstat(['-anL', '-p', 'tcp']));
+      return parseDarwinPorts(await readNetstat('netstat', ['-anL', '-p', 'tcp']));
     case 'linux': {
       const tables = await Promise.all([
         readFile('/proc/net/tcp', 'utf8'),
@@ -19,23 +19,27 @@ export async function readListeningPorts(platform: NodeJS.Platform = process.pla
       return parseLinuxPorts(tables);
     }
     case 'win32':
-      return parseWindowsPorts(await readNetstat(['-an']));
+      return parseWindowsPorts(await readNetstat('netstat', ['-an']));
     default:
       throw new Error(`TCP listener inspection is not supported on ${platform}.`);
   }
 }
 
+const DARWIN_TITLE = 'Current listen queue sizes (qlen/incqlen/maxqlen)';
 const DARWIN_COLUMNS = /^Listen\s+Local Address$/;
 const DARWIN_TABLE_CHANGE = /^Some tcp sockets may have been (?:created|deleted|created or deleted)\.?$/;
 const DARWIN_LISTENER = /^\d+\/\d+\/\d+\s+\S+\.(?<port>\d+)$/;
 
 function parseDarwinPorts(output: string): Set<number> {
   const ports = new Set<number>();
+  let title = false;
+  let columns = false;
 
   for (const raw of output.split('\n')) {
     const line = raw.trim();
-    if (!line || line === 'Current listen queue sizes (qlen/incqlen/maxqlen)') continue;
-    if (DARWIN_COLUMNS.test(line) || DARWIN_TABLE_CHANGE.test(line)) continue;
+    if (line === DARWIN_TITLE) title = true;
+    else if (DARWIN_COLUMNS.test(line)) columns = true;
+    if (!line || line === DARWIN_TITLE || DARWIN_COLUMNS.test(line) || DARWIN_TABLE_CHANGE.test(line)) continue;
 
     const listener = DARWIN_LISTENER.exec(line)?.groups;
     if (!listener) throw new Error('Cannot parse the TCP listen table from netstat.');
@@ -43,6 +47,7 @@ function parseDarwinPorts(output: string): Set<number> {
     addPort(ports, Number(listener.port));
   }
 
+  if (!title || !columns) throw new Error('netstat printed no TCP listen table.');
   return ports;
 }
 
@@ -79,15 +84,19 @@ function parseLinuxPorts(tables: readonly (string | null)[]): Set<number> {
   return ports;
 }
 
+const WINDOWS_COLUMNS = /^Proto\s/;
 const WINDOWS_TCP_ROW = /^TCP\s+\S*:(?<localPort>\d+)\s+\S*:(?<remotePort>\d+)\s+\S/;
 
 function parseWindowsPorts(output: string): Set<number> {
   const ports = new Set<number>();
+  let table = false;
 
   for (const raw of output.split('\n')) {
     const line = raw.trim();
+    if (WINDOWS_COLUMNS.test(line)) table = true;
     const [protocol] = line.split(/\s+/, 1);
     if (protocol !== 'TCP') continue;
+    table = true;
 
     const connection = WINDOWS_TCP_ROW.exec(line)?.groups;
     if (!connection) throw new Error('Cannot parse the TCP connection table from netstat.');
@@ -96,11 +105,12 @@ function parseWindowsPorts(output: string): Set<number> {
     if (Number(connection.remotePort) === 0) addPort(ports, Number(connection.localPort));
   }
 
+  if (!table) throw new Error('netstat printed no TCP connection table.');
   return ports;
 }
 
-function readNetstat(args: string[]): Promise<string> {
-  return getExecutor().runFileAsync('netstat', args, {
+function readNetstat(file: string, args: string[]): Promise<string> {
+  return getExecutor().runFileAsync(file, args, {
     timeoutMs: 5000,
     rejectStderr: true,
     env: { LC_ALL: 'C' },
