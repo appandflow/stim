@@ -270,6 +270,19 @@ function successfulCommand(commands, expected) {
   });
 }
 
+function successfulGuideFirstChain(commands) {
+  return commands.some((command) => {
+    command = commandWithReportedStatus(command);
+    if (command.exitCode !== 0) return false;
+    const source = topLevelShellCommand(command.command);
+    const segments = shellCommandSegments(source);
+    if (segments.length < 2 || segments[0] !== 'stim guide agent' || /[$`]/.test(source)) return false;
+    if (segments.some((segment) => !literalShellArguments(segment)?.length)) return false;
+    const pattern = segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*&&\\s*');
+    return new RegExp(`^${pattern}$`).test(source);
+  });
+}
+
 function dependencyInstallCommand(command) {
   return shellCommandSegments(command).some((segment) =>
     /^(?:npm\s+(?:install|i|ci)|pnpm\s+(?:install|i)|yarn(?:\s+install)?|bun\s+install)(?:\s|$)/.test(segment),
@@ -292,7 +305,7 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
     reasons.push('dependencies-installed-inside-timer');
   }
   if (meta.arm !== 'stim') return reasons;
-  if (!successfulCommand(commands, 'stim guide agent')) {
+  if (!successfulCommand(commands, 'stim guide agent') && !successfulGuideFirstChain(commands)) {
     reasons.push('stim-guide-agent-missing-or-failed');
   }
   const warmRuns = commands.filter(
