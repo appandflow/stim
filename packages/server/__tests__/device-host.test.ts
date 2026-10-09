@@ -1649,12 +1649,21 @@ test('offer capacity counts unresolved sessions and preserves SDK failures as de
 
 test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
   const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
-  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  const pid = await vi.waitFor(() => {
+    expect(existsSync(join(home, 'probe-entered'))).toBe(true);
+    const recordedPid = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    expect(Number.isSafeInteger(recordedPid)).toBe(true);
+    expect(recordedPid).toBeGreaterThan(0);
+    return recordedPid;
+  });
   if (action === 'revoke') {
     allowed.delete('client');
     host.revoke();
   } else await host.close();
   expect(await pending).toHaveProperty('error.code', 'forbidden');
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), {
+    timeout: 5000,
+  });
   expect(existsSync(deviceHostRoot())).toBe(false);
 });
 

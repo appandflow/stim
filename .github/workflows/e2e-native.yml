@@ -329,7 +329,9 @@ jobs:
           name: build-logs-ios-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-pool-home/workspaces/**/logs/*
             ${{ env.TMPDIR }}/stim-*/app/package.json
             ${{ env.TMPDIR }}/stim-*/app/package-lock.json
@@ -337,6 +339,7 @@ jobs:
             ${{ env.TMPDIR }}/stim-*/app/.stim.json
             xcode-ga-ios.txt
             runtimes-ga-ios.json
+            ${{ env.TMPDIR }}/stim-cli-pool-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -497,7 +500,9 @@ jobs:
           name: build-logs-android-${{ matrix.framework }}-${{ matrix.suite }}
           path: |
             ${{ env.TMPDIR }}/stim-cli-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-home/archive/**/logs/*
             ${{ env.TMPDIR }}/stim-cli-cache-home/workspaces/**/logs/*
+            ${{ env.TMPDIR }}/stim-cli-cache-home/archive/**/logs/*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
@@ -613,6 +618,7 @@ jobs:
           path: |
             D:\e\stim-home\workspaces\**\logs\*
             D:\e\stim-home\logs\debug\*
+            D:\e\stim-home\archive\**\logs\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
