@@ -391,7 +391,6 @@ async function runIos(
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
-  let useBuildCache = opts.buildCache !== false;
 
   const phase = writePhase;
   const note = writeNote;
@@ -582,8 +581,6 @@ async function runIos(
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
-  const cachePolicy = artifactCachePolicy(optimizations, useBuildCache, release);
-  useBuildCache = cachePolicy.read;
 
   const deviceType = resolveDeviceType(opts.deviceType, settings);
   const runtime = resolveRuntime(opts.runtime, settings);
@@ -786,6 +783,11 @@ async function runIos(
     let lanOriginUrl: string | null = null;
     let devServer: DevServerStart | null = null;
     const appRuntime = composeRuntime();
+    const cachePolicy = artifactCachePolicy(
+      optimizations,
+      opts.buildCache !== false,
+      appRuntime.kind === 'embedded-js',
+    );
     const preparation = await appRuntime.prepare();
     if (!preparation.ok) return fail(preparation.error);
     const runtimePreparation = preparation.prepared;

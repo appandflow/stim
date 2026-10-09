@@ -5,6 +5,20 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
+Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
+no Metro, npm install or React Native dependency is required. The directory must
+contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
+one application module and the exact variant (debug by default). Stim installs
+one signed universal or matching-ABI APK on an owned emulator or leased phone.
+Multiple application modules, density/split APK sets, EAS and remote targets
+are unsupported. Set org.gradle.configureondemand=false; configuration cache
+remains supported. Stim verifies the existing APK signature; it does not sign it.
+Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
+and build offload are unavailable until arbitrary Gradle inputs can be tracked.
+Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.
+
 Two workflows share steps 2 through 6.
 
 SINGLE CHECKOUT: work in place, on a branch, in one directory. There is no

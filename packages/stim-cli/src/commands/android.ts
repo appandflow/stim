@@ -844,11 +844,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
     },
   };
-  const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
+  const { build: requestedBuildPlan, isExpo, cacheProviderConfig } = plan;
 
-  const { variant, release, cache: cachePolicy } = buildPlan;
+  const { variant, release } = requestedBuildPlan;
   record.configuration = variant ?? 'debug';
-  const useBuildCache = cachePolicy.read;
   const hosting = await selectAndroidPlacement({
     root,
     slot,
@@ -978,7 +977,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: true, prepared: { metroPort } };
   }
 
-  const runtime = options.runtimePlan ?? integration.runtime({ build: buildPlan, prepareMetro, phase });
+  const runtime = options.runtimePlan ?? integration.runtime({ build: requestedBuildPlan, prepareMetro, phase });
+  const buildPlan =
+    runtime.kind === 'process'
+      ? {
+          ...requestedBuildPlan,
+          cache: { ...requestedBuildPlan.cache, read: requestedBuildCache && requestedBuildPlan.cache.write },
+        }
+      : requestedBuildPlan;
+  const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
     const { code, message, remedy, lines } = preparation.error;

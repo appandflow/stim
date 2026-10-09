@@ -403,9 +403,27 @@ stim android [--slot <name>] [--variant <name>] [--system-image <id>] [--device-
              [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
+Native Android Gradle apps need a wrapper and `settings.gradle` or
+`settings.gradle.kts`, with one AGP application module. Run `stim android`
+(default variant `debug`) or pass an exact `--variant freeDebug`. Kotlin DSL,
+Groovy DSL, version catalogs and convention plugins are evaluated by Gradle;
+Stim does not infer their model from source text. No Node dependencies or Metro
+are required. Stim verifies the APK signature and installs one universal or
+matching-ABI APK on an owned emulator or leased physical Android phone.
+
+Multiple application modules, density/split APK sets, unsigned APKs, EAS and
+remote targets are unsupported. Set `org.gradle.configureondemand=false` so all
+application modules can be enumerated; configuration cache remains supported.
+Gradle incremental and build-cache reuse still apply, but Stim artifact caching
+and build offload are unavailable because arbitrary Gradle inputs are not fully
+tracked. Native `--plan` refuses without
+executing Gradle; `doctor` reports native prerequisites. `reload` refuses for a
+process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
+scoped device cleanup and physical-device lease behavior.
+
 Builds or restores the Android app. Stim then boots an owned emulator, installs
-the app, opens it, and checks launch logs. An emulator debug build can compile
-on a paired remote Mac instead: see `remote.buildMode` in
+the app, opens it, and checks launch logs. A React Native emulator debug build
+can compile on a paired remote Mac instead: see `remote.buildMode` in
 [machine settings](./settings.md#machine-settings).
 
 - `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD` and

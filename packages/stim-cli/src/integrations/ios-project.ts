@@ -24,7 +24,7 @@ export interface IosSourcePreparation {
 }
 
 export interface IosArtifactRecipe {
-  identity(): Promise<IosArtifactIdentity>;
+  identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
   cache(): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;

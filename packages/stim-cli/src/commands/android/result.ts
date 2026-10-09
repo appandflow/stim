@@ -302,7 +302,7 @@ export function reportAndroidResult({
     variant,
     metroPort,
     cacheHit: record.cacheHit,
-    cacheSkipped: !useBuildCache,
+    cacheSkipped: record.cacheSkipped || !useBuildCache,
     waitedForBuild,
     appPath: apkPath,
     bundleId: androidPackage,
