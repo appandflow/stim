@@ -50,6 +50,8 @@ test('invalid launch entries are ignored instead of becoming reload targets', ()
   writeWorkspaceState(root, {
     launches: {
       ios: { appId: 'com.example.ios' },
+      'android:invalid-runtime': { ...launch('native', 'emulator-5556'), metroPort: null, runtime: 'unknown' },
+      'android:contradictory-runtime': { ...launch('native', 'emulator-5558'), runtime: 'process' },
       android: launch('com.example.android', 'emulator-5554'),
     },
   });
@@ -136,7 +138,7 @@ test.each([
 ])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
   upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
   setExecutor({
-    run: () => 'List of devices attached\nemulator-5554\tdevice\n',
+    runFile: () => 'List of devices attached\nemulator-5554\tdevice\n',
     runQuiet: () => avdName,
   });
   try {

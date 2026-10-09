@@ -959,6 +959,9 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
             : 'List of devices attached\n';
         return '';
       },
+      runFile(file, args = [], options) {
+        return this.run!([file, ...args].join(' '), options);
+      },
       runQuiet(cmd) {
         commands.push(cmd);
         return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;

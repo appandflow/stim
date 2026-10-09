@@ -81,6 +81,7 @@ const reactNativeProject: ProjectIntegration = {
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
       ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
+      android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
     };
   },
 };

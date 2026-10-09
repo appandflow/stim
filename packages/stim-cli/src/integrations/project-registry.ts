@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { projectRootDirectories } from '@stim-cli/core/state';
+import type { AndroidProject } from './android-project.ts';
 import type { IosProject } from './ios-project.ts';
 import type { MacosProject } from './macos-project.ts';
 import type { WebProject } from './web-project.ts';
@@ -20,6 +21,7 @@ interface ProjectMatch {
   application: boolean;
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
+  android?(): Promise<AndroidProject>;
   ios?(): Promise<IosProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
@@ -34,6 +36,7 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
+  selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
   selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
@@ -127,6 +130,23 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     return ownedRootProblem(root, matches) ?? operationProblem(root, matches, operation);
   }
 
+  function selectAndroid(root: string): ReturnType<ProjectRegistry['selectAndroid']> {
+    root = canonicalPath(root);
+    const matches = inspect(root);
+    const problem = ownedRootProblem(root, matches);
+    if (problem) return { problem };
+    const selected = operationSelection(root, matches, 'android');
+    if ('problem' in selected) return selected;
+    if (selected.match.android) return { load: selected.match.android };
+    return {
+      problem: {
+        kind: 'not-an-app',
+        message: `The ${selected.match.id} integration does not provide an Android operation.`,
+        remedy: 'Use an integration with an Android build and runtime recipe.',
+      },
+    };
+  }
+
   function selectMacos(root: string): ReturnType<ProjectRegistry['selectMacos']> {
     root = canonicalPath(root);
     const matches = inspect(root);
@@ -206,6 +226,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
   return {
     findProjectRoot,
     projectProblem,
+    selectAndroid,
     selectIos,
     selectMacos,
     selectWeb,
