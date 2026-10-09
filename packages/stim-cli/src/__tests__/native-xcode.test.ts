@@ -558,6 +558,28 @@ test('local Swift packages do not get a partial key that omits their transitive 
   expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('transitive local dependencies') });
 });
 
+test('local package product dependencies without a package reference cannot use a partial artifact key', () => {
+  const project = writeNativeXcodeProject(root);
+  const pbx = join(project, 'project.pbxproj');
+  writeFileSync(
+    pbx,
+    readFileSync(pbx, 'utf8')
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, LOCAL_PACKAGE, );')
+      .replace('name = Native; productType', 'name = Native; packageProductDependencies = ( PRODUCT, ); productType')
+      .replace(
+        'objects = {',
+        `objects = {
+LOCAL_PACKAGE = { isa = PBXFileReference; lastKnownFileType = wrapper; path = Packages/Local; sourceTree = "<group>"; };
+PRODUCT = { isa = XCSwiftPackageProductDependency; productName = Local; };`,
+      ),
+  );
+  write(
+    join(root, 'Packages', 'Local', 'Package.swift'),
+    'import PackageDescription\nlet package = Package(name: "Local", dependencies: [.package(path: "../../../External")])\n',
+  );
+  expect(fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('transitive local dependencies') });
+});
+
 test('native planning refuses unresolved source closure without dependency preparation or builds', async () => {
   const project = writeNativeXcodeProject(root);
   const pbx = join(project, 'project.pbxproj');

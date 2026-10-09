@@ -13,7 +13,10 @@ export function nativeXcodePackages(root: string): string {
 export function nativeXcodeHasPackages(selection: NativeXcodeSelection): boolean {
   return selection.projects.some((project) =>
     [...project.objects.values()].some(
-      (entry) => entry.isa === 'XCRemoteSwiftPackageReference' || entry.isa === 'XCLocalSwiftPackageReference',
+      (entry) =>
+        entry.isa === 'XCRemoteSwiftPackageReference' ||
+        entry.isa === 'XCLocalSwiftPackageReference' ||
+        entry.isa === 'XCSwiftPackageProductDependency',
     ),
   );
 }
