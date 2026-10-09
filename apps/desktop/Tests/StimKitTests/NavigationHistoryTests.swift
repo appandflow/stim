@@ -85,3 +85,16 @@ struct NavigationHistoryTests {
     #expect(history.entries == ["overview", "other"])
   }
 }
+
+struct NavigationLevelTests {
+  @Test func arrivingAtTheOverviewFromAnotherPageIsAWarning() {
+    #expect(DebugLog.navigationLevel(to: "overview", from: "workspace /a") == .warning)
+    #expect(DebugLog.navigationLevel(to: "overview", from: "none") == .warning)
+  }
+
+  @Test func otherChangesStayAtDebug() {
+    #expect(DebugLog.navigationLevel(to: "wall", from: "overview") == .debug)
+    #expect(DebugLog.navigationLevel(to: "overview", from: nil) == .debug)
+    #expect(DebugLog.navigationLevel(to: "overview", from: "overview") == .debug)
+  }
+}
