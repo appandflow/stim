@@ -977,7 +977,6 @@ struct MachineSummary: View {
     }
     .padding(.horizontal, Space.lg)
     .padding(.vertical, Space.xs)
-    .background(Palette.surface, in: Capsule())
   }
 
   private func cpuItem(_ cpu: Double) -> some View {
