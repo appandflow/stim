@@ -109,7 +109,6 @@ struct RootView: View {
       .toolbar {
         if columnVisibility != .detailOnly { sidebarToggleToolbar }
       }
-      .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
