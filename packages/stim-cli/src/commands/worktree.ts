@@ -218,6 +218,7 @@ export function registerWarm(worktree: Command): void {
         const app = findProjectRoot(process.cwd());
         if (app) recordWorkspaceUse(app);
         workspace = warmedWorkspace(root, target, process.cwd());
+        if (workspace && workspace !== app) recordWorkspaceUse(workspace);
         if (!workspace) {
           console.error(
             chalk.dim(

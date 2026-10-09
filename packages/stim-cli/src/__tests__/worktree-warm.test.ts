@@ -634,8 +634,15 @@ test('warm from a monorepo worktree root registers the app the source checkout r
   git(root, 'commit', '-qm', 'apps');
   git(target, 'merge', '-q', 'main');
   upsertProject(join(root, 'apps/mobile'), {});
+  vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'warm-shell');
   const result = await runWarm(target);
+  vi.unstubAllEnvs();
   expect(result.code).toBe(0);
+  expect(result.stdout).toEqual([]);
+  expect(readWorkspaceState(join(target, 'apps/mobile'))?.agentSession).toMatchObject({
+    tool: 'claude-code',
+    sessionId: 'warm-shell',
+  });
   expect(Object.keys(loadConfig()?.projects ?? {}).toSorted()).toEqual([
     join(target, 'apps/mobile'),
     join(root, 'apps/mobile'),
