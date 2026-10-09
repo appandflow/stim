@@ -63,6 +63,8 @@ struct RootView: View {
   @State private var sidebarWidth: CGFloat = 0
   @State private var settledInspectorFits: Bool?
   @State private var detailWidth: CGFloat = 0
+  @State private var narrowestSummaryWidth: CGFloat = .infinity
+  @State private var summaryHidden = true
   @State private var logWorkspacePath: String?
   @State private var columnVisibility = NavigationSplitViewVisibility.all
   @ObservedObject private var nativePermissions = NativeViewerPermissions.shared
@@ -109,7 +111,6 @@ struct RootView: View {
       .toolbar {
         if columnVisibility != .detailOnly { sidebarToggleToolbar }
       }
-      .frame(minWidth: 220, idealWidth: 272, maxWidth: .infinity)
       .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
@@ -120,7 +121,7 @@ struct RootView: View {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
         if tutorial.isOpen, let snapshot = tutorial.snapshot {
-          Divider()
+          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           TutorialPanel(
             snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message, prompt: tutorial.prompt,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
@@ -144,6 +145,15 @@ struct RootView: View {
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
       .overlay(alignment: .bottom) { onboardingPopup }
+      .background(alignment: .topLeading) {
+        machineSummary(measuresNarrowest: true)
+          .onGeometryChange(for: CGFloat.self) {
+            $0.size.width
+          } action: {
+            narrowestSummaryWidth = $0
+          }
+          .hidden()
+      }
       .overlay(alignment: .topTrailing) { inspectorSideControls }
       .overlay(alignment: .topTrailing) { ToastStack(center: toasts) }
       .overlay(alignment: .bottomLeading) { NoticeStack(center: notices) }
@@ -172,15 +182,12 @@ struct RootView: View {
             OperationsButton(log: operations, actions: actions, store: store, arrowEdge: .bottom)
           }
         }
-        let summary = MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth) {
-          navigate(.machine, .click("machine summary"))
-        }
-        if summary.hasContent {
+        let summary = machineSummary()
+        if summary.hasContent, summaryFits {
           let summaryItem =
             summary
-            .frame(width: showsWorkspace && inspector == .overlay ? max(0, summaryWidth) : nil, alignment: .leading)
+            .frame(maxWidth: max(0, summaryWidth), alignment: .leading)
             .frame(height: ToolbarMetrics.glassHeight)
-            .clipped()
           if #available(macOS 26.0, *) {
             ToolbarItem(id: summaryItemID(for: summary), placement: .navigation) {
               summaryItem.glassEffect(.regular, in: Capsule())
@@ -223,6 +230,9 @@ struct RootView: View {
           }
         }
       }
+    }
+    .onChange(of: [summaryWidth, narrowestSummaryWidth], initial: true) {
+      summaryHidden = !summaryFits
     }
     .tutorialHighlights()
     .environment(\.tutorialHint, tutorialHint)
@@ -596,8 +606,8 @@ struct RootView: View {
       navigate(.notifications, .click("notifications button"))
     } label: {
       NotificationBell(selected: selection == .notifications)
-        .padding(.trailing, 6)
-        .frame(width: 46, height: 36)
+        .padding(.trailing, unread > 0 ? 6 : 0)
+        .frame(width: Self.bellContentWidth(unread: unread), height: 36)
         .overlay(alignment: .topTrailing) {
           if unread > 0 {
             Text(unread > 99 ? "99+" : "\(unread)")
@@ -621,23 +631,47 @@ struct RootView: View {
     .help("Open notifications")
   }
 
-  private static let bellWidth: CGFloat = 72
+  private static func bellContentWidth(unread: Int) -> CGFloat {
+    unread == 0 ? 32 : unread < 10 ? 40 : 46
+  }
+
+  private var bellWidth: CGFloat {
+    Self.bellContentWidth(unread: inbox.inbox.unreadCount) + 2 * Space.xs + Self.toolbarItemSpacing
+  }
+
+  private static let toolbarItemSpacing: CGFloat = 16
+  private static let toolbarSlack: CGFloat = 16
+  private static let summaryHysteresis: CGFloat = 8
   private static let historyButtonsWidth: CGFloat = 64
+  private static let operationsButtonWidth: CGFloat = 64
 
   /// macOS moves the traffic lights and the sidebar toggle into the detail's toolbar when the sidebar is hidden.
   private var summaryWidth: CGFloat {
-    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - (showsWorkspace ? 88 : 0) - Self.bellWidth
+    detailWidth - (columnVisibility == .detailOnly ? 200 : 80) - Self.toolbarSlack
+      - (showsWorkspace && inspector != .column ? 88 : 0)
+      - bellWidth
       - Self.historyButtonsWidth
+      - (columnVisibility == .detailOnly && !operations.runs.isEmpty ? Self.operationsButtonWidth : 0)
       - (tutorial.isOpen ? WorkspaceDetail.inspectorWidth + 1 : 0)
       - (showsWorkspace && inspector == .column
         ? WorkspaceDetail.clampedInspectorWidth(inspectorWidth, detailWidth: detailWidth) + 1
-        : showsWorkspace && inspector == .overlay ? WorkspaceDetail.inspectorWidth : 0)
+        : showsWorkspace && inspector == .overlay ? max(0, WorkspaceDetail.inspectorWidth - 88 - bellWidth) : 0)
+  }
+
+  private func machineSummary(measuresNarrowest: Bool = false) -> MachineSummary {
+    MachineSummary(store: store, metrics: metrics, gc: gc, width: summaryWidth, measuresNarrowest: measuresNarrowest) {
+      navigate(.machine, .click("machine summary"))
+    }
+  }
+
+  private var summaryFits: Bool {
+    summaryWidth >= narrowestSummaryWidth + (summaryHidden ? Self.summaryHysteresis : 0)
   }
 
   /// NSToolbar measures an item when it is inserted or the window resizes, not when a SwiftUI item grows, so the
   /// summary is reinserted whenever the room it gets changes.
   private func summaryItemID(for summary: MachineSummary) -> String {
-    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(tutorial.isOpen)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)"
+    "machine-summary-\(summary.contentKey)-\(detailWidth > 0)-\(tutorial.isOpen)-\(showsWorkspace)-\(showsWorkspace && inspector == .column)-\(showsWorkspace && inspector == .overlay)-\(bellWidth)-\(summaryFits)"
   }
 
   private func restoreLastProject() {
@@ -980,6 +1014,7 @@ struct MachineSummary: View {
   var metrics: MetricsStore
   var gc: GcReportStore
   var width: CGFloat
+  var measuresNarrowest = false
   var openMachine: () -> Void
   @State private var expandedResource: ResourceKind?
 
@@ -1012,17 +1047,26 @@ struct MachineSummary: View {
 
   var body: some View {
     ProposedWidth(width: max(0, width)) {
-      ViewThatFits(in: .horizontal) {
-        row(showsMemory: true, showsBar: true, showsReclaimable: true)
-        row(showsMemory: true, showsBar: true, showsReclaimable: false)
-        row(showsMemory: true, showsBar: false, showsReclaimable: false)
-        row(showsMemory: !showsCPU && !metrics.hasVolumes, showsBar: false, showsReclaimable: false)
+      if measuresNarrowest {
+        narrowestRow.fixedSize()
+      } else {
+        ViewThatFits(in: .horizontal) {
+          row(showsCPU: true, showsMemory: true, showsBar: true, showsReclaimable: true)
+          row(showsCPU: true, showsMemory: true, showsBar: true, showsReclaimable: false)
+          row(showsCPU: true, showsMemory: true, showsBar: false, showsReclaimable: false)
+          row(showsCPU: false, showsMemory: true, showsBar: false, showsReclaimable: false)
+          narrowestRow
+        }
       }
     }
     .font(.stim(.callout))
   }
 
-  private func row(showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
+  private var narrowestRow: some View {
+    row(showsCPU: !metrics.hasVolumes, showsMemory: !metrics.hasVolumes, showsBar: false, showsReclaimable: false)
+  }
+
+  private func row(showsCPU includesCPU: Bool, showsMemory: Bool, showsBar: Bool, showsReclaimable: Bool) -> some View {
     HStack(spacing: Space.md) {
       if let error = store.error {
         Label(abbreviatingHome(error), systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
@@ -1031,7 +1075,7 @@ struct MachineSummary: View {
           .help(abbreviatingHome(error))
       }
       let cap = store.payload?.capacity
-      let cpu = cap == nil ? nil : metrics.totalCpuFraction
+      let cpu = cap == nil || !includesCPU ? nil : metrics.totalCpuFraction
       let memory = cap == nil || !showsMemory ? nil : metrics.memory
       let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes })
       ForEach(
