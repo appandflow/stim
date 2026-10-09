@@ -22,14 +22,15 @@
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:]
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
+      poolDisabled: [String: [String]]? = nil, failure: String? = nil
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
-        working: nil, progress: nil, refreshing: false, failure: nil, tailscaleRunning: tailscale, canAsk: true,
+        working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
-        remove: { _ in }, thisMac: EmptyView()
+        remove: { _ in }, poolDisabled: poolDisabled, thisMac: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
@@ -73,6 +74,24 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let fixtures: [(String, AnyView)] = [
+        (
+          "pools-enabled",
+          AnyView(content(entries: ["mini"], statuses: try busy(), tailscale: true, poolDisabled: ["build": [], "device": []]))
+        ),
+        (
+          "pools-split",
+          AnyView(
+            content(
+              entries: ["mini"], statuses: try busy(), tailscale: true,
+              poolDisabled: ["build": ["local"], "device": ["mini"]]))
+        ),
+        (
+          "pools-last-member",
+          AnyView(
+            content(
+              entries: [], statuses: [], tailscale: true, poolDisabled: ["build": [], "device": []],
+              failure: "Keep at least one approved member enabled in the build pool."))
+        ),
         ("empty", AnyView(content(entries: [], statuses: [], tailscale: true))),
         (
           "list", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: true))

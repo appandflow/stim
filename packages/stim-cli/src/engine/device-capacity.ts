@@ -17,6 +17,7 @@ import {
 } from '../devices/ios.ts';
 import { listAdbDevices, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
+import { automaticMachineEnabled } from '@stim-cli/core/state';
 import { formatElapsed, phaseLine } from '../command-output.ts';
 import { recordCapacityRefusal, recordCapacityWait } from './stats.ts';
 import {
@@ -381,6 +382,7 @@ export function peekDeviceSlots({
 }
 
 export interface DeviceSlotWaitPolicy {
+  automatic?: boolean;
   waitMs?: number;
   signal?: AbortSignal;
   noWait?: boolean;
@@ -524,6 +526,7 @@ export async function withDeviceBootAdmission<T>(
     out = () => {},
     waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
     noWait = false,
+    automatic = false,
     displayName = basename(root),
     now = Date.now,
     signal,
@@ -538,7 +541,16 @@ export async function withDeviceBootAdmission<T>(
     out?: (line: string) => void;
   },
 ): Promise<T> {
+  const requireMembership = () => {
+    if (automatic && !automaticMachineEnabled('device', 'local'))
+      throw new DeviceAdmissionRefusal({
+        code: 'STIM_HOSTING_REFUSED',
+        message: "local is disabled in this requester's automatic device pool.",
+        remedy: 'Enable local in remote.devicePoolDisabled or select a machine explicitly.',
+      });
+  };
   signal?.throwIfAborted();
+  requireMembership();
   if (!max || max <= 0) return boot();
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
@@ -558,6 +570,7 @@ export async function withDeviceBootAdmission<T>(
         const result = await admissionTransaction(
           async () => {
             signal?.throwIfAborted();
+            requireMembership();
             const waiters = liveWaiters();
             const first = waiters[0];
             const turn = !first || first.claimId === ticket?.claimId;
@@ -660,6 +673,7 @@ export async function withDeviceBootAdmission<T>(
         onWait(ms);
       }
     }
+    requireMembership();
     return await boot();
   } finally {
     releaseClaim(marker);

@@ -6936,6 +6936,20 @@ describe('strict remote Mac selection', () => {
     );
   });
 
+  test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: offline');
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await harness({ buildMachine: 'auto', build, acquireSlot: slot }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    expect((await harness({ buildMachine: 'auto', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
+    expect(build).not.toHaveBeenCalled();
+  });
+
   test.each(['sync failed'])('remote %s never falls back to Gradle', async (reason) => {
     configureMini();
     const choice = { machine: 'mini', offer: { capacity: {} } } as offloadClient.OffloadChoice;

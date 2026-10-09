@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { createNdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import { workspaceDerivedData, workspaceLogsDir } from '../workspace/paths.ts';
-import { buildIos, discoverXcodeProject, resolveScheme } from '../engine/xcode.ts';
+import { buildIos, discoverXcodeProject } from '../integrations/react-native-build.ts';
+import { resolveScheme } from '../engine/xcode.ts';
 
 let tmp: string;
 let stateHome: string;
