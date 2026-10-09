@@ -144,8 +144,9 @@ WHAT THE SUPERVISOR IS
   to install, and no cross-project state. It hosts the dev server, writes its
   output as NDJSON into the global workspace logs directory
   ($STIM_HOME/workspaces/<project>--<digest>/logs; see \`guide logs\`), and
-  records itself in that workspace's state.json before it starts serving. Two modes,
-  chosen by ecosystem detection:
+  records itself in that workspace's state.json before it starts serving. Three
+  modes: metro.command selects command-child, otherwise ecosystem detection
+  picks one of the first two:
 
     bare-inproc  bare React Native: Metro is hosted INSIDE the supervisor,
                  from the project's own node_modules, with Stim's reporter
@@ -154,6 +155,15 @@ WHAT THE SUPERVISOR IS
     expo-child   Expo: the project's own \`expo start --port <port>\` runs as
                  a child and its stdout is parsed into records. Levels are
                  INFERRED from each line, so those records carry raw: true.
+    command-child  metro.command (\`guide settings\`): that argv runs as a
+                 child in its own process group, with {port} replaced by the
+                 reserved port, and its output is parsed like expo-child's
+                 under command_stdout and command_stderr events. Stopping the
+                 dev server signals the whole group, so a wrapper such as
+                 yarn takes its Metro with it. Stim adds no reporter, warmup
+                 observer or shared transform store, so ios and android
+                 launches stay UNVERIFIED: read \`stim logs --source metro\`
+                 for the bundle lines.
 
   In expo-child mode, remote intent plus metro.tunnel "expo" makes \`start\` pass
   \`--tunnel\` and EXPO_UNSTABLE_TUNNEL_V2=1 (the legacy ws-tunnel path is

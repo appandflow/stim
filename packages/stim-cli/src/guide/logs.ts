@@ -287,11 +287,11 @@ they stay in the local logs. These records carry no tokens.
 
 WHAT WRITES WHAT
   maintenance.ndjson   workspace maintenance actions, failures and explaining skips
-  metro.ndjson         the bundler, in both supervisor modes
+  metro.ndjson         the bundler, in every supervisor mode
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
-                       In expo-child mode everything Expo prints lands in
-                       metro.ndjson with raw: true, so \`--source client\`
-                       returns nothing there.
+                       In expo-child and command-child mode everything the
+                       dev server prints lands in metro.ndjson with raw: true,
+                       so \`--source client\` returns nothing there.
   device.ndjson        the device-log collector uses \`simctl log stream\`
                        predicated on the app, or \`adb logcat\` filtered to
                        the app's pid. Local iOS simulator capture starts
