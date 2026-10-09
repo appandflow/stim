@@ -435,7 +435,7 @@ function processSnapshot(h, candidates) {
       : inspect(h, 'ps', ['-p', pids.join(','), '-o', 'pid=,lstart=,command=']);
   const live = new Map(
     out
-      .split('\n')
+      .split(/\r?\n/)
       .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
       .filter(Boolean)
       .map((match) => [Number(match[1]), match[0].trim()]),
