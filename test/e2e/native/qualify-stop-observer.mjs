@@ -38,7 +38,7 @@ if (role === 'tools') {
   const result = spawnSync(join(selectedDirectory, 'adb.exe'), ['devices'], {
     env: {
       ...process.env,
-      NODE_OPTIONS: `--require "${join(root, 'finite-client.cjs')}"`,
+      NODE_OPTIONS: `--require "${join(root, 'finite-client.cjs').replaceAll('\\', '/')}"`,
       STIM_STOP_MODE: selectedMode,
     },
     timeout: selectedMode === 'timeout' ? 5000 : 20000,
