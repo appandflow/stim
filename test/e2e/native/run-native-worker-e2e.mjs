@@ -92,6 +92,7 @@ const { inspectBuildMachines, pinnedEndpoint } =
 const { BuildConnection } = await import('../../../packages/stim-cli/src/offload/client.ts');
 const { readBuildMachines, readWorkspaceState } = await import('../../../packages/core/state/index.ts');
 const { readClaimSet } = await import('../../../packages/core/ownership-claim.ts');
+const { fingerprintNativeInputs } = await import('../../../packages/stim-cli/src/integrations/native-inputs.ts');
 let host;
 let hostExit;
 let machine;
@@ -113,7 +114,11 @@ const redact = (value) => {
 const save = (label, value) =>
   writeFileSync(
     join(evidence, `${label}.json`),
-    JSON.stringify(value, (key, val) => (/token|secret/i.test(key) ? '[redacted]' : val), 2) + '\n',
+    JSON.stringify(
+      value,
+      (key, val) => (/token|secret/i.test(key) ? '[redacted]' : typeof val === 'string' ? redact(val) : val),
+      2,
+    ) + '\n',
   );
 let serial = 0;
 async function run(label, file, args, options = {}) {
@@ -213,6 +218,7 @@ async function build(label, revision, workerHit) {
     },
   });
   let result;
+  let buildFailed = false;
   try {
     result = await api.build({
       platform: 'ios',
@@ -222,8 +228,45 @@ async function build(label, revision, workerHit) {
       remoteBuild: machine,
       signal: AbortSignal.timeout(20 * 60_000),
     });
+  } catch (error) {
+    buildFailed = true;
+    throw error;
   } finally {
-    writeFileSync(join(evidence, `${label}.log`), redact(output.join('')));
+    const failures = [];
+    try {
+      writeFileSync(join(evidence, `${label}.log`), redact(output.join('')));
+    } catch (error) {
+      failures.push(`progress evidence: ${error.message}`);
+    }
+    try {
+      save(`${label}-diagnostics`, await api.diagnostics({ tail: 2000, signal: AbortSignal.timeout(30_000) }));
+    } catch (error) {
+      failures.push(`client diagnostics: ${error.message}`);
+    }
+    try {
+      const areas = workerAreas();
+      assert.equal(areas.length, 1);
+      const directory = areas[0];
+      save(`${label}-worker-state`, workerState());
+      save(`${label}-worker-mirror`, JSON.parse(readFileSync(join(directory, 'mirror.json'), 'utf8')));
+      const src = join(directory, 'src');
+      save(
+        `${label}-worker-inputs`,
+        fingerprintNativeInputs([{ name: 'repository', path: src }], {
+          excluded: [join(src, '.git')],
+          parameters: null,
+        }),
+      );
+    } catch (error) {
+      failures.push(`worker evidence: ${error.message}`);
+    }
+    try {
+      save(`${label}-evidence-status`, { ok: failures.length === 0, failures });
+    } catch (error) {
+      failures.push(`evidence status: ${error.message}`);
+    }
+    if (failures.length) console.error(redact(`Build evidence failed: ${failures.join('; ')}`));
+    if (!buildFailed) assert.deepEqual(failures, []);
   }
   save(`${label}-result`, result);
   assert.equal(result.platform, 'ios');
@@ -380,8 +423,14 @@ try {
     failures.push(error.message);
   }
   summary.cleanup = { ok: failures.length === 0, failures };
-  save('summary', summary);
-  if (failures.length) {
+  let recorded = false;
+  try {
+    save('summary', summary);
+    recorded = true;
+  } catch (error) {
+    console.error(redact(`Summary evidence failed: ${error.message}`));
+  }
+  if (failures.length || !recorded) {
     process.exitCode = 1;
     console.error(`Retained task state at ${root}: ${failures.join('; ')}`);
   } else rmSync(root, { recursive: true, force: true });
