@@ -605,26 +605,14 @@ struct RootView: View {
     openRequests.device = nil
     let path = owner.workspace.path
     let deviceID = owner.device.id
-    let page: LaunchPage
-    switch selection {
-    case .overview, .wall: page = .allDevices
-    case .environment(let current): page = .workspace(current)
-    default: page = .other
-    }
-    switch launchResponse(page: page, mainWindowOpen: openRequests.deviceArrivedWithWindow, workspacePath: path) {
-    case .navigate:
-      selection = .environment(path)
-      focusedDeviceID = deviceID
-    case .notice:
-      notices.show(
-        Notice(
-          icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
-          detail: abbreviatingHome(path), actionTitle: "Show",
-          perform: {
-            selection = .environment(path)
-            focusedDeviceID = deviceID
-          }, key: "device-launch:\(deviceID)", workspacePath: path))
-    }
+    notices.show(
+      Notice(
+        icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
+        detail: abbreviatingHome(path), actionTitle: "Show",
+        perform: {
+          selection = .environment(path)
+          focusedDeviceID = deviceID
+        }, key: "device-launch:\(deviceID)", workspacePath: path))
   }
 
   private func showStimUpdate(_ latest: SemanticVersion?) {

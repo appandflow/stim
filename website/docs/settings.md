@@ -306,8 +306,8 @@ including ones it never opened a window for and ones other workspaces or
 agents are using; never quit it to free memory or clean up. Set
 `"siniulator"` to use an installed
 [Siniulator](https://github.com/kmagiera/Siniulator) instead. Set
-`"stim-desktop"` to open no simulator window and show the device in Stim
-Desktop, which selects the workspace that owns it. This is a
+`"stim-desktop"` to open no simulator window and show a launch card in Stim
+Desktop. Clicking **Show** opens the workspace that owns the device. This is a
 machine-wide preference, not a project setting; Stim still creates, boots, and
 owns the simulator. An invalid value refuses before boot. Opening the chosen
 app is best effort, so install Siniulator or Stim Desktop before selecting it.
@@ -320,9 +320,10 @@ only applies to local simulators.
 `androidEmulatorApp` chooses how an owned Android emulator that Stim boots on
 macOS is displayed. It defaults to `"stim-desktop"` while Stim Desktop is
 installed and to `"emulator"` otherwise. `"emulator"` opens the emulator's own window.
-`"stim-desktop"` boots it with `-no-window -gpu host` and opens it in Stim
-Desktop, which renders frames and sends input through the emulator's gRPC
-endpoint. It applies only when Stim boots the emulator: an emulator that is
+`"stim-desktop"` boots it with `-no-window -gpu host` and shows a launch card in
+Stim Desktop. Clicking **Show** opens the emulator view. Desktop renders frames
+and sends input through the emulator's gRPC endpoint. It applies only when Stim
+boots the emulator: an emulator that is
 already running keeps its current display until it next boots, and physical
 devices are unaffected. It has no effect on Linux or Windows. An invalid value
 refuses before boot. There is no per-run flag.
