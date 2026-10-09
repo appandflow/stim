@@ -1219,7 +1219,7 @@ struct InspectorToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .help(isShown ? "Hide the inspector" : "Show the inspector")
@@ -1236,7 +1236,7 @@ struct LogsToggleButton: View {
     Button(action: action) {
       Label(isShown ? "Hide Logs" : "Show Logs", systemImage: "text.alignleft")
     }
-    .buttonStyle(.icon(active: isShown))
+    .buttonStyle(.icon(tint: isShown ? Palette.text : Palette.secondary))
     .labelStyle(.iconOnly)
     .accessibilityAddTraits(isShown ? .isSelected : [])
     .overlay(alignment: .topTrailing) {
