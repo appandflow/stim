@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { launchEvidenceMessage } from './assertions.mjs';
 import {
   appendFileSync,
   copyFileSync,
@@ -69,6 +70,31 @@ export function createHarness({ env, cliPath, label }) {
   };
 
   return { env, cliPath, label, log, banner, die, sh, cli, cliJson, requireTool };
+}
+
+export function assertVerifiedLaunch({ h, facts, cwd, label, expectUnattributedAndroidSlot = false }) {
+  const strict = h.env.STIM_E2E_STRICT_QA === '1';
+  if (strict) {
+    assert([true, 'bundling', 'unverified'].includes(facts.launched), `${label} did not establish launch evidence`);
+    h.log(`${label}: checking this launch's delivery, live process and readiness (QA deadline 180s)`);
+    const helper = fileURLToPath(new URL('./await-launch.mjs', import.meta.url));
+    const argv = ['--experimental-strip-types', helper, cwd, JSON.stringify(facts)];
+    if (expectUnattributedAndroidSlot) argv.push('expect-unattributed-android-slot');
+    const result = h.sh(process.execPath, argv, {
+      cwd,
+      timeout: 180_000,
+      allowFail: true,
+    });
+    if (result.stdout) h.log(result.stdout.trim());
+    assert(result.code === 0, `${label} launch did not establish strict readiness: ${result.stderr}`);
+    h.log(
+      expectUnattributedAndroidSlot
+        ? `${label}: delivery UNAVAILABLE (same-platform Android slot attribution); exact app process checked, slot/cache/cleanup checks remain required.`
+        : `${label} completed bundle delivery and stayed alive.`,
+    );
+    return;
+  }
+  h.log(launchEvidenceMessage(facts.launched, label));
 }
 
 export function preflight(h, platform) {
@@ -358,12 +384,15 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
       state.supervisor,
       { pid: state.supervisor?.serverPid, startedAt: state.supervisor?.startedAt },
       ...Object.values(state.collectors ?? {}),
-    ].filter(Boolean);
-    const live = processSnapshot(h);
+    ].filter((record) => Number.isInteger(record?.pid) && record.pid > 0);
+    if (records.length === 0) return;
+    const live = processSnapshot(
+      h,
+      records.map((record) => record.pid),
+    );
     for (const record of records) {
-      if (!Number.isInteger(record.pid) || record.pid <= 0) continue;
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
-      if (!processes.has(key)) processes.set(key, live.get(record.pid));
+      if (!processes.has(key)) processes.set(key, { pid: record.pid, identity: live.get(record.pid) });
     }
   }
 
@@ -388,8 +417,14 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
   async function verifyProcesses() {
     const deadline = Date.now() + processExitTimeoutMs;
     while (true) {
-      const live = new Set(processSnapshot(h).values());
-      const leaked = [...processes.values()].filter((identity) => live.has(identity));
+      const records = [...processes.values()];
+      const live = new Set(
+        processSnapshot(
+          h,
+          records.map((record) => record.pid),
+        ).values(),
+      );
+      const leaked = records.map((record) => record.identity).filter((identity) => live.has(identity));
       if (leaked.length === 0) return;
       assert(Date.now() < deadline, `a workspace process is still running:\n${leaked.join('\n')}`);
       await sleep(Math.min(100, deadline - Date.now()));
@@ -405,24 +440,34 @@ function inspect(h, file, argv, timeout = 5000) {
   return result.stdout;
 }
 
-// Windows has no ps. Win32_Process is the pid, start time and command line ps -o would print;
-// the script avoids double quotes because they do not survive spawnSync's command-line quoting.
-const WIN32_PROCESS_LIST =
-  "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId.ToString() + ' ' + " +
-  "$_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }";
-
-function processSnapshot(h) {
+function processSnapshot(h, candidates) {
+  // macOS ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
+  const pids = [...new Set([...candidates, process.pid])];
+  const filter = pids.map((pid) => `ProcessId = ${pid}`).join(' OR ');
   const out =
     process.platform === 'win32'
-      ? inspect(h, 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN32_PROCESS_LIST], 60_000)
-      : inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
-  return new Map(
+      ? inspect(
+          h,
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter '${filter}' | ` +
+              "ForEach-Object { $_.ProcessId.ToString() + ' ' + $_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }",
+          ],
+          60_000,
+        )
+      : inspect(h, 'ps', ['-p', pids.join(','), '-o', 'pid=,lstart=,command=']);
+  const live = new Map(
     out
-      .split('\n')
+      .split(/\r?\n/)
       .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
       .filter(Boolean)
       .map((match) => [Number(match[1]), match[0].trim()]),
   );
+  assert(live.has(process.pid), 'process inspection did not include the live harness');
+  return live;
 }
 
 export async function verifyCleanup({ h, cleanup, appDir, created }) {
@@ -435,8 +480,9 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   await cleanup.verifyProcesses();
   h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
-  const status = h.cli(['status'], { allowFail: true }).stdout;
-  assert(!created.some((p) => status.includes(p)), 'status still lists a removed workspace');
+  const status = h.cli(['status'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(status.code === 0, `cleanup status failed: ${status.stderr}`);
+  assert(!created.some((p) => status.stdout.includes(p)), 'status still lists a removed workspace');
   h.log('(3) status is clean of our workspaces');
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
@@ -452,6 +498,7 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   h.log('(4) source checkout byte-clean, no worktrees linger');
 
   const gc = h.cli(['gc'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
   assert(!created.some((p) => gc.stdout.includes(p)), 'gc reports one of our workspaces as orphaned');
   h.log('(5) gc reports nothing of ours orphaned');
 }

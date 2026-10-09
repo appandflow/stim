@@ -281,11 +281,16 @@ returns 130. Leave 70 seconds before the job's hard timeout for diagnostics and
 stop. SIGKILL and runner loss cannot run cleanup. Stop shuts down owned devices;
 it never deletes them.
 
-CI=true does not bypass ownership or coordination. Persistent runners keep the
-normal Stim home. A disposable exclusive job can explicitly set --home to a
-fresh job directory and --build-cache to a job-local restored cache. Persist
-only cache artifacts, not state, claims or device ledgers. Independent homes
-must not share a writable filesystem cache because its claims live in the home.
+GitHub-hosted jobs default to $RUNNER_TEMP/stim-ci/home and
+$RUNNER_TEMP/stim-ci/build-cache, reused between steps in the job. Detection
+requires GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and RUNNER_TEMP.
+An explicit --home or STIM_HOME keeps the selected home and its normal cache
+configuration; --build-cache or STIM_BUILD_CACHE overrides the cache path.
+Self-hosted runners and local runs keep normal Stim configuration. Other
+exclusive disposable providers can set their job-local paths explicitly.
+CI=true alone does not change defaults, ownership or coordination. Persist only
+cache artifacts, not state, claims or device ledgers. Independent homes must
+not share a writable filesystem cache because its claims live in the home.
 
 The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,

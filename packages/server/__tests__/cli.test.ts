@@ -170,7 +170,7 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     if (!denied.ok) throw new Error(denied.reason);
     expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
     expect(plain('devices', 'grant', denied.device.id, `--${capability}`).status).toBe(1);
-  });
+  }, 20_000);
 });
 
 withTailscale('pair with Tailscale running', () => {

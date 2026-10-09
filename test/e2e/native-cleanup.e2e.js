@@ -26,6 +26,8 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
     gc: '',
     failure: null,
     processReads: 0,
+    harnessVisible: true,
+    crlf: false,
   };
   const h = {
     env: { STIM_HOME: home },
@@ -42,6 +44,8 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
       else if (file === 'ps') {
         output.processReads++;
         stdout = output.processes;
+        if (output.harnessVisible) stdout += `\n${process.pid} Sat Sep 5 00:00:00 2026 node native-cleanup`;
+        if (output.crlf) stdout = stdout.replaceAll('\n', '\r\n') + '\r\n';
       } else if (file === 'git' && argv.includes('status')) stdout = output.porcelain;
       else if (file === 'git' && argv.includes('worktree')) stdout = output.worktrees;
       else assert.fail(`unexpected command: ${file} ${argv.join(' ')}`);
@@ -106,7 +110,10 @@ for (const platform of ['ios', 'android']) {
         },
       }),
     );
+    f.writeState({});
+    f.output.failure = 'ps';
     f.cleanup.recordWorkspace(f.cwd);
+    f.output.failure = null;
     rmSync(f.configFile);
     f.cleanup.recordWorkspace(f.cwd);
     f.output.devices = [{ udid: 'RUN', name: 'stim-parked' }];
@@ -193,8 +200,9 @@ test('native cleanup does not hide unreadable workspace state', async (t) => {
   assert.throws(() => f.cleanup.recordWorkspace(f.cwd), SyntaxError);
 });
 
-test('native cleanup retains replaced collectors and ignores a reused PID', async (t) => {
+test('native cleanup retains replaced collectors and ignores a reused PID with CRLF process rows', async (t) => {
   const f = fixture(t);
+  f.output.crlf = true;
   const first = ` 123 Sat Sep 5 01:00:00 2026 node collector --root ${f.cwd}`;
   const second = ` 456 Sat Sep 5 01:01:00 2026 node collector --root ${f.cwd}`;
   f.writeState({ collectors: { android: { pid: 123 } } });
@@ -263,6 +271,12 @@ for (const [platform, tool] of [
     await assert.rejects(() => f.verify(), new RegExp(`could not inspect ${tool}: fixture inspection failed`));
   });
 }
+
+test('native cleanup refuses empty successful process inspection', async (t) => {
+  const f = fixture(t);
+  f.output.harnessVisible = false;
+  await assert.rejects(() => f.verify(), /process inspection did not include the live harness/);
+});
 
 for (const setting of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
   test(`native cleanup finds the emulator through ${setting} without PATH`, (t) => {

@@ -974,8 +974,9 @@ RULES
       body: () => `  stim status --json
 
   logs        { dir, errorsSinceMarker }, or null without a log directory
-  agentDevice { stateDir }: absolute workspace agent-device state path on
-              every environment, shared by its slots. Reporting it creates
+  agentDevice { stateDir, installed }: absolute workspace agent-device state
+              path on every environment, shared by its slots, and whether
+              the agent-device executable is on PATH. Reporting it creates
               no directory; agent-device creates it when used.
 
   Each environment carries phase, where the workspace is in its lifecycle:
@@ -1484,7 +1485,8 @@ RULES
   disk (environment)  { worktreeBytes, nodeModulesBytes, buildBytes,
                       measuredAt }
     worktreeBytes     the linked worktree, or else the checkout holding the
-                      workspace, node_modules included
+                      workspace, node_modules included; the linked
+                      worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
                       part of worktreeBytes
     buildBytes        Stim's folder for the workspace: Xcode derived data,
@@ -1494,11 +1496,13 @@ RULES
   disk (device)       { bytes, measuredAt }: the simulator's data folder
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
-  \`status --watch\` runs one du at a time off its refresh path, and measures
-  a folder at most every 5 minutes while its environment is active and every
-  hour otherwise. It caches each size under $STIM_HOME/disk-usage, which
-  one-shot status only reads, so the fields appear once a watcher, such as
-  stim-server or Stim Desktop, has measured.
+  \`status --watch\` runs one du at a time on the whole machine, at low
+  priority, off its refresh path, and measures a folder at most every 5
+  minutes while its environment is active and every hour otherwise. A walk
+  that fails or times out is not repeated by any watcher for that period. It
+  caches each size under $STIM_HOME/disk-usage, which one-shot status only
+  reads, so the fields appear once a watcher, such as stim-server or Stim
+  Desktop, has measured.
 
   An environment carries agents when coding-agent sessions work in it, most
   recently active first:

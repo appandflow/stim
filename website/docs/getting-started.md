@@ -84,27 +84,26 @@ build-performance details when you want history across runs.
 
 ## Take the tutorial
 
-Try Stim on a small iOS app in its own repository and worktree. The tutorial
-covers builds, cache reuse, device control, logs, agent actions, and Fast
-Refresh. The agent pauses between steps so you can inspect the result in Stim
-Desktop, or use the simulator and CLI. The first build can take about four
-minutes on a cold cache; uncached dependencies need network access.
+Clone a tiny Expo app and watch two agents work on two changes at once, each
+in its own worktree with its own simulator and dev server, each checking its own
+work on the device. The first build can take a few minutes on a cold cache; the
+parallel one reuses it. Uncached dependencies need network access.
 
 <PromptBox
 title="Run the Stim tutorial"
-response={`The tutorial app is running. Look at Build, then the device, then Logs.
-Next prompt: Continue the Stim tutorial: rebuild`}
+response={`The test app is cloned and its dependencies are installed.
+Next, ask for a change in your own words.`}
 
 >
 
-{`Run the Stim tutorial.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
 </PromptBox>
 
 To type the commands yourself:
 
 <StimTabs code={`stim guide tutorial manual`} />
 
-Finishing stops the environment and removes only the tour worktree, keeping
+Finishing stops the apps and removes only the two experiment worktrees, keeping
 the base repository. With archiving enabled, the tour appears under Archived.
 Phone viewing and a build on an approved machine are optional.
 

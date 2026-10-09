@@ -254,8 +254,7 @@ struct DeviceTile: View {
     Card {
       VStack(spacing: 0) {
         header
-          .padding(.horizontal, Space.lg)
-          .padding(.vertical, Space.md)
+          .padding(CardMetrics.headerPadding)
           .background(highlightsHeaderOnHover ? (hovering ? Palette.raised : Palette.surface) : .clear)
           .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { headerHeight = $0 }
         Rectangle().fill(Palette.border).frame(height: 1)
@@ -268,8 +267,8 @@ struct DeviceTile: View {
         DeviceTileMenu(
           device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
         )
-        .padding(.trailing, Space.lg)
-        .padding(.top, Space.md + 2)
+        .padding(.trailing, CardMetrics.headerPadding)
+        .padding(.top, CardMetrics.headerPadding + 2)
       }
     }
     .overlay {
