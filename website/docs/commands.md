@@ -216,6 +216,11 @@ stim ports release [label]
 Reserves TCP ports 8900–8999 for web or API servers started by the
 project. `get` prints only the number and reuses an existing allocation.
 New allocations skip reserved and occupied ports; retry notices go to stderr.
+Allocation reads native TCP tables through `netstat` on macOS and Windows and
+`/proc/net` on Linux. When the table is denied, empty or unreadable, it checks
+each port with `lsof` and loopback connects instead, and refuses only when
+none of them can answer. Stopping listeners still requires `lsof` on macOS and
+Linux, or `netstat` on Windows.
 `ports` lists named allocations and Metro, marked managed.
 
 Labels start with a letter and contain up to 64 letters, digits, underscores,
