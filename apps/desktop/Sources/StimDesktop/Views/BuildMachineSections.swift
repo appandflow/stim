@@ -1,22 +1,40 @@
 import StimKit
 import SwiftUI
 
-/// Where this Mac's compiling builds ran today and the latest placements with their reasons, from `stim stats`;
-/// hidden while `remote.machines` names no machine or no build has compiled.
 struct ThisMacPlacements: View {
   var model: BuildMachinesModel
+  var limit = 6
+  var showsEmpty = false
 
   var body: some View {
     if !(model.entries ?? []).isEmpty, let offload = model.stats.value?.offload, !offload.placements.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        Text("Where Builds Ran").font(.stim(.headline))
+        Text("Where builds ran").font(.stim(.headline))
         Text(
           "Today: \(offload.today.here) here, \(offload.today.offloaded) on a remote Mac, \(offload.today.fellBack) here after trying one."
         )
         .foregroundStyle(Palette.secondary)
-        PlacementList(placements: Array(offload.placements.prefix(6)))
+        PlacementList(placements: Array(offload.placements.prefix(limit)))
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+    } else if showsEmpty {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Label("Build placements", systemImage: "hammer").font(.stim(.headline))
+        if (model.entries ?? []).isEmpty {
+          Text("Link a remote Mac to see where builds run and compare their times.")
+        } else if model.stats.error != nil {
+          Text("Build history is unavailable. The page will retry automatically.")
+        } else if model.stats.value == nil {
+          ProgressView("Loading build history...").controlSize(.small)
+        } else if model.stats.value?.offload == nil {
+          Text("This Stim version does not report build placements. Update Stim to see them here.")
+        } else {
+          Text("No build placements yet. Compiling builds will appear here with the machine they ran on.")
+        }
+      }
+      .foregroundStyle(Palette.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.vertical, Space.xl)
     }
   }
 }

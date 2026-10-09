@@ -514,10 +514,21 @@ version with `gc --json`.
 **Machines** has a selector for **This Mac** and its configured remote Macs
 (see [Remote Macs](#remote-macs)), with visible choices across the top and
 a menu when they do not fit. **Link Machine** opens **Settings >
-Remote Macs**. Select **This Mac** for **Now**, where its builds ran and
-**Disk on this Mac**; select a remote Mac for its readiness, capacity and
-build history. Removing a selected machine returns the page to **This Mac**.
-**Now** is what uses the Mac's CPU and memory at this
+Remote Macs**. Selected machines use the accent color; other choices have neutral
+surfaces and remote readiness labels. Select **This Mac** for **Overview**,
+**Builds**, and **Storage** tabs; select a remote Mac for its readiness, capacity
+and build history. Removing a selected machine returns the page to **This Mac**.
+**Overview** puts whole-Mac memory, tracked-process CPU and available disk space
+in one compact row, stacking the cards in a narrow window. It shows the three
+largest process groups, with **View all processes** to expand the list, and a
+**Storage to reclaim** summary. **Review cleanup** opens the Storage tab without
+running a cleanup command. Its total includes measured cleanup candidates,
+including optional caches; the checklist still decides what to free. Unknown
+candidate sizes make the total a lower bound. **Builds** shows the latest build
+placements, or explains why no history is available. The Overview also shows
+the latest three placements when available.
+
+**Top resource users** shows what uses the Mac's CPU and memory at this
 moment, from the `machine` section of the status watch, which refreshes it
 every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
@@ -526,13 +537,15 @@ CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
 is one core) and memory, largest memory first so rows stay in place
 as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
-`stim stop`. Nothing Stim does not own has an action. Two sparklines above the
+`stim stop`. Nothing Stim does not own has an action. The information button
+explains measurement scope and the difference between row CPU (one core) and
+summary CPU (a share of the whole Mac). Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3
 seconds while the window is visible, so the CPU line steps with the 15-second
 refresh. When workspaces are active but `machine` is missing, the band says live
 usage is unavailable instead of listing nothing.
 
-Under **Disk on this Mac**, the page shows what uses disk space, largest first,
+Under **Storage**, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime
 and cache sizes come from `stim gc --json`, and the app sizes only folders
 outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
@@ -542,13 +555,13 @@ when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
 could not be sized, or a dash before the first measurement, with the reason in
 its help tag.
 
-The processes under **Now**, **Safe to free now**, **Projects**,
+**Free Disk Space**, **Repositories and Worktrees**,
 **Simulators and Emulators** and **Runtimes and System Images** each have a
 header with a disclosure chevron and a count. A collapsed section shows only
 its header. An expanded one shows its first 10 rows in their usual order, then
-**Show All** or **Show Fewer**. For **Projects** the 10 are repositories; an
-expanded repository lists all of its worktrees. An expanded **Safe to free
-now** always lists every row, so none of the rows **Free** acts on are hidden.
+**Show All** or **Show Fewer**. For **Repositories and Worktrees** the 10 are repositories; an
+expanded repository lists all of its worktrees. An expanded **Free Disk Space**
+always lists every row, so none of the rows **Free** acts on are hidden.
 Free still previews or confirms its commands first, collapsed or not. The app
 remembers each section's choices in its own preferences.
 
@@ -1305,9 +1318,10 @@ button, and nothing approves a request without it. The card and the macOS
 notification go away once the request is answered or lapses.
 
 The **Machines** page shows where builds ran. While `remote.machines` names a
-machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or
+machine, **Where builds ran** under **This Mac > Builds** counts today's compiling builds that built here, on a remote Mac, or
 here after trying one, and lists the latest placements with the reason Stim
-gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
+gave, such as `load 0.6/core, 1 of 3 build slots busy here`. **Overview** shows
+the latest three placements. Selecting an
 `remote.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
 load per core, cores, offloaded builds running and free disk from its offer,

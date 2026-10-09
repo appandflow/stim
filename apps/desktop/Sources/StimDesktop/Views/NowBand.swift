@@ -2,65 +2,148 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// What uses the Mac's CPU and memory now, from the status watch's `machine` section.
+struct MachineResourceSummary: View {
+  var metrics: MetricsStore
+  var volume: DiskVolume?
+  var minimumFreeBytes: Int64?
+  var compact: Bool
+
+  var body: some View {
+    let layout = compact ? AnyLayout(VStackLayout(spacing: Space.lg)) : AnyLayout(HStackLayout(spacing: Space.lg))
+    layout {
+      historyTile(
+        "Memory",
+        value: metrics.memory.map { "\(Format.memory($0.usedBytes)) / \(Format.memory($0.totalBytes))" } ?? "Unavailable",
+        values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
+      historyTile(
+        "CPU \u{00B7} tracked processes", value: metrics.ownersCpu.last.map(formatPercent) ?? "Unavailable",
+        values: metrics.ownersCpu, peak: 100)
+      Card {
+        VStack(alignment: .leading, spacing: Space.md) {
+          Text("Disk available").font(.stim(.callout)).foregroundStyle(Palette.secondary)
+          Text(volume.map { Format.fileSize($0.freeBytes) } ?? "Unavailable")
+            .font(.stim(.title)).monospacedDigit()
+            .foregroundStyle(isLow ? Palette.warning : Palette.text)
+          if let volume, volume.totalBytes > 0 {
+            ProgressView(value: min(1, max(0, Double(volume.freeBytes) / Double(volume.totalBytes))))
+              .tint(isLow ? Palette.warning : Palette.primary)
+              .accessibilityLabel("Available disk space")
+              .accessibilityValue(
+                "\(Format.fileSize(volume.freeBytes)) of \(Format.fileSize(volume.totalBytes)) on \(volume.name)")
+          }
+          Text(minimumFreeBytes.map { "\(Format.fileSize($0)) minimum free" } ?? "No minimum free space set")
+            .font(.stim(.caption)).foregroundStyle(isLow ? Palette.warning : Palette.secondary)
+        }
+        .padding(Space.xl)
+        .frame(maxWidth: .infinity, minHeight: 106, maxHeight: .infinity, alignment: .leading)
+      }
+    }
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private var isLow: Bool {
+    guard let volume, let minimumFreeBytes else { return false }
+    return volume.freeBytes < minimumFreeBytes
+  }
+
+  private func historyTile(_ title: String, value: String, values: [Double], peak: Double) -> some View {
+    Card {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text(title).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+        Text(value).font(.stim(.title)).monospacedDigit().minimumScaleFactor(0.8).lineLimit(1)
+        Sparkline(values: values, minimumPeak: peak).frame(height: 28)
+          .accessibilityElement(children: .ignore)
+          .accessibilityAddTraits(.isImage)
+          .accessibilityLabel(
+            "\(title), recent history. " + (values.isEmpty ? "Unavailable" : "\(values.count) measurements, oldest to newest"))
+      }
+      .padding(Space.xl)
+      .frame(maxWidth: .infinity, minHeight: 106, maxHeight: .infinity, alignment: .leading)
+    }
+  }
+}
+
 struct NowBand: View {
   @ObservedObject var status: StatusStore
-  var metrics: MetricsStore
   var gc: GcReportStore
   @EnvironmentObject private var actions: ActionCenter
   @State private var reclaiming: (title: String, offer: GcReport.MemoryReclaim)?
+  @State private var showsAll = false
+  @State private var showsMeasurementInfo = false
 
   private static let valueWidth: CGFloat = 64
   private static let actionWidth: CGFloat = 88
   private static let reclaimWidth: CGFloat = 140
 
   var body: some View {
-    VStack(alignment: .leading, spacing: Space.lg) {
-      Label {
-        Text("Resource Usage").font(.stim(.headline))
-      } icon: {
-        Image(systemName: "memorychip").iconFont(IconSize.small)
-          .accessibilityHidden(true)
-      }
-      ViewThatFits(in: .horizontal) {
-        HStack(alignment: .top, spacing: Space.md) { tiles }
-        VStack(spacing: Space.md) { tiles }
-      }
-      if let machine = status.payload?.machine, !machine.owners.isEmpty {
-        let actionWidth = actionWidth(machine.owners)
-        CollapsibleSection("machine.processes", title: "Memory and CPU by Process Group", items: machine.ranked) { shown in
-          Text("Only the listed process groups are shown; they do not add up to this Mac's total memory.")
-            .font(.stim(.footnote))
-            .foregroundStyle(Palette.secondary)
-          Text(
-            machine.memorySource == .footprint
-              ? "Each process counts in one row. Memory is each process's footprint, as Activity Monitor shows it."
-              : "Each process counts in one row. Resident memory counts memory shared between processes once per process, so simulators read high."
-          )
-          .font(.stim(.footnote))
-          .foregroundStyle(Palette.tertiary)
-          VStack(alignment: .leading, spacing: Space.xs) {
+    Card {
+      VStack(alignment: .leading, spacing: Space.lg) {
+        HStack {
+          Text(showsAll ? "Resource users" : "Top resource users").font(.stim(.headline))
+          Spacer()
+          Button {
+            showsMeasurementInfo.toggle()
+          } label: {
+            Image(systemName: "info.circle").foregroundStyle(Palette.secondary)
+          }
+          .buttonStyle(.plain)
+          .accessibilityLabel("About resource measurements")
+          .popover(isPresented: $showsMeasurementInfo) {
+            VStack(alignment: .leading, spacing: Space.md) {
+              Text("Resource measurements").font(.stim(.headline))
+              Text(
+                "The summary shows whole-Mac memory and the tracked groups' share of this Mac's CPU. Each row counts CPU against one core, where 100% is one full core. The rows do not add up to whole-Mac memory."
+              )
+              Text(
+                status.payload?.machine?.memorySource == .footprint
+                  ? "Each process counts in one row. Memory is its footprint, as Activity Monitor shows it."
+                  : "Each process counts in one row. Resident memory counts shared memory once per process, so simulators read high."
+              )
+            }
+            .font(.stim(.callout))
+            .padding(Space.xl)
+            .frame(width: 320)
+            .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        .padding(.horizontal, Space.xl)
+        if let machine = status.payload?.machine, !machine.owners.isEmpty {
+          let actionWidth = actionWidth(machine.owners)
+          let shown = showsAll ? machine.ranked[...] : machine.ranked.prefix(3)
+          VStack(alignment: .leading, spacing: 0) {
             header(actionWidth: actionWidth)
-            ListSection(data: shown, id: \.key) {
-              EmptyView()
-            } row: { owner in
+              .padding(.bottom, Space.md)
+            ForEach(shown, id: \.key) { owner in
+              Divider().padding(.horizontal, Space.xl)
               row(owner, actionWidth: actionWidth)
             }
           }
+          if machine.owners.count > 3 {
+            Button(showsAll ? "Show fewer processes" : "View all \(machine.owners.count) processes") { showsAll.toggle() }
+              .buttonStyle(.plain)
+              .foregroundStyle(Palette.primary)
+              .font(.stim(.callout))
+              .padding(.horizontal, Space.xl)
+          }
+        } else if status.payload == nil {
+          Text("Waiting for stim status...")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.secondary)
+            .padding(.horizontal, Space.xl)
+        } else if status.payload?.environments.contains(where: { $0.live || $0.build?.isRunning == true }) == true {
+          Text("Live usage is unavailable: this stim does not report it, or it could not read the process table.")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.secondary)
+            .padding(.horizontal, Space.xl)
+        } else {
+          Text("No simulator, emulator, dev server or build is running.")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.secondary)
+            .padding(.horizontal, Space.xl)
         }
-      } else if status.payload == nil {
-        Text("Waiting for stim status...")
-          .font(.stim(.callout))
-          .foregroundStyle(Palette.secondary)
-      } else if status.payload?.environments.contains(where: { $0.live || $0.build?.isRunning == true }) == true {
-        Text("Live usage is unavailable: this stim does not report it, or it could not read the process table.")
-          .font(.stim(.callout))
-          .foregroundStyle(Palette.secondary)
-      } else {
-        Text("No simulator, emulator, dev server or build is running.")
-          .font(.stim(.callout))
-          .foregroundStyle(Palette.secondary)
       }
+      .padding(.vertical, Space.xl)
+      .frame(maxWidth: .infinity, alignment: .leading)
     }
     .confirmationDialog(
       "Reclaim Memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
@@ -80,39 +163,9 @@ struct NowBand: View {
     return owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
   }
 
-  @ViewBuilder private var tiles: some View {
-    tile(
-      "memorychip", "Memory used on this Mac",
-      metrics.memory.map { "\(Format.memory($0.usedBytes)) of \(Format.memory($0.totalBytes))" } ?? "Unavailable",
-      values: metrics.memoryUsed, peak: Double(metrics.memory?.totalBytes ?? 1))
-    tile(
-      "speedometer", "Mac CPU used by the rows below",
-      metrics.ownersCpu.last.map(formatPercent) ?? "Unavailable",
-      values: metrics.ownersCpu, peak: 100)
-  }
-
-  private func tile(_ icon: String, _ title: String, _ value: String, values: [Double], peak: Double) -> some View {
-    Card {
-      VStack(alignment: .leading, spacing: Space.sm) {
-        Label(title, systemImage: icon).foregroundStyle(Palette.secondary)
-        Text(value).font(.stim(.headline)).monospacedDigit()
-        Text("Recent History").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          .accessibilityHidden(true)
-        Sparkline(values: values, minimumPeak: peak).frame(height: 28)
-          .accessibilityElement(children: .ignore)
-          .accessibilityAddTraits(.isImage)
-          .accessibilityLabel(
-            "\(title), recent history. "
-              + (values.isEmpty ? "Unavailable" : "\(values.count) measurements, oldest to newest"))
-      }
-      .padding(Space.lg)
-      .frame(maxWidth: .infinity, alignment: .leading)
-    }
-  }
-
   private func header(actionWidth: CGFloat) -> some View {
     HStack(spacing: Space.md) {
-      Text("What").frame(maxWidth: .infinity, alignment: .leading)
+      Text("Process group").frame(maxWidth: .infinity, alignment: .leading)
       Text("CPU").frame(width: Self.valueWidth, alignment: .trailing)
       Text("Memory").frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { Color.clear.frame(width: actionWidth, height: 1) }
