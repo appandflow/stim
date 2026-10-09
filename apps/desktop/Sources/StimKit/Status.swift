@@ -583,4 +583,5 @@ public struct TutorialMarker: Decodable, Hashable, Sendable {
 
 public struct AgentDevice: Decodable, Hashable, Sendable {
   public var stateDir: String
+  public var installed: Bool?
 }

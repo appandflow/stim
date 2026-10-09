@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Executor } from '../exec.ts';
+import { debugLog } from '../debug-log.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
 import {
@@ -792,6 +793,37 @@ describe('ios', () => {
     expect(parseLaunchedPid('something went wrong')).toBe(null);
     expect(parseLaunchedPid(null)).toBe(null);
     expect(parseLaunchedPid('com.example.app: 0')).toBe(null);
+  });
+
+  test.each([
+    { output: '4242\t0\tUIKitApplication:com.example.app[abcd]\n', state: 'running', pid: 4242 },
+    { output: '99\t0\tother.application\n', state: 'absent', pid: null },
+    { output: null, state: 'unknown', pid: undefined },
+  ])('process diagnostics distinguish $state without publishing native output', ({ output, state, pid }) => {
+    const log = vi.spyOn(debugLog, 'log').mockImplementation(() => {});
+    const exec = recordingExec();
+    exec.runFile = () => {
+      if (output === null)
+        throw Object.assign(new Error('private native error'), {
+          code: 'ETIMEDOUT',
+          stdout: 'private output',
+          stderr: 'private error output',
+        });
+      return output;
+    };
+    try {
+      expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(pid);
+      expect(log).toHaveBeenCalledExactlyOnceWith('ios.app-process', {
+        deviceId: 'U1',
+        bundleId: 'com.example.app',
+        state,
+        ...(typeof pid === 'number' ? { appPid: pid } : {}),
+        ms: expect.any(Number),
+        ...(output === null ? { code: 'ETIMEDOUT' } : {}),
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   test('iosAppProcess finds the app pid in the simulator launchctl list', () => {

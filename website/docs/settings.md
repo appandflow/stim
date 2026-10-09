@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                                         |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
-| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
@@ -112,7 +112,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.variant`             | Gradle build variant                                                                                                              |
 | `android.keystore`            | Release keystore path                                                                                                             |
 | `android.keystorePassword`    | Release keystore password source                                                                                                  |
-| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `android.remote`              | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |

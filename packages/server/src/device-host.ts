@@ -17,6 +17,8 @@ import {
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '@stim-cli/core/process-identity';
 import {
   assertHostedDeviceLedger,
+  createDebugLog,
+  type DebugLog,
   deviceHostArea,
   deviceHostRoot,
   getConcurrencyLimits,
@@ -147,11 +149,13 @@ export class DeviceHost {
   private reconciling?: Promise<void>;
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
+  private readonly debug: DebugLog;
 
   private readonly options: DeviceHostOptions;
 
   constructor(options: DeviceHostOptions) {
     this.options = options;
+    this.debug = createDebugLog('server', { env: options.env });
     this.limits = {
       prepareMs: 5 * 60_000,
       offerMs: 30_000,
@@ -1646,6 +1650,16 @@ export class DeviceHost {
       if (options.claim) clearClaimChild(options.claim);
       throw error;
     }
+    const started = performance.now();
+    const mode = 'mode' in options.input && typeof options.input.mode === 'string' ? options.input.mode : undefined;
+    const diagnostic = (event: string, fields: Record<string, unknown> = {}) =>
+      this.debug.log(`device-host.worker.${event}`, {
+        mode,
+        workerPid: child.pid,
+        ms: Math.round(performance.now() - started),
+        ...fields,
+      });
+    diagnostic('start', { timeoutMs: options.timeoutMs });
     let identity: ProcessRecord | null = null;
     const output: Buffer[] = [];
     let outputBytes = 0;
@@ -1668,7 +1682,9 @@ export class DeviceHost {
       clearTimeout(killTimer);
       clearTimeout(finishTimer);
       clearTimeout(groupTimer);
-      const settled = closed && (!child.pid || !processGroupAlive(child.pid));
+      const groupAlive = closed && child.pid ? processGroupAlive(child.pid) : null;
+      const settled = closed && groupAlive !== true;
+      diagnostic('settled', { closed, groupAlive, settled, cancelling });
       if (settled && options.claim) clearClaimChild(options.claim);
       let value: unknown = null;
       try {
@@ -1694,9 +1710,10 @@ export class DeviceHost {
         process.kill(-child.pid, name);
       } catch {}
     };
-    const cancel = () => {
+    const cancel = (reason = 'requested') => {
       if (finished || cancelling) return;
       cancelling = true;
+      diagnostic('cancel', { reason });
       notice ??= 'Hosted worker was cancelled or exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), this.limits.killGraceMs);
@@ -1706,15 +1723,15 @@ export class DeviceHost {
       if (finished) return;
       if (!child.pid || !processGroupAlive(child.pid)) finish();
       else {
-        cancel();
+        cancel('group-after-close');
         groupTimer = setTimeout(finishGroup, 25);
       }
     };
-    const timer = setTimeout(cancel, options.timeoutMs);
+    const timer = setTimeout(() => cancel('deadline'), options.timeoutMs);
     child.stdout?.on('data', (chunk: Buffer) => {
       if (outputBytes + chunk.length > options.maxOutputBytes) {
         notice = 'Hosted worker output exceeded its bound.';
-        cancel();
+        cancel('output-bound');
       } else {
         output.push(chunk);
         outputBytes += chunk.length;
@@ -1723,13 +1740,15 @@ export class DeviceHost {
     child.stderr?.on('data', (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-8192);
     });
-    child.stdin?.on('error', () => cancel());
+    child.stdin?.on('error', () => cancel('stdin-error'));
     child.once('error', (error) => {
+      diagnostic('error', { code: (error as NodeJS.ErrnoException).code });
       notice = error.message;
       closed = true;
       finishGroup();
     });
-    child.once('close', (code) => {
+    child.once('close', (code, closeSignal) => {
+      diagnostic('close', { code, signal: closeSignal });
       if (code !== 0) notice ??= stderr.trim() || `Hosted worker exited ${code}.`;
       closed = true;
       finishGroup();
@@ -1738,7 +1757,7 @@ export class DeviceHost {
     if (!captured?.ok || child.pid === undefined) {
       notice = 'The worker process identity could not be captured; no native request was sent.';
       child.kill('SIGKILL');
-      cancel();
+      cancel('identity-unavailable');
     } else {
       identity = { pid: child.pid, processToken: captured.token };
       try {
@@ -1746,7 +1765,7 @@ export class DeviceHost {
         child.stdin?.end(JSON.stringify(options.input));
       } catch (error) {
         notice = (error as Error).message;
-        cancel();
+        cancel('request-write');
       }
     }
     return { done, cancel };
