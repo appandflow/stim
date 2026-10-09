@@ -25,3 +25,9 @@ import Testing
     [#"cd "{base}""#, #"cd "{tour}""#], tourPath: "/tmp/tour", repository: "/tmp/{tour}", stateDir: nil, machine: nil)
   #expect(result == "cd \"/tmp/{tour}\"\ncd \"/tmp/tour\"")
 }
+
+@Test func tutorialAskUsesPlainPathsAndFillsEachPlaceholderOnce() {
+  let result = tutorialAsk(
+    "In {tour}, keep {base}, build on {machine}.", tourPath: "/tmp/my tour $1", repository: "/tmp/{tour}", machine: nil)
+  #expect(result == "In /tmp/my tour $1, keep /tmp/{tour}, build on my approved Mac.")
+}

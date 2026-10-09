@@ -118,21 +118,42 @@ export const TUTORIAL_PROMPTS = {
 
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
+/**
+ * The requests Stim Desktop offers to copy, in plain words. {base}, {tour} and {machine} are filled in by Desktop.
+ * Each one ends with the guide section the agent follows, which holds the pinned template, folder safety and cleanup.
+ */
+export const TUTORIAL_ASKS = {
+  begin:
+    'Set up a small Expo test app in {base} so I can try Stim, then run it on iOS with stim. If that folder is inside another git repository or already holds something else, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run for the template.',
+  rebuild:
+    "We're in {tour}. Change the title color in theme.js to blue, then run the app on iOS and check it looks right. See stim guide tutorial rebuild.",
+  agent:
+    "We're in {tour}. Use agent-device to tap Log an error in the iOS app and take a screenshot, then replay the tap. See stim guide tutorial agent.",
+  refresh: "We're in {tour}. Make the app title purple and check it on iOS. See stim guide tutorial refresh.",
+  machine:
+    "We're in {tour}. Build the app for iOS on {machine} instead of this Mac. Don't approve or pair anything; see stim guide tutorial machine.",
+  finish:
+    "I'm done with this branch in {tour}. Revert the tutorial edit, stop the app and remove that worktree, never with --force, and keep {base}. See stim guide tutorial finish.",
+  retry:
+    'The first iOS build in {base} failed. Run the app on iOS again with stim and tell me what went wrong if it fails. See stim guide tutorial run.',
+};
+
 export const TUTORIAL_STEPS: {
   id: string;
   title: string;
   who: 'agent' | 'you' | 'both';
   optional: boolean;
-  prompt: string | null;
+  ask: string | null;
   section: string | null;
   manual: string[];
+  commands: string[];
 }[] = [
   {
     id: 'begin',
     title: 'Create the Tutorial',
     who: 'agent',
     optional: false,
-    prompt: TUTORIAL_PROMPTS.begin,
+    ask: TUTORIAL_ASKS.begin,
     section: 'run',
     manual: [
       'base="{base}"',
@@ -160,22 +181,24 @@ export const TUTORIAL_STEPS: {
       `git rev-parse --show-toplevel | node -e 'const fs = require("node:fs"); const root = fs.readFileSync(0, "utf8").trim(); if (fs.realpathSync(root) !== fs.realpathSync(process.cwd())) { console.error("Stop: inside another repository. Ask for another folder; never git add in the user repository."); process.exit(1); }'`,
       'fi',
     ],
+    commands: [],
   },
   {
     id: 'sidebar',
     title: 'Workspace in Sidebar',
     who: 'you',
     optional: false,
-    prompt: null,
+    ask: null,
     section: null,
     manual: [],
+    commands: [],
   },
   {
     id: 'build',
     title: 'First iOS Build',
     who: 'you',
     optional: false,
-    prompt: null,
+    ask: null,
     section: null,
     manual: [
       'cd "{base}"',
@@ -187,40 +210,44 @@ export const TUTORIAL_STEPS: {
       'stim start',
       'stim ios',
     ],
+    commands: ['cd "{tour}"', 'stim start', 'stim ios'],
   },
   {
     id: 'rebuild',
     title: 'Rebuild from Cache',
     who: 'agent',
     optional: false,
-    prompt: TUTORIAL_PROMPTS.rebuild,
+    ask: TUTORIAL_ASKS.rebuild,
     section: 'rebuild',
     manual: ['cd "{tour}"', 'stim ios', 'stim status --json'],
+    commands: ['cd "{tour}"', `echo "export const TITLE_COLOR = '#2563eb';" > theme.js`, 'stim ios'],
   },
   {
     id: 'device',
     title: 'Live View and Control',
     who: 'you',
     optional: false,
-    prompt: null,
+    ask: null,
     section: null,
     manual: ['stim status'],
+    commands: ['stim status'],
   },
   {
     id: 'logs',
     title: 'App Logs',
     who: 'you',
     optional: false,
-    prompt: null,
+    ask: null,
     section: null,
     manual: ['stim logs --errors', "stim logs --grep '\\[stim:tutorial\\]'"],
+    commands: ['stim logs --errors', 'stim logs --grep stim:tutorial'],
   },
   {
     id: 'agent',
     title: 'Agent Actions and Replay',
     who: 'agent',
     optional: false,
-    prompt: TUTORIAL_PROMPTS.agent,
+    ask: TUTORIAL_ASKS.agent,
     section: 'agent',
     manual: [
       'cd "{tour}"',
@@ -236,13 +263,24 @@ export const TUTORIAL_STEPS: {
       'agent-device replay tutorial-replay.ad --platform ios --udid "$iosUdid"',
       'stim logs --source agent --tail 10',
     ],
+    commands: [
+      'cd "{tour}"',
+      'export AGENT_DEVICE_STATE_DIR="{stateDir}"',
+      'agent-device open dev.stim.tutorial --platform ios --udid {udid} --save-script=tutorial.ad',
+      `agent-device press 'label="Log an error"' --settle`,
+      'agent-device screenshot tutorial.png',
+      'agent-device close',
+      'grep -v target-v1 tutorial.ad > tutorial-replay.ad',
+      'agent-device replay tutorial-replay.ad --platform ios --udid {udid}',
+      'stim logs --source agent --tail 10',
+    ],
   },
   {
     id: 'refresh',
     title: 'Fast Refresh',
     who: 'agent',
     optional: false,
-    prompt: TUTORIAL_PROMPTS.refresh,
+    ask: TUTORIAL_ASKS.refresh,
     section: 'refresh',
     manual: [
       'cd "{tour}"',
@@ -253,31 +291,39 @@ export const TUTORIAL_STEPS: {
       'stim logs --errors',
       "stim logs --grep 'title color'",
     ],
+    commands: [
+      'cd "{tour}"',
+      `echo "export const TITLE_COLOR = '#7c3aed';" > theme.js`,
+      'stim logs --errors',
+      'stim logs --grep "title color"',
+    ],
   },
   {
     id: 'phone',
     title: 'Watch on Your Phone',
     who: 'you',
     optional: true,
-    prompt: null,
+    ask: null,
     section: null,
     manual: [],
+    commands: [],
   },
   {
     id: 'machine',
     title: 'Build on Another Mac',
     who: 'both',
     optional: true,
-    prompt: TUTORIAL_PROMPTS.machine,
+    ask: TUTORIAL_ASKS.machine,
     section: 'machine',
     manual: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
+    commands: ['cd "{tour}"', 'stim ios --remote-build "{machine}" --no-build-cache'],
   },
   {
     id: 'finish',
     title: 'Finish and Archive',
     who: 'agent',
     optional: false,
-    prompt: TUTORIAL_PROMPTS.finish,
+    ask: TUTORIAL_ASKS.finish,
     section: 'finish',
     manual: [
       'git -C "{tour}" checkout -- theme.js',
@@ -286,5 +332,6 @@ export const TUTORIAL_STEPS: {
       'cd "{base}"',
       'stim worktree remove "{tour}"',
     ],
+    commands: ['cd "{tour}"', 'git checkout -- theme.js', 'stim stop', 'cd "{base}"', 'stim worktree remove "{tour}"'],
   },
 ];

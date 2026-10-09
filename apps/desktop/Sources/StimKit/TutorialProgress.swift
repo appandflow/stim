@@ -58,7 +58,6 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var step: String
   public var done: [String]
   public var skipped: [String]
-  public var manual: Bool
   public var stepSince: Date?
   public var stepTimes: [String: Date]?
   public var refreshErrors: Int?
@@ -73,7 +72,7 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
 
   public init(
     version: Int, tourPath: String? = nil, startedAt: Date, step: String = "begin",
-    done: [String] = [], skipped: [String] = [], manual: Bool = false
+    done: [String] = [], skipped: [String] = []
   ) {
     self.version = version
     self.tourPath = tourPath
@@ -81,7 +80,6 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
     self.step = step
     self.done = done
     self.skipped = skipped
-    self.manual = manual
   }
 
   public func archivedProjectRoots(in archives: [ArchivedWorkspace]) -> [String] {
@@ -92,7 +90,7 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   }
 
   public func beginWaitTimedOut(now: Date) -> Bool {
-    !manual && runPromptCopiedAt.map { now.timeIntervalSince($0) >= 180 } == true
+    runPromptCopiedAt.map { now.timeIntervalSince($0) >= 180 } == true
   }
 }
 
@@ -216,10 +214,8 @@ public struct TutorialProgress: Sendable {
     return true
   }
 
-  public mutating func setManual(_ manual: Bool) { record?.manual = manual }
-
   public mutating func copiedRunPrompt(now: Date) {
-    guard record?.step == "begin", record?.manual == false, record?.runPromptCopiedAt == nil else { return }
+    guard record?.step == "begin", record?.runPromptCopiedAt == nil else { return }
     record?.runPromptCopiedAt = now
   }
 

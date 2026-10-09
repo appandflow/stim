@@ -61,12 +61,11 @@
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
         version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "build",
-        done: ["begin"], skipped: ["sidebar"], manual: true)
+        done: ["begin"], skipped: ["sidebar"])
       let model = TutorialModel(defaults: defaults)
       model.update(workspaces: [try workspace()], archived: [], sheetOpen: false)
       XCTAssertTrue(model.isOpen)
       XCTAssertEqual(model.snapshot?.currentStep, "build")
-      XCTAssertTrue(model.manual)
       XCTAssertEqual(model.snapshot?.record.skipped, ["sidebar"])
     }
 
@@ -147,7 +146,7 @@
       let start = ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!
       TutorialRecordStore(defaults).record = TutorialRecord(
         version: 1, tourPath: "/tmp/tutorial-tour", startedAt: start, step: "build",
-        done: ["begin"], skipped: ["sidebar"], manual: true)
+        done: ["begin"], skipped: ["sidebar"])
       let model = TutorialModel(defaults: defaults)
       let env = try workspace()
       model.update(workspaces: [env], archived: [], sheetOpen: false, now: start)
@@ -157,14 +156,12 @@
       model.update(
         workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(61))
       XCTAssertTrue(model.restarting)
-      XCTAssertTrue(model.manual)
       XCTAssertEqual(model.snapshot?.record.startedAt, start)
       XCTAssertEqual(model.snapshot?.record.skipped, ["sidebar"])
       XCTAssertEqual(model.snapshot?.currentStep, "build")
       model.update(workspaces: [], archived: [], sheetOpen: false, now: start.addingTimeInterval(62))
       model.update(workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(63))
       XCTAssertFalse(model.restarting)
-      XCTAssertFalse(model.manual)
       XCTAssertEqual(model.snapshot?.record.skipped, [])
       XCTAssertEqual(model.snapshot?.record.startedAt, start.addingTimeInterval(63))
       XCTAssertEqual(model.snapshot?.currentStep, "sidebar")
@@ -221,10 +218,10 @@
       }
     }
 
-    @MainActor func testSetupEntryBeginsWhileHelpResumes() {
+    @MainActor func testSetupEntryBeginsWhileHelpResumes() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, startedAt: Date(), step: "build", done: ["begin", "sidebar"], manual: true)
+        version: 1, startedAt: Date(), step: "build", done: ["begin", "sidebar"])
       let model = TutorialModel(defaults: defaults)
       model.open()
       XCTAssertNil(model.snapshot)
@@ -232,8 +229,8 @@
       XCTAssertEqual(model.snapshot?.currentStep, "build")
       model.open(beginning: true)
       XCTAssertEqual(model.snapshot?.currentStep, "begin")
-      XCTAssertEqual(model.prompt, "Run the Stim tutorial.")
-      XCTAssertFalse(model.manual)
+      let begin = try XCTUnwrap(TutorialSteps.all.first { $0.id == "begin" })
+      XCTAssertTrue(try XCTUnwrap(model.ask(for: begin)).contains("~/stim-tutorial"))
     }
 
     @MainActor func testDeletedWorkspaceRequiresRestartWithoutObservedStop() throws {

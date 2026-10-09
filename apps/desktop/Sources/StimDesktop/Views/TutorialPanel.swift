@@ -9,16 +9,17 @@ struct TutorialPanel: View {
   #endif
   var restarting = false
   var message: String? = nil
-  var prompt: String? = nil
   var issues: [StatusIssue] = []
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   var machineState = TutorialMachineState.none
+  var canRunIOS = false
+  var asks: (TutorialStep) -> String? = { $0.ask }
   var commands: (TutorialStep) -> String
   var copied: () -> Void = {}
   var skip: () -> Void = {}
   var markDone: () -> Void = {}
   var restart: () -> Void = {}
-  var setManual: (Bool) -> Void = { _ in }
+  var runIOS: () -> Void = {}
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
   var pairPhone: () -> Void = {}
@@ -26,6 +27,7 @@ struct TutorialPanel: View {
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
   @State private var collapsedOptional: Set<String> = []
+  @AppStorage("tutorial.commandsExpanded") private var commandsExpanded = false
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -136,31 +138,11 @@ struct TutorialPanel: View {
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          if snapshot.record.manual, !step.manual.isEmpty, step.id != "machine" || machineState.showsPrompt {
-            if rendersStatic {
-              CommandBlock(commandText: commands(step))
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(height: 280, alignment: .top).clipped()
-            } else {
-              ScrollView { CommandBlock(commandText: commands(step)) }
-                .frame(maxHeight: 280)
-            }
-            if step.id == "begin" {
-              Text("Then expand First iOS build below for the worktree and build commands.")
-                .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            }
-          } else if !step.optional || (step.id == "machine" && machineState.showsPrompt),
-            let text = current ? prompt ?? step.prompt : step.prompt
-          {
-            TutorialPromptBox(prompt: text, onCopy: copied)
-          }
+          copyBlock(step)
           if step.id == "machine", machineState.showsPrompt {
-            if !snapshot.record.manual {
-              Text(
-                snapshot.record.approvedMachine.map { "Tell your agent to use \($0) when you paste this prompt." }
-                  ?? "Name the approved machine to your agent when you paste this prompt."
-              )
-              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+            if snapshot.record.approvedMachine == nil {
+              Text("Name the approved machine to your agent when you paste this prompt.")
+                .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
             }
           }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
@@ -195,6 +177,16 @@ struct TutorialPanel: View {
               Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }
+            if ["build", "rebuild"].contains(step.id) {
+              Button {
+                runIOS()
+              } label: {
+                Label("Run iOS", systemImage: "play.fill")
+              }
+              .buttonStyle(.stim(.primary)).disabled(!canRunIOS)
+              .help("stim ios: builds if needed, installs and launches in this workspace")
+              .accessibilityLabel("Run the tutorial app on iOS")
+            }
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
             }
@@ -211,16 +203,46 @@ struct TutorialPanel: View {
               Button("Mark Done", action: markDone).buttonStyle(.stim())
                 .accessibilityLabel("Mark \(step.title) done")
             }
-            if step.id == "begin", !snapshot.record.manual {
-              Button("Show Commands", action: { setManual(true) }).buttonStyle(.stim(.plain))
-                .accessibilityLabel("Show tutorial commands instead of agent prompts")
-            }
           }
         }
         .padding(.leading, Space.xl)
       } else if state.state == .done, ["build", "rebuild"].contains(step.id), !state.detail.isEmpty {
         Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
       }
+    }
+  }
+
+  @ViewBuilder private func copyBlock(_ step: TutorialStep) -> some View {
+    let ask = step.id == "machine" && !machineState.showsPrompt ? nil : asks(step)
+    let hasCommands = !step.commands.isEmpty && (step.id != "machine" || machineState.showsPrompt)
+    let showsAsk = ask != nil && (!step.optional || step.id == "machine")
+    if let ask, showsAsk {
+      TutorialPromptBox(prompt: ask, onCopy: copied)
+    }
+    if hasCommands, showsAsk || !step.optional {
+      DisclosureGroup(isExpanded: $commandsExpanded) {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text(showsAsk ? "Your agent runs these. You can also run them yourself." : "Run these yourself.")
+            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          commandBlock(step)
+        }
+        .padding(.top, Space.sm)
+      } label: {
+        Text(showsAsk ? "Commands your agent will run" : "Commands to run yourself")
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      }
+      .accessibilityLabel("Commands for \(step.title)")
+    }
+  }
+
+  @ViewBuilder private func commandBlock(_ step: TutorialStep) -> some View {
+    if rendersStatic {
+      CommandBlock(commandText: commands(step))
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(height: 280, alignment: .top).clipped()
+    } else {
+      ScrollView { CommandBlock(commandText: commands(step)) }
+        .frame(maxHeight: 280)
     }
   }
 
@@ -235,9 +257,6 @@ struct TutorialPanel: View {
       } else {
         Menu {
           Button("Restart Tutorial", action: restart)
-          Button(snapshot.record.manual ? "Show prompts instead of commands" : "Show commands instead of prompts") {
-            setManual(!snapshot.record.manual)
-          }
           Button("Close Tutorial", action: close)
         } label: {
           Image(systemName: "ellipsis")
@@ -282,7 +301,9 @@ struct TutorialPanel: View {
     case "sidebar": return "The tutorial workspace appears beside your other projects. Select it to follow along."
     case "build":
       return "Watch the first iOS build: prebuild, pods, compile and launch. Open the build details for phase timings."
-    case "rebuild": return "Run iOS again. The cache badge shows a hit, or explains why Stim rebuilt."
+    case "rebuild":
+      return
+        "Your agent changes the title color and runs iOS again. Look at the cache badge in Build: it shows a hit, or explains why Stim rebuilt."
     case "device": return "Open the live view, then tap Log an error."
     case "logs": return "Open Logs to find the tagged error. Try Crash me and Slow request too."
     case "agent":

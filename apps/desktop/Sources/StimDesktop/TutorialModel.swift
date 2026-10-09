@@ -40,19 +40,21 @@ final class TutorialModel: ObservableObject {
   }
 
   var tourPath: String? { snapshot?.record.tourPath ?? records.record?.tourPath }
-  var manual: Bool { snapshot?.record.manual == true }
-  var prompt: String? {
-    if restarting { return TutorialSteps.restartPrompt }
-    if let step = snapshot?.currentStep,
-      ["build", "device"].contains(step),
-      snapshot?.steps.first(where: { $0.id == step }).map({
+
+  func ask(for step: TutorialStep) -> String? {
+    var template = step.ask
+    if step.id == snapshot?.currentStep, ["build", "device"].contains(step.id),
+      snapshot?.steps.first(where: { $0.id == step.id }).map({
         if case .failed = $0.state { return true }
         return false
       }) == true
     {
-      return "Continue the Stim tutorial: run"
+      template = TutorialSteps.retryAsk
     }
-    return TutorialSteps.all.first { $0.id == snapshot?.currentStep }?.prompt
+    return template.map {
+      tutorialAsk(
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine)
+    }
   }
 
   var message: String? {
@@ -184,12 +186,8 @@ final class TutorialModel: ObservableObject {
     progress.markDone(now: Date())
     refresh()
   }
-  func setManual(_ manual: Bool) {
-    progress.setManual(manual)
-    refresh()
-  }
   func copiedPrompt(now: Date = Date()) {
-    guard !restarting, !manual else { return }
+    guard !restarting else { return }
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
   }
@@ -203,8 +201,9 @@ final class TutorialModel: ObservableObject {
 
   func commands(for step: TutorialStep) -> String {
     tutorialCommands(
-      step.manual, tourPath: tourPath, repository: workspace?.worktree?.repository,
-      stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine)
+      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository,
+      stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine,
+      udid: workspace?.ios?.udid)
   }
 
   private func refresh(now: Date = Date()) {

@@ -17,7 +17,7 @@
         TutorialInput(environment: nil, now: now, record: TutorialRecord(version: 1, startedAt: now)))
       let panel = TutorialPanel(
         snapshot: snapshot, fixtureRendering: true, restarting: true,
-        message: "Waiting for a restarted tutorial workspace...", prompt: TutorialSteps.restartPrompt,
+        message: "Waiting for a restarted tutorial workspace...",
         commands: { _ in "" })
       let data = NSMutableData()
       let consumer = try XCTUnwrap(CGDataConsumer(data: data))
@@ -76,19 +76,26 @@
         approved: name.hasPrefix("machine-approved") || name == "machine-offloaded")
     }
 
+    private var storage: UserDefaults {
+      let defaults = UserDefaults(suiteName: "TutorialFixture")!
+      defaults.set(name == "manual" || name == "machine-approved-manual", forKey: "tutorial.commandsExpanded")
+      return defaults
+    }
+
     var body: some View {
       let snapshot = fixture()
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true, restarting: name == "restarting",
         message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
-        prompt: name == "failure" ? "Continue the Stim tutorial: run" : nil,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
         commands: { step in
           tutorialCommands(
-            step.manual, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
-            stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio")
+            step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
+            stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio",
+            udid: "tutorial-simulator")
         }
       )
+      .defaultAppStorage(storage)
       .frame(width: 320, height: name == "machine-approved-manual" ? 1440 : machineState.showsPrompt ? 1120 : 960)
     }
 
@@ -104,7 +111,7 @@
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
       var record = TutorialRecord(
-        version: 1, startedAt: now, step: id, done: done, manual: name == "manual" || name == "machine-approved-manual")
+        version: 1, startedAt: now, step: id, done: done)
       if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
       if ["machine", "finish"].contains(id) {
         record.done.removeAll { $0 == "phone" }

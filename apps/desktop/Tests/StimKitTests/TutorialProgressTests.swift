@@ -142,7 +142,7 @@ private func log(
   let store = TutorialRecordStore(defaults)
   var record = saved(at: "build")
   record.step = "rebuild"
-  record.manual = true
+  record.approvedMachine = "Studio"
   store.record = record
   let relaunchedStore = TutorialRecordStore(defaults)
   var progress = TutorialProgress()
@@ -151,7 +151,7 @@ private func log(
   #expect(state("build", in: result).state == .done)
   #expect(state("rebuild", in: result).state == .done)
   #expect(result.shouldReopen)
-  #expect(result.record.manual)
+  #expect(result.record.approvedMachine == "Studio")
 }
 
 @Test func tutorialTracksSavedPathOtherwiseNewestPhase() throws {

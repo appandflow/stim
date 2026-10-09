@@ -1813,13 +1813,13 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 an inspector-width trailing column. It replaces the inspector until closed;
 Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and manual mode.
+sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress when the tracked tour disappears and returns, or its oldest build
 started after Restart. A newer phase timestamp alone does not reset progress.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying manual commands does not start it. Only archives
+and survives relaunch. Copying commands does not start it. Only archives
 removed after this run started can complete the tutorial.
 
 The panel follows workspace creation, the first iOS build, a cached rebuild,
@@ -1832,17 +1832,21 @@ followed by "Open Stim on your phone: the tour workspace is there".
 
 Add Remote Mac opens the existing wizard using the tour workspace as its
 checkout. With no machine configured, Skip is the primary action. Once a machine
-is approved, the step shows "Continue the Stim tutorial: machine" and asks you to
-use the approved machine's name with your agent. Manual commands include that
-name. Approval completes the step and preserves its handoff across status polls;
+is approved, the step shows a prompt that names the approved machine, or asks you to
+name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server, pairs or grants access, or runs a
-build. Mark done appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access. Mark done
+appears after two minutes.
 
-Manual mode copies the generated commands, including app-file heredocs, with the
-tracked paths substituted. Expand First iOS build after the
-base app is created to copy the worktree and build commands. Desktop never runs them.
+Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
+section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
+short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
+`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
+simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
+Tutorial has no commands. Desktop never runs the commands. First iOS Build and Rebuild
+from Cache have a Run iOS button that calls the same `ActionCenter.runApp` as the
+Build section's Run, and is disabled while a build or action runs in the workspace.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.

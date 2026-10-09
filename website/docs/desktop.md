@@ -105,8 +105,8 @@ The panel follows a small iOS app in its own worktree. It shows:
 </PromptBox>
 
 Completed optional steps stay expanded so you can follow the phone handoff or
-copy the machine prompt. The tutorial does not start the server, pair phones,
-grant access or run builds.
+copy the machine prompt. The tutorial does not start the server, pair phones or
+grant access. Its only build is the **Run iOS** button.
 
 Accent rings and short callouts point to existing controls without covering the
 app with a dimming layer. **Show me** selects the tutorial workspace when its
@@ -121,14 +121,17 @@ also offers **Restart Tutorial**, which shows a restart prompt and resets
 checkpoints when the tracked tour disappears and returns, or its oldest build
 starts after Restart. A newer phase timestamp alone does not reset progress.
 
-Choose **Show commands instead of prompts** for manual mode. Copy the commands
-into your terminal, including the app-file heredocs. After creating the base
-app, expand **First iOS build** to copy the worktree and build commands; the
-workspace checkpoint ticks once those run. Paths come from the tour's
-repository and agent-device state directory when known; the default base is
-`~/stim-tutorial`. A machine command needs the name of an approved Mac.
-Copying manual commands does not start the three-minute workspace warning.
-Desktop never executes these tutorial commands. To read the complete manual:
+Each step shows a plain request to copy for your coding agent, with the paths
+filled in from the tour's repository. Below it, a collapsed **Commands your agent
+will run** section lists the same work as a short set of commands you can type
+yourself, with the agent-device state directory and simulator filled in when
+known. Create the Tutorial has only the prompt. Desktop remembers whether the
+section is open. Copying a command does not start the three-minute workspace
+warning. The default base is `~/stim-tutorial`, and the machine step needs the
+name of an approved Mac.
+**Run iOS** on First iOS Build and Rebuild from Cache runs `stim ios` for the
+tour workspace, the same action as **Run** in the workspace's Build section. To
+read the complete manual:
 
 <StimTabs code={`stim guide tutorial manual`} />
 
