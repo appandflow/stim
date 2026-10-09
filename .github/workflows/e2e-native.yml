@@ -74,10 +74,11 @@ on:
         type: choice
         default: loop
         options: [smoke, loop, caches, pool, all]
-      supplement_only:
-        description: 'Run only task macOS and web regression jobs'
-        type: boolean
-        default: false
+      qa_scope:
+        description: 'Task QA jobs to run; all runs the full regression'
+        type: choice
+        default: all
+        options: [all, supplement, ios, android, windows, macos, web]
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
@@ -95,7 +96,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.supplement_only && '-supplement' || '' }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.qa_scope && inputs.qa_scope != 'all' && format('-{0}', inputs.qa_scope) || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -107,7 +108,7 @@ env:
 jobs:
   plan:
     name: plan
-    if: ${{ !inputs.supplement_only }}
+    if: inputs.qa_scope != 'supplement' && inputs.qa_scope != 'macos' && inputs.qa_scope != 'web'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -132,7 +133,7 @@ jobs:
   ios:
     name: ios ${{ matrix.framework }} (${{ matrix.suite }})
     needs: plan
-    if: needs.plan.outputs.ios != '[]'
+    if: needs.plan.outputs.ios != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios')
     runs-on: xcode-27
     # The caches suite adds a second cold compile (the single-flight race) plus a
     # third cache-hit build, so it needs headroom the loop suite never did.
@@ -317,7 +318,7 @@ jobs:
   android:
     name: android ${{ matrix.framework }} (${{ matrix.suite }})
     needs: plan
-    if: needs.plan.outputs.android != '[]'
+    if: needs.plan.outputs.android != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'android')
     # A Linux host with KVM: the Android emulator needs hardware acceleration,
     # which the ubuntu-latest GitHub runners provide once /dev/kvm is exposed.
     runs-on: ubuntu-latest
@@ -486,7 +487,7 @@ jobs:
   windows:
     name: android bare (${{ matrix.suite }}, windows)
     needs: plan
-    if: needs.plan.outputs.windows != '[]'
+    if: needs.plan.outputs.windows != '[]' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'windows')
     runs-on: windows-latest
     timeout-minutes: ${{ matrix.suite == 'loop' && 90 || 45 }}
     strategy:
@@ -591,7 +592,7 @@ jobs:
   ios-bare-qa:
     name: ios bare (${{ matrix.suite }}, Xcode 26.6)
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all' && !inputs.supplement_only
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'ios')
     runs-on: macos-26
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
     strategy:
@@ -671,7 +672,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
   macos-runtime-and-tools:
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'supplement' || inputs.qa_scope == 'macos')
     runs-on: macos-26
     timeout-minutes: 35
     steps:
@@ -757,7 +758,7 @@ jobs:
           retention-days: 14
   task-expo-web:
     name: task Expo web and public API regression
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/platform-convergence-local'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/refactor/platform-convergence-local' && (!inputs.qa_scope || inputs.qa_scope == 'all' || inputs.qa_scope == 'supplement' || inputs.qa_scope == 'web')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:

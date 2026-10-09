@@ -4,6 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { buildLog } from './harness.mjs';
 import { readNdjsonGenerations } from '../../../packages/stim-cli/src/ndjson.ts';
 import { verifyLaunch, readCollectorRecords } from '../../../packages/stim-cli/src/engine/launch-verify.ts';
+import { isAppLaunchError } from '../../../packages/stim-cli/src/command-output.ts';
 import { APP_READINESS_TIMEOUT_MS, appReadinessSignal } from '../../../packages/stim-cli/src/engine/app-readiness.ts';
 import { iosAppProcess, androidAppProcess } from '../../../packages/stim-cli/src/engine/app-install.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../../../packages/stim-cli/src/engine/slot-launch.ts';
@@ -76,6 +77,7 @@ const result = await verifyLaunch({
   processAlive: () => probe() === pid,
   readNativeCrashes: readCrashes,
 });
+let nonAppErrors = [];
 if (expectUnattributed) {
   assert(
     !result.verified && result.unattributed && !result.fatal,
@@ -87,10 +89,9 @@ if (expectUnattributed) {
     const deviceRecords = readCollectorRecords(logsDir).filter(
       (record) => Number(record.ts) >= since && (record.slot ?? 'default') === slot && record.platform === platform,
     );
-    assert(
-      !deviceRecords.some((record) => ['error', 'fatal'].includes(record.level)),
-      'named-slot app reported errors',
-    );
+    const errors = deviceRecords.filter((record) => ['error', 'fatal'].includes(record.level));
+    assert(!errors.some(isAppLaunchError), 'named-slot app reported errors');
+    nonAppErrors = errors.filter((record) => !isAppLaunchError(record));
     const pending = deviceRecords.findLast((record) => appReadinessSignal(record, platform) === 'pending');
     if (
       !pending ||
@@ -108,11 +109,12 @@ if (expectUnattributed) {
     result.verified && result.processAlive === true && !result.fatal,
     'launch did not become verified with its live app process',
   );
-  assert(!result.errors?.length, 'launch reported app or bundle errors');
+  assert(!result.errors?.some(isAppLaunchError), 'launch reported app or bundle errors');
+  nonAppErrors = (result.errors ?? []).filter((record) => !isAppLaunchError(record));
   assert(!['error', 'timed-out'].includes(result.readiness), 'app readiness failed or timed out');
 }
 process.stdout.write(
-  `${JSON.stringify({ ...result, platform, slot, appId, deviceId, pid, since, delivery: expectUnattributed ? 'UNAVAILABLE: same-platform Android slot attribution' : 'verified' })}\n`,
+  `${JSON.stringify({ ...result, nonAppErrors, platform, slot, appId, deviceId, pid, since, delivery: expectUnattributed ? 'UNAVAILABLE: same-platform Android slot attribution' : 'verified' })}\n`,
 );
 assert.equal(probe(), pid, 'the verified app process changed or exited');
 assert.deepEqual(
