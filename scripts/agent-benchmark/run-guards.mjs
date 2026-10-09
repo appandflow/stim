@@ -131,6 +131,7 @@ export function shellCommandSegments(command) {
 function literalShellArguments(command) {
   const words = [];
   let word = '';
+  let started = false;
   let quote = null;
   for (let index = 0; index < command.length; index++) {
     const char = command[index];
@@ -138,20 +139,44 @@ function literalShellArguments(command) {
       const next = command[++index];
       if (next == null) return null;
       if (quote === '"' && !['$', '`', '"', '\\', '\n'].includes(next)) word += '\\';
-      if (next !== '\n') word += next;
+      if (next !== '\n') {
+        word += next;
+        started = true;
+      }
     } else if (quote) {
+      if (quote === '"' && /[$`]/.test(char)) return null;
       if (char === quote) quote = null;
       else word += char;
-    } else if (char === "'" || char === '"') quote = char;
-    else if (/\s/.test(char)) {
-      if (word) words.push(word);
+    } else if (char === "'" || char === '"') {
+      quote = char;
+      started = true;
+    } else if (char === ' ' || char === '\t') {
+      if (started) words.push(word);
       word = '';
-    } else if (/[<>*?[\]{}~()]/.test(char)) return null;
-    else word += char;
+      started = false;
+    } else if (/[\s;&|<>*?[\]{}~()$`#]/.test(char)) return null;
+    else {
+      word += char;
+      started = true;
+    }
   }
   if (quote) return null;
-  if (word) words.push(word);
+  if (started) words.push(word);
   return words;
+}
+
+export function sameLiteralShellCommand(command, expected) {
+  let actual = literalShellArguments(String(command ?? '').trim());
+  const required = literalShellArguments(expected);
+  if (actual?.length === 3 && /^\/bin\/(?:zsh|bash|sh)$/.test(actual[0]) && /^-l?c$/.test(actual[1])) {
+    actual = literalShellArguments(actual[2]);
+  }
+  return Boolean(
+    actual &&
+    required?.length &&
+    actual.length === required.length &&
+    actual.every((word, index) => word === required[index]),
+  );
 }
 
 export function agentDeviceAuxiliarySessions(commands, expectedPrefix, target) {
@@ -270,6 +295,19 @@ function successfulCommand(commands, expected) {
   });
 }
 
+function successfulGuideFirstChain(commands) {
+  return commands.some((command) => {
+    command = commandWithReportedStatus(command);
+    if (command.exitCode !== 0) return false;
+    const source = topLevelShellCommand(command.command);
+    const segments = shellCommandSegments(source);
+    if (segments.length < 2 || segments[0] !== 'stim guide agent' || /[$`]/.test(source)) return false;
+    if (segments.some((segment) => !literalShellArguments(segment)?.length)) return false;
+    const pattern = segments.map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*&&\\s*');
+    return new RegExp(`^${pattern}$`).test(source);
+  });
+}
+
 function dependencyInstallCommand(command) {
   return shellCommandSegments(command).some((segment) =>
     /^(?:npm\s+(?:install|i|ci)|pnpm\s+(?:install|i)|yarn(?:\s+install)?|bun\s+install)(?:\s|$)/.test(segment),
@@ -292,7 +330,7 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
     reasons.push('dependencies-installed-inside-timer');
   }
   if (meta.arm !== 'stim') return reasons;
-  if (!successfulCommand(commands, 'stim guide agent')) {
+  if (!successfulCommand(commands, 'stim guide agent') && !successfulGuideFirstChain(commands)) {
     reasons.push('stim-guide-agent-missing-or-failed');
   }
   const warmRuns = commands.filter(

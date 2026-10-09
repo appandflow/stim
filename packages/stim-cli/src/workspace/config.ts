@@ -11,6 +11,7 @@ import {
   getConfigPath,
   loadConfig,
   withConfigLock,
+  validateAutomaticPool,
   type Config,
   type DeviceRecord,
   type ProjectRecord,
@@ -338,6 +339,12 @@ export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: stri
       if (!deleteNested(settings, dottedKey)) return false;
     } else {
       writeNested(settings, dottedKey, value);
+    }
+    if (target.scope === 'machine') {
+      if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
+        validateAutomaticPool('build', cfg);
+      if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
+        validateAutomaticPool('device', cfg);
     }
     saveConfig(cfg);
     return true;

@@ -24,6 +24,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
+import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
@@ -744,6 +745,13 @@ test('the facts topic documents every agent tool status can attribute', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   expect(body).toMatch(new RegExp(`^ +tool +${AGENT_TOOLS.join(' \\| ')}$`, 'm'));
+});
+
+test('the cleanup guide names the nested-worktree watchman finding and that doctor never drops a root', () => {
+  const body = renderSection('cleanup', 'memory');
+  assert(body);
+  expect(body).toContain(WATCHMAN_NESTED_WORKTREES);
+  expect(body).toMatch(/Doctor never runs watch-del or shutdown-server/);
 });
 
 test('the facts topic documents every memory source', () => {

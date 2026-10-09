@@ -1,5 +1,5 @@
 import { InvalidArgumentError } from 'commander';
-import { OFFLOAD_MODES, parseMachine } from '@stim-cli/core/state';
+import { OFFLOAD_MODES, parseMachine, automaticMachineEnabled } from '@stim-cli/core/state';
 import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
@@ -32,6 +32,14 @@ export function parseBuildMachineOption(value: string): string {
   } catch (error) {
     throw new InvalidArgumentError((error as Error).message);
   }
+}
+
+export function requireLocalBuild(selected: string): void {
+  if (selected === 'auto' && !automaticMachineEnabled('build', 'local'))
+    throw new OffloadRefusal(
+      'auto',
+      'local is disabled in remote.buildPoolDisabled; enable it or select a machine explicitly',
+    );
 }
 
 export function namedBuildMachine(selected: string): boolean {

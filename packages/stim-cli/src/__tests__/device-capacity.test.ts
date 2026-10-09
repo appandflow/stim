@@ -627,3 +627,27 @@ test('the non-binding peek preserves an unknown count for the binding boot admis
     }),
   ).toMatchObject({ count: null, max: 1, localLive: false });
 });
+
+test('automatic device admission rechecks exclusion after waiting and clears its own wait ticket', async () => {
+  const boot = vi.fn<() => Promise<string>>(async () => 'booted');
+  const sleeping = vi.fn<() => Promise<void>>(async () => {
+    writeFileSync(join(root, 'config.json'), JSON.stringify({ remote: { devicePoolDisabled: ['local'] } }));
+  });
+  const device = { platform: 'ios', key: 'new' };
+  await expect(
+    withDeviceBootAdmission(device, boot, {
+      root,
+      max: 1,
+      automatic: true,
+      sources: { ...empty, sims: occupied },
+      sleep: sleeping,
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(sleeping).toHaveBeenCalledOnce();
+  expect(boot).not.toHaveBeenCalled();
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  await expect(withDeviceBootAdmission(device, boot, { root, max: 0, automatic: true })).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+  });
+  await expect(withDeviceBootAdmission(device, boot, { root, max: 0 })).resolves.toBe('booted');
+});

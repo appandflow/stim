@@ -1,8 +1,10 @@
+import type { IosRuntimePlan } from './launch.ts';
 import { automaticDevicePlacement } from '../../device-host/auto-placement.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
+import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
 import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
@@ -47,13 +49,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import { readRunEstimates, recordRunStats, recordCapacityRefusal } from '../../engine/stats.ts';
 import { swapJsBundle } from '../../engine/js-swap.ts';
-import {
-  buildIos,
-  discoverXcodeProject,
-  resolveScheme,
-  readBundleExecutable,
-  readBundleId,
-} from '../../engine/xcode.ts';
+import { resolveScheme, readBundleExecutable, readBundleId } from '../../engine/xcode.ts';
 import { pidExists, resolveProjectMetro } from '../../metro.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { detectBundleId } from '../../workspace/app-id.ts';
@@ -74,6 +70,7 @@ import { devClientScheme, devClientTakesDevMenuParams } from '../dev-client.ts';
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
   checkEasFallback: typeof checkEasFallback;
   prepareHostedIos: typeof prepareHostedIos;

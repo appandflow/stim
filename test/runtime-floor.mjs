@@ -17,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'server'];
+const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'ci', 'server'];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
@@ -59,36 +59,79 @@ try {
   const consumer = join(apiScratch, 'consumer.mts');
   writeFileSync(
     consumer,
-    `import { createStim, type StimStopResult } from 'stim';
-const result: StimStopResult = await createStim({ projectRoot: '.' }).stop();
+    `import { createStim, type StimPlatform, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
+const stim = createStim({ projectRoot: '.' });
+const ios = await stim.run({ platform: 'ios', scheme: 'App' });
+const udid: string = ios.facts.udid;
+const iosPlatform: 'ios' = ios.platform;
+const android = await stim.run({ platform: 'android', variant: 'debug' });
+const serial: string | null = android.facts.serial;
+const androidPlatform: 'android' = android.platform;
+const macos = await stim.run({ platform: 'macos' });
+const executable: string = macos.facts.executable;
+const macosPlatform: 'macos' = macos.platform;
+const web = await stim.run({ platform: 'web', headed: true });
+const webPlatform: 'web' = web.platform;
+const reused: boolean = web.facts.reused;
+declare const platform: 'ios' | 'android';
+const native = await stim.run({ platform });
+const nativePlatform: 'ios' | 'android' = native.platform;
+if (native.platform === 'ios') {
+  const nativeUdid: string = native.facts.udid;
+} else {
+  const nativeSerial: string | null = native.facts.serial;
+}
+declare const options: StimRunOptions;
+const dynamic: StimRunResult = await stim.run(options);
+function runPlatform<P extends StimPlatform>(platform: P) {
+  return stim.run({ platform });
+}
+const generic: StimRunResult = await runPlatform('ios');
+const result: StimStopResult = await stim.stop();
 const ok: boolean = result.ok;
 const status: string = result.outcomes.supervisor.status;
 const summary: string = result.summary;
 `,
   );
-  execFileSync(
-    process.execPath,
-    [
-      join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
-      '--ignoreConfig',
-      '--noEmit',
-      '--strict',
-      '--skipLibCheck',
-      'false',
-      '--target',
-      'ES2022',
-      '--module',
-      'NodeNext',
-      '--moduleResolution',
-      'NodeNext',
-      '--types',
-      'node',
-      '--typeRoots',
-      join(repositoryRoot, 'node_modules', '@types'),
+  const compilerArgs = [
+    join(repositoryRoot, 'node_modules', 'typescript', 'bin', 'tsc'),
+    '--ignoreConfig',
+    '--noEmit',
+    '--strict',
+    '--skipLibCheck',
+    'false',
+    '--target',
+    'ES2022',
+    '--module',
+    'NodeNext',
+    '--moduleResolution',
+    'NodeNext',
+    '--types',
+    'node',
+    '--typeRoots',
+    join(repositoryRoot, 'node_modules', '@types'),
+    consumer,
+  ];
+  execFileSync(process.execPath, compilerArgs, { cwd: repositoryRoot, stdio: 'inherit' });
+  for (const [source, rejectedProperty] of [
+    ["await stim.run({ platform: 'ios', variant: 'debug' });", 'variant'],
+    ["await stim.run({ platform: 'android', scheme: 'App' });", 'scheme'],
+    ["await stim.run({ platform: 'web', slot: 'browser' });", 'slot'],
+    ["(await stim.run({ platform: 'ios' })).facts.serial;", 'serial'],
+  ]) {
+    writeFileSync(
       consumer,
-    ],
-    { cwd: repositoryRoot, stdio: 'inherit' },
-  );
+      `import { createStim } from 'stim';
+const stim = createStim({ projectRoot: '.' });
+${source}
+`,
+    );
+    assert.throws(
+      () => execFileSync(process.execPath, compilerArgs, { cwd: repositoryRoot, encoding: 'utf8', stdio: 'pipe' }),
+      (error) => error.status === 1 && error.stdout.includes(rejectedProperty),
+      `the public API must reject ${source}`,
+    );
+  }
   const stim = require('stim').createStim({ projectRoot: apiScratch, home: join(apiScratch, 'home') });
   const diagnostics = await stim.diagnostics({ tail: 0 });
   assert.equal(diagnostics.records.length, 0, 'the API worker reads an empty workspace on the runtime floor');
@@ -141,6 +184,15 @@ const serverVersion = execFileSync(process.execPath, ['packages/server/dist/stim
 }).trim();
 const serverPackage = JSON.parse(readFileSync(join(repositoryRoot, 'packages', 'server', 'package.json'), 'utf8'));
 assert.equal(serverVersion, serverPackage.version);
+
+const ciRequire = createRequire(join(repositoryRoot, 'packages', 'ci', 'package.json'));
+assert.equal(typeof ciRequire('@stim-cli/ci').runCI, 'function');
+assert.equal(typeof (await import(pathToFileURL(ciRequire.resolve('@stim-cli/ci')).href)).runCI, 'function');
+const ciVersion = execFileSync(process.execPath, ['packages/ci/dist/stim-ci.mjs', '--version'], {
+  cwd: repositoryRoot,
+  encoding: 'utf8',
+}).trim();
+assert.equal(ciVersion, cliPackage.version);
 
 execFileSync(process.execPath, ['packages/stim-cli/dist/cli.mjs', '--help'], {
   cwd: repositoryRoot,

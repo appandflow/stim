@@ -196,8 +196,8 @@ main().then(
   (err) => {
     log(`FAIL pool ${FRAMEWORK}-ios: ${err?.message || err}`);
     dumpDiagnostics(h, created);
-    cleanupAfterFailure();
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!err?.preserveNativeState) cleanupAfterFailure();
+    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
     process.exit(1);
   },
 );

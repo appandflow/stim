@@ -255,6 +255,46 @@ WAITING FOR A CHANGE
   still running, which it notices at the next change.
   Without --json it reprints the human view on change.`,
   sections: {
+    ci: {
+      summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
+      body: () => `CONTINUOUS INTEGRATION
+
+Install app dependencies and platform tools first. Use a dedicated checkout:
+cleanup stops that workspace, including resources created before a build fails.
+
+  npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
+
+Or install npm install --global @stim-cli/ci and use stim-ci directly.
+Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
+--artifacts selects the result directory (a fresh temporary directory by default).
+An explicit artifacts directory must be empty; use a new directory per run.
+Stdout is one JSON result; progress and test output go to stderr.
+
+Tests receive STIM_CI_PLATFORM, STIM_CI_DEVICE_ID, STIM_CI_APP_ID,
+STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last is
+run.json with the exact public API result. Use that target and check app
+readiness; launched can still be bundling or unverified.
+
+result.json preserves the test exit code even if diagnostics or cleanup fail.
+Passing tests with failed cleanup return 1; timeout returns 124; cancellation
+returns 130. Leave 70 seconds before the job's hard timeout for diagnostics and
+stop. SIGKILL and runner loss cannot run cleanup. Stop shuts down owned devices;
+it never deletes them.
+
+GitHub-hosted jobs default to $RUNNER_TEMP/stim-ci/home and
+$RUNNER_TEMP/stim-ci/build-cache, reused between steps in the job. Detection
+requires GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and RUNNER_TEMP.
+An explicit --home or STIM_HOME keeps the selected home and its normal cache
+configuration; --build-cache or STIM_BUILD_CACHE overrides the cache path.
+Self-hosted runners and local runs keep normal Stim configuration. Other
+exclusive disposable providers can set their job-local paths explicitly.
+CI=true alone does not change defaults, ownership or coordination. Persist only
+cache artifacts, not state, claims or device ledgers. Independent homes must
+not share a writable filesystem cache because its claims live in the home.
+
+The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
+README for result types, cancellation, cache policy, and coordination findings.`,
+    },
     'hosted-android': {
       summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',
       body: () => `ANDROID ON A HOSTING MAC
@@ -421,7 +461,10 @@ there is a free concurrency.maxDevices slot (0 means unlimited), no device
 waiter ahead, normal host memory pressure, no budget shortfall,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto is local. An unknown local device count also stays local; boot admission
-still decides. The default without a flag or setting stays local.
+still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
+members from new automatic placement only; an excluded local member is never a
+fallback. Existing sessions keep their owner and named placement bypasses the pool.
+See stim guide settings for separate build/device membership controls.
 
 Otherwise Stim asks every approved remote.machines host in parallel, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.

@@ -67,6 +67,15 @@ jobs:
             }
           '
       - run: swift test -Xswiftc -warnings-as-errors
+        env:
+          STIM_BUILD_MACHINES_SHOTS: ${{ runner.temp }}/build-machines-screenshots
+      - name: Upload build machine screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-machines-screenshots
+          path: ${{ runner.temp }}/build-machines-screenshots
+          if-no-files-found: warn
       - name: Compile the stim-server frames helper
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
