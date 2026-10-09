@@ -74,6 +74,10 @@ on:
         type: choice
         default: loop
         options: [smoke, loop, caches, pool, all]
+      supplement_only:
+        description: 'Run only task macOS and web regression jobs'
+        type: boolean
+        default: false
   pull_request:
     # `labeled` is what makes "add the label to run it" work; the others let a
     # push to an already-labeled PR re-run. The `plan` job is the actual gate
@@ -91,7 +95,7 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.supplement_only && '-supplement' || '' }}
   cancel-in-progress: true
 
 permissions:
@@ -103,6 +107,7 @@ env:
 jobs:
   plan:
     name: plan
+    if: ${{ !inputs.supplement_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -586,7 +591,7 @@ jobs:
   ios-bare-qa:
     name: ios bare (${{ matrix.suite }}, Xcode 26.6)
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all' && !inputs.supplement_only
     runs-on: macos-26
     timeout-minutes: ${{ matrix.suite == 'caches' && 120 || 60 }}
     strategy:
@@ -699,7 +704,7 @@ jobs:
       - name: Full macOS unit suite
         shell: bash
         run: |
-          pnpm test --reporter=default --reporter=json \
+          pnpm run test --reporter=default --reporter=json \
             --outputFile="$QA_ROOT/evidence/unit.json" 2>&1 | tee "$QA_ROOT/evidence/unit.log"
       - name: Full macOS E2E suite
         shell: bash

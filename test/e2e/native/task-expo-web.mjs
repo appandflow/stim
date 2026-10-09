@@ -74,7 +74,7 @@ const gone = (record) =>
     () => inspectProcessIdentity(record),
     (state) => state === 'gone' || state === 'different',
   );
-async function command(label, file, args, timeout = 120_000) {
+async function command(label, file, args, timeout = 120_000, env = {}) {
   const prefix = join(evidence, `${mode}-${String(++sequence).padStart(3, '0')}-${label}`);
   const result = await new Promise((done) =>
     execFile(
@@ -89,6 +89,7 @@ async function command(label, file, args, timeout = 120_000) {
           npm_config_cache: join(out, 'npm-cache'),
           EXPO_NO_TELEMETRY: '1',
           FORCE_COLOR: '0',
+          ...env,
         },
         encoding: 'utf8',
         timeout,
@@ -101,7 +102,7 @@ async function command(label, file, args, timeout = 120_000) {
   );
   writeFileSync(`${prefix}.stdout`, result.stdout);
   writeFileSync(`${prefix}.stderr`, result.stderr);
-  jsonFile(`${prefix}.json`, { file, args, code: result.code, signal: result.signal });
+  jsonFile(`${prefix}.json`, { file, args, env, code: result.code, signal: result.signal });
   assert.equal(result.code, 0, `${label}: ${result.stderr}`);
   return result.stdout;
 }
@@ -257,16 +258,18 @@ export default function App() {
     await cli('android-viewer-setting', ['settings', 'set', 'androidEmulatorApp', 'stim-desktop']);
     await cli('agent-guide', ['guide', 'agent']);
     await command('fixture-install', 'npm', ['install', '--no-audit', '--no-fund'], 600_000);
-    await command('expo-version-check', process.execPath, [
-      join(manifest.root, 'node_modules/expo/bin/cli'),
-      'install',
-      '--check',
-    ]);
     cpSync(join(manifest.root, 'package-lock.json'), join(evidence, 'fixture-package-lock.json'));
     cpSync(join(manifest.root, 'package.json'), join(evidence, 'fixture-package.json'));
     cpSync(
       join(manifest.root, 'node_modules/expo/bundledNativeModules.json'),
       join(evidence, 'expo-bundledNativeModules.json'),
+    );
+    await command(
+      'expo-pinned-sdk-version-check',
+      process.execPath,
+      [join(manifest.root, 'node_modules/expo/bin/cli'), 'install', '--check'],
+      120_000,
+      { EXPO_OFFLINE: '1' },
     );
     manifest.registered = true;
     save();
