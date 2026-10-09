@@ -24,7 +24,9 @@ function validatePortLabel(label: string): void {
 
 function portListeners(port: number, platform: NodeJS.Platform): number[] {
   if (platform === 'win32') {
-    return parseNetstatPids(getExecutor().runFile('netstat', ['-ano'], { timeoutMs: 5000, rejectStderr: true }), port);
+    const out = getExecutor().runFile('netstat', ['-ano'], { timeoutMs: 5000, rejectStderr: true });
+    if (!/^\s*(?:Proto|TCP)\s/m.test(out)) throw new Error('netstat printed no TCP connection table.');
+    return parseNetstatPids(out, port);
   }
   let out: string;
   try {

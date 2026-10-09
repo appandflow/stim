@@ -86,6 +86,7 @@ const NETSTAT = [
   '  TCP    127.0.0.1:8900         127.0.0.1:52001        ESTABLISHED     41219',
   '  TCP    0.0.0.0:8901           0.0.0.0:0              LISTENING       7',
 ].join('\r\n');
+const NETSTAT_IDLE = NETSTAT.split('\r\n').slice(0, 4).join('\r\n');
 
 type Argv = { file: string; args: string[] };
 
@@ -120,7 +121,7 @@ function win32Executor(listening: () => boolean): Argv[] {
     runFile: (file: string, args: string[] = []) => {
       if (file !== 'netstat' || args.join(' ') !== '-ano') throw new Error(`unexpected win32 command ${file}`);
       calls.push({ file, args });
-      return listening() ? NETSTAT : '';
+      return listening() ? NETSTAT : NETSTAT_IDLE;
     },
     runQuiet: (cmd: string) => {
       calls.push({ file: cmd.split(' ')[0]!, args: cmd.split(' ').slice(1) });
@@ -263,16 +264,20 @@ test('an lsof failure other than "no listeners" keeps that allocation and still 
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 
-test('a win32 netstat failure keeps the allocations it could not inspect', async () => {
+test.each([
+  ['fails', 'denied'],
+  ['prints no table', 'no TCP connection table'],
+])('a win32 netstat that %s keeps the allocations it could not inspect', async (_case, message) => {
   upsertProject(root, { ports: { web: 8900 } });
   setExecutor({
     runFile: (file: string, args: string[] = [], opts: { rejectStderr?: boolean } = {}) => {
       expect([file, ...args, opts.rejectStderr]).toEqual(['netstat', '-ano', true]);
-      throw Object.assign(new Error('denied'), { status: 0, stdout: '', stderr: 'denied' });
+      if (message === 'denied') throw Object.assign(new Error('denied'), { status: 0, stdout: '', stderr: 'denied' });
+      return '';
     },
     runFileQuiet: () => null,
   });
-  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'win32' })).rejects.toThrow('denied');
+  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'win32' })).rejects.toThrow(message);
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 
