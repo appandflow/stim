@@ -166,6 +166,7 @@ test('measures stale folders and pull requests in the background, then status re
 });
 
 test('a checkout is measured without the linked worktrees nested under it', async () => {
+  kilobytes = {};
   const common = join(app, '.git');
   const nested = join(app, '.worktrees', 'feature');
   mkdirSync(join(common, 'worktrees', 'feature'), { recursive: true });
