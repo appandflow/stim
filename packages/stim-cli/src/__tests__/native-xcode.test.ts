@@ -619,7 +619,14 @@ test('the registered native iOS provider builds Release without a device and reu
   writeNativeXcodeProject(root);
   write(join(root, '.stim.json'), JSON.stringify({ optimizations: { releaseBundleSwap: false } }));
   vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
-  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  setExecutor(
+    makeExecutor({
+      runFile(file, args = []) {
+        if (file === 'cp') cpSync(args.at(-2)!, args.at(-1)!, { recursive: true });
+        return 'Xcode 26.0 build 17A';
+      },
+    }),
+  );
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const compiled = join(home, 'derived', 'Native.app');
   const compile = vi.spyOn(xcode, 'buildXcode').mockImplementation(async (options) => {
