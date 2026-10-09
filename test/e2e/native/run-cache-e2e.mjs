@@ -544,22 +544,38 @@ async function main() {
       if (/^\s*total:/.test(line)) break;
     }
 
+    const outputNames = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider'];
+    const workspaceOutputStats = [wt1, wt2]
+      .flatMap((root) => outputNames.map((name) => dirStats(join(workspaceLogsDir(root), '..', name))))
+      .reduce(
+        (total, stats) => ({
+          exists: total.exists || stats.exists,
+          files: total.files + stats.files,
+          bytes: total.bytes + stats.bytes,
+        }),
+        { exists: false, files: 0, bytes: 0 },
+      );
+    c.ev(
+      `workspace build output accounting excludes workspace.json, state.json, logs and device records: ${workspaceOutputStats.files} output files`,
+    );
     const expected = [
       { name: 'the fingerprint build cache', dir: BUILD_CACHE_ROOT },
       { name: 'the shared Metro transform store', dir: storeRoot1 || METRO_CACHE_ROOT },
-      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces') },
+      { name: 'the workspace build outputs', dir: join(HOME_DIR, 'workspaces'), stats: workspaceOutputStats },
     ];
     if (PLATFORM === 'ios') expected.push({ name: "Xcode's compilation cache (CAS)", dir: CAS_DIR });
     if (PLATFORM === 'android') expected.push({ name: 'the Gradle build cache', dir: GRADLE_CACHE_DIR });
 
     const missing = [];
+    let reported = 0;
     for (const e of expected) {
-      const stats = dirStats(e.dir);
+      const stats = e.stats ?? dirStats(e.dir);
       if (!stats.exists || stats.files === 0) {
         c.ev(`${e.name}: nothing on disk at ${e.dir}, so gc has nothing to report -- not counted against it`);
         continue;
       }
       if (gc.stdout.includes(e.dir)) {
+        reported += 1;
         c.ev(`gc reports ${e.name} at ${e.dir} (${stats.files} files, ${formatBytes(stats.bytes)})`);
       } else {
         c.ev(
@@ -573,7 +589,7 @@ async function main() {
         `${missing.length} live cache(s) are invisible to gc, so nothing will ever trim them: ${missing.map((m) => m.dir).join(', ')}`,
       );
     }
-    return c.pass(`gc reports ${expected.length} live cache(s) with sizes and calls none of them garbage`);
+    return c.pass(`gc reports ${reported} live cache(s) with sizes and calls none of them garbage`);
   });
 
   stopWorkspace(wt1);

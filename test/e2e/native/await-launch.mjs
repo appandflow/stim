@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { realpathSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { buildLog } from './harness.mjs';
+import { getExecutor } from '../../../packages/stim-cli/src/exec.ts';
 import { readNdjsonGenerations } from '../../../packages/stim-cli/src/ndjson.ts';
 import { verifyLaunch, readCollectorRecords } from '../../../packages/stim-cli/src/engine/launch-verify.ts';
 import { isAppLaunchError } from '../../../packages/stim-cli/src/command-output.ts';
@@ -51,7 +52,35 @@ assert(
   'the build did not report this launch',
 );
 assert(typeof logsDir === 'string' && metroPort, 'the launch has no Metro evidence location');
-const probe = () => (platform === 'ios' ? iosAppProcess(deviceId, appId) : androidAppProcess(deviceId, appId));
+const executor = getExecutor();
+const probe = () => {
+  if (platform !== 'ios') return androidAppProcess(deviceId, appId);
+  const started = performance.now();
+  let failure;
+  const observedPid = iosAppProcess(deviceId, appId, {
+    exec: {
+      ...executor,
+      runFile(...args) {
+        try {
+          return executor.runFile(...args);
+        } catch (error) {
+          failure = {
+            code: error.code,
+            status: error.status,
+            signal: error.signal,
+            message: error.message,
+            stderr: String(error.stderr ?? '').slice(-4000),
+          };
+          throw error;
+        }
+      },
+    },
+  });
+  process.stderr.write(
+    `${JSON.stringify({ event: 'qa_ios_process_probe', appId, deviceId, slot, since, outcome: observedPid === undefined ? 'inspection-error' : observedPid === null ? 'not-running' : 'running', pid: observedPid ?? null, elapsedMs: Math.round(performance.now() - started), error: failure })}\n`,
+  );
+  return observedPid;
+};
 const pid = probe();
 assert(Number.isInteger(pid) && pid > 0, 'the launch has no positively identified live app process');
 const platformShared = siblingPlatformSlots(root, platform, slot).length > 0;
