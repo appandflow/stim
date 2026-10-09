@@ -20,7 +20,7 @@ import Foundation
     try Task.checkCancellation()
     guard let client = eligibleServer(for: cli) else { return try await cli.stats(workspace: workspace) }
     let result = try await client.request("stats.get", ["workspace": .string(workspace)])
-    return try JSONDecoder().decode(ProjectStats.self, from: JSONEncoder().encode(result))
+    return try decodeReporting(ProjectStats.self, from: result, source: .server)
   }
 
   public func machine() async throws -> MachineStats {
@@ -28,7 +28,7 @@ import Foundation
     try Task.checkCancellation()
     guard let client = eligibleServer(for: cli) else { return try await cli.machineStats() }
     let result = try await client.request("stats.get", [:])
-    return try JSONDecoder().decode(MachineStats.self, from: JSONEncoder().encode(result))
+    return try decodeReporting(MachineStats.self, from: result, source: .server)
   }
 
   private func eligibleServer(for cli: StimCLI) -> ServerClient? {

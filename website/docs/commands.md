@@ -523,7 +523,7 @@ the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints
-`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, refusal? }`.
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, refusal? }`.
 `missReason` has the shape of `lastBuilds.<platform>.missReason` in
 [`stim status --json`](#status).
 `cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of
@@ -537,8 +537,11 @@ and the run then checks the new key. A Release hit whose JavaScript swap fails
 builds from scratch. An Android plan uses the ABI of the emulator the slot
 records, or of the system image a new emulator would use. A plan refuses
 `--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
-`--simulator-app` with `STIM_BAD_ARG`. Without `--eas-profile`, it also refuses
-the `ios.remote` and `android.remote` settings and the experimental compiler CAS.
+`--simulator-app` with `STIM_BAD_ARG`. With `ios.remote` or `android.remote`
+set to `auto` or a Mac name, it asks that Mac for its device (a read-only
+probe) and prints a `placement` line; it refuses `eas`, `proxy` and a Mac that
+does not answer. Without `--eas-profile`, it also refuses the experimental
+compiler CAS.
 
 Try it with an agent:
 
@@ -1797,7 +1800,7 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 A person on the worker Mac runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
-one ticket, until one expiry. Each grant asks y/N in a terminal; `--yes` is
+one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve new requests without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.

@@ -57,14 +57,14 @@ struct OverviewTests {
   }
 
   @Test func showsTheFirstIdleProjectsUntilExpanded() {
-    let limit = Overview.idleShown
+    let limit = 2
     let few = idleItems(limit)
-    #expect(Overview.visibleIdle(few, expanded: false) == (few, 0))
+    #expect(Overview.visibleIdle(few, expanded: false, limit: limit) == (few, 0))
     let many = idleItems(limit + 14)
-    let collapsed = Overview.visibleIdle(many, expanded: false)
+    let collapsed = Overview.visibleIdle(many, expanded: false, limit: limit)
     #expect(collapsed.shown == Array(many.prefix(limit)))
     #expect(collapsed.hidden == 14)
-    let expanded = Overview.visibleIdle(many, expanded: true)
+    let expanded = Overview.visibleIdle(many, expanded: true, limit: limit)
     #expect(expanded.shown == many)
     #expect(expanded.hidden == 0)
   }

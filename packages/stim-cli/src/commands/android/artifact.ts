@@ -28,6 +28,7 @@ import {
   type untrackedNativeFiles,
 } from '../../cache/build-cache.ts';
 import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
+import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import {
   waitForSharedBuild,
@@ -241,7 +242,20 @@ export async function acquireAndroidArtifact(
   let hereReason = 'no remote Mac is paired';
   let slotWaitMs: number | undefined;
   const buildMachine = record.buildMachine ?? 'auto';
-  const fallBack = (reason: string, line: string = reason) => {
+  const fallBack = (
+    reason: string,
+    line: string = reason,
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+  ) => {
+    writer.write(
+      buildPlacementRecord({
+        platform: PLATFORM,
+        buildMachine,
+        candidates: info.candidates,
+        event: 'placement_fallback',
+        fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
+      }),
+    );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
@@ -612,6 +626,7 @@ export async function acquireAndroidArtifact(
   interface Candidate {
     mode: OffloadMode;
     here: MachineCapacity;
+    code: string;
     reason: string;
     machines: ReturnType<typeof pairedMachines>;
   }
@@ -635,16 +650,24 @@ export async function acquireAndroidArtifact(
     const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
     if (!placement.offload) {
       hereReason = placement.reason;
+      writer.write(
+        buildPlacementRecord({
+          platform: PLATFORM,
+          buildMachine,
+          stays: { code: placement.code, reason: placement.reason },
+        }),
+      );
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { mode, here, reason: placement.reason, machines };
+    return { mode, here, code: placement.code, reason: placement.reason, machines };
   }
 
   const openOffload: { choice: OffloadChoice | null } = { choice: null };
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
+    let asked: PlacementCandidate[] = [];
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target: { platform: 'android', local: androidToolchain(), requires: androidRequirements(root) },
@@ -653,14 +676,23 @@ export async function acquireAndroidArtifact(
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
       machines: candidate.machines,
       selected: buildMachine,
+      onCandidates: (each) => (asked = each),
     });
     if (typeof choice === 'string') {
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
-      fallBack(choice);
+      fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
       return null;
     }
     openOffload.choice = choice;
+    writer.write(
+      buildPlacementRecord({
+        platform: PLATFORM,
+        buildMachine,
+        candidates: asked,
+        chose: { machine: choice.machine, reason: `${candidate.reason}${placementLoad(choice)}` },
+      }),
+    );
     phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
     return choice;
   }
@@ -668,7 +700,17 @@ export async function acquireAndroidArtifact(
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
     if (!storeKey || !storeHash) {
-      if (namedBuildMachine(buildMachine)) fallBack('the build fingerprint or cache key is unavailable');
+      const reason = 'the build fingerprint or cache key is unavailable';
+      if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
+      else
+        writer.write(
+          buildPlacementRecord({
+            platform: PLATFORM,
+            buildMachine,
+            event: 'placement_fallback',
+            fallback: { code: 'fallback', reason, machine: choice.machine },
+          }),
+        );
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
@@ -727,7 +769,10 @@ export async function acquireAndroidArtifact(
     if (!outcome.ok || !stored) {
       const why = reason ?? 'the APK was not stored';
       fallbackMachine = choice.machine;
-      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`);
+      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
+        code: 'offload-failed',
+        machine: choice.machine,
+      });
       writer.write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
     }

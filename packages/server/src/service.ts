@@ -37,7 +37,7 @@ import {
   lastLines,
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, serveCommand, serveRoute, tailscaleStatus } from './tailscale.ts';
+import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from './tailscale.ts';
 import type { StartupState } from './startup.ts';
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
@@ -226,7 +226,7 @@ export async function prepareRoute(
   previous: InstalledService | null,
 ): Promise<{ record: ServeRecord; create: string[] | null }> {
   const binary = findTailscale(process.env);
-  const status = tailscaleStatus(binary, process.env);
+  const status = await readTailscaleStatus(binary, process.env);
   if (!binary || status.state !== 'running') {
     throw new ServiceError('--serve needs Tailscale running on this Mac, and the tailscale command on PATH.');
   }
@@ -625,7 +625,7 @@ async function uninstallJob(label: string): Promise<string[]> {
   let routeOff: number | null = null;
   const tailscale = findTailscale(process.env);
   if (installed.serve?.created && installed.port !== null) {
-    const status = tailscaleStatus(tailscale, process.env);
+    const status = await readTailscaleStatus(tailscale, process.env);
     if (!tailscale || status.state !== 'running') {
       throw new ServiceError(
         `${label} created the tailscale serve route on https port ${installed.serve.port}, and Tailscale is not answering, so uninstall cannot check it. Start Tailscale and run this again.`,

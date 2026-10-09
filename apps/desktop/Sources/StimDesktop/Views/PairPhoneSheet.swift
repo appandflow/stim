@@ -15,7 +15,7 @@ struct PairPhoneSheet: View {
   var body: some View {
     HStack(spacing: 0) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Text("Pair a phone").font(.stim(.headline)).padding(.bottom, Space.xl)
+        Text("Pair a Phone").font(.stim(.headline)).padding(.bottom, Space.xl)
         ForEach(PhonePairing.Step.allCases, id: \.self) { step in
           let done = step < wizard.step || wizard.step == .done
           let current = step == wizard.step && !done
@@ -44,7 +44,7 @@ struct PairPhoneSheet: View {
       }
     }
     .frame(width: 740, height: 600)
-    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.brand)
+    .font(.stim(.body)).foregroundStyle(Palette.text).tint(Palette.primary)
     .background(Palette.background)
     .task { await model.start() }
     .onDisappear { model.cancel() }
@@ -71,29 +71,30 @@ struct PairPhoneSheet: View {
   private var appContent: some View {
     Group {
       PhoneAppsArt()
-      Text("Get the apps on your phone").font(.stim(.title))
+      Text("Get the Apps on Your Phone").font(.stim(.title))
       HStack(alignment: .top, spacing: Space.md) {
-        appCard {
-          Text("Stim Mobile").font(.stim(.headline))
-          Text("Install Stim Mobile from your TestFlight invitation.").foregroundStyle(Palette.secondary)
-          Link("How to get Stim Mobile", destination: URL(string: "https://stim.appandflow.com/docs/phone-app#install")!)
-        }
-        appCard {
-          Text("Tailscale").font(.stim(.headline))
-          QRCodeImage(text: "https://apps.apple.com/app/tailscale/id1470499037").frame(width: 112, height: 112)
-          Text("Scan with your phone's camera to get Tailscale.").foregroundStyle(Palette.secondary)
-          Link("Open App Store page", destination: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!)
-        }
-      }
+        appCard(.stim)
+        appCard(.tailscale)
+      }.fixedSize(horizontal: false, vertical: true)
     }
   }
 
-  private func appCard(@ViewBuilder content: () -> some View) -> some View {
-    VStack(alignment: .leading, spacing: Space.md, content: content)
-      .fixedSize(horizontal: false, vertical: true)
-      .frame(maxWidth: .infinity, alignment: .leading).padding(Space.lg)
-      .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
-      .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+  private func appCard(_ app: PhoneInstallApp) -> some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      Text(app.rawValue).font(.stim(.headline))
+      QRCodeImage(text: app.storeURL.absoluteString, app: app).frame(width: 128, height: 128)
+        .accessibilityLabel("Scan to install \(app.rawValue)")
+      Text("Scan with your phone's camera to install \(app.rawValue).")
+        .foregroundStyle(Palette.secondary)
+      Spacer(minLength: 0)
+      Button("Open App Store", systemImage: "arrow.up.right") {
+        NSWorkspace.shared.open(app.storeURL)
+      }.buttonStyle(.stim()).accessibilityLabel("Open \(app.rawValue) in the App Store")
+    }
+    .fixedSize(horizontal: false, vertical: true)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading).padding(Space.lg)
+    .background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   private var tailscaleContent: some View {
@@ -104,7 +105,7 @@ struct PairPhoneSheet: View {
       case .missing: AddMachineIllustration(scene: .tailnet(connected: false))
       case .checking, .running: PhoneTailnetArt()
       }
-      Text("Connect both to your tailnet").font(.stim(.title))
+      Text("Connect Both to Your Tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
         Text("This Mac").font(.stim(.headline))
         switch wizard.tailscale {
@@ -133,7 +134,7 @@ struct PairPhoneSheet: View {
           .buttonStyle(.stim(.primary, .regular))
         }
         Divider()
-        Text("Your phone").font(.stim(.headline))
+        Text("Your Phone").font(.stim(.headline))
         Text("Open Tailscale on your phone and sign in with the same account as this Mac.").foregroundStyle(Palette.secondary)
       }
     }
@@ -142,7 +143,7 @@ struct PairPhoneSheet: View {
   private var serveContent: some View {
     Group {
       PhoneServeArt()
-      Text("Turning on serving").font(.stim(.title))
+      Text("Turning On Serving").font(.stim(.title))
       checkRow(wizard.serverCheck) {
         switch wizard.server {
         case .running: Text("Stim server is running")
@@ -181,7 +182,7 @@ struct PairPhoneSheet: View {
               let url = detector.matches(in: error, range: NSRange(error.startIndex..., in: error))
                 .compactMap(\.url).first(where: { $0.scheme == "https" && $0.host == "login.tailscale.com" })
             {
-              Link("Open Tailscale setup", destination: url)
+              Link("Open Tailscale Setup", destination: url)
             }
             Button("Try Again") { model.send(.retry) }.buttonStyle(.stim())
           }
@@ -218,8 +219,8 @@ struct PairPhoneSheet: View {
     VStack(alignment: .leading, spacing: Space.sm) {
       Text("Scan with Stim Mobile").font(.stim(.title))
       Picker("Access", selection: Binding(get: { wizard.control }, set: { model.send(.access(control: $0)) })) {
-        Text("View only").tag(false)
-        Text("View and control").tag(true)
+        Text("View Only").tag(false)
+        Text("View and Control").tag(true)
       }.pickerStyle(.segmented)
       Text(
         wizard.control
@@ -248,7 +249,7 @@ struct PairPhoneSheet: View {
               .font(.stim(.callout, mono: true)).foregroundStyle(remaining > 30 ? Palette.secondary : Palette.warning)
           }
         }
-        DisclosureGroup("Can't scan? Enter the endpoint and token", isExpanded: $model.manualExpanded) {
+        DisclosureGroup("Can't Scan? Enter the Endpoint and Token", isExpanded: $model.manualExpanded) {
           VStack(spacing: Space.sm) {
             detail("Endpoint", code.qr.endpoint)
             detail("Token", code.qr.pairingToken, secret: true)
@@ -335,27 +336,78 @@ struct PairPhoneSheet: View {
   }
 }
 
+enum PhoneInstallApp: String {
+  case stim = "Stim Mobile"
+  case tailscale = "Tailscale"
+
+  var storeURL: URL {
+    switch self {
+    case .stim: URL(string: "https://apps.apple.com/app/id6816250896")!
+    case .tailscale: URL(string: "https://apps.apple.com/app/tailscale/id1470499037")!
+    }
+  }
+
+  @ViewBuilder var logo: some View {
+    switch self {
+    case .stim:
+      if let wordmark = BrandAssets.wordmark {
+        Image(nsImage: wordmark).resizable().scaledToFit().foregroundStyle(Palette.brand)
+      }
+    case .tailscale:
+      VStack(spacing: 2) {
+        ForEach(0..<3) { row in
+          HStack(spacing: 2) {
+            ForEach(0..<3) { column in
+              Circle().fill(Color(white: 0.08).opacity(row == 1 || row == 2 && column == 1 ? 1 : 0.2))
+                .frame(width: 4, height: 4)
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
 struct QRCodeImage: View {
   var text: String
+  var app: PhoneInstallApp? = nil
 
   var body: some View {
-    if let image = Self.render(text) {
+    if let image = Self.render(text, branded: app != nil) {
       Image(nsImage: image)
         .interpolation(.none)
         .resizable()
         .scaledToFit()
         .padding(Space.lg)
         .background(RoundedRectangle(cornerRadius: Radius.card).fill(.white))
+        .overlay {
+          if let app {
+            app.logo.frame(width: 20, height: 20).padding(4)
+              .background(.white, in: RoundedRectangle(cornerRadius: Radius.small))
+          }
+        }
+        .overlay {
+          if app != nil {
+            RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.brand.opacity(0.3))
+          }
+        }
     }
   }
 
-  static func render(_ text: String) -> NSImage? {
+  static func render(_ text: String, branded: Bool = false) -> NSImage? {
     let filter = CIFilter.qrCodeGenerator()
     filter.message = Data(text.utf8)
-    filter.correctionLevel = "M"
-    guard let output = filter.outputImage?.transformed(by: CGAffineTransform(scaleX: 8, y: 8)),
-      let cgImage = CIContext().createCGImage(output, from: output.extent)
+    filter.correctionLevel = branded ? "H" : "M"
+    guard let output = filter.outputImage else { return nil }
+    let colored =
+      branded
+      ? output.applyingFilter(
+        "CIFalseColor",
+        parameters: ["inputColor0": CIColor(cgColor: NSColor(Palette.brand).cgColor), "inputColor1": CIColor.white])
+      : output
+    let scaled = colored.transformed(by: CGAffineTransform(scaleX: 8, y: 8))
+    guard let cgImage = CIContext().createCGImage(scaled, from: scaled.extent)
     else { return nil }
-    return NSImage(cgImage: cgImage, size: output.extent.size)
+    return NSImage(cgImage: cgImage, size: scaled.extent.size)
   }
 }

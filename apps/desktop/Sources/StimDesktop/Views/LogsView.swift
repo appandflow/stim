@@ -11,6 +11,7 @@ struct LogsView: View {
   var page: WorktreePage? = nil
   var selectedApp: Binding<String?>? = nil
   var archive: ArchivedWorkspace? = nil
+  var availableSources: [LogSource] = LogSource.allCases
   @ObservedObject private var server = ServerSession.shared
   @StateObject private var model = LogsModel()
   @State private var search = ""
@@ -109,7 +110,7 @@ struct LogsView: View {
           }, isActive: true
         )
       }
-      ForEach(LogSource.allCases, id: \.self) { source in
+      ForEach(availableSources, id: \.self) { source in
         let on = query.sources.contains(source)
         Button {
           if on {
@@ -147,7 +148,7 @@ struct LogsView: View {
         MenuPill(
           label: "Slot",
           selection: Binding(get: { effectiveQuery.slot }, set: { query.slot = $0 }),
-          options: [MenuPillOption(value: String?.none, title: "All slots")]
+          options: [MenuPillOption(value: String?.none, title: "All Slots")]
             + slots.map { MenuPillOption(value: Optional($0), title: $0) },
           isActive: effectiveQuery.slot != nil
         )
@@ -156,7 +157,7 @@ struct LogsView: View {
         label: "Level",
         selection: $query.minimumLevel,
         options: LogLevel.allCases.map {
-          MenuPillOption(value: $0, title: $0 == .debug ? "All levels" : "\($0.rawValue.capitalized)+")
+          MenuPillOption(value: $0, title: $0 == .debug ? "All Levels" : "\($0.rawValue.capitalized)+")
         },
         isActive: query.minimumLevel != .debug
       )
@@ -184,7 +185,7 @@ struct LogsView: View {
 
   @ViewBuilder private var overlay: some View {
     if case .ended(let message) = model.phase, model.count == 0 {
-      EmptyState(title: "No logs", message: message)
+      EmptyState(title: "No Logs", message: message)
     } else if model.phase == .loading {
       ProgressView("Loading archived logs")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -197,7 +198,7 @@ struct LogsView: View {
       Button {
         model.jumpToLatest()
       } label: {
-        Label("Jump to latest", systemImage: "arrow.down.to.line")
+        Label("Jump to Latest", systemImage: "arrow.down.to.line")
       }
       .buttonStyle(.stim(.primary, .regular))
       .padding(Space.xl)
@@ -229,9 +230,10 @@ struct LogsView: View {
       Spacer()
       CopyButton(copyText(), help: selection.isEmpty ? "Copy every loaded record" : "Copy the selected records")
       if archive == nil {
-        Button("Reveal log folder") {
+        Button("Reveal Log Folder") {
           if let dir = env?.logs?.dir { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir) }
         }
+        .buttonStyle(.stim())
         .disabled(env?.logs?.dir == nil)
       }
     }

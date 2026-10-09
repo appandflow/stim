@@ -8,11 +8,11 @@ public enum SetupStep: String, CaseIterable, Sendable {
     switch self {
     case .welcome: return "Welcome"
     case .cli: return "Install the CLI"
-    case .skill: return "Add the agent skill"
+    case .skill: return "Add the Agent Skill"
     case .notifications: return "Notifications"
-    case .phone: return "Pair your phone"
-    case .check: return "Check your setup"
-    case .done: return "You're set"
+    case .phone: return "Pair Your Phone"
+    case .check: return "Check Your Setup"
+    case .done: return "You're Set"
     }
   }
 

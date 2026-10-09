@@ -1,5 +1,5 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
@@ -98,21 +98,6 @@ export function readTailscaleStatus(
       },
     );
   });
-}
-
-export function tailscaleStatus(binary: string | null, env: NodeJS.ProcessEnv): TailscaleState {
-  if (!binary) return { state: 'unavailable', reason: 'the tailscale command was not found' };
-  try {
-    const output = execFileSync(binary, ['status', '--json'], {
-      env,
-      timeout: TIMEOUT_MS,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return parseTailscaleStatus(JSON.parse(output));
-  } catch (error) {
-    return { state: 'unavailable', reason: `\`tailscale status --json\` failed: ${(error as Error).message}` };
-  }
 }
 
 /**

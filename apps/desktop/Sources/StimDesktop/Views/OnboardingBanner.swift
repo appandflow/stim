@@ -70,14 +70,14 @@ struct OnboardingBanner: View {
         runButton(
           missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
       }
-      Button("Choose stim executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
+      Button("Choose stim Executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
     }
   }
 
   private func nodePopup(_ report: Onboarding.Report) -> some View {
     let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
-      Text("Update Node.js to use Stim Desktop").font(.stim(.headline))
+      Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
       Text(
         "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
       )
@@ -92,7 +92,7 @@ struct OnboardingBanner: View {
 
   private func relaunchPopup(_ report: Onboarding.Report) -> some View {
     popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
-      Text("Restart Stim Desktop to use the new stim").font(.stim(.headline))
+      Text("Restart Stim Desktop to Use the New stim").font(.stim(.headline))
       Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
         .foregroundStyle(Palette.secondary)
       disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
@@ -117,13 +117,13 @@ struct OnboardingBanner: View {
         runButton(
           missing ? "Install stim-server" : "Update stim-server", variant: .primary, key: .server,
           action: onboarding.installServer)
-        Button("Choose stim-server executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
+        Button("Choose stim-server Executable\u{2026}", action: onboarding.chooseServer).buttonStyle(.stim())
       })
   }
 
   private func viewerPopup(_ keys: [String]) -> some View {
     popupCard(kind: .viewer, icon: "macwindow", tone: .accent) {
-      Text("Show Stim's devices in Stim Desktop").font(.stim(.headline))
+      Text("Show Stim's Devices in Stim Desktop").font(.stim(.headline))
       Text("Stim can open the simulators and emulators it boots here instead of in their own windows.")
         .foregroundStyle(Palette.secondary)
       disclosure {
@@ -138,7 +138,7 @@ struct OnboardingBanner: View {
       }
     } buttons: {
       runButton("Use Stim Desktop", variant: .primary, key: .viewer, action: onboarding.useDesktopViewer)
-      Button("Not now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
+      Button("Not Now") { onboarding.dismissPopup(.viewer) }.buttonStyle(.stim())
     }
   }
 
@@ -167,7 +167,7 @@ struct OnboardingBanner: View {
 
   @ViewBuilder
   private func disclosure<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
-    DisclosureGroup("Show command", isExpanded: $showsCommand) {
+    DisclosureGroup("Show Command", isExpanded: $showsCommand) {
       content().font(.stim(.footnote)).foregroundStyle(Palette.tertiary).padding(.top, Space.xs)
     }
     .font(.stim(.footnote)).foregroundStyle(Palette.secondary)

@@ -183,7 +183,10 @@ export default function logsCommand(program: Command): void {
       "Only this device slot's records, plus the shared Metro and app client records once it has launched",
       parseDeviceSlotOption,
     )
-    .option('--source <s...>', 'Only these sources: metro, client, device, build, agent, maintenance, or all')
+    .option(
+      '--source <s...>',
+      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all',
+    )
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
     .option('--grep <re>', 'Only records whose message matches this regular expression')

@@ -149,7 +149,7 @@ export function Home() {
             icon={Platform.OS === 'ios' ? 'plus' : PLUS_ICON}
             iconRenderingMode="template"
             tintColor={theme.colors.text}
-            accessibilityLabel={t`Pair a machine`}
+            accessibilityLabel={t`Pair a Machine`}
             onPress={() => router.push('/pair')}
           />
         ) : (
@@ -176,10 +176,10 @@ export function Home() {
       <SafeAreaView style={styles.screen} edges={['left', 'right']}>
         {header}
         <EmptyState
-          title={t`No machine paired`}
-          message={t`In Stim Desktop, open Pair a phone and scan its QR code. This phone and the machine both need Tailscale.`}
+          title={t`No Machine Paired`}
+          message={t`In Stim Desktop, open Pair a Phone and scan its QR code. This phone and the machine both need Tailscale.`}
         >
-          <Button title={t`Pair a machine`} onPress={() => router.push('/pair')} style={styles.primaryButton} />
+          <Button title={t`Pair a Machine`} onPress={() => router.push('/pair')} style={styles.primaryButton} />
         </EmptyState>
       </SafeAreaView>
     );
@@ -191,7 +191,7 @@ export function Home() {
         <Text variant="body" weight="medium" tone="tertiary" accessibilityRole="header">
           <Trans>Machines</Trans>
         </Text>
-        <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a machine`} hitSlop={11}>
+        <Touch onPress={() => router.push('/pair')} accessibilityLabel={t`Pair a Machine`} hitSlop={11}>
           <Icon name="plus" size={22} color={theme.colors.text} />
         </Touch>
       </View>
@@ -301,7 +301,7 @@ export function Home() {
               <Text tone="secondary">
                 {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
                 <Text tone="brand">
-                  <Trans>Show all</Trans>
+                  <Trans>Show All</Trans>
                 </Text>
               </Text>
             </Touch>
@@ -372,7 +372,7 @@ function HomeEmpty({
       <View style={styles.empty}>
         <StimJar playing={focused} />
         <Text variant="headline">
-          <Trans>No device running</Trans>
+          <Trans>No Device Running</Trans>
         </Text>
         <Text tone="secondary" style={styles.emptyMessage}>
           <Trans>Simulators and emulators appear here while they run, on every paired machine the filters keep.</Trans>
@@ -385,7 +385,7 @@ function HomeEmpty({
       <View style={styles.empty}>
         <StimJar playing={focused} />
         <Text variant="headline">
-          <Trans>No active workspaces</Trans>
+          <Trans>No Active Workspaces</Trans>
         </Text>
         <Text tone="secondary" style={styles.emptyMessage}>
           <Trans>Tap a prompt to copy it for your coding agent.</Trans>
@@ -403,10 +403,10 @@ function HomeEmpty({
       <StimJar playing={focused} />
       <Text variant="headline">
         {items
-          ? t`Nothing matches the filters`
+          ? t`Nothing Matches the Filters`
           : connections.some((c) => c.state.kind === 'open')
-            ? t`Nothing running`
-            : t`No machine connected`}
+            ? t`Nothing Running`
+            : t`No Machine Connected`}
       </Text>
       <Text tone="secondary" style={styles.emptyMessage}>
         {items

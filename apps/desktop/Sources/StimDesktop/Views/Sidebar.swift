@@ -137,7 +137,7 @@ struct Sidebar: View {
         SidebarLabel(title: "Overview", icon: "square.grid.2x2", selected: selection == .overview)
       }
       PinnedRow(item: .wall, selection: $selection) {
-        SidebarLabel(title: "Active workspaces", icon: "rectangle.stack", selected: selection == .wall)
+        SidebarLabel(title: "Active Workspaces", icon: "rectangle.stack", selected: selection == .wall)
       }
       PinnedRow(item: .machine, selection: $selection) {
         SidebarLabel(title: "Machines", icon: "internaldrive", selected: selection == .machine)
@@ -172,11 +172,11 @@ struct Sidebar: View {
     HStack(spacing: Space.xs) {
       if options.statuses.isEmpty {
         InlineEmpty("No status selected \u{00B7}")
-        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.statuses.count == 1, let status = options.statuses.first {
         InlineEmpty("No \(status.title.lowercased()) workspaces \u{00B7}")
-        Button("Show all") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
+        Button("Show All") { prefs.statuses = StatusFilter.encode(StatusFilter.all) }
           .buttonStyle(.hoverRow(outset: Space.xs)).foregroundStyle(Palette.primary)
       } else if options.differsFromDefaults(projects: store.projectList.map(\.project)) {
         InlineEmpty("Nothing matches \u{00B7}")
@@ -263,7 +263,7 @@ struct ProjectRow: View {
         onStopAllLiveWorkspaces: { confirmingStopAll = true })
     }
     .confirmationDialog(
-      "Stop every active workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
+      "Stop Every Active Workspace in \(summary.project.name)?", isPresented: $confirmingStopAll,
       titleVisibility: .visible
     ) {
       Button("Run stim stop", role: .destructive) {
@@ -383,7 +383,7 @@ struct WorkspaceRow: View {
         canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
         onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
     }
-    .confirmationDialog("Stop this workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {
         actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
       }
@@ -391,7 +391,7 @@ struct WorkspaceRow: View {
       Text("This also ends the workspace's billable EAS Simulator session.")
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal
@@ -460,7 +460,7 @@ struct WorkspaceRowContent: View {
     )
     .accessibilityActions {
       if archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
-        Button("Show errors") { openLogs(env.path) }
+        Button("Show Errors") { openLogs(env.path) }
       }
     }
   }
@@ -525,7 +525,7 @@ struct NoEnvironmentRow: View {
         onToggleHidden: { prefs.setHidden(!isHidden, path: worktree.path) })
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
       titleVisibility: .visible,
       presenting: removal

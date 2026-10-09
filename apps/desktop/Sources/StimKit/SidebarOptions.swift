@@ -7,7 +7,7 @@ public enum StatusFilter: String, CaseIterable, Sendable {
     switch self {
     case .live: "Active"
     case .idle: "Idle"
-    case .notSetUp: "Not set up"
+    case .notSetUp: "Not Set Up"
     case .archived: "Archived"
     case .hidden: "Hidden"
     }
@@ -48,7 +48,7 @@ public enum SidebarSort: String, CaseIterable, Sendable {
 
   public var title: String {
     switch self {
-    case .lastActivity: return "Last activity"
+    case .lastActivity: return "Last Activity"
     case .name: return "Name"
     case .memory: return "Memory"
     }

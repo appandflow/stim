@@ -45,7 +45,7 @@ struct MachineView: View {
         HStack(spacing: Space.lg) {
           machineChoices
             .frame(maxWidth: .infinity, alignment: .leading)
-          Button("Link machine", systemImage: "plus") {
+          Button("Link Machine", systemImage: "plus") {
             settingsTab = "build-machines"
             openSettings()
           }
@@ -77,7 +77,7 @@ struct MachineView: View {
           NowBand(status: status, metrics: metrics, gc: gc)
           if let plan = autopilot.pressure { pressureBanner(plan) }
           ThisMacPlacements(model: buildMachines)
-          MachineHeading(icon: "internaldrive", title: "Disk usage", subtitle: "Workspace, device and tool storage on this Mac.")
+          MachineHeading(icon: "internaldrive", title: "Disk Usage", subtitle: "Workspace, device and tool storage on this Mac.")
           { EmptyView() }
           headline(report)
           if let usage = status.payload?.archivedUsage { ArchivedStorageSection(usage: usage) }
@@ -107,11 +107,11 @@ struct MachineView: View {
       if gc.report == nil { gc.refresh() }
     }
     .confirmationDialog(
-      "Free this space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+      "Free This Space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
     ) { commands in
-      Button("Free disk space", role: .destructive) {
-        actions.run("Free disk space", steps: commands, key: ActionCenter.machineKey)
+      Button("Free Disk Space", role: .destructive) {
+        actions.run("Free Disk Space", steps: commands, key: ActionCenter.machineKey)
       }
     } message: { commands in
       Text(
@@ -120,7 +120,7 @@ struct MachineView: View {
       )
     }
     .confirmationDialog(
-      "Remove this worktree?",
+      "Remove This Worktree?",
       isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
       titleVisibility: .visible, presenting: removing
     ) { workspace in
@@ -204,7 +204,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Free disk space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free Disk Space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }
@@ -306,7 +306,7 @@ struct MachineView: View {
     let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
-    return CollapsibleSection("machine.free", title: "Free disk space", items: report.free, capped: false) {
+    return CollapsibleSection("machine.free", title: "Free Disk Space", items: report.free, capped: false) {
       Image(systemName: "trash")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)
@@ -361,13 +361,13 @@ struct MachineView: View {
       HStack(spacing: Space.lg) {
         Image(systemName: "trash").foregroundStyle(Palette.accent).accessibilityHidden(true)
         VStack(alignment: .leading, spacing: Space.xxs) {
-          Text("Reclaim what Stim left behind")
+          Text("Reclaim What Stim Left Behind")
           Text("Preview the stim gc report, then confirm before anything is deleted.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
         Spacer()
         let command = StimCommand(["gc", "--json"], cwd: NSHomeDirectory())
-        Button("Preview disk cleanup") { actions.run("Preview disk cleanup", command, key: ActionCenter.machineKey) }
+        Button("Preview Disk Cleanup") { actions.run("Preview Disk Cleanup", command, key: ActionCenter.machineKey) }
           .buttonStyle(.stim())
           .disabled(actions.active(for: ActionCenter.machineKey) != nil)
           .help(command.displayLine())
@@ -426,7 +426,7 @@ struct MachineView: View {
 
   private func free(_ commands: [StimCommand]) {
     if let preview = FreePlan.preview(commands) {
-      actions.run("Preview disk cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
+      actions.run("Preview Disk Cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
     } else {
       confirming = commands
     }
@@ -435,7 +435,7 @@ struct MachineView: View {
   // MARK: Projects
 
   private func projects(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.projects", title: "Repositories and worktrees", items: report.repositories) {
+    CollapsibleSection("machine.projects", title: "Repositories and Worktrees", items: report.repositories) {
       Image(systemName: "folder")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)
@@ -467,6 +467,7 @@ struct MachineView: View {
               }
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }
@@ -474,11 +475,11 @@ struct MachineView: View {
 
   private var columnHeader: some View {
     HStack(spacing: Space.lg) {
-      Text("Repository and worktree").frame(maxWidth: .infinity, alignment: .leading)
+      Text("Repository and Worktree").frame(maxWidth: .infinity, alignment: .leading)
       Text("Lifecycle").frame(width: 130, alignment: .leading)
       Text("node_modules").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("Devices").frame(width: Self.sizeWidth, alignment: .trailing)
-      Text("Build outputs").frame(width: Self.sizeWidth, alignment: .trailing)
+      Text("Build Outputs").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("Logs").frame(width: Self.sizeWidth, alignment: .trailing)
       Text("Total").frame(width: Self.sizeWidth, alignment: .trailing)
       Color.clear.frame(width: 28)
@@ -627,7 +628,7 @@ struct MachineView: View {
   // MARK: Devices
 
   private func devices(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.devices", title: "Simulators and emulators", items: report.devices) {
+    CollapsibleSection("machine.devices", title: "Simulators and Emulators", items: report.devices) {
       Image(systemName: "iphone")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)
@@ -651,6 +652,7 @@ struct MachineView: View {
               deviceRow(device)
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }
@@ -737,7 +739,7 @@ struct MachineView: View {
 
   private func runtimes(_ report: StorageReport) -> some View {
     let unused = report.runtimes.filter(\.unused)
-    return CollapsibleSection("machine.runtimes", title: "Runtimes and system images", items: report.runtimes) {
+    return CollapsibleSection("machine.runtimes", title: "Runtimes and System Images", items: report.runtimes) {
       Image(systemName: "square.stack.3d.up")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)
@@ -763,6 +765,7 @@ struct MachineView: View {
               runtimeRow(runtime)
             }
           }
+          .finiteAccessibilityFrame()
         }
       }
     }
@@ -801,7 +804,7 @@ struct MachineView: View {
   // MARK: Other tools
 
   private func otherTools(_ report: StorageReport) -> some View {
-    CollapsibleSection("machine.otherTools", title: "Other tool storage", items: report.unmanaged, capped: false) {
+    CollapsibleSection("machine.otherTools", title: "Other Tool Storage", items: report.unmanaged, capped: false) {
       Image(systemName: "wrench.and.screwdriver")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)

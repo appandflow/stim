@@ -22,7 +22,7 @@ struct BuildMachineArt: View {
 
   private func chip(_ title: String, systemImage: String) -> some View {
     HStack(spacing: Space.xs) {
-      Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.brand)
+      Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.primary)
       Text(title).font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
     }
     .padding(.horizontal, Space.md)
@@ -52,7 +52,7 @@ struct BuildMachinesEmptyState: View {
         } else {
           BuildMachineArt()
         }
-        Text(tailscaleOff ? "Tailscale is off" : "No remote Macs").font(.stim(.headline))
+        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Macs").font(.stim(.headline))
         Text(
           tailscaleOff
             ? "Turn on Tailscale on this Mac. Remote Macs reach it over your tailnet, and they show up here once it is connected."

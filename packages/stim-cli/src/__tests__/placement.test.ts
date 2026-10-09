@@ -34,7 +34,12 @@ const decide = (local = here, offers: PlacementProbe[] = [offered('mini')], extr
   decideDevicePlacement({ platform: 'ios', here: local, offers, noWait: false, ...extra });
 
 test('a free local slot on a healthy Mac stays local instead of consuming a host', () => {
-  expect(decide()).toEqual({ kind: 'local', reason: 'load 1.2/core here, 1 of 3 devices in use', skipped: [] });
+  expect(decide()).toEqual({
+    kind: 'local',
+    code: 'this-mac-free',
+    reason: 'load 1.2/core here, 1 of 3 devices in use',
+    skipped: [],
+  });
   expect(decide({ ...here, devices: { count: 10, max: 0, queued: 0 } }).kind).toBe('local');
 });
 
@@ -125,6 +130,23 @@ test('fallback includes every declined, incompatible, full, pressured and unreac
     skipped: offers.map((each) => ({ machine: each.machine, reason: expect.any(String) })),
   });
   expect(result.skipped[0]?.reason).toBe('declined: All configured hosted device reservations are occupied');
+  expect(result.skipped.map((each) => each.code)).toEqual([
+    'declined',
+    'no-matching-device',
+    'no-capacity',
+    'memory',
+    'no-matching-device',
+    'unreachable',
+  ]);
+  expect(result.code).toBe('no-host-admits');
+});
+
+test('a placed host and the reasons this Mac stays local carry stable codes', () => {
+  expect(decide(full).code).toBe('placed');
+  expect(decide(full, []).code).toBe('no-remote-mac');
+  expect(decide({ ...full, devices: { ...full.devices, count: null } }).code).toBe('device-count-unknown');
+  expect(decide({ ...here, loadPerCore: 3 }, [offered('unknown', null)]).skipped[0]?.code).toBe('load');
+  expect(decideDevicePlacement({ sticky: { machine: 'mini' } }).code).toBe('sticky');
 });
 
 test('no-wait does not reject an admitted host or bypass local admission when none admits', () => {
@@ -158,4 +180,49 @@ test('Android uses the same admission and ranking with its own image choice', ()
       ],
     }),
   ).toMatchObject({ kind: 'host', machines: [{ machine: 'mini' }] });
+});
+
+const usable = { usable: true } as const;
+const missing = { usable: false, code: 'eas-no-cli', reason: 'eas-cli is not installed' } as const;
+const unreachable = { machine: 'mini', failure: 'unreachable' };
+
+test('remote.easFallback takes a full Mac to an EAS Simulator only after no Mac admits', () => {
+  expect(decide(full, [offered('mini')], { eas: usable })).toMatchObject({ kind: 'host' });
+  for (const offers of [[], [unreachable]])
+    expect(decide(full, offers, { eas: usable })).toMatchObject({
+      kind: 'eas',
+      code: 'eas-fallback',
+      reason: expect.stringContaining('3 of 3 devices in use'),
+    });
+  expect(decide({ ...here, devices: { count: 1, max: 3, queued: 2 } }, [], { eas: usable }).kind).toBe('eas');
+});
+
+test('an EAS Simulator is never chosen while this Mac has room or cannot count its devices', () => {
+  for (const local of [
+    here,
+    { ...here, loadPerCore: 3 },
+    { ...here, memoryPressure: 'warning' as const },
+    { ...full, devices: { ...full.devices, count: null } },
+  ])
+    for (const offers of [[], [unreachable]]) expect(decide(local, offers, { eas: usable }).kind).toBe('local');
+});
+
+test('a full Mac marks the local result so the caller asks EAS, and keeps the wait without it', () => {
+  expect(decide(full, [unreachable])).toMatchObject({ kind: 'local', atCapacity: true });
+  expect(decide(full, [])).toMatchObject({ kind: 'local', atCapacity: true });
+  expect(decide({ ...here, loadPerCore: 3 }, [unreachable])).not.toHaveProperty('atCapacity');
+  expect(decide(full, [unreachable], { eas: missing })).toMatchObject({
+    kind: 'local',
+    code: 'no-host-admits',
+    reason: expect.stringContaining('waiting locally'),
+    skipped: [
+      { machine: 'mini', code: 'unreachable' },
+      { machine: 'eas', code: 'eas-no-cli', reason: 'eas-cli is not installed' },
+    ],
+  });
+  expect(decide(full, [], { eas: missing })).toMatchObject({
+    kind: 'local',
+    code: 'no-remote-mac',
+    skipped: [{ machine: 'eas', code: 'eas-no-cli' }],
+  });
 });

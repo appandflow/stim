@@ -65,13 +65,13 @@ struct WorkspaceActionsMenu: View {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
       }
     case .copyPath:
-      Button("Copy path", systemImage: "doc.on.doc") {
+      Button("Copy Path", systemImage: "doc.on.doc") {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(path, forType: .string)
       }
     case .lastOutput:
       if let onShowLastOutput {
-        Button("Last output", systemImage: "doc.plaintext", action: onShowLastOutput)
+        Button("Last Output", systemImage: "doc.plaintext", action: onShowLastOutput)
       }
     case .run(let platform):
       if let onRun {
@@ -80,12 +80,12 @@ struct WorkspaceActionsMenu: View {
       }
     case .reload:
       if let onReload {
-        Button("Reload app", systemImage: "arrow.clockwise", action: onReload)
+        Button("Reload App", systemImage: "arrow.clockwise", action: onReload)
           .disabled(busy || !reloadAllowed)
       }
     case .startDevServer:
       if let onStartDevServer {
-        Button("Start dev server", systemImage: "play", action: onStartDevServer).disabled(busy)
+        Button("Start Dev Server", systemImage: "play", action: onStartDevServer).disabled(busy)
       }
     case .stopDevServer:
       if let onStopDevServer {
@@ -93,11 +93,11 @@ struct WorkspaceActionsMenu: View {
       }
     case .showLogs:
       if let onShowLogs {
-        Button("Show logs", systemImage: "text.alignleft", action: onShowLogs)
+        Button("Show Logs", systemImage: "text.alignleft", action: onShowLogs)
       }
     case .warmWorktree:
       if let onWarmWorktree {
-        Button("Warm worktree", systemImage: "flame", action: onWarmWorktree).disabled(busy)
+        Button("Warm Worktree", systemImage: "flame", action: onWarmWorktree).disabled(busy)
       }
     case .toggleHidden:
       if let onToggleHidden {
@@ -107,13 +107,13 @@ struct WorkspaceActionsMenu: View {
       }
     case .removeWorktree:
       if let onRemoveWorktree {
-        Button("Remove worktree\u{2026}", systemImage: "trash", role: .destructive, action: onRemoveWorktree)
+        Button("Remove Worktree\u{2026}", systemImage: "trash", role: .destructive, action: onRemoveWorktree)
           .disabled(busy || !removalAllowed)
           .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
       }
     case .stopAllLiveWorkspaces:
       if let onStopAllLiveWorkspaces {
-        Button("Stop all active workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
+        Button("Stop All Active Workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
       }
     }
   }

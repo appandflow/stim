@@ -323,6 +323,20 @@ final class AddMachineModel {
     } catch { self.error = error.localizedDescription }
   }
 
+  /// Not once the remote stim-server answered 503: setup is already running there.
+  var canGoBack: Bool { page == .setup && !busy && !cancelling && !checkingJournal && !serverNotReady && wizard.canGoBack }
+
+  /// Steps back one step. A command that was shown is dropped and a fresh ticket drafted, so it can no longer
+  /// match this wizard.
+  func goBack() {
+    guard canGoBack else { return }
+    _ = wizard.apply(.back, now: now)
+    error = nil
+    manualPort = ""
+    commandKnown = nil
+    draftTicket = dependencies.ticket(dependencies.now())
+  }
+
   func newCommand() async {
     commandKnown = known
     await send(.newCommand(dependencies.ticket(dependencies.now())))

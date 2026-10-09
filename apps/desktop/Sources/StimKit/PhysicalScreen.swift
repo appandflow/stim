@@ -17,6 +17,15 @@ public enum PhysicalScreen: Equatable, Sendable {
 
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
+    if case .macos = device, let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message(
+          "The app on \(machineName(machine)) stopped.", remedy: "stim macos --remote \(machine)")
+      } else {
+        self.init(hostedMacosOn: link)
+      }
+      return
+    }
     if let machine = device.hostedMachine {
       let slot = device.slot == DeviceRef.defaultSlot ? "" : " --slot \(device.slot)"
       if device.state == "stopped" {

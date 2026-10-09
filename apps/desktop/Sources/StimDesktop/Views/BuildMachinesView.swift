@@ -313,6 +313,9 @@ private struct BuildMachineRow: View {
             Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
+          if let resources = status.capacity?.resources, !resources.isEmpty {
+            RemoteResourceSummary(resources: resources)
+          }
           ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
             VStack(alignment: .leading, spacing: Space.xxs) {
               Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).textSelection(.enabled)
@@ -358,6 +361,38 @@ private struct BuildMachineRow: View {
       .accessibilityLabel("More actions for \(entry)")
     }
     .padding(.vertical, Space.xxs)
+  }
+}
+
+/// A remote Mac's CPU load, RAM and disk with the icons and spacing of the toolbar's resource summary.
+private struct RemoteResourceSummary: View {
+  var resources: [MachineResource]
+
+  var body: some View {
+    HStack(spacing: Space.md) {
+      ForEach(
+        Array(
+          ResourceSummary.entries(
+            cpu: resources.contains { $0.kind == .cpu }, memory: resources.contains { $0.kind == .memory },
+            disk: resources.contains { $0.kind == .disk }
+          ).enumerated()), id: \.offset
+      ) { _, entry in
+        switch entry {
+        case .divider:
+          Rectangle().fill(Palette.secondary.opacity(0.3)).frame(width: 1, height: 12)
+        case .item(let kind):
+          if let resource = resources.first(where: { $0.kind == kind }) {
+            HStack(spacing: Space.sm) {
+              Image(systemName: kind.icon).foregroundStyle(Palette.secondary)
+              Text(resource.label).font(.stim(.caption)).foregroundStyle(Palette.secondary)
+              Text(resource.value).font(.stim(.caption, mono: true)).fontWeight(.semibold)
+                .foregroundStyle(Color(resource.tone))
+            }
+            .fixedSize()
+          }
+        }
+      }
+    }
   }
 }
 

@@ -24,6 +24,9 @@ Branch on the code, never on the message.`,
   an unavailable choice. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An unreachable stop keeps the placement; rerun stim stop when the host answers.
+  To see why a host was slow or refused: stim logs --source placement (hosts checked and
+  reason codes), stim logs --source build (remote_connect_failed, remote_request_failed),
+  and the host's stim-server service log, searched for the run id (stim guide logs).
   A failed build handoff uses upload instead. If native log queries are unavailable,
   logs prints a note on stderr and shows copied records. Update an older stim-server
   on the host to enable handoff and native logs (hello features hosted-ios-data
@@ -776,7 +779,9 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   physical, hosted, remote, parked and other homes' devices and never deletes.
   A failed reclaim is logged and skipped; the run keeps waiting.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. Waiting prints holder names and elapsed
+  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
+  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
   Stats records capacityWaits for waits and capacityRefusals for this code.
   See \`guide lifecycle concurrency\`.`,

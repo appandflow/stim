@@ -196,7 +196,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
       {switcher}
       {active?.platform === 'macos' && app ? (
         <>
-          <Section title={t`Last build`}>
+          <Section title={t`Last Build`}>
             <Text variant="body" weight="semibold">
               {app.product}
             </Text>
@@ -210,7 +210,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
           </Section>
           <ListSection>
             <ListRow
-              title={t`Build logs`}
+              title={t`Build Logs`}
               accessory="chevron"
               onPress={() =>
                 router.push({
@@ -300,7 +300,7 @@ function NativeBuildDetails({
       {running ? null : <FinishedBuilds last={last} history={history} now={now} root={path} platform={platform} />}
 
       <Section
-        title={t`Next build`}
+        title={t`Next Build`}
         action={
           <Touch
             onPress={() => recheck?.()}
@@ -311,7 +311,7 @@ function NativeBuildDetails({
           >
             <Icon name="arrow.clockwise" size={14} color={canCheck ? theme.colors.primary : theme.colors.tertiary} />
             <Text variant="footnote" weight="medium" tone={canCheck ? 'brand' : 'tertiary'}>
-              <Trans>Check again</Trans>
+              <Trans>Check Again</Trans>
             </Text>
           </Touch>
         }
@@ -498,7 +498,7 @@ function RunningBuild({
         counts={remote ? remoteStep(remote, build) : currentPhaseLabel(build).counts}
       />
       {lines.length ? (
-        <Section title={t`Live output`}>
+        <Section title={t`Live Output`}>
           <View style={styles.output}>
             {lines.map((line, i) => (
               <Text
@@ -695,7 +695,7 @@ function FinishedBuilds({
   );
   return (
     <>
-      <Section title={t`Last build`}>
+      <Section title={t`Last Build`}>
         {last ? (
           <LastBuildDetails last={last} now={now} root={root} />
         ) : (
@@ -706,7 +706,7 @@ function FinishedBuilds({
         {lastRun ? <PhaseList steps={finishedSteps(lastRun)} cacheLabel={finishedCacheLookupLabel(lastRun)} /> : null}
       </Section>
       {history.length ? (
-        <Section title={t`Recent builds`}>
+        <Section title={t`Recent Builds`}>
           <History entries={history} now={now} root={root} />
         </Section>
       ) : null}
