@@ -250,7 +250,7 @@ async function captureDaemons() {
     'private-gradle-processes',
     '/bin/ps',
     ['-ww', '-p', candidates.map((record) => record.pid).join(','), '-o', 'pid=,command='],
-    { timeout: 5000 },
+    { cwd: root, timeout: 5000 },
   );
   const current = candidates.filter((record) =>
     processes.split('\n').some((line) => {
