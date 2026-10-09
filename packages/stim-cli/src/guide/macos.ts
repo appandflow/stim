@@ -60,7 +60,8 @@ Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
-Stim Desktop honors. An app that activates itself at launch still takes focus.
+Stim Desktop honors, including for reopen events from open -g. An app that
+activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
 macOS artifacts are not cached. This prototype has no --slot or reload command.
 --plan validates the Swift Package directory, macos settings, development plist
