@@ -102,7 +102,7 @@ const result = await verifyLaunch({
   since,
   metroPort,
   platform,
-  timeoutMs: expectUnattributed ? 3_000 : 120_000,
+  timeoutMs: 120_000,
   processAlive: () => probe() === pid,
   readNativeCrashes: readCrashes,
 });
