@@ -511,8 +511,9 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
   { "iosSimulatorApp": "stim-desktop" }
 
-Stim Desktop selects the workspace that owns the simulator and focuses that
-device. It only displays the simulator; it never boots or shuts it down.
+Stim Desktop keeps the current page and shows a launch card. Clicking Show
+opens the workspace that owns the simulator and focuses that device.
+It only displays the simulator; it never boots or shuts it down.
 When Stim Desktop is not running, Stim starts it without the command's
 \`STIM_HOME\`, so it reads the same Stim home as when you open it yourself.
 It shows only devices from that home: under another \`STIM_HOME\`, pick
@@ -541,7 +542,8 @@ headlessly and show it in Stim Desktop:
   { "androidEmulatorApp": "stim-desktop" }
 
 Stim then starts the emulator with \`-no-window -gpu host\` and opens
-\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop reads
+\`stim-desktop://open?serial=<serial>\` in the background. Stim Desktop shows a
+launch card and opens the emulator only when Show is clicked. It reads
 frames and sends input over the emulator's gRPC endpoint. The setting applies
 only when Stim boots the emulator: one that is already running keeps its
 current display until it next boots, and physical devices are unaffected.

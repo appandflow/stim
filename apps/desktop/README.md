@@ -1468,9 +1468,8 @@ card stays until it is acted on or dismissed, with or without VoiceOver. Several
 cards stack, newest first, with a counter and previous and next buttons.
 Two things use them. When `stim ios` or `stim android` launches on a device
 Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop navigates straight to the device only when nothing would be replaced: no
-main window was open, or the window already shows that workspace or All
-devices. Another page keeps its selection. A newer `stim` shows a card with
+Desktop keeps the current page and opens the launched device only when **Show**
+is clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
 
