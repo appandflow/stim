@@ -6,6 +6,7 @@ import {
   readMacosRecord,
 } from '@stim-cli/core/state';
 import { macosRuntimeClaim } from '../macos/state.ts';
+import { bundleInstancePids } from '../macos/instances.ts';
 import { lstatSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { isClaimRefusal, isClaimUnavailable, readClaimSet } from '../ownership-claim.ts';
@@ -60,6 +61,14 @@ export function workspaceInUse(
       reasons.push('its macOS app or build is running');
     else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
       reasons.push('its macOS process owner cannot be verified');
+    else {
+      try {
+        const pids = bundleInstancePids(root);
+        if (pids.length) reasons.push(`its macOS app is running (pid ${pids.join(', ')})`);
+      } catch (error) {
+        reasons.push(`its running macOS apps cannot be listed: ${(error as Error).message}`);
+      }
+    }
     const runtime = readClaimSet(macosRuntimeClaim(root));
     if (runtime.live.length) reasons.push('its macOS runtime claim is held');
     else if (runtime.unresolved[0])

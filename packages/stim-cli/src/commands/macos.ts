@@ -25,7 +25,7 @@ import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import { validateInfoPlist } from '../macos/stage.ts';
-import { stopMacosAppHeld } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -266,6 +266,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
 }
 
 async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAppRecord> {
+  await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   let child;
   try {
