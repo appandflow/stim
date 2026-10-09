@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -92,7 +92,9 @@ const { inspectBuildMachines, pinnedEndpoint } =
   await import('../../../packages/stim-cli/src/offload/build-machines.ts');
 const { BuildConnection } = await import('../../../packages/stim-cli/src/offload/client.ts');
 const { readBuildMachines, readWorkspaceState } = await import('../../../packages/core/state/index.ts');
-const { readClaimSet } = await import('../../../packages/core/ownership-claim.ts');
+const { readClaimSet, processGroupAlive } = await import('../../../packages/core/ownership-claim.ts');
+const { workspaceName } = await import('../../../packages/core/index.ts');
+const { inspectProcessIdentity, sameProcessRecord } = await import('../../../packages/core/process-identity.ts');
 const { fingerprintNativeInputs } = await import('../../../packages/stim-cli/src/integrations/native-inputs.ts');
 let host;
 let hostExit;
@@ -105,6 +107,7 @@ const summary = {
   source: process.env.GITHUB_SHA,
   transport: 'synthetic Tailnet identity over verified loopback TLS',
   runs: [],
+  cancelled: null,
   debugLogs: [],
   diagnostics: [],
   failure: null,
@@ -302,10 +305,133 @@ async function build(label, revision, workerHit) {
     .split('\n')
     .map((line) => JSON.parse(line));
   assert(!requests.some((event) => event.method.startsWith('device-host.')));
-  assert.equal(requests.filter((event) => event.method === 'build.start').length, summary.runs.length + 1);
+  assert.equal(
+    requests.filter((event) => event.method === 'build.start').length,
+    summary.runs.length + 1 + (summary.cancelled ? 1 : 0),
+  );
   summary.runs.push({ label, cacheKey: facts.cacheKey, binaryHash, workerHit });
   return facts;
 }
+async function cancelBuild() {
+  await waitForWorkerCapacity('cancel');
+  const output = [];
+  const api = createStim({
+    projectRoot: app,
+    home,
+    buildCache: join(root, 'client-cache-cancel'),
+    onProgress: (event) => output.push(event.message),
+  });
+  const clientLock = join(home, 'workspaces', workspaceName(app), 'native-run.lock');
+  const workerLock = join(workerArea, 'home', 'workspaces', workspaceName(join(workerArea, 'src')), 'native-run.lock');
+  let settled = false;
+  const outcome = api
+    .build({
+      platform: 'ios',
+      configuration: 'Debug',
+      scheme: 'NativeAcceptance',
+      arch: 'arm64',
+      remoteBuild: machine,
+      signal: AbortSignal.timeout(20 * 60_000),
+    })
+    .then(
+      (result) => {
+        settled = true;
+        return { result };
+      },
+      (error) => {
+        settled = true;
+        return { error };
+      },
+    );
+  let failure;
+  try {
+    const deadline = Date.now() + 120_000;
+    let parent;
+    let compiler;
+    while (Date.now() < deadline) {
+      if (settled) break;
+      parent = readClaimSet(`${workerArea}.claims`).live.find((holder) => holder.child?.pid > 0);
+      compiler = readClaimSet(workerLock).live.find(
+        (holder) => holder.child?.pid > 0 && sameProcessRecord(holder.owner, parent?.child),
+      );
+      if (compiler) break;
+      await sleep(50);
+    }
+    assert(compiler && parent, 'Cancellation must observe a live native compiler, not a completed build.');
+    assert.equal(parent.owner.pid, host.pid);
+    assert.equal(inspectProcessIdentity(parent.child), 'same');
+    assert.equal(inspectProcessIdentity(compiler.child), 'same');
+    const observed = await run(
+      'cancel-compiler',
+      '/bin/ps',
+      ['-p', String(compiler.child.pid), '-o', 'ppid=,pgid=,comm='],
+      { timeout: 5000 },
+    );
+    const match = /^\s*(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(observed);
+    assert(match, 'The exact claimed compiler must still be inspectable.');
+    assert.equal(Number(match[1]), parent.child.pid);
+    assert.equal(Number(match[2]), parent.child.pid);
+    assert.equal(basename(match[3]), 'xcodebuild');
+    const client = readClaimSet(clientLock).live[0];
+    assert(client);
+    save('cancel-identities', { parent, compiler, client, process: observed });
+    const stopped = await api.stop({ signal: AbortSignal.timeout(30_000) });
+    save('cancel-stop', stopped);
+    assert.equal(stopped.ok, true);
+    const result = await Promise.race([
+      outcome,
+      sleep(30_000, undefined, { ref: false }).then(() => {
+        throw new Error('Cancelled build did not settle.');
+      }),
+    ]);
+    assert.equal(result.error?.code, 'STIM_CANCELLED');
+    const records = [client.owner, parent.child, compiler.child];
+    const gone = (record) => ['gone', 'different'].includes(inspectProcessIdentity(record));
+    const settlementDeadline = Date.now() + 30_000;
+    while (
+      Date.now() < settlementDeadline &&
+      (!records.every(gone) || processGroupAlive(parent.child.pid) || readClaimSet(`${workerArea}.claims`).live.length)
+    )
+      await sleep(100);
+    assert(records.every(gone), 'Every exact observed run/compiler identity must be gone.');
+    assert.equal(processGroupAlive(parent.child.pid), false);
+    assert.deepEqual(readClaimSet(`${workerArea}.claims`), { live: [], dead: [], unresolved: [], orphans: [] });
+    const paths = [clientLock, workerLock];
+    for (const directory of [join(hostHome, 'build-slots'), join(workerArea, 'home', 'build-slots')])
+      for (const entry of existsSync(directory) ? readdirSync(directory) : []) paths.push(join(directory, entry));
+    const claims = paths.map((path) => Object.assign({ path }, readClaimSet(path)));
+    save('cancel-settlement', {
+      records: records.map((record) => ({
+        pid: record.pid,
+        processToken: record.processToken,
+        status: inspectProcessIdentity(record),
+      })),
+      claims,
+    });
+    for (const claim of claims) {
+      assert.deepEqual(claim.live, []);
+      assert.deepEqual(claim.unresolved, []);
+      assert.deepEqual(claim.orphans, []);
+      for (const holder of claim.dead) assert(gone(holder.owner));
+      if (claim.path === clientLock || claim.path.startsWith(join(hostHome, 'build-slots')))
+        assert.deepEqual(claim.dead, []);
+    }
+    assert.equal(readWorkspaceState(app).lastBuild.errorCode, 'STIM_CANCELLED');
+    assert.equal(readWorkspaceState(app).activeBuild, undefined);
+    summary.cancelled = { code: result.error.code, workerPid: parent.child.pid, compilerPid: compiler.child.pid };
+  } catch (error) {
+    failure = error;
+  } finally {
+    try {
+      writeFileSync(join(evidence, 'cancel.log'), redact(output.join('')));
+    } catch (error) {
+      console.error(redact(`Cancellation evidence failed: ${error.message}`));
+      failure ??= error;
+    }
+  }
+  if (failure) throw failure;
+}
+
 try {
   writeFileSync(
     join(root, 'bin', 'tailscale'),
@@ -385,6 +511,11 @@ try {
   const edited = await build('source-edit', 'native-revision-two', false);
   assert.notEqual(edited.cacheKey, cold.cacheKey);
   assert.notEqual(summary.runs[2].binaryHash, summary.runs[0].binaryHash);
+  writeFileSync(swift, readFileSync(swift, 'utf8').replaceAll('native-revision-two', 'native-revision-three'));
+  await cancelBuild();
+  await build('cancel-recovery', 'native-revision-three', false);
+  const workerLock = join(workerArea, 'home', 'workspaces', workspaceName(join(workerArea, 'src')), 'native-run.lock');
+  assert.deepEqual(readClaimSet(workerLock), { live: [], dead: [], unresolved: [], orphans: [] });
 } catch (error) {
   summary.failure = redact(error.stack ?? String(error));
   process.exitCode = 1;
