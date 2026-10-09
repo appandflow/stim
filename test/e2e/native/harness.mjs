@@ -360,10 +360,13 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
       ...Object.values(state.collectors ?? {}),
     ].filter((record) => Number.isInteger(record?.pid) && record.pid > 0);
     if (records.length === 0) return;
-    const live = processSnapshot(h);
+    const live = processSnapshot(
+      h,
+      records.map((record) => record.pid),
+    );
     for (const record of records) {
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
-      if (!processes.has(key)) processes.set(key, live.get(record.pid));
+      if (!processes.has(key)) processes.set(key, { pid: record.pid, identity: live.get(record.pid) });
     }
   }
 
@@ -388,8 +391,14 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
   async function verifyProcesses() {
     const deadline = Date.now() + processExitTimeoutMs;
     while (true) {
-      const live = new Set(processSnapshot(h).values());
-      const leaked = [...processes.values()].filter((identity) => live.has(identity));
+      const records = [...processes.values()];
+      const live = new Set(
+        processSnapshot(
+          h,
+          records.map((record) => record.pid),
+        ).values(),
+      );
+      const leaked = records.map((record) => record.identity).filter((identity) => live.has(identity));
       if (leaked.length === 0) return;
       assert(Date.now() < deadline, `a workspace process is still running:\n${leaked.join('\n')}`);
       await sleep(Math.min(100, deadline - Date.now()));
@@ -405,24 +414,34 @@ function inspect(h, file, argv, timeout = 5000) {
   return result.stdout;
 }
 
-// Windows has no ps. Win32_Process is the pid, start time and command line ps -o would print;
-// the script avoids double quotes because they do not survive spawnSync's command-line quoting.
-const WIN32_PROCESS_LIST =
-  "Get-CimInstance Win32_Process | ForEach-Object { $_.ProcessId.ToString() + ' ' + " +
-  "$_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }";
-
-function processSnapshot(h) {
+function processSnapshot(h, candidates) {
+  // macOS ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
+  const pids = [...new Set([...candidates, process.pid])];
+  const filter = pids.map((pid) => `ProcessId = ${pid}`).join(' OR ');
   const out =
     process.platform === 'win32'
-      ? inspect(h, 'powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', WIN32_PROCESS_LIST], 60_000)
-      : inspect(h, 'ps', ['-ax', '-o', 'pid=,lstart=,command=']);
-  return new Map(
+      ? inspect(
+          h,
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-Command',
+            `$ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter '${filter}' | ` +
+              "ForEach-Object { $_.ProcessId.ToString() + ' ' + $_.CreationDate.Ticks.ToString() + ' ' + $_.CommandLine }",
+          ],
+          60_000,
+        )
+      : inspect(h, 'ps', ['-p', pids.join(','), '-o', 'pid=,lstart=,command=']);
+  const live = new Map(
     out
-      .split('\n')
+      .split(/\r?\n/)
       .map((line) => /^\s*(\d+)\s+(.+)$/.exec(line))
       .filter(Boolean)
       .map((match) => [Number(match[1]), match[0].trim()]),
   );
+  assert(live.has(process.pid), 'process inspection did not include the live harness');
+  return live;
 }
 
 export async function verifyCleanup({ h, cleanup, appDir, created }) {
