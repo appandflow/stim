@@ -1,7 +1,8 @@
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimePlan } from '../commands/ios/launch.ts';
-import type { FailArgs } from '../commands/ios/types.ts';
+import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
+import type { ProjectBuildPlanner } from './project-plan.ts';
 import type { BuildIosResult } from '../engine/xcode.ts';
 import type { SimulatorArch } from '../engine/agent-device.ts';
 import type { BuildPhase } from '../engine/build-progress.ts';
@@ -79,6 +80,7 @@ export interface IosArtifactContext {
 }
 
 export interface IosProject {
+  plan?: ProjectBuildPlanner<IosCommandOptions>;
   isExpo: boolean;
   bundleId(): string | null;
   schemeProblem(scheme: string | undefined): FailArgs | null;

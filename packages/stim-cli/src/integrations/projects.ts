@@ -82,6 +82,7 @@ const reactNativeProject: ProjectIntegration = {
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
       ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
       android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
+      doctor: async () => (await import('./react-native-doctor.ts')).reactNativeProjectDoctor(root),
     };
   },
 };
@@ -97,6 +98,14 @@ const swiftPackage: ProjectIntegration = {
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
+      doctor: async () => {
+        const { macosToolchain } = await import('../offload/toolchain.ts');
+        return {
+          inspect: () => [],
+          offloadTargets: ({ options: { host = process.platform, platform } }) =>
+            host === 'darwin' && platform === undefined ? () => [{ platform: 'macos', local: macosToolchain() }] : null,
+        };
+      },
     };
   },
 };

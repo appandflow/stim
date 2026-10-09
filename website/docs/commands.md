@@ -79,10 +79,12 @@ differences against a fresh worktree. The checkout is left untouched unless
 `--fix` is passed.
 
 `--platform ios` or `--platform android` limits native findings to that
-platform while keeping shared project checks. Each run in a React Native or
-Expo app is recorded per platform in Stim's state for this project, which also
-registers the project for `stim status`, and a run without `--platform` counts
-for both, so `stim guide` can tell when doctor is due again. A run in a
+platform while keeping shared project checks. The selected project integration
+supplies framework checks and repairs; React Native and Expo checks include
+Metro, CocoaPods and fingerprint parity. Shared findings appear before
+framework findings. Each run in a supported native app is recorded for the
+inspected platforms in Stim's state, which also registers the project for
+`stim status`, so `stim guide` can tell when doctor is due again. A run in a
 directory that is not an app records nothing.
 
 The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
@@ -490,6 +492,12 @@ A variant that ends in `Release` embeds its JavaScript bundle and skips Metro.
 come from the cache and how long it should take, without building, booting a
 device, installing, or starting Metro. A plan takes no workspace lock and
 writes no Stim state, so it can run while another build is in progress.
+
+The selected project integration supplies the plan using its build recipe's
+identity and cache policy. If the integration has no read-only planner,
+`--plan` refuses with `STIM_BAD_ARG` and reports no cache hit. Run the command
+without `--plan` to build and run the app. React Native and Expo planning
+behaves as follows.
 
 ```text
 $ stim ios --plan

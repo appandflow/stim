@@ -9,7 +9,10 @@ import {
 } from '../commands/android/plan.ts';
 import { androidAvdConfigSettingError } from '../workspace/settings.ts';
 
-import { planAndroid, type AndroidPlanDeps, type AndroidPlanOptions } from '../commands/android/next-build.ts';
+import { planAndroid, type AndroidPlanOptions } from '../commands/android/next-build.ts';
+import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.ts';
+import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
+import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
@@ -246,14 +249,28 @@ describe('planAndroid', () => {
         { json: true, ...opts },
         {
           findRoot: () => app,
-          fingerprint: async () => ({ hash: HASH, sources: [] }),
-          listSystemImages: () => [ARM, X86],
-          avdSystemImage: () => null,
-          avdDirectory: () => null,
-          listAvds: () => [],
-          loadProjectProvider: async () => ({ none: true }),
-          planPrebuild: () => 'none',
-          ...deps,
+          projectRegistry: {
+            selectAndroid(path) {
+              const selected = projectRegistry.selectAndroid(path);
+              return 'problem' in selected
+                ? selected
+                : {
+                    load: async () =>
+                      reactNativeAndroidProject(path, {
+                        plan: {
+                          fingerprint: async () => ({ hash: HASH, sources: [] }),
+                          listSystemImages: () => [ARM, X86],
+                          avdSystemImage: () => null,
+                          avdDirectory: () => null,
+                          listAvds: () => [],
+                          loadProjectProvider: async () => ({ none: true }),
+                          planPrebuild: () => 'none',
+                          ...deps,
+                        },
+                      }),
+                  };
+            },
+          },
         },
       );
     } finally {

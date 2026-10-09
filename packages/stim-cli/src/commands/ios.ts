@@ -1,5 +1,4 @@
 import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
-import { reactNativeIosSchemeProblem } from '../integrations/react-native-ios.ts';
 import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
@@ -134,7 +133,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .command('ios')
     .description(
       "Build (or restore from the fingerprint cache), install and launch this workspace's app on its owned " +
-        'simulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
+        'simulator. React Native and Expo Debug runs start the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -210,7 +209,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     .action(async (opts: IosCommandOptions) => {
       if (opts.plan) {
         const d = { ...DEFAULT_DEPS, ...deps };
-        await planIos(opts, d, (root, scheme, isExpo) => reactNativeIosSchemeProblem(root, scheme, isExpo, d));
+        await planIos(opts, d);
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());

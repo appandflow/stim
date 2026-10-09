@@ -1,6 +1,8 @@
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidRunPlan } from '../commands/android/plan.ts';
+import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
+import type { ProjectBuildPlanner } from './project-plan.ts';
 import type { AndroidRuntimePlan } from '../commands/android/launch.ts';
 import type { AndroidWriter, FailExtra } from '../commands/android/types.ts';
 import type { BuildAndroidResult } from '../engine/gradle.ts';
@@ -62,6 +64,7 @@ export interface AndroidArtifactContext {
 }
 
 export interface AndroidProject {
+  plan?: ProjectBuildPlanner<AndroidPlanOptions>;
   isExpo: boolean;
   packageRemedy: string;
   appIds(): { bundleId: string | null; androidPackage: string | null };

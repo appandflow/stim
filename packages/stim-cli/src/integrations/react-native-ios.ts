@@ -24,6 +24,8 @@ import { bundlerPin } from '../engine/bundler.ts';
 import { iosToolchain } from '../offload/toolchain.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
+import { planReactNativeIos } from './react-native-ios-plan.ts';
+
 const PLATFORM = 'ios';
 
 type ReactNativeIosDependencies = Pick<
@@ -50,7 +52,7 @@ type ReactNativeIosDependencies = Pick<
   | 'swapJsBundle'
 >;
 
-export function reactNativeIosSchemeProblem(
+function reactNativeIosSchemeProblem(
   root: string,
   scheme: string | undefined,
   isExpo: boolean,
@@ -69,13 +71,14 @@ export function reactNativeIosSchemeProblem(
   return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
-export function reactNativeIosProject(
-  root: string,
-  dependencies: Partial<ReactNativeIosDependencies> = {},
-): IosProject {
+export function reactNativeIosProject(root: string, dependencies: Partial<IosDeps> = {}): IosProject {
   const d: ReactNativeIosDependencies = { ...DEFAULT_DEPS, ...dependencies };
   const isExpo = d.detectIsExpo(root);
   return {
+    plan: (options) =>
+      planReactNativeIos(root, options, { ...DEFAULT_DEPS, ...dependencies }, (scheme) =>
+        reactNativeIosSchemeProblem(root, scheme, isExpo, d),
+      ),
     isExpo,
     bundleId: () => d.detectBundleId(root),
     schemeProblem: (scheme) => reactNativeIosSchemeProblem(root, scheme, isExpo, d),

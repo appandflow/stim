@@ -1160,6 +1160,11 @@ PREDICTING THE NEXT BUILD (--plan)
   installing, or starting Metro. They take no workspace lock and write no
   Stim state, cache entry or statistic, so they run beside a build.
 
+  The selected project integration supplies the read-only plan and uses its
+  build recipe's identity and cache policy. If it has no planner, --plan
+  refuses with STIM_BAD_ARG; run the command without --plan. The refusal
+  reports no cache hit. React Native and Expo planning behaves as follows.
+
     stim ios --plan
       plan        ios 1b625d.. -> local cache hit
       expect      ~2.7s (median of 1 hit run)
