@@ -1,1 +1,2 @@
 patches/*.patch text eol=lf
+.github/actions/stim-ci/dist/** linguist-generated=true

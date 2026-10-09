@@ -12,7 +12,7 @@ export function benchmarkTaskPrompt({ arm, platform, variant, source, worktree, 
     task,
     arm === 'stim' ? 'Use Stim and its installed skill.' : "Use the project's standard tooling. Do not use Stim.",
     `Run the Debug app on ${device}. Use only the device assigned to this run.`,
-    'Verify the result in the app with agent-device, handle any onboarding, and save a Settings screenshot and simulator recording. Keep the app running until proof is saved. Make no unrelated changes.',
+    'Verify the result in the app with agent-device, handle any onboarding, and save a Settings screenshot and simulator recording. Leave the app, assigned device and worktree available for coordinator teardown after proof. Make no unrelated changes.',
     `Run constraints: preserve the supplied environment and tool versions; do not install dependencies, access other runs, or use subagents. ${proof}`,
   ].join('\n\n');
 }
