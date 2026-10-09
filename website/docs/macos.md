@@ -75,7 +75,8 @@ stim logs --errors
 stim stop`}
 />
 
-Each `macos` run stops the previous owned app and rebuilds using that workspace's
+Each `macos` run validates the project settings, development plist and resource
+entries before stopping the previous owned app and rebuilding using that workspace's
 incremental outputs. Every process running an app bundle from the workspace's
 `macos/` directory counts as the owned app, including copies opened through
 LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
