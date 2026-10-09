@@ -375,6 +375,7 @@ struct RootView: View {
         archivedLogQuery = LogQuery()
         if case .archived = old {} else { previousSelection = old }
       }
+      if case .environment(let path) = item, path == lastResolvedWorkspace {} else { lastResolvedWorkspace = nil }
       restoredProject = true
       if case .project = item {} else { showingAllWorktrees = nil }
       switch item {
