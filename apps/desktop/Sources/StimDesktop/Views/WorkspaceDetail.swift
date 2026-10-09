@@ -151,7 +151,6 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
-      .environment(\.tutorialHint, tutorialHint)
     }
     .confirmationDialog(
       "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",

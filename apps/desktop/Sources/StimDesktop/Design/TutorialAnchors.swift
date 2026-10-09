@@ -2,7 +2,7 @@ import StimKit
 import SwiftUI
 
 enum TutorialAnchorID: Hashable {
-  case sidebarRow, buildSection, cacheBadge, deviceTile, viewerControl, logsTab, agentActions, replay, archivedFilter
+  case sidebarRow, deviceTile, viewerControl, logsTab, archivedFilter
 }
 
 struct TutorialAnchorKey: Hashable {
@@ -23,30 +23,18 @@ struct TutorialHint {
   var selectedPath: String?
   var showMe: () -> Void
 
-  var anchor: TutorialAnchorID? {
+  var target: (anchor: TutorialAnchorID, callout: String)? {
     switch step {
-    case "sidebar": return .sidebarRow
-    case "build": return .buildSection
-    case "rebuild": return .cacheBadge
-    case "device": return .deviceTile
-    case "logs", "refresh": return .logsTab
-    case "agent": return .agentActions
-    case "finish", "done": return .archivedFilter
+    case "sidebar": return (.sidebarRow, "Select the tutorial workspace")
+    case "device": return (.deviceTile, "Open the live view, then tap Log an error.")
+    case "logs", "refresh": return (.logsTab, "Open Logs")
+    case "finish", "done": return (.archivedFilter, "Find the run in Archived")
     default: return nil
     }
   }
 
-  var callout: String {
-    switch step {
-    case "sidebar": return "Select the tutorial workspace"
-    case "build": return "Follow the iOS build"
-    case "rebuild": return "See the cache outcome in build details"
-    case "device": return "Open the live view, then tap Log an error."
-    case "logs", "refresh": return "Open Logs"
-    case "agent": return "Watch Agent actions and Replay"
-    case "finish", "done": return "Find the run in Archived"
-    default: return "Follow the tutorial workspace"
-    }
+  var offersShowMe: Bool {
+    ["sidebar", "build", "rebuild", "device", "logs", "refresh", "agent", "finish", "done"].contains(step ?? "")
   }
 }
 
@@ -80,28 +68,24 @@ private struct TutorialHighlights: ViewModifier {
   func body(content: Content) -> some View {
     content.overlayPreferenceValue(TutorialAnchorPreference.self) { anchors in
       GeometryReader { geometry in
-        if let hint, let id = hint.anchor {
+        if let hint {
+          let spec = hint.target
           let match =
             anchors.first {
-              $0.key.id == id && ($0.key.workspace == nil || $0.key.workspace == hint.path)
-            } ?? anchors.first {
-              hint.step == "rebuild" && $0.key.id == .buildSection && $0.key.workspace == hint.path
-            } ?? anchors.first {
-              hint.step == "device" && $0.key.id == .viewerControl
+              $0.key.id == spec?.anchor && ($0.key.workspace == nil || $0.key.workspace == hint.path)
             }
             ?? anchors.first {
-              hint.step == "agent" && $0.key.id == .replay
+              hint.step == "device" && $0.key.id == .viewerControl
             }
-          if let match, hint.path == hint.selectedPath || id == .sidebarRow || id == .archivedFilter,
-            geometry[match.value].intersects(CGRect(origin: .zero, size: geometry.size))
-          {
-            let rect = geometry[match.value]
+          let rect = match.map { geometry[$0.value] }
+          let onPage = hint.path == hint.selectedPath || spec?.anchor == .sidebarRow || spec?.anchor == .archivedFilter
+          if let spec, let rect, onPage, rect.intersects(CGRect(origin: .zero, size: geometry.size)) {
             RoundedRectangle(cornerRadius: Radius.control)
               .stroke(Palette.accent, lineWidth: 2)
               .frame(width: rect.width + 6, height: rect.height + 6)
               .position(x: rect.midX, y: rect.midY)
               .allowsHitTesting(false)
-            Text(hint.callout).font(.stim(.footnote, weight: .semibold))
+            Text(spec.callout).font(.stim(.footnote, weight: .semibold))
               .foregroundStyle(Palette.text)
               .padding(.horizontal, Space.md).padding(.vertical, Space.sm)
               .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
@@ -111,7 +95,7 @@ private struct TutorialHighlights: ViewModifier {
                 y: rect.maxY + 38 < geometry.size.height ? rect.maxY + 22 : max(20, rect.minY - 22)
               )
               .allowsHitTesting(false)
-          } else if showFallback, hint.path != nil, hint.path != hint.selectedPath {
+          } else if showFallback, hint.offersShowMe, hint.path != nil, hint.path != hint.selectedPath {
             Button("Show Me", action: hint.showMe)
               .buttonStyle(.stim(.secondary))
               .accessibilityLabel("Show the tutorial workspace")

@@ -169,7 +169,6 @@ struct DeviceViewer: View {
               close()
             }
           )
-          .tutorialAnchor(.agentActions, workspace: env.path)
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
         }
