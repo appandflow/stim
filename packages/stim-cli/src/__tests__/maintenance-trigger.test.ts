@@ -41,6 +41,9 @@ test.each([
   ['-V'],
   ['gc', '--delete'],
   ['gc', '--delete', '--json'],
+  ['ios', '--plan'],
+  ['android', '--plan', '--json'],
+  ['macos', '--plan', '--json'],
 ])('excluded command %s never spawns maintenance', (...argv) => {
   triggerMaintenance('command', { argv });
   expect(spawned).not.toHaveBeenCalled();

@@ -5,7 +5,8 @@
   enum DiscoveryFixtures {
     static func capHitUsingHostingMac() -> DiscoveryPrompt {
       Discovery.capHit(
-        source: .init(at: Date(), workspaceID: "fixture", platform: "ios"), mac: nil, hosts: ["janics-mac-mini"])!
+        source: .init(at: Date(), workspaceID: "fixture", platform: "ios"), mac: nil, hosts: ["janics-mac-mini"],
+        paired: ["janics-mac-mini"])!
     }
 
     static func prompt(_ type: DiscoveryType) -> DiscoveryPrompt {
@@ -25,15 +26,14 @@
           """.utf8))
       let three = Array(repeating: placements[0], count: 3)
       switch type {
-      case .slowCold: return Discovery.slowCold(placements: three, machines: [], macs: [mac], now: now)!
       case .newMac: return Discovery.newMac(macs: [mac], seen: [], machines: [], hosting: [], now: now).prompt!
-      case .slotWait: return Discovery.slotWait(placements: three, macs: [mac], now: now)!
+      case .slotWait: return Discovery.slotWait(placements: three, macs: [mac], paired: [], now: now)!
       case .lowWithCaches:
         return Discovery.lowWithCaches(
           plan: PressurePlan.make(freeBytes: 0, minimumFreeGb: 20, hardFloorGb: 5, report: nil),
-          cacheBytes: 48 * 1_073_741_824, mac: mac)!
+          cacheBytes: 48 * 1_073_741_824)!
       case .capHit:
-        return Discovery.capHit(source: .init(at: now, workspaceID: "fixture", platform: "ios"), mac: mac, hosts: [])!
+        return Discovery.capHit(source: .init(at: now, workspaceID: "fixture", platform: "ios"), mac: mac, hosts: [], paired: [])!
       case .away: return Discovery.away(pairedPhones: 0, durationMs: 700_000, idleSeconds: 400)!
       }
     }
@@ -76,7 +76,7 @@
   }
 
   struct DiscoveryPlayground: View {
-    @State private var type = DiscoveryType.slowCold
+    @State private var type = DiscoveryType.slotWait
 
     var body: some View {
       VStack {

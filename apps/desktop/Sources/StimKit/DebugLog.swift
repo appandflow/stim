@@ -27,9 +27,26 @@ public enum DebugLog {
   public static let subsystem = "dev.stim.desktop"
   private static let pid = ProcessInfo.processInfo.processIdentifier
 
+  public static let releaseBundleIdentifier = "dev.stim.desktop"
+
   public static var logURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Stim/Desktop.log")
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library/Logs/Stim/\(logFileName(bundleIdentifier: Bundle.main.bundleIdentifier))")
   }
+
+  /// The release app writes `Desktop.log`. Any other bundle id (a `stim macos` test copy, a dev bundle) writes
+  /// `Desktop-<id without the release prefix>.log`, so the installed app's log holds only its own lines.
+  public static func logFileName(bundleIdentifier: String?) -> String {
+    guard let bundleIdentifier, bundleIdentifier != releaseBundleIdentifier else { return "Desktop.log" }
+    let suffix =
+      bundleIdentifier.hasPrefix(releaseBundleIdentifier + ".")
+      ? String(bundleIdentifier.dropFirst(releaseBundleIdentifier.count + 1)) : bundleIdentifier
+    let safe = String(suffix.unicodeScalars.map { Self.fileNameCharacters.contains($0) ? Character($0) : "-" })
+    return safe.isEmpty ? "Desktop.log" : "Desktop-\(safe).log"
+  }
+
+  private static let fileNameCharacters = CharacterSet(
+    charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
   /// Whether the verbose level is on.
   public static var isVerbose: Bool { UserDefaults.standard.bool(forKey: AppPreferences.Key.debugLogging) }
@@ -84,9 +101,17 @@ public enum DebugLog {
   }
   private static let context = LockedValue(Context())
 
-  public static func setDestination(_ destination: String) {
+  /// An arrival at the Overview from another page logs as a warning whatever its cause, so the default log explains
+  /// an unexpected jump. Every other page change logs at debug.
+  public static func navigationLevel(to destination: String, from previous: String?) -> Level {
+    destination == "overview" && previous != nil && previous != "overview" ? .warning : .debug
+  }
+
+  public static func setDestination(_ destination: String, from previous: String? = nil, cause: NavigationCause? = nil) {
     context.withLock { $0.destination = destination }
-    debug(.navigation, "destination \(destination)")
+    let origin = previous.map { " from \($0)" } ?? ""
+    let reason = cause.map { " cause=\($0.logDescription)" } ?? ""
+    log(navigationLevel(to: destination, from: previous), .navigation, "destination \(destination)\(origin)\(reason)")
   }
 
   public static var destination: String { context.withLock { $0.destination } }

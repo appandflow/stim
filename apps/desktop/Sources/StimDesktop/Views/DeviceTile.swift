@@ -1009,7 +1009,7 @@ struct DeviceTile: View {
         placeholder("A workspace is required to view this hosted device.")
       }
     case .macos(let app) where device.hostedMachine == nil:
-      MacosLocalScreen(app: app, choice: choice) { pixelSizes[1] = $0 }
+      MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
         .frame(width: screenWidth(1))
         .padding(screenPadding)
     case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:

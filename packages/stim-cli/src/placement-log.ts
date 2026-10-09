@@ -53,16 +53,21 @@ function skippedCandidates(skipped: PlacementSkip[]): PlacementCandidate[] {
 export function devicePlacementRecord({
   platform,
   fromFlag,
+  easFallback = false,
   placed,
 }: {
   platform: 'ios' | 'android';
   fromFlag: boolean;
+  easFallback?: boolean;
   placed: { placement: { machine?: string; reason: string }; code: string; skipped: PlacementSkip[] };
 }): PlacementRecord {
   return placementRecord({
     kind: 'device',
     platform,
-    settings: [{ key: `${platform}.remote`, value: 'auto', from: fromFlag ? 'flag' : 'setting' }],
+    settings: [
+      { key: `${platform}.remote`, value: 'auto', from: fromFlag ? 'flag' : 'setting' },
+      ...(easFallback ? [{ key: 'remote.easFallback', value: 'true', from: 'setting' as const }] : []),
+    ],
     candidates: skippedCandidates(placed.skipped),
     choice: { machine: placed.placement.machine ?? 'local', code: placed.code, msg: placed.placement.reason },
   });

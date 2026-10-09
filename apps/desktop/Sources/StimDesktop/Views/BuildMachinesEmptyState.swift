@@ -22,7 +22,7 @@ struct BuildMachineArt: View {
 
   private func chip(_ title: String, systemImage: String) -> some View {
     HStack(spacing: Space.xs) {
-      Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.brand)
+      Image(systemName: systemImage).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.primary)
       Text(title).font(.stim(.caption, weight: .semibold)).foregroundStyle(Palette.primary)
     }
     .padding(.horizontal, Space.md)

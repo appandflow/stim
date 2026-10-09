@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import StimKit
+import StimStores
 
 @MainActor @Observable
 final class BuildMachinesModel {
@@ -28,6 +29,8 @@ final class BuildMachinesModel {
   private var refreshedEntries: [String: [String]] = [:]
   private var hostingCheckedAt: [String: Date] = [:]
   private var checks: [String: Check] = [:]
+  @ObservationIgnored private var lastMachineCheck: BuildMachineCheck?
+  @ObservationIgnored private var settingsReadAt: Date?
 
   let settings: MachineSettingsStore
   private let cli: Task<StimCLI, Never>
@@ -135,6 +138,54 @@ final class BuildMachinesModel {
       autoUpdated.insert(key)
       Task { await update(status.machine, checkout: checkout) }
     }
+  }
+
+  func keepMachinesCurrent(status: StatusStore) {
+    Task { [weak self, weak status] in
+      while !Task.isCancelled {
+        guard let self, let status else { return }
+        let candidates = doctorCheckouts(status.payload?.environments ?? [], project: status.project(ofPath:)).map(\.path)
+        let enabled = UserDefaults.standard.bool(forKey: AppPreferences.Key.updatesBuildMachines)
+        let cli = await cli.value
+        let launcher = cli.launcher
+        let executable = cli.executable
+        let (checkout, identity) = await Task.detached {
+          (
+            candidates.first { FileManager.default.fileExists(atPath: $0) },
+            (launcher?.script ?? executable).flatMap(Self.identity(ofExecutable:))
+          )
+        }.value
+        let current = now()
+        if enabled, checkout != nil, !isBusy,
+          settingsReadAt.map({ current.timeIntervalSince($0) >= BuildMachineCheckState.interval }) ?? true
+        {
+          settingsReadAt = current
+          await settings.refresh()
+        }
+        await checkMachinesIfDue(checkout: checkout, enabled: enabled, identity: identity)
+        try? await Task.sleep(for: .seconds(30))
+      }
+    }
+  }
+
+  nonisolated private static func identity(ofExecutable path: String) -> String? {
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    return (try? FileManager.default.attributesOfItem(atPath: resolved)[.modificationDate] as? Date)
+      .map { "\(resolved)@\($0.timeIntervalSince1970)" }
+  }
+
+  func checkMachinesIfDue(checkout: String?, enabled: Bool, identity: String?) async {
+    guard enabled else {
+      lastMachineCheck = nil
+      return
+    }
+    guard !isBusy, let checkout, let identity else { return }
+    let due = shouldCheckBuildMachines(
+      BuildMachineCheckState(
+        entries: entries, checkout: checkout, last: lastMachineCheck, identity: identity, now: now()))
+    guard due else { return }
+    lastMachineCheck = BuildMachineCheck(at: now(), identity: identity, entries: entries ?? [])
+    await refreshStatuses(checkout: checkout, ask: false)
   }
 
   var entries: [String]? {
@@ -273,4 +324,29 @@ final class BuildMachinesModel {
     }
     working = nil
   }
+}
+
+struct BuildMachineCheck: Equatable {
+  var at: Date
+  var identity: String?
+  var entries: [String]
+}
+
+struct BuildMachineCheckState {
+  var entries: [String]?
+  var checkout: String?
+  var last: BuildMachineCheck?
+  var identity: String?
+  var now: Date
+
+  static let interval: TimeInterval = 15 * 60
+}
+
+/// Whether the automatic install should look at the build machines now. Callers pass `enabled` separately: a
+/// disabled setting never checks.
+func shouldCheckBuildMachines(_ state: BuildMachineCheckState) -> Bool {
+  guard let entries = state.entries, !entries.isEmpty, state.checkout != nil else { return false }
+  guard let last = state.last else { return true }
+  return last.identity != state.identity || last.entries != entries
+    || state.now.timeIntervalSince(last.at) >= BuildMachineCheckState.interval
 }

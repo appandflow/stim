@@ -118,10 +118,9 @@ stay `"xcode"` and `"emulator"`, and a value you set always wins.
 `stim settings get iosSimulatorApp` prints the effective value and, on stderr,
 `(default: Stim Desktop installed)` when the default comes from the app.
 
-For owned simulators, Stim Desktop selects the workspace that owns the
-simulator and focuses that device, and no simulator window opens. If the app is
-showing another page, it keeps that page and shows a card with a **Show**
-button instead. It only displays the simulator; it never boots or shuts it
+For owned simulators, Stim Desktop keeps the current page and shows a launch
+card with a **Show** button. Clicking **Show** opens the workspace that owns the
+simulator and focuses that device, and no simulator window opens. It only displays the simulator; it never boots or shuts it
 down. Pass
 `--simulator-app stim-desktop` to use it for one launch.
 
@@ -133,7 +132,7 @@ home, so a simulator booted under another `STIM_HOME` does not appear in it.
 For owned Android emulators, Stim starts newly booted emulators on macOS with
 `-no-window -gpu host`, which keeps GPU acceleration, and opens
 `stim-desktop://open?serial=<serial>` in the background so Stim Desktop
-focuses that emulator, or offers it in a card when the app is on another page. An emulator that is already running keeps its current display
+shows a launch card. Clicking **Show** opens that emulator. An emulator that is already running keeps its current display
 until it next boots, and physical devices are unaffected.
 
 To keep the simulator and emulator windows with Stim Desktop installed:

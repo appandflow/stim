@@ -16,7 +16,6 @@ enum TutorialEntry { case resume, begin }
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
-  var deviceArrivedWithWindow = false
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.
@@ -82,8 +81,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
     MainActor.assumeIsolated {
-      OpenRequests.shared.deviceArrivedWithWindow = MainWindow.isOpen
       OpenRequests.shared.device = request
+      if !MainWindow.isOpen { MainWindow.show() }
     }
   }
 
@@ -233,6 +232,7 @@ struct StimDesktopApp: App {
       tips.start()
       metrics.start()
       autopilot.start()
+      buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
   }
