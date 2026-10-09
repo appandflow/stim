@@ -185,9 +185,20 @@ struct RootView: View {
           }
         }
         if showsWorkspace {
-          ToolbarItem(placement: .primaryAction) { logsToggleButton }
-          ToolbarItem(placement: .primaryAction) {
+          let controls = HStack(spacing: Space.md) {
+            logsToggleButton
             InspectorToggleButton(isShown: inspector != .hidden, action: toggleInspector)
+          }
+          .padding(.horizontal, Space.md + Space.xxs)
+          .frame(height: 40)
+          .accessibilityElement(children: .contain)
+          if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .primaryAction) {
+              controls.glassEffect(.regular, in: Capsule()).padding(.trailing, Space.md)
+            }
+            .sharedBackgroundVisibility(.hidden)
+          } else {
+            ToolbarItem(placement: .primaryAction) { controls.padding(.trailing, Space.md) }
           }
         }
       }
