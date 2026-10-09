@@ -873,7 +873,10 @@ indirect enum Command {
 func parseCommand(_ line: String, base: Config) -> Command? {
   guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { return nil }
   if let control = object["control"] as? [String: Any], let session = control["session"] as? String,
-    let enabled = control["enabled"] as? Bool { return .control(session, enabled: enabled) }
+    let enabled = control["enabled"] as? Bool
+  {
+    return .control(session, enabled: enabled)
+  }
   if let session = object["controlSession"] as? String {
     var unscoped = object
     unscoped.removeValue(forKey: "controlSession")
@@ -1018,7 +1021,7 @@ extension SimulatorSource: Source {
         MainActor.assumeIsolated {
           guard let touch = self.duo?.touch(phase, point: point, revision: revision) else { return }
           self.inputQueue.async {
-            if self.hid?.isConnected != true { self.hid = SimulatorHID(udid: self.udid) }
+            if self.hid?.isConnected != true { self.hid = self.openInput() }
             self.hid?.touch(phase, at: touch.point, screenID: touch.screenID)
           }
         }
@@ -1037,6 +1040,12 @@ extension SimulatorSource: Source {
     inputQueue.async { self.hid?.touch(.up, at: touch.point, screenID: touch.screenID) }
   }
 
+  private func openInput() -> SimulatorHID? {
+    SimulatorHID(udid: udid) { reason in
+      Output.notice(["inputError": "\(self.udid) could not be opened for input: \(reason)"])
+    }
+  }
+
   private func apply(_ command: Command) {
     if case .rotate(let clockwise) = command {
       if !SimulatorRotation.rotate(udid: udid, clockwise: clockwise) {
@@ -1044,8 +1053,8 @@ extension SimulatorSource: Source {
       }
       return
     }
-    if hid?.isConnected != true { hid = SimulatorHID(udid: udid) }
-    guard let hid else { return Output.notice(["inputError": "\(udid) could not be opened for input."]) }
+    if hid?.isConnected != true { hid = openInput() }
+    guard let hid else { return }
     switch command {
     case .touch(let phase, let point, let index):
       let displays = CoreSimulator.displays(udid: udid)
@@ -1069,7 +1078,8 @@ extension SimulatorSource: Source {
       hid.button(button, down: true)
       usleep(100_000)
       hid.button(button, down: false)
-    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .window, .duoTouch, .duoRelease:
+    case .config, .keyframe, .recordKeyframe, .rotate, .posture, .control, .scoped, .scroll, .key, .window, .duoTouch,
+      .duoRelease:
       break
     }
   }

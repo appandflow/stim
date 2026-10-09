@@ -20,7 +20,16 @@ typealias ButtonMessageFn = @convention(c) (UInt32, UInt32, UInt32) -> UnsafeMut
 typealias HIDMessageFn = @convention(c) (UInt32, UInt32, UInt32, UInt32) -> UnsafeMutableRawPointer?
 
 enum SimulatorKit {
-  static let handle = dlopen(CoreSimulator.simulatorKitPath(CoreSimulator.developerDir), RTLD_NOW)
+  private static let loaded: (handle: UnsafeMutableRawPointer?, error: String?) = {
+    let path = CoreSimulator.simulatorKitPath(CoreSimulator.developerDir)
+    guard let handle = dlopen(path, RTLD_NOW) else {
+      let detail = dlerror().map { String(cString: $0) } ?? "no loader error"
+      return (nil, "SimulatorKit at \(path): \(detail)")
+    }
+    return (handle, nil)
+  }()
+  static var handle: UnsafeMutableRawPointer? { loaded.handle }
+  static var loadError: String? { loaded.error }
   static let mouseMessage = symbol("IndigoHIDMessageForMouseNSEvent", MouseMessageFn.self)
   static let usageForKeyCode = symbol("hidUsageForCGKeyCode", UsageForKeyCodeFn.self)
   static let buttonMessage = symbol("IndigoHIDMessageForButton", ButtonMessageFn.self)
@@ -81,13 +90,19 @@ final class SimulatorHID {
     case legacy(LegacyHID)
   }
 
-  init?(udid: String) {
-    guard let device = CoreSimulator.device(udid: udid) else { return nil }
-    if let coreDevice = CoreDeviceHID(device: device, feature: CoreDeviceHID.digitizer) {
+  init?(udid: String, onFailure: ((String) -> Void)? = nil) {
+    guard let device = CoreSimulator.device(udid: udid) else {
+      onFailure?("CoreSimulator could not resolve this device")
+      return nil
+    }
+    var failures: [String] = []
+    let record: (String) -> Void = { failures.append(String($0.prefix(1024))) }
+    if let coreDevice = CoreDeviceHID(device: device, feature: CoreDeviceHID.digitizer, onFailure: record) {
       transport = .coreDevice(coreDevice)
-    } else if let legacy = LegacyHID(device: device) {
+    } else if let legacy = LegacyHID(device: device, onFailure: record) {
       transport = .legacy(legacy)
     } else {
+      onFailure?(failures.joined(separator: "; "))
       return nil
     }
   }
@@ -150,16 +165,30 @@ final class CoreDeviceHID {
   private var closed = false
   private var pending: [xpc_object_t]? = []
 
-  init?(device: NSObject, feature: String) {
+  init?(device: NSObject, feature: String, onFailure: ((String) -> Void)? = nil) {
     self.feature = feature
     let process = dlopen(nil, RTLD_NOW)
-    guard device.responds(to: Self.lookupSelector),
-      let createEndpoint = dlsym(process, "xpc_endpoint_create_mach_port_4sim"),
+    guard device.responds(to: Self.lookupSelector) else {
+      onFailure?("CoreDevice lookup:error: is unavailable")
+      return nil
+    }
+    guard let createEndpoint = dlsym(process, "xpc_endpoint_create_mach_port_4sim"),
       let enableSimToHost = dlsym(process, "xpc_connection_enable_sim2host_4sim")
-    else { return nil }
+    else {
+      onFailure?("CoreDevice simulator XPC endpoint symbols are unavailable")
+      return nil
+    }
     let lookup = unsafeBitCast(device.method(for: Self.lookupSelector), to: LookupFn.self)
-    let port = lookup(device, Self.lookupSelector, feature as NSString, nil)
-    guard port != 0, let endpoint = unsafeBitCast(createEndpoint, to: EndpointFn.self)(port, 0, 0) else { return nil }
+    var error: Unmanaged<NSError>?
+    let port = lookup(device, Self.lookupSelector, feature as NSString, &error)
+    guard port != 0 else {
+      onFailure?("CoreDevice \(feature) lookup: \(error?.takeUnretainedValue().localizedDescription ?? "no port or error")")
+      return nil
+    }
+    guard let endpoint = unsafeBitCast(createEndpoint, to: EndpointFn.self)(port, 0, 0) else {
+      onFailure?("CoreDevice could not create an endpoint for its HID port")
+      return nil
+    }
     connection = xpc_connection_create_from_endpoint(endpoint)
     unsafeBitCast(enableSimToHost, to: EnableFn.self)(connection)
     let queue = DispatchQueue(label: "stim.simulator-hid")
@@ -292,20 +321,30 @@ private final class LegacyHID {
   private let client: AnyObject
   private let send: SendFn
 
-  init?(device: NSObject) {
+  init?(device: NSObject, onFailure: ((String) -> Void)? = nil) {
     let allocSelector = NSSelectorFromString("alloc")
     let initSelector = NSSelectorFromString("initWithDevice:error:")
-    guard SimulatorKit.handle != nil,
-      let cls = NSClassFromString("_TtC12SimulatorKit24SimDeviceLegacyHIDClient"),
+    guard SimulatorKit.handle != nil else {
+      onFailure?(SimulatorKit.loadError ?? "SimulatorKit could not be loaded")
+      return nil
+    }
+    guard let cls = NSClassFromString("_TtC12SimulatorKit24SimDeviceLegacyHIDClient"),
       let metaclass = object_getClass(cls),
       class_respondsToSelector(metaclass, allocSelector),
       class_respondsToSelector(cls, initSelector),
       class_respondsToSelector(cls, Self.sendSelector)
-    else { return nil }
+    else {
+      onFailure?("SimulatorKit SimDeviceLegacyHIDClient or its alloc/init/send selectors are unavailable")
+      return nil
+    }
     let alloc = unsafeBitCast(class_getMethodImplementation(metaclass, allocSelector), to: AllocFn.self)
     let initialize = unsafeBitCast(class_getMethodImplementation(cls, initSelector), to: InitFn.self)
-    guard let client = initialize(alloc(cls, allocSelector), initSelector, device, nil)?.takeRetainedValue()
-    else { return nil }
+    var error: Unmanaged<NSError>?
+    guard let client = initialize(alloc(cls, allocSelector), initSelector, device, &error)?.takeRetainedValue()
+    else {
+      onFailure?("SimulatorKit HID initialization: \(error?.takeUnretainedValue().localizedDescription ?? "no client or error")")
+      return nil
+    }
     self.client = client
     send = unsafeBitCast(class_getMethodImplementation(cls, Self.sendSelector), to: SendFn.self)
   }
