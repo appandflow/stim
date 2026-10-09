@@ -674,12 +674,13 @@ async function probeMachine(
     connection.close();
     return { credential, failure: 'This worker does not support native Xcode builds.' };
   }
+  const native = identity.native && connection.supports('native-xcode-toolchain') ? identity.native : undefined;
   const reply = await connection.request(
     'build.offer',
     {
       repo: identity.repo,
       ...(identity.lockfile ? { lockfile: identity.lockfile } : {}),
-      ...(identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
+      ...(native ? { native } : identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
     },
     offerMs,
   );
