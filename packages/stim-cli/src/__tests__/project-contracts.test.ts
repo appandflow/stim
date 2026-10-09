@@ -77,7 +77,10 @@ function registryWithPlan(
         : { ...match, android: async () => ({ ...(await match.android!()), plan: planner }) };
     },
   };
-  return createProjectRegistry([...projectIntegrations, provider]);
+  return createProjectRegistry([
+    ...projectIntegrations.filter((integration) => integration.id !== 'native-xcode'),
+    provider,
+  ]);
 }
 
 test.each(['ios', 'android'] as const)(
@@ -194,7 +197,11 @@ test('doctor combines shared findings with the selected native platform and reco
       }),
     }),
   });
-  const registry = createProjectRegistry([...projectIntegrations, nativeDoctor('ios'), nativeDoctor('android')]);
+  const registry = createProjectRegistry([
+    ...projectIntegrations.filter((integration) => integration.id !== 'native-xcode'),
+    nativeDoctor('ios'),
+    nativeDoctor('android'),
+  ]);
   const program = new Command();
   doctorCommand(program, '1.2.3', () => analyzeStimVersions('1.2.3', '/tools/stim', []), 'linux', {
     findProjectRoot: () => root,

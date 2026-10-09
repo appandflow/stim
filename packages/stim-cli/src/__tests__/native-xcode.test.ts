@@ -39,6 +39,29 @@ function fingerprint() {
   });
 }
 
+test('native discovery accepts compact OpenStep arrays and preserves quoted and variable parentheses', () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const source = readFileSync(file, 'utf8')
+    .replaceAll(', );', ');')
+    .replace(
+      'SDKROOT = iphoneos;',
+      `SDKROOT = iphoneos;
+      OTHER_SWIFT_FLAGS = ($(inherited), "-D(SAFE)");
+      PRODUCT_NAME = $(PRODUCT_$(CONFIGURATION));
+      COMMENTED = (one /* ) */, two);`,
+    );
+  writeFileSync(file, source);
+  const selection = selectNativeXcodeProject(root);
+  expect(selection).toMatchObject({ scheme: 'Native', targetName: 'Native' });
+  expect(selection.settings).toMatchObject({
+    OTHER_SWIFT_FLAGS: ['$(inherited)', '"-D(SAFE)"'],
+    PRODUCT_NAME: '$(PRODUCT_$(CONFIGURATION))',
+    COMMENTED: [{ value: 'one', comment: ')' }, 'two'],
+  });
+  expect(readFileSync(file, 'utf8')).toBe(source);
+});
+
 test('production discovery selects a native application without Node or Metro and exposes each build configuration', async () => {
   writeNativeXcodeProject(root);
   setExecutor(

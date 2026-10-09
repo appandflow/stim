@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { DOMParser, type Element } from '@xmldom/xmldom';
-import pbxParser from 'xcode/lib/parser/pbxproj.js';
+import { parseNativeXcodeSyntax } from './native-xcode-syntax.ts';
 import type { XcodeProject } from '../engine/xcode.ts';
 import type { ProjectIntegration } from './project-registry.ts';
 import { declaresAppDependency, readPackageJson } from '../workspace/project-files.ts';
@@ -79,7 +79,7 @@ export function pbxReferences(value: unknown): string[] {
 }
 
 function readNativeXcodeModel(path: string): NativeXcodeModel {
-  const parsed = object(pbxParser.parse(readFileSync(join(path, 'project.pbxproj'), 'utf8')));
+  const parsed = object(parseNativeXcodeSyntax(readFileSync(join(path, 'project.pbxproj'), 'utf8')));
   const project = object(parsed?.project);
   const objects = new Map<string, PbxObject>();
   const collect = (value: unknown) => {

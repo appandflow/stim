@@ -32,7 +32,7 @@ const env = {
 process.env.STIM_HOME = home;
 const harness = createHarness({ env, cliPath: cli, label: 'native-xcode' });
 const cleanup = createCleanupTracker({ h: harness, platform: 'ios' });
-const summary = { temporary, source, app, home, steps: [], runs: [], cleanup: null, failure: null };
+const summary = { temporary, source, app, home, steps: [], runs: [], diagnostics: [], cleanup: null, failure: null };
 let commandNumber = 0;
 let activeAgentEnv;
 let ownedUdid;
@@ -253,7 +253,7 @@ try {
       if (existsSync(logs)) cpSync(logs, join(evidence, 'workspace-logs'), { recursive: true });
       await run('final-logs', process.execPath, [cli, 'logs', '--source', 'all', '--json']);
     } catch (error) {
-      cleanupFailures.push(error.message);
+      summary.diagnostics.push(error.message);
     }
     try {
       assert.equal((await stim('cleanup-stop', ['stop'])).ok, true);
