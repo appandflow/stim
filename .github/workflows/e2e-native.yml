@@ -538,6 +538,7 @@ jobs:
       STIM_BUILD_CACHE: D:\e\build-cache
       STIM_BUILD_CACHE_KEY: stim-cli-buildcache-v2-windows-android-bare
       STIM_E2E_AVD_DIAGNOSTICS: ${{ matrix.suite == 'loop' && 'D:\e\avd-delete-diagnostics' || '' }}
+      STIM_E2E_STOP_DIAGNOSTICS: ${{ matrix.suite == 'loop' && 'D:\e\stop-diagnostics' || '' }}
     steps:
       - uses: actions/checkout@v4
       - run: New-Item -ItemType Directory -Force -Path "D:\e", "D:\e\build-cache"
@@ -632,6 +633,7 @@ jobs:
             D:\e\stim-home\logs\debug\*
             D:\e\stim-home\archive\**\logs\*
             D:\e\avd-delete-diagnostics\*
+            D:\e\stop-diagnostics\*
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

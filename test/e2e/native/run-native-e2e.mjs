@@ -145,7 +145,12 @@ async function main() {
 }
 
 function stop(cwd) {
-  cli(['stop'], { cwd, env: { ...ENV, STIM_DEBUG: '1' } });
+  const options = { cwd, env: { ...ENV, STIM_DEBUG: '1' } };
+  if (process.platform === 'win32' && ENV.STIM_E2E_STOP_DIAGNOSTICS) {
+    sh(process.execPath, ['--require', join(HERE, 'adb-stop-preload.cjs'), CLI, 'stop'], options);
+  } else {
+    cli(['stop'], options);
+  }
 }
 
 function verifyDeviceSlots(cwd, original, thirdFlags) {
