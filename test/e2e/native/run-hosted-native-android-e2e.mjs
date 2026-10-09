@@ -374,7 +374,7 @@ try {
   }
   if (worktree) {
     try {
-      assert.equal((await stim('stop-tablet', ['stop', '--slot', 'tablet'])).ok, true);
+      assert.equal((await stim('stop-workspace', ['stop'])).ok, true);
       assert.deepEqual(Object.keys(hostedAndroidPlacements(readWorkspaceState(app))), []);
       for (const session of hostSessions()) {
         assert.equal(session.state, 'stopped');

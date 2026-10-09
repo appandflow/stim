@@ -1,5 +1,6 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
-import { createServer } from 'node:net';
+import { createServer, type AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -220,6 +221,52 @@ async function deliver(release = false, slot = 'default', mode?: HostedAppOffer[
     target.host.connection.close();
   }
 }
+
+test.skipIf(!loopbackAvailable)(
+  'explicit host selection accepts an inventory probe that takes longer than three seconds',
+  async () => {
+    open.mockRestore();
+    const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    tailnet.port = (server.address() as AddressInfo).port;
+    let replyTimer: ReturnType<typeof setTimeout> | undefined;
+    const requests: string[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (data) => {
+        const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
+        requests.push(method);
+        if (method === 'hello') {
+          socket.send(JSON.stringify({ id, result: { capabilities: ['device-host'] } }));
+        } else if (method === 'device-host.offer') {
+          replyTimer = setTimeout(() => {
+            socket.send(
+              JSON.stringify({
+                id,
+                result: {
+                  platform: 'ios',
+                  choice: device,
+                  capacity: { available: 1 },
+                  resources: { memoryPressure: 'normal' },
+                },
+              }),
+            );
+          }, 3500);
+        }
+      });
+    });
+    try {
+      const target = await prepareHostedIos('mini', {});
+      expect(target.choice).toEqual(device);
+      expect(target.session).toBeNull();
+      expect(requests).toEqual(['hello', 'device-host.offer']);
+    } finally {
+      clearTimeout(replyTimer);
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+  15_000,
+);
 
 test('offers before reservation, uploads digest-matching bytes, and development launch waits for client evidence', async () => {
   const run = await deliver();

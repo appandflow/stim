@@ -137,7 +137,7 @@ export async function prepareHostedNative(
       }
     }
     if (resumeOnly) return null;
-    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 3000);
+    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 45_000);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
       platform === 'ios'
