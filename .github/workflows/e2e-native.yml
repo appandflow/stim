@@ -73,6 +73,11 @@ on:
         description: Run only native Gradle provider validation
         type: boolean
         default: false
+      native_gradle_project:
+        description: Native Gradle acceptance project
+        type: choice
+        default: fixture
+        options: [fixture, architecture-samples]
       suite:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
@@ -610,6 +615,8 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      NATIVE_GRADLE_DRIVER: ${{ inputs.native_gradle_project == 'architecture-samples' && 'test/e2e/native/run-architecture-samples-e2e.mjs' || 'test/e2e/native/run-gradle-e2e.mjs' }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
@@ -625,8 +632,8 @@ jobs:
         run: |
           npm install --global --prefix "$RUNNER_TEMP/native-agent-device" agent-device@0.21.22
           echo "$RUNNER_TEMP/native-agent-device/bin" >> "$GITHUB_PATH"
-      - name: Prepare pinned native Kotlin and Compose fixture
-        run: node test/e2e/native/run-gradle-e2e.mjs prepare "$RUNNER_TEMP/native-gradle"
+      - name: Prepare pinned native Android project
+        run: node "$NATIVE_GRADLE_DRIVER" prepare "$RUNNER_TEMP/native-gradle"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -642,7 +649,7 @@ jobs:
           script: |
             adb -s emulator-5554 emu kill
             sleep 3
-            node test/e2e/native/run-gradle-e2e.mjs run "$RUNNER_TEMP/native-gradle"
+            node "$NATIVE_GRADLE_DRIVER" run "$RUNNER_TEMP/native-gradle"
       - name: Preserve native evidence and fixture sources
         if: always()
         uses: actions/upload-artifact@v4
@@ -658,6 +665,7 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/gradle.properties
             ${{ runner.temp }}/native-gradle/project/.stim.json
             ${{ runner.temp }}/native-gradle/project/mobile/build/outputs/apk/**/*.apk
+            ${{ runner.temp }}/native-gradle/project/app/build/outputs/apk/**/*.apk
             ${{ runner.temp }}/native-gradle/project/mobile/build.gradle.kts
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
