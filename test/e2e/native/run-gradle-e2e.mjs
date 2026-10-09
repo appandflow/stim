@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const [mode, supplied] = process.argv.slice(2);
 assert(['prepare', 'run'].includes(mode) && supplied, 'usage: run-gradle-e2e.mjs prepare|run <owned-output>');
@@ -18,12 +19,12 @@ function write(path, contents) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, contents);
 }
-function command(label, file, args, { cwd = fixture, allowFailure = false } = {}) {
+function command(label, file, args, { cwd = fixture, allowFailure = false, timeout = 20 * 60_000 } = {}) {
   const result = spawnSync(file, args, {
     cwd,
     env,
     encoding: 'utf8',
-    timeout: 20 * 60_000,
+    timeout,
     maxBuffer: 64 * 1024 * 1024,
   });
   const text = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
@@ -250,13 +251,21 @@ dependencies {
     failure = error;
   }
   try {
-    if (attemptedRun) stim('cleanup-stop', ['stop', '--json']);
+    if (attemptedRun) {
+      const stopped = stim('cleanup-stop', ['stop', '--json']);
+      assert.equal(JSON.parse(stopped.stdout.trim()).ok, true);
+    }
     if (serial) {
-      const devices = command('cleanup-devices', 'adb', ['devices']);
-      assert(
-        !devices.stdout.split('\n').some((line) => line.startsWith(`${serial}\t`)),
-        `owned emulator ${serial} still running after stop`,
-      );
+      const deadline = Date.now() + 30_000;
+      let present;
+      let attempt = 0;
+      do {
+        const devices = command(`cleanup-devices-${++attempt}`, 'adb', ['devices'], { timeout: 10_000 });
+        present = devices.stdout.split('\n').some((line) => line.startsWith(`${serial}\t`));
+        if (!present || Date.now() >= deadline) break;
+        await sleep(250);
+      } while (Date.now() < deadline);
+      assert(!present, `owned emulator ${serial} still listed by adb after stop`);
     }
   } catch (error) {
     if (failure) console.error(failure);
