@@ -739,6 +739,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
+    key: 'remote.easFallback',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description:
+      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+  },
+  {
     key: 'remote.build',
     type: {
       kind: 'string',

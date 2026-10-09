@@ -120,7 +120,7 @@ export type BuildCacheHit = 'local' | 'remote' | false;
 
 /** A platform's most recent `ios` or `android` run in one workspace. */
 export interface DevicePlacement {
-  decision: 'local' | 'hosted' | 'waited-locally';
+  decision: 'local' | 'hosted' | 'waited-locally' | 'eas';
   reason: string;
   machine?: string;
 }

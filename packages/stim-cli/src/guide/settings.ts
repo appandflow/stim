@@ -257,6 +257,20 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         remote.machines; "auto" places on an approved Mac when
                         this Mac is full or busy. Unset runs here.
                         See lifecycle hosted-android.
+  remote.easFallback    true lets "auto" (ios.remote, android.remote or
+                        --remote auto) run the simulator or emulator on a
+                        billed EAS Simulator when this Mac is at its
+                        concurrency.maxDevices cap (or has runs queued) and no
+                        remote.machines Mac takes the run, instead of waiting
+                        or refusing with STIM_AT_CAPACITY. Default false. A
+                        busy Mac with a free slot never uses it. Stim checks
+                        first that the run could use --remote eas (eas-cli
+                        with simulator commands, eas simulator:availability,
+                        agent-device, the default slot, a reachable Metro);
+                        otherwise it waits or refuses as before. Machine or
+                        project scope; a committed value opts in everyone who
+                        runs the app. Only the user enables it. See lifecycle
+                        hosted-ios.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
