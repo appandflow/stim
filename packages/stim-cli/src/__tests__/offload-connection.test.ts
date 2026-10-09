@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
-import { chooseBuildMachine, offloadBuild, type BuildOffer } from '../offload/client.ts';
+import { chooseBuildMachine, closeOffload, offloadBuild, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
@@ -513,6 +513,45 @@ describe('macOS artifact transfer', () => {
 });
 
 describe('native Xcode worker selection', () => {
+  test.each([
+    { native: true, scoped: true },
+    { native: true, scoped: false },
+    { native: false, scoped: true },
+  ])('requests the native report only for a native target and capable peer: %j', async ({ native, scoped }) => {
+    const machine = await fakeMachine(
+      'worker',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({
+          result: {
+            capabilities: ['build'],
+            features: ['native-xcode-build', ...(scoped ? ['native-xcode-toolchain'] : [])],
+          },
+        }),
+      },
+    );
+    machines.push(machine);
+    writeFileSync(join(repo, '.ruby-version'), 'ruby-3.3.4\n');
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: native ? { ...TARGET, native: 'xcode' } : TARGET,
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('worker')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    try {
+      const request = machine.requests.find((entry) => entry.method === 'build.offer');
+      expect(request?.params.native).toBe(native && scoped ? 'xcode' : undefined);
+      expect(request?.params.rubyVersion).toBe(native && scoped ? undefined : '3.3.4');
+      expect(machine.methods).toEqual(['hello', 'build.offer']);
+    } finally {
+      closeOffload(choice);
+    }
+  });
+
   test('an old worker is refused before offer or source upload', async () => {
     const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
     machines.push(machine);

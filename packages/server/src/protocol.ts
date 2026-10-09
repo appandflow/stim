@@ -1448,6 +1448,7 @@ export function protocolJsonSchema(): JsonSchema {
               repo: buildRepo,
               lockfile: sha256,
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
+              native: { const: 'xcode' },
             },
           }),
           request('build.sync', {
