@@ -189,7 +189,10 @@ async function waitForWorkerCapacity(label) {
     while (Date.now() < deadline) {
       const reply = await connection.request(
         'build.offer',
-        { repo: 'native-worker-capacity' },
+        {
+          repo: 'native-worker-capacity',
+          ...(connection.supports('native-xcode-toolchain') ? { native: 'xcode' } : {}),
+        },
         Math.min(20_000, Math.max(1, deadline - Date.now())),
       );
       assert('result' in reply, JSON.stringify(reply));

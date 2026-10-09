@@ -59,18 +59,18 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(root: string): IosToolchain {
-  return iosToolchainForRuby(readRubyVersion(root));
+export function iosToolchain(root: string, native?: 'xcode'): IosToolchain {
+  return iosToolchainForRuby(native ? null : readRubyVersion(root), native);
 }
 
-function iosToolchainForRuby(rubyVersion: string | null): IosToolchain {
+function iosToolchainForRuby(rubyVersion: string | null, native?: 'xcode'): IosToolchain {
   const xcode = quiet('xcodebuild', ['-version']);
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
     simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: cocoapodsVersion(rubyVersion),
+    cocoapods: native ? null : cocoapodsVersion(rubyVersion),
   };
 }
 
@@ -189,18 +189,18 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(rubyVersion: string | null = null): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode'): WorkerToolchain {
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
   return {
-    ...iosToolchainForRuby(rubyVersion),
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
-    bundler: quiet('bundle', ['--version'])?.trim() || null,
+    ...iosToolchainForRuby(rubyVersion, native),
+    macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
+    bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
-    jdk: localJdk(),
-    androidSdk: sdkPackages(),
+    jdk: native ? null : localJdk(),
+    androidSdk: native ? null : sdkPackages(),
   };
 }
 
