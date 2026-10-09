@@ -920,8 +920,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               tunnelMode: tunnelModeSetting(settings),
               publicUrl: publicUrlSetting(settings),
               localOnlyFlags: [
-                ...(systemImageFlag !== undefined ? ['--system-image'] : []),
-                ...(deviceProfileFlag !== undefined ? ['--device-profile'] : []),
+                ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
+                ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
               ],
             }),
         }

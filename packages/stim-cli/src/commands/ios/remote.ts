@@ -162,7 +162,7 @@ export async function selectIosPlacement(
                 tunnelMode: tunnelModeSetting(args.settings),
                 publicUrl: publicUrlSetting(args.settings),
                 deviceTypeFlag: opts.deviceType,
-                localOnlyFlags: opts.runtime !== undefined ? ['--runtime'] : [],
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
               }),
           }
         : {}),

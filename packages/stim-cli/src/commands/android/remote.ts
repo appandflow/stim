@@ -112,7 +112,6 @@ export async function selectAndroidPlacement({
   fromFlag: boolean;
   noWait: boolean;
   buildMachine?: string;
-  /** Present when remote.easFallback is on. */
   eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
     systemImage: string | null;

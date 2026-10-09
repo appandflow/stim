@@ -182,7 +182,7 @@ export async function planIos(
                 tunnelMode: tunnelModeSetting(settings),
                 publicUrl: publicUrlSetting(settings),
                 deviceTypeFlag: opts.deviceType,
-                localOnlyFlags: opts.runtime !== undefined ? ['--runtime'] : [],
+                localOnlyFlags: typeof opts.runtime === 'string' ? ['--runtime'] : [],
               }),
           }
         : {}),

@@ -32,6 +32,14 @@ test('availability output from eas-cli 24.8 decides whether EAS Simulator can be
   expect(parseSimulatorAvailability({ stdout: 'oops' })).toMatchObject({ code: 'eas-unavailable' });
 });
 
+const session = {
+  platform: 'ios' as const,
+  sessionId: 'drs_1',
+  startedAt: null,
+  webPreviewUrl: null,
+  deviceType: 'iPhone 17',
+};
+
 const usable = {
   root: '/project',
   platform: 'ios' as const,
@@ -46,6 +54,8 @@ const usable = {
   readVersion: () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2',
   onPath: (bin: string) => bin === 'agent-device' || bin === 'ngrok',
   readTunnel: () => null,
+  readSession: () => null,
+  metroPort: () => 8081,
 };
 
 test('a run that --remote eas would refuse falls through before asking EAS', async () => {
@@ -64,11 +74,15 @@ test('a run that --remote eas would refuse falls through before asking EAS', asy
     [{ onPath: (bin) => bin === 'agent-device' }, 'eas-metro-unreachable'],
     [{ tunnelMode: 'tailscale', onPath: () => true }, 'eas-metro-unreachable'],
     [{ tunnelMode: 'expo', isExpo: true }, 'eas-metro-unreachable'],
+    [{ tunnelMode: 'off' }, 'eas-metro-unreachable'],
+    [{ platform: 'android', readSession: () => session }, 'eas-session-busy'],
+    [{ deviceTypeFlag: 'iPad Pro', readSession: () => session }, 'eas-session-busy'],
   ];
   for (const [overrides, code] of cases) expect(await check(overrides)).toMatchObject({ usable: false, code });
   expect(availability).not.toHaveBeenCalled();
 
   expect(await check({})).toEqual({ usable: true });
+  expect(await check({ readSession: () => session, deviceTypeFlag: 'iPhone 17' })).toEqual({ usable: true });
   expect(await check({ release: true, onPath: (bin) => bin === 'agent-device' })).toEqual({ usable: true });
   expect(
     await check({

@@ -123,7 +123,6 @@ export async function automaticDevicePlacement(
     selectors: HostedDeviceSelectors;
     buildMachine?: string;
     noWait: boolean;
-    /** Present when remote.easFallback is on; asked only when this Mac is full and no Mac takes the run. */
     eas?: () => Promise<EasFallbackCheck>;
   },
   {

@@ -605,8 +605,11 @@ A Mac that is busy but has a free device slot never uses EAS. Before choosing
 it, Stim checks without starting a session that eas-cli has the simulator
 commands, `eas simulator:availability` accepts this project's account,
 agent-device is on PATH, the run uses the default slot and no `--runtime`,
-`--system-image` or `--device-profile` flag, and a Debug run's Metro can be
-reached (with an Expo tunnel, run `stim start --remote` first). When a check
+`--system-image` or `--device-profile` flag, no EAS Simulator session of this
+workspace runs another platform or model, and a Debug run's Metro can be
+reached (not `metro.tunnel` `off`; with an Expo tunnel, run
+`stim start --remote` first). A recorded EAS session is not sticky: once this
+Mac has room, auto runs locally and the session bills until `stim stop`. When a check
 fails, the run continues as below and the placement record says why.
 
 If none admits and EAS is off or unusable, the run stays local and may wait in
@@ -638,7 +641,8 @@ when finished.
 
 ```text
 This Mac is often at its simulator cap. Explain what remote.easFallback costs
-and ask me before enabling it. Once I agree, run stim ios --remote auto, report
+and give me the stim settings command to enable it; I will run it myself. Once
+it is on, run stim ios --remote auto, report
 the placement line from stim logs --source placement, and stop this workspace
 when finished so the EAS Simulator session ends.
 ```

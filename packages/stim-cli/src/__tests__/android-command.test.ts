@@ -1098,7 +1098,7 @@ describe('explicit remote backend behavior', () => {
     });
     const result = await h.run();
     expect(result.ok).toBe(true);
-    expect(checkEasFallback).toHaveBeenCalledOnce();
+    expect(checkEasFallback).toHaveBeenCalledWith(expect.objectContaining({ localOnlyFlags: [] }));
     expect(backends).toEqual(['eas']);
     expect(h.calls.ensureDevice).toEqual([]);
     expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });

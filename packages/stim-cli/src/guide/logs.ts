@@ -277,7 +277,7 @@ Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch
 (detail lists the toolchain parts: xcode, arch, jdk, ...), no-matching-device,
 declined, memory, no-capacity; with machine eas, why an EAS Simulator was not
 used: eas-named-slot, eas-local-flags, eas-no-agent-device, eas-no-cli,
-eas-cli-too-old, eas-metro-unreachable, eas-logged-out, eas-not-enabled,
+eas-cli-too-old, eas-session-busy, eas-metro-unreachable, eas-logged-out, eas-not-enabled,
 eas-unavailable. Choice codes for a build: placed, named,
 forced, this-mac-busy, this-mac-free, mode-off, local-selected, no-remote-mac,
 unsupported; fallback codes: no-remote-mac-took-it, offload-failed, fallback.

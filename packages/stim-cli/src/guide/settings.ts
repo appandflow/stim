@@ -268,7 +268,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         with simulator commands, eas simulator:availability,
                         agent-device, the default slot, a reachable Metro);
                         otherwise it waits or refuses as before. Machine or
-                        project scope. See lifecycle hosted-ios.
+                        project scope; a committed value opts in everyone who
+                        runs the app. Only the user enables it. See lifecycle
+                        hosted-ios.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)

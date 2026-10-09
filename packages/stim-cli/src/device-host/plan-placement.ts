@@ -34,7 +34,6 @@ export async function planHostedDevice({
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this Mac's own device would; null when this Mac's key is unknown. */
   sameKey: (choice: Choice) => boolean | null;
-  /** Present when remote.easFallback is on. */
   eas?: () => Promise<EasFallbackCheck>;
   deps?: { automatic?: typeof automaticDevicePlacement; probe?: typeof probeHost; machines?: typeof hostingMachines };
 }): Promise<PlannedDevice> {

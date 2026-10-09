@@ -1,6 +1,7 @@
 import type { EasFallbackCheck } from '../device-host/placement.ts';
 import { getExecutor } from '../exec.ts';
-import { readMetroTunnel } from '../supervisor/state.ts';
+import { readMetroTunnel, readRemoteSession } from '../supervisor/state.ts';
+import { getProject } from '../workspace/config.ts';
 import { isEasAuthFailureText, resolveEasCliBin } from './remote-cache.ts';
 import { readInstalledEasCliVersion } from './device-remote.ts';
 import { easCliSupport, MIN_EAS_CLI_DEVICE_VERSION, MIN_EAS_CLI_SIMULATOR_VERSION } from './eas-simulator.ts';
@@ -59,6 +60,8 @@ export async function checkEasFallback({
   readVersion = readInstalledEasCliVersion,
   onPath = (bin: string) => getExecutor().findExecutable(bin) !== null,
   readTunnel = readMetroTunnel,
+  readSession = readRemoteSession,
+  metroPort = () => getProject(root)?.metroPort ?? null,
   availability = async (bin: string) => {
     try {
       return {
@@ -91,12 +94,25 @@ export async function checkEasFallback({
   readVersion?: typeof readInstalledEasCliVersion;
   onPath?: (bin: string) => boolean;
   readTunnel?: typeof readMetroTunnel;
+  readSession?: typeof readRemoteSession;
+  metroPort?: () => number | null;
   availability?: (bin: string) => Promise<{ stdout: string } | { failure: string; timedOut?: boolean }>;
 }): Promise<EasFallbackCheck> {
   if (slot !== 'default')
     return unusable('eas-named-slot', `an EAS Simulator takes only the default slot, not ${slot}`);
   if (localOnlyFlags.length)
     return unusable('eas-local-flags', `${localOnlyFlags.join(' and ')} applies only to a ${platform} device on a Mac`);
+  const session = readSession(root);
+  if (session && session.platform !== platform)
+    return unusable(
+      'eas-session-busy',
+      `this workspace's EAS Simulator session ${session.sessionId} runs ${session.platform ?? 'another platform'}`,
+    );
+  if (session && deviceTypeFlag?.trim() && session.deviceType && session.deviceType !== deviceTypeFlag.trim())
+    return unusable(
+      'eas-session-busy',
+      `this workspace's EAS Simulator session ${session.sessionId} runs ${session.deviceType}, not ${deviceTypeFlag.trim()}`,
+    );
   if (!onPath('agent-device')) return unusable('eas-no-agent-device', 'agent-device is not on PATH');
   const bin = resolveBin(root);
   if (!bin) return unusable('eas-no-cli', 'eas-cli is not installed for this project or on PATH');
@@ -108,9 +124,11 @@ export async function checkEasFallback({
     return unusable('eas-cli-too-old', `eas-cli ${version ?? '(unknown version)'} is older than ${minimum}`);
   if (!release) {
     const mode = tunnelMode ?? 'auto';
+    if (mode === 'off')
+      return unusable('eas-metro-unreachable', 'metro.tunnel is off, so an EAS Simulator cannot reach Metro');
     const plan = planMetroReach({
       mode,
-      metroPort: 0,
+      metroPort: metroPort() ?? 'unknown',
       publicUrl: env[PUBLIC_METRO_ENV]?.trim() || publicUrl,
       isExpo,
       available: detectProviders(onPath, mode),

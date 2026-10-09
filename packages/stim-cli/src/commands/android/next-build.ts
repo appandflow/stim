@@ -247,7 +247,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
                 isExpo,
                 tunnelMode: tunnelModeSetting(settings),
                 publicUrl: publicUrlSetting(settings),
-                localOnlyFlags: opts.systemImage !== undefined ? ['--system-image'] : [],
+                localOnlyFlags: typeof opts.systemImage === 'string' ? ['--system-image'] : [],
               }),
           }
         : {}),
