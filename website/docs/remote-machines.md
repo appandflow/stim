@@ -252,7 +252,8 @@ request and `stim-server service uninstall`.
 The wizard has five steps. It refreshes in the background every few seconds,
 so there is no Check again button:
 
-1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac. If
+1. **Pick a Mac.** The wizard first checks that Tailscale runs on this Mac and
+   shows Checking Tailscale until it has an answer. If
    the Tailscale app is off, turn it on from its menu bar item. With only the
    CLI installed, run `tailscale up`. Without Tailscale, the step links to the
    download. Then select an online macOS peer from your tailnet. When no other
@@ -263,16 +264,16 @@ so there is no Check again button:
    `stim-server setup` on the worker Mac gives the same three answers when it
    cannot read Tailscale: install it from `https://tailscale.com/download/mac`,
    turn the app on from its menu bar icon, or run `tailscale up`.
-2. **What it does.** Choose **Builds**, **Hosted simulators**, or both. The
+2. **What it does.** The step is titled with the Mac you picked. Choose **Builds**, **Hosted simulators**, or both. The
    preview shows what setup will do. With neither chosen, **Next** stays
    disabled.
 3. **Set it up.** Copy the generated command and run it in Terminal while
-   signed in at the worker Mac. It needs Node 22.12 or later there. Answer y/N
-   for each new capability grant there; No is the default. Desktop mirrors
+   signed in at the worker Mac. It needs Node 22.12 or later there. Answer Y/n
+   for each new capability grant there; Yes is the default, so Enter lets the
+   client Mac build here, or run its app code in hosted simulators here. Desktop mirrors
    setup progress live and checks the selected approvals. Already approved
    capabilities are omitted from the command. When setup finishes, the step
-   shows the approved capabilities, any skipped permission with its fix, and
-   the setup log behind **Show setup log**. There is no SSH option.
+   shows the approved capabilities, and any skipped permission with its fix. There is no SSH option.
 4. **Tools.** Compare the worker's tools with this Mac, including the Android
    tools when **Builds** is chosen. Only a problem that stops the chosen
    capability blocks **Next**: a Stim build mismatch or no Xcode for Builds, and
@@ -296,13 +297,13 @@ so there is no Check again button:
      `auto` (run there when this Mac is full) and **Always** names the Mac's
      `remote.machines` entry. A current value the
      wizard does not offer, such as `eas`, is kept unless you choose another.
-   - **Run a test build with a sample app** builds a sample through the worker
+   - **Run a Test Build with a Sample App** builds a sample through the worker
      and then locally.
 
 Desktop adds entries when it finds the setup journal and sends approval
 requests with that command's ticket. When adding the first remote Mac
 with the default mode, it temporarily sets `remote.buildMode` to `off` during
-setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New command**.
+setup. Closing the wizard before Done puts the previous value back. An expired ticket needs **New Command**.
 
 Agents never run `stim-server setup`, edit `remote.*`, `server.*` or `hosting.*` for you,
 or approve requests; use Desktop or perform the setup yourself.
@@ -341,7 +342,7 @@ npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
 
 Run the actual copied command on the worker. Desktop tickets last 30 minutes;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
-to npx. It does not skip setup's per-grant y/N questions. Setup's own `--yes`
+to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
 without a terminal. A person on the worker makes that decision.
 
@@ -451,7 +452,7 @@ Desktop creates a pinned Expo blank SDK 58 sample under
 `~/Library/Application Support/Stim Desktop/Onboarding/sample-sdk58`.
 Preparation downloads the template and installs its dependencies, so it needs
 network access. Desktop uses the sample for setup requests when no workspace
-is listed. It is optional: start it with **Run a test build with a sample app**
+is listed. It is optional: start it with **Run a Test Build with a Sample App**
 on the wizard's last step. It tests iOS builds.
 
 The first run uses `stim ios --remote-build <name> --no-build-cache --json`.
@@ -512,6 +513,19 @@ a process already running as the worker user can forge that header.
 - For setup failures, follow the named step's fix and exit code. Update a
   reused server older than 1.16.0, generate a new command after expiry, and
   check Tailscale and the private route when the live mirror cannot connect.
+
+### Find out why a remote Mac was slow or refused
+
+Every placement decision is a record: `stim logs --source placement` lists the
+Macs checked with a reason code each, and a failed request to a Mac (for
+example one that did not answer hello in time) is a `remote_connect_failed` or
+`remote_request_failed` record in `stim logs --source build`. On the Mac that
+serves the request, stim-server writes request errors to its service log
+(`~/Library/Logs/Stim/<label>.log`) with the client's device id and the run id
+of the `stim` command that sent it. To see every request with its duration and
+slow steps, run `stim settings set debug.logs true --scope machine` on that Mac,
+or set `STIM_DEBUG=1` for its stim-server. Nothing is sent anywhere, and no
+token or ticket is logged.
 
 ## Ask your agent
 
@@ -576,11 +590,35 @@ then `remote.build`. A named preference ranks first, followed by lowest load,
 most free memory and configuration order. Automatic
 build offload resolves later, using the device's offered architecture.
 
-If none admits, the run stays local and may wait in the FIFO device slot queue.
+If none admits and this Mac is at its `concurrency.maxDevices` cap (or runs are
+queued ahead), the opt-in `remote.easFallback` setting runs the device on an EAS
+Simulator, exactly as `--remote eas` would. EAS Simulator is billed, so the
+setting defaults to `false`; set it per machine or per project:
+
+```sh
+stim settings set remote.easFallback true --scope machine
+```
+
+The build still runs here and Stim never starts an EAS cloud build. `stim stop`
+ends the session, and `stim status` reports it like any `--remote eas` session.
+A Mac that is busy but has a free device slot never uses EAS. Before choosing
+it, Stim checks without starting a session that eas-cli has the simulator
+commands, `eas simulator:availability` accepts this project's account,
+agent-device is on PATH, the run uses the default slot and no `--runtime`,
+`--system-image` or `--device-profile` flag, no EAS Simulator session of this
+workspace runs another platform or model, and a Debug run's Metro can be
+reached (not `metro.tunnel` `off`; with an Expo tunnel, run
+`stim start --remote` first). A recorded EAS session is not sticky: once this
+Mac has room, auto runs locally and the session bills until `stim stop`. When a check
+fails, the run continues as below and the placement record says why.
+
+If none admits and EAS is off or unusable, the run stays local and may wait in
+the FIFO device slot queue.
 `--no-wait` or `--wait 0` refuses with `STIM_AT_CAPACITY`; an admitted host can
 still take those runs. The `placement:` line reports the decision and skipped
 hosts; JSON mode sends it to stderr. Run facts and each status slot include
-`devicePlacement: { decision, reason, machine? }`. Hosted status also preserves
+`devicePlacement: { decision, reason, machine? }`, where `decision` is `local`,
+`hosted`, `waited-locally` or `eas`. Hosted status also preserves
 `host.selected: "auto"` and `host.reason`.
 
 A reservation can be refused after a successful offer because another run
@@ -599,4 +637,12 @@ Run this workspace's iOS app with stim ios --remote auto using the approved
 remote.machines. Report the placement reason and verify the launched app on
 the reported device. Keep using any recorded session, then stop this workspace
 when finished.
+```
+
+```text
+This Mac is often at its simulator cap. Explain what remote.easFallback costs
+and give me the stim settings command to enable it; I will run it myself. Once
+it is on, run stim ios --remote auto, report
+the placement line from stim logs --source placement, and stop this workspace
+when finished so the EAS Simulator session ends.
 ```

@@ -86,7 +86,7 @@ it('switches among the native and macOS builds and opens the selected macOS app 
   expect(screen.getByRole('tab', { name: 'macOS' }).props.accessibilityState.selected).toBe(true);
   expect(screen.getByText('desktop error')).toBeTruthy();
   expect(screen.queryByText('mobile error')).toBeNull();
-  await fireEvent.press(screen.getByText('Build logs'));
+  await fireEvent.press(screen.getByText('Build Logs'));
   expect(mockPush).toHaveBeenLastCalledWith({
     pathname: '/mac/[id]/logs',
     params: { id: 'mac', path: '/w/apps/desktop', source: 'build' },
@@ -113,6 +113,6 @@ it('renders all five real archived runs with durations, failure codes and build 
   expect(screen.getAllByText('Failed (STIM_BUILD_FAILED)')).toHaveLength(2);
   expect(screen.getAllByText('Built on janics-mac-mini')).toHaveLength(2);
   expect(screen.getAllByText(/on this Mac/)).toHaveLength(3);
-  expect(screen.queryByText('Next build')).toBeNull();
-  expect(screen.queryByText('Check again')).toBeNull();
+  expect(screen.queryByText('Next Build')).toBeNull();
+  expect(screen.queryByText('Check Again')).toBeNull();
 });

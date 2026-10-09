@@ -259,7 +259,10 @@ function devicePlacement(value: unknown): DevicePlacement | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
   if (
-    (record.decision !== 'local' && record.decision !== 'hosted' && record.decision !== 'waited-locally') ||
+    (record.decision !== 'local' &&
+      record.decision !== 'hosted' &&
+      record.decision !== 'waited-locally' &&
+      record.decision !== 'eas') ||
     typeof record.reason !== 'string'
   )
     return null;
@@ -354,6 +357,9 @@ function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntr
     configuration: typeof record.configuration === 'string' ? record.configuration : null,
     cacheKey: typeof record.cacheKey === 'string' ? record.cacheKey : null,
     phases: historyPhases(record.phases),
+    ...(typeof record.compileSteps === 'number' && Number.isInteger(record.compileSteps) && record.compileSteps >= 0
+      ? { compileSteps: record.compileSteps }
+      : {}),
   };
 }
 
@@ -389,11 +395,14 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
   return candidates.length ? Math.max(...candidates) : NaN;
 }
 
+export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
+
 export function workspaceLastUsed(root: string): number {
   const logs = workspaceLogsDir(root);
   let mtimes: number[] = [];
   try {
     mtimes = readdirSync(logs).flatMap((name) => {
+      if (name.startsWith(MAINTENANCE_LOG_NAME)) return [];
       try {
         return [statSync(join(logs, name)).mtimeMs];
       } catch {

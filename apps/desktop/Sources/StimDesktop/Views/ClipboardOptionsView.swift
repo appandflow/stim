@@ -12,11 +12,11 @@ struct ClipboardOptionsView: View {
       Toggle("Sync clipboard", isOn: $syncs)
         .help("Copy text between this Mac and the device while this window is focused")
       HStack(spacing: Space.sm) {
-        Button("Paste Mac clipboard", action: paste)
+        Button("Paste Mac Clipboard", action: paste)
           .buttonStyle(.stim(.secondary))
           .help("Paste the Mac clipboard's text into the focused device field")
         CopyButton(
-          variant: .secondary, title: "Copy device clipboard", help: "Replace the Mac clipboard with the device clipboard's text",
+          variant: .secondary, title: "Copy Device Clipboard", help: "Replace the Mac clipboard with the device clipboard's text",
           copy: copy)
       }
       .controlSize(.small)

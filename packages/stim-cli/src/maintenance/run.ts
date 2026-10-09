@@ -8,6 +8,8 @@ import {
   maintenanceRunClaims,
   maintenanceStateFile,
   readMaintenanceState,
+  type MaintenanceAction,
+  type MaintenanceCheck,
   type MaintenanceState,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
@@ -19,7 +21,8 @@ import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
 import { capChildLog } from './attempt.ts';
 import { measurePressure, measureSizes, sizeScanDeferred } from './measure.ts';
-import { plannedMaintenance } from './preview.ts';
+import { diskRecovered, executeAction, type ActionOutcome } from './act.ts';
+import { plannedMaintenance, triggeringRoot, type PlannedMaintenance } from './preview.ts';
 import { maintenanceLogger } from './log.ts';
 
 function writeState(state: MaintenanceState): void {
@@ -36,6 +39,50 @@ function writeState(state: MaintenanceState): void {
       } catch {}
     }
   });
+}
+
+const EXECUTION_ORDER: Partial<Record<MaintenanceAction['kind'], number>> = {
+  'would-unregister-cache': 0,
+  'would-remove-orphan': 0,
+  'would-clear-outputs': 1,
+  'would-trim-cache': 2,
+  'would-empty-cache': 3,
+  'would-remove-worktree': 4,
+};
+
+function shrinkSizes(state: MaintenanceState, action: MaintenanceAction, outcome: ActionOutcome): void {
+  state.sizes = state.sizes.flatMap((size) => {
+    if (
+      action.kind === 'would-clear-outputs' &&
+      size.category === 'workspace-outputs' &&
+      size.workspace === action.workspace
+    )
+      return [];
+    if (action.kind === 'would-trim-cache' && action.dir && size.dir === action.dir)
+      return [{ ...size, bytes: Math.max(0, size.bytes - outcome.bytes) }];
+    if (action.kind === 'would-empty-cache' && size.dir === action.target) return [];
+    return [size];
+  });
+}
+
+const executedKind = (action: MaintenanceAction) => action.kind.replace(/^would-/, '');
+
+function describeDone(action: MaintenanceAction): string {
+  const name = basename(action.workspace ?? action.target);
+  switch (action.kind) {
+    case 'would-clear-outputs':
+      return `Cleared build outputs of ${name}`;
+    case 'would-trim-cache':
+      return `Trimmed ${action.target}`;
+    case 'would-empty-cache':
+      return `Emptied ${action.target}`;
+    case 'would-remove-worktree':
+      return `Removed the worktree ${action.target}`;
+    case 'would-remove-orphan':
+      return `Removed the orphaned workspace directory ${action.target}`;
+    default:
+      return `Unregistered the stale cache ${action.target}`;
+  }
 }
 
 const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([action.kind, action.target]);
@@ -94,10 +141,11 @@ export async function runMaintenance(trigger: string): Promise<void> {
     const failures: string[] = [];
     let measuredSizes = false;
     const budget = resolveBudget().budget;
+    const ran = new Set<MaintenanceCheck>();
     for (const check of checks) {
-      if (check === 'size' && sizeScanDeferred(settings)) {
-        record('maintenance_skip', 'debug', 'Size check deferred: host load exceeds maintenance.maxLoadPerCore', {
-          target: 'size',
+      if (check !== 'pressure' && sizeScanDeferred(settings)) {
+        record('maintenance_skip', 'debug', `${check} check deferred: host load exceeds maintenance.maxLoadPerCore`, {
+          target: check,
           reason: 'host load exceeds maintenance.maxLoadPerCore',
         });
         state.deferredAt = { ...state.deferredAt, [check]: Date.now() };
@@ -105,9 +153,11 @@ export async function runMaintenance(trigger: string): Promise<void> {
         continue;
       }
       state.lastAt[check] = Date.now();
+      ran.add(check);
       delete state.deferredAt?.[check];
       writeState(state);
       try {
+        if (check === 'worktree' || check === 'sweep') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
           const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
@@ -160,9 +210,12 @@ export async function runMaintenance(trigger: string): Promise<void> {
         record('maintenance_failure', 'error', `${check} check failed: ${message}`, { target: check, error: message });
       }
     }
-    let result;
+    let result: PlannedMaintenance;
     try {
-      result = await plannedMaintenance(state.pressure, state.sizes, settings);
+      result = await plannedMaintenance(state.pressure, state.sizes, settings, {
+        sweep: ran.has('sweep'),
+        worktrees: ran.has('worktree'),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       failures.push(message);
@@ -171,53 +224,155 @@ export async function runMaintenance(trigger: string): Promise<void> {
         error: message,
       });
       result = { actions: [], blocked: [], skips: [] };
+      for (const check of ['sweep', 'worktree'] as const) if (ran.has(check)) delete state.lastAt[check];
     }
+    async function executePlan(
+      actions: readonly MaintenanceAction[],
+    ): Promise<{ action: MaintenanceAction; outcome: ActionOutcome }[]> {
+      const context = {
+        settings,
+        budget,
+        protectedRoot: triggeringRoot(),
+        worktreeSweep: result.worktreeSweep,
+      };
+      const results: { action: MaintenanceAction; outcome: ActionOutcome }[] = [];
+      const ordered = actions.toSorted((a, b) => (EXECUTION_ORDER[a.kind] ?? 9) - (EXECUTION_ORDER[b.kind] ?? 9));
+      for (const action of ordered) {
+        const began = Date.now();
+        let outcome: ActionOutcome;
+        try {
+          outcome =
+            action.check === 'disk' && diskRecovered(budget)
+              ? { status: 'kept', bytes: 0, detail: 'free disk recovered before this action' }
+              : await executeAction(action, context);
+        } catch (error) {
+          outcome = { status: 'failed', bytes: 0, detail: error instanceof Error ? error.message : String(error) };
+        }
+        results.push({ action, outcome });
+        const fields = {
+          action: {
+            kind: executedKind(action),
+            target: action.target,
+            bytes: outcome.bytes,
+            durationMs: Date.now() - began,
+          },
+          ...(action.workspace && action.kind !== 'would-remove-worktree' ? { workspace: action.workspace } : {}),
+        };
+        if (outcome.status === 'done')
+          record(
+            'maintenance_action',
+            action.kind === 'would-remove-worktree' ? 'warn' : 'info',
+            `${describeDone(action)} (${formatBytes(outcome.bytes)}): ${action.reason}`,
+            fields,
+          );
+        else if (outcome.status === 'failed') {
+          failures.push(`${describeDone(action)} failed: ${outcome.detail}`);
+          record('maintenance_failure', 'error', `Could not process ${action.target}: ${outcome.detail}`, {
+            target: action.target,
+            error: outcome.detail,
+            ...(fields.workspace ? { workspace: fields.workspace } : {}),
+          });
+        } else if (!loggedSkips.has(action.target)) {
+          loggedSkips.add(action.target);
+          record('maintenance_skip', 'info', `Kept ${action.target}: ${outcome.detail}`, {
+            target: action.target,
+            reason: outcome.detail,
+            ...(fields.workspace ? { workspace: fields.workspace } : {}),
+          });
+        }
+      }
+      return results;
+    }
+    const retained = state.plan.filter(
+      (action) => (action.check === 'sweep' || action.check === 'worktree') && !ran.has(action.check),
+    );
     const previousActions = new Set(state.plan.map(actionKey));
-    const nextActions = new Set(result.actions.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
     const nextSkips = new Set(result.skips.map((skip) => skip.target));
-    const blocked = [...result.blocked, ...failures];
-    const changed =
-      !state.lastPass ||
-      !sameSet(previousActions, nextActions) ||
-      !sameSet(previousSkips, nextSkips) ||
-      !sameSet(new Set(state.lastPass.blocked.map(stableText)), new Set(blocked.map(stableText)));
-    for (const action of result.actions) {
-      if (previousActions.has(actionKey(action))) continue;
-      previousActions.add(actionKey(action));
-      const label =
-        action.kind === 'would-clear-outputs'
-          ? `clear build outputs of ${basename(action.workspace ?? action.target)}`
-          : `${action.kind.slice(6).replaceAll('-', ' ')} ${action.target}`;
-      record('maintenance_action', 'info', `Would ${label} (${formatBytes(action.bytes)}): ${action.reason}`, {
-        action: { ...action, durationMs: 0 },
-        ...(action.workspace ? { workspace: action.workspace } : {}),
-      });
-    }
+    const loggedSkips = new Set(previousSkips);
     for (const skip of result.skips) {
-      if (previousSkips.has(skip.target)) continue;
-      previousSkips.add(skip.target);
+      if (loggedSkips.has(skip.target)) continue;
+      loggedSkips.add(skip.target);
       record('maintenance_skip', 'info', `Kept ${skip.target}: ${skip.reason}`, skip);
     }
-    state.plan = result.actions;
-    state.skipKeys = [...nextSkips];
-    state.lastPass = {
-      startedAt,
-      durationMs: Date.now() - startedAt,
-      trigger,
-      mode: 'report',
-      freedBytes: 0,
-      actions: result.actions.length,
-      stopped: 0,
-      blocked,
-    };
-    if (measuredSizes || changed)
-      record(
-        'maintenance_pass',
-        state.lastPass.blocked.length ? 'warn' : 'info',
-        `Report-only pass: ${result.actions.length} planned actions${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
-        { ...state.lastPass },
+    if (settings.mode === 'on') {
+      const outcomes = await executePlan(result.actions);
+      const blockedNow = [
+        ...result.blocked,
+        ...failures,
+        ...outcomes.flatMap(({ outcome }) => (outcome.shortfall ? [outcome.shortfall] : [])),
+      ];
+      const done = outcomes.filter(({ outcome }) => outcome.status === 'done');
+      const freedBytes = done.reduce((sum, { outcome }) => sum + outcome.bytes, 0);
+      for (const { action, outcome } of done) shrinkSizes(state, action, outcome);
+      state.plan = outcomes.filter(({ outcome }) => outcome.status !== 'done').map(({ action }) => action);
+      state.skipKeys = [
+        ...nextSkips,
+        ...outcomes.filter(({ outcome }) => outcome.status === 'kept').map(({ action }) => action.target),
+      ];
+      const previousBlocked = state.lastPass?.blocked;
+      state.lastPass = {
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        trigger,
+        mode: 'on',
+        freedBytes,
+        actions: done.length,
+        stopped: 0,
+        blocked: blockedNow,
+      };
+      const blockedChanged = !sameSet(
+        new Set((previousBlocked ?? []).map(stableText)),
+        new Set(state.lastPass.blocked.map(stableText)),
       );
+      if (done.length || measuredSizes || blockedChanged)
+        record(
+          'maintenance_pass',
+          state.lastPass.blocked.length ? 'warn' : 'info',
+          `Pass: ${done.length} actions, ${formatBytes(freedBytes)} freed${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
+          { ...state.lastPass },
+        );
+    } else {
+      const blocked = [...result.blocked, ...failures];
+      const planned = [...result.actions, ...retained];
+      const nextActions = new Set(planned.map(actionKey));
+      const changed =
+        !state.lastPass ||
+        !sameSet(previousActions, nextActions) ||
+        !sameSet(previousSkips, nextSkips) ||
+        !sameSet(new Set(state.lastPass.blocked.map(stableText)), new Set(blocked.map(stableText)));
+      for (const action of result.actions) {
+        if (previousActions.has(actionKey(action))) continue;
+        previousActions.add(actionKey(action));
+        const label =
+          action.kind === 'would-clear-outputs'
+            ? `clear build outputs of ${basename(action.workspace ?? action.target)}`
+            : `${action.kind.slice(6).replaceAll('-', ' ')} ${action.target}`;
+        record('maintenance_action', 'info', `Would ${label} (${formatBytes(action.bytes)}): ${action.reason}`, {
+          action: { ...action, durationMs: 0 },
+          ...(action.workspace ? { workspace: action.workspace } : {}),
+        });
+      }
+      state.plan = planned;
+      state.skipKeys = [...nextSkips];
+      state.lastPass = {
+        startedAt,
+        durationMs: Date.now() - startedAt,
+        trigger,
+        mode: 'report',
+        freedBytes: 0,
+        actions: planned.length,
+        stopped: 0,
+        blocked,
+      };
+      if (measuredSizes || changed)
+        record(
+          'maintenance_pass',
+          state.lastPass.blocked.length ? 'warn' : 'info',
+          `Report-only pass: ${planned.length} planned actions${state.lastPass.blocked.length ? `; ${state.lastPass.blocked.join('; ')}` : ''}`,
+          { ...state.lastPass },
+        );
+    }
     writeState(state);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

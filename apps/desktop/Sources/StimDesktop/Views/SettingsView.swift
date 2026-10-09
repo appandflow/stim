@@ -159,12 +159,12 @@ struct ScopeSettingsView: View {
 
   @ViewBuilder private var content: some View {
     if let error = model.schemaError ?? model.loadError {
-      EmptyState(title: "Settings unavailable", message: error)
+      EmptyState(title: "Settings Unavailable", message: error)
     } else if model.payload == nil || model.fields.isEmpty {
       ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
     } else if scope != .machine && model.payload?.file(for: scope) == nil {
       EmptyState(
-        title: "No workspace selected",
+        title: "No Workspace Selected",
         message: "Pick a workspace above, or choose a project directory, to edit its \(scope.rawValue) settings.")
     } else {
       ScrollView {
@@ -175,6 +175,7 @@ struct ScopeSettingsView: View {
           }
           unknown
         }
+        .finiteAccessibilityFrame()
         .padding(.horizontal, Space.xl)
       }
     }

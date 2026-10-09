@@ -39,6 +39,9 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var summary: String {
     let took = durationMs.map { " in \(Format.elapsed(ms: $0))" } ?? ""
     guard status == "ok" else { return "Failed (\(errorCode ?? "error"))\(took)" }
+    if platform == "macos" {
+      return offloadedTo.map { "Built on \(machineName($0))\(took)" } ?? "Built\(took)"
+    }
     switch cacheHit {
     case .local: return "Local cache\(took)"
     case .remote: return "Remote cache\(took)"
@@ -118,7 +121,13 @@ public struct LastBuilds: Decodable, Hashable, Sendable {
   public var ios: LastBuild?
   public var android: LastBuild?
 
-  public func build(for platform: String) -> LastBuild? { platform == "ios" ? ios : android }
+  public func build(for platform: String) -> LastBuild? {
+    switch platform {
+    case "ios": return ios
+    case "android": return android
+    default: return nil
+    }
+  }
 }
 
 /// One run in a workspace's recent build history, from `builds.<platform>` in `stim status --json`: the fields
@@ -131,8 +140,10 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
   public var configuration: String?
   /// Milliseconds spent in each build phase the run entered, keyed by phase name.
   public var phases: [String: Double]
+  /// A `stim macos` run's SwiftPM step total; absent for other runs and older stim.
+  public var compileSteps: Int?
 
-  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases }
+  enum CodingKeys: String, CodingKey { case result, slot, configuration, phases, compileSteps }
 
   public init(from decoder: Decoder) throws {
     build = try LastBuild(from: decoder)
@@ -141,6 +152,7 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     slot = try container.decode(String.self, forKey: .slot)
     configuration = try container.decodeIfPresent(String.self, forKey: .configuration)
     phases = try container.decode([String: Double].self, forKey: .phases)
+    compileSteps = try container.decodeIfPresent(Int.self, forKey: .compileSteps)
   }
 
   /// How the run ended in a word or two, for a list row; `detail` carries the error code and miss reason.
@@ -149,6 +161,8 @@ public struct BuildHistoryEntry: Decodable, Hashable, Sendable {
     case ("interrupted", _): return "Interrupted"
     case ("cancelled", _): return "Cancelled"
     case ("failed", _): return "Failed"
+    case (_, .none) where build.platform == "macos":
+      return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Succeeded"
     case (_, .local): return "Local cache"
     case (_, .remote): return "Remote cache"
     case (_, .none): return build.offloadedTo.map { "Built on \(machineName($0))" } ?? "Compiled"
@@ -190,10 +204,10 @@ public struct BuildHistory: Decodable, Hashable, Sendable {
   }
 }
 
-/// The payload of `stim ios --plan --json` or `stim android --plan --json`.
+/// The payload of `stim ios|android|macos --plan --json`.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String
-  public var fingerprint: String
+  public var fingerprint: String?
   public var cacheHit: CacheSource
   public var provider: String?
   public var cacheSkipped: Bool
@@ -201,12 +215,17 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
   public var outcome: String?
   public var expectedMs: Double?
   public var basis: Int
+  public var product: String?
+  public var buildMachine: String?
   public var missReason: BuildMissReason?
   public var refusal: CommandRefusal?
+  /// Set with `ios.remote` or `android.remote` on `auto` or a Mac: where the plan assumes the device runs.
+  public var placement: String?
 
   /// What the next build would do, as the Builds section words it after "Next build: ".
   public var nextBuild: String {
     if let refusal { return "would refuse (\(refusal.code))" }
+    if platform == "macos" { return "SwiftPM Debug build" }
     let took = expectedMs.map { ", ~\(Format.elapsed(ms: $0))" } ?? ""
     switch cacheHit {
     case .local: return "cache hit (local)\(took)"
@@ -220,6 +239,10 @@ public struct BuildPlan: Decodable, Hashable, Sendable {
 
   /// The remote provider and the runs behind the estimate.
   public var detail: String? {
+    if platform == "macos", refusal == nil {
+      return
+        "Build selection: \(buildMachine ?? "auto"). Worker availability is not checked. SwiftPM determines incremental work when the build runs; macOS has no artifact cache or timing prediction."
+    }
     guard refusal == nil, let outcome else { return nil }
     let runs =
       expectedMs == nil

@@ -25,6 +25,7 @@ struct DeviceViewer: View {
   @State private var backingScale: CGFloat = 1
   @State private var displayPointsPerInch: CGFloat?
   @FocusState private var actionsFocused: Bool
+  @StateObject private var windowChoice = MacosWindowChoice()
   @AppStorage(AppPreferences.Key.viewerShowsActions) private var showsActions = true
   @EnvironmentObject private var actions: ActionCenter
   @ObservedObject private var server = ServerSession.shared
@@ -67,7 +68,7 @@ struct DeviceViewer: View {
           }
           .padding(.horizontal, Space.xl)
           .padding(.vertical, Space.md)
-          EmptyState(title: "Device gone", message: "stim status no longer reports this device.")
+          EmptyState(title: "Device Gone", message: "stim status no longer reports this device.")
             .frame(maxHeight: .infinity)
         }
       }
@@ -128,7 +129,7 @@ struct DeviceViewer: View {
         device: device, env: env, usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
         takenOver: $takenOver, replaying: replaying, showsActions: hasActions && fits ? $showsActions : nil,
         scalingMode: $scalingMode, scalingModes: scalingModes(device, replaying: replaying),
-        close: close)
+        windowChoice: windowChoice, close: close)
       Rectangle().fill(Palette.border).frame(height: 1)
       if let run = actions.latest(for: env.path) {
         ViewerRunNotice(run: run, openedAt: openedAt)
@@ -189,6 +190,7 @@ struct DeviceViewer: View {
           replay: replay, replaying: replaying,
           presence: env.appPresence(device),
           showsCovers: true,
+          status: DeviceTileStatus(device: device, canControl: interactive, building: env.runningBuild(for: device) != nil),
           viewer: true,
           maxWidth: max(DeviceTile.minimumWidth, geo.size.width - padding * 2),
           pixelScale: devicePixelScale(
@@ -200,7 +202,8 @@ struct DeviceViewer: View {
             guard !recordedInput, let udid = device.localSimulatorUDID else { return }
             recordedInput = true
             TutorialViewerEvents.shared.input(udid)
-          }
+          },
+          windowChoice: windowChoice
         )
         .frame(minWidth: geo.size.width, minHeight: geo.size.height)
       }
@@ -214,7 +217,7 @@ struct DeviceViewer: View {
   private func scalingModes(_ device: DeviceRef, replaying: Bool) -> [DeviceScalingMode] {
     switch device {
     case .ios, .android: break
-    case .remote, .web: return [.fit]
+    case .remote, .web, .macos: return [.fit]
     }
     guard !replaying, device.isRunning, !device.isPhysical, device.hostedMachine == nil, device.formFactor != .dual else {
       return [.fit]
@@ -257,7 +260,7 @@ struct DeviceViewer: View {
   /// Physical and remote devices have no replay, as on the phone.
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
-    case .remote: return nil
+    case .remote, .macos: return nil
     case _ where device.isPhysical || device.hostedMachine != nil: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }

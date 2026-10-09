@@ -47,7 +47,7 @@ struct TutorialPanel: View {
     .font(.stim(.callout))
     .foregroundStyle(Palette.text)
     .background(Palette.sidebar)
-    .tint(Palette.brand)
+    .tint(Palette.primary)
     .accessibilityLabel("Stim tutorial")
   }
 
@@ -79,7 +79,7 @@ struct TutorialPanel: View {
         Text("Waiting for a restarted tutorial workspace...").foregroundStyle(Palette.secondary)
       }
       if snapshot.isComplete {
-        Label("Tutorial complete", systemImage: "checkmark.circle.fill")
+        Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
           .font(.stim(.headline)).foregroundStyle(Palette.success)
         Text(
           snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off"
@@ -179,7 +179,7 @@ struct TutorialPanel: View {
               .accessibilityLabel("Open the setup guide to update Stim CLI")
           }
           if detail.contains("Restart") || detail.hasPrefix("No tutorial workspace") {
-            Button("Restart tutorial", action: restart).buttonStyle(.stim())
+            Button("Restart Tutorial", action: restart).buttonStyle(.stim())
               .accessibilityLabel("Restart the Stim tutorial")
           }
           ForEach(state.ticks, id: \.id) { tick in
@@ -208,11 +208,11 @@ struct TutorialPanel: View {
                 .accessibilityLabel("Skip \(step.title)")
             }
             if state.canMarkDone {
-              Button("Mark done", action: markDone).buttonStyle(.stim())
+              Button("Mark Done", action: markDone).buttonStyle(.stim())
                 .accessibilityLabel("Mark \(step.title) done")
             }
             if step.id == "begin", !snapshot.record.manual {
-              Button("Show commands", action: { setManual(true) }).buttonStyle(.stim(.plain))
+              Button("Show Commands", action: { setManual(true) }).buttonStyle(.stim(.plain))
                 .accessibilityLabel("Show tutorial commands instead of agent prompts")
             }
           }
@@ -227,18 +227,18 @@ struct TutorialPanel: View {
   private var footer: some View {
     HStack {
       if !snapshot.isComplete {
-        Button("Skip step", action: skip).buttonStyle(.stim(.plain)).accessibilityLabel("Skip current tutorial step")
+        Button("Skip Step", action: skip).buttonStyle(.stim(.plain)).accessibilityLabel("Skip current tutorial step")
       }
       Spacer()
       if rendersStatic {
         Image(systemName: "ellipsis").accessibilityLabel("Tutorial options")
       } else {
         Menu {
-          Button("Restart tutorial", action: restart)
+          Button("Restart Tutorial", action: restart)
           Button(snapshot.record.manual ? "Show prompts instead of commands" : "Show commands instead of prompts") {
             setManual(!snapshot.record.manual)
           }
-          Button("Close tutorial", action: close)
+          Button("Close Tutorial", action: close)
         } label: {
           Image(systemName: "ellipsis")
         }

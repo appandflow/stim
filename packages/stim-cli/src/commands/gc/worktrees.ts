@@ -8,7 +8,7 @@ import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
 import { getExecutor } from '../../exec.ts';
-import { settingDefinition } from '@stim-cli/core/state';
+import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
 import { workspaceInUse } from '../../workspace/in-use.ts';
@@ -312,7 +312,9 @@ function newestMtime(paths: readonly { path: string; basis: string }[]): Worktre
 function logFiles(key: string): { path: string; basis: string }[] | null {
   const dir = workspaceLogsDir(key);
   try {
-    return readdirSync(dir).map((name) => ({ path: join(dir, name), basis: 'a Stim log write' }));
+    return readdirSync(dir)
+      .filter((name) => !name.startsWith(MAINTENANCE_LOG_NAME))
+      .map((name) => ({ path: join(dir, name), basis: 'a Stim log write' }));
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'ENOENT' ? [] : null;
   }

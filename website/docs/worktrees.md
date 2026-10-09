@@ -17,7 +17,10 @@ Commands use `stim`. If it is not installed globally, replace `stim` with
 
 Use Git to choose the branch, path, and starting commit. Prefer a sibling
 worktree directory: nested worktrees can confuse Metro, TypeScript, and other
-filesystem scanners even when Git ignores them.
+filesystem scanners even when Git ignores them. When worktrees do live inside
+the checkout, such as under `.worktrees/`, `stim doctor` reports that a
+Watchman root at the checkout would crawl them, and `stim doctor --fix` adds
+them to the checkout's `.watchmanconfig` `ignore_dirs`.
 
 <StimTabs
 code={`git worktree add -b feature-x ../feature-x HEAD
@@ -47,6 +50,20 @@ Warm preserves the current branch, tracked files, and every existing
 destination entry, including dangling symlinks. An existing ignored directory
 such as `node_modules` is skipped whole; warm does not fill missing children.
 Untracked files that Git does not ignore are not copied.
+
+A copied `ios/Pods` names the source checkout's path in its generated files and
+in the checksum of any podspec that embeds that path, such as the precompiled
+ExpoModulesCore. When `ios/Podfile.lock` and the copied `Pods/Manifest.lock`
+differ only by those checksums, warm rewrites the source path to the
+worktree's path and makes `Manifest.lock` match `Podfile.lock`, so the first
+`stim ios` skips `pod install`. Any other difference, a Pods file that still names the source path, or
+carried `node_modules` that do not match the worktree's lockfile leaves Pods as
+copied and `pod install` runs. Warm does not edit `Podfile.lock`.
+
+When the two locks already match but the copied Pods still name the source
+path, warm applies the same rewrite and scan, so builds do not read the source
+checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm
+deletes `ios/Pods/Manifest.lock` so `stim ios` runs `pod install`.
 
 Wait for warm to exit successfully before editing, installing dependencies,
 starting Metro/builds, or running another warm in that worktree. **Concurrent
@@ -283,6 +300,10 @@ code={`stim gc
 stim gc --delete
 stim gc --delete --worktrees --older-than 3`}
 />
+
+Automatic maintenance (`maintenance.mode`, on by default) removes finished
+worktrees on its own, by the same rules as `gc --delete`; turn that off with
+`maintenance.removeFinishedWorktrees false`.
 
 `gc` lists every linked worktree that has a Stim workspace and says why each
 one is removed or kept. A worktree is finished when its branch is merged into

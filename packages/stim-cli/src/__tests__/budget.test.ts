@@ -122,6 +122,22 @@ describe('enforceBudget', () => {
     });
   });
 
+  test('the simulator snapshot is dropped after each reclaim step, so the re-measure lists again', async () => {
+    const { deps } = fakeDeps([100 * GB], [30 * GB]);
+    let invalidations = 0;
+    const simSnapshot = {
+      read: () => [],
+      invalidate: () => {
+        invalidations++;
+      },
+    };
+    await enforceBudget(
+      { root: apps, note: () => {}, budget: limits({ maxCommittedMemoryMb: 16 * GB }), simSnapshot },
+      deps,
+    );
+    expect(invalidations).toBe(2);
+  });
+
   test('memory alone reclaims devices and dev servers, never build outputs or caches, and never refuses', async () => {
     const { deps, steps } = fakeDeps([100 * GB], [30 * GB]);
     const notes: string[] = [];

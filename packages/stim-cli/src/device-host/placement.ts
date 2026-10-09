@@ -19,15 +19,25 @@ export interface PlacementOffer {
 export type PlacementProbe = { machine: string } & ({ offer: PlacementOffer } | { failure: string });
 export interface PlacementSkip {
   machine: string;
+  code: string;
   reason: string;
 }
-export type DevicePlacementDecision = (
-  | { kind: 'local'; reason: string }
-  | { kind: 'host'; machines: { machine: string; reason: string }[]; reason: string }
-) & { skipped: PlacementSkip[] };
+/** Whether an EAS Simulator can take this run, checked only when remote.easFallback is on and this Mac is full. */
+export type EasFallbackCheck = { usable: true } | { usable: false; code: string; reason: string };
 
-function local(reason: string, skipped: PlacementSkip[] = []): DevicePlacementDecision {
-  return { kind: 'local', reason, skipped };
+export type DevicePlacementDecision = (
+  | { kind: 'local'; reason: string; atCapacity?: true }
+  | { kind: 'host'; machines: { machine: string; reason: string }[]; reason: string }
+  | { kind: 'eas'; reason: string }
+) & { code: string; skipped: PlacementSkip[] };
+
+function local(
+  code: string,
+  reason: string,
+  skipped: PlacementSkip[] = [],
+  atCapacity = false,
+): DevicePlacementDecision {
+  return { kind: 'local', code, reason, skipped, ...(atCapacity ? { atCapacity: true as const } : {}) };
 }
 
 export function decideDevicePlacement(
@@ -39,16 +49,23 @@ export function decideDevicePlacement(
         offers: PlacementProbe[];
         buildMachine?: string;
         noWait: boolean;
+        eas?: EasFallbackCheck;
       },
 ): DevicePlacementDecision {
   if ('sticky' in inputs) {
     if ('machine' in inputs.sticky) {
       const reason = `recorded session on ${inputs.sticky.machine}`;
-      return { kind: 'host', reason, machines: [{ machine: inputs.sticky.machine, reason }], skipped: [] };
+      return {
+        kind: 'host',
+        code: 'sticky',
+        reason,
+        machines: [{ machine: inputs.sticky.machine, reason }],
+        skipped: [],
+      };
     }
-    return { kind: 'local', reason: "this workspace's device runs here", skipped: [] };
+    return { kind: 'local', code: 'sticky', reason: "this workspace's device runs here", skipped: [] };
   }
-  const { platform, here, offers, buildMachine, noWait } = inputs;
+  const { platform, here, offers, buildMachine, noWait, eas } = inputs;
   const { count, max, queued } = here.devices;
   const room = max === 0 || (count !== null && count < max);
   const cannotTake = !room || queued > 0;
@@ -62,29 +79,46 @@ export function decideDevicePlacement(
           (here.memoryPressure !== 'normal'
             ? `host memory pressure ${here.memoryPressure ?? 'unknown'} here`
             : `load ${here.loadPerCore.toFixed(1)}/core here, ${usage}`));
-  if (!offers.length) return local('no remote Macs configured; ' + localReason);
-  if (count === null) return local(localReason);
+  const nowhere = (
+    code: string,
+    reason: string,
+    skipped: PlacementSkip[] = [],
+    waiting = '',
+  ): DevicePlacementDecision => {
+    if (!cannotTake || count === null) return local(code, reason + waiting, skipped);
+    if (eas?.usable)
+      return { kind: 'eas', code: 'eas-fallback', reason: `${reason}; EAS Simulator (remote.easFallback)`, skipped };
+    const why = eas ? [...skipped, { machine: 'eas', code: eas.code, reason: eas.reason }] : skipped;
+    return local(code, reason + waiting, why, true);
+  };
+  if (!offers.length) return nowhere('no-remote-mac', 'no remote Macs configured; ' + localReason);
+  if (count === null) return local('device-count-unknown', localReason);
   if (!cannotTake && here.memoryPressure === 'normal' && !here.budgetRefusal && here.loadPerCore < here.maxLoadPerCore)
-    return local(localReason);
+    return local('this-mac-free', localReason);
   const skipped: PlacementSkip[] = [];
   const admitted: { machine: string; offer: PlacementOffer; index: number }[] = [];
   offers.forEach((probe, index) => {
     let reason: string | null = null;
+    let code = 'unreachable';
     if ('failure' in probe) reason = probe.failure;
     else {
       const { offer } = probe;
-      if (offer.declined !== null) reason = `declined: ${offer.declined}`;
-      else if (offer.platform !== platform || !offer.choice) reason = `no matching ${platform} device choice`;
-      else if (offer.resources.memoryPressure !== 'normal') reason = 'host memory pressure unknown or elevated';
-      else if (offer.capacity.available === 0) reason = 'no hosted device capacity available';
+      if (offer.declined !== null) [code, reason] = ['declined', `declined: ${offer.declined}`];
+      else if (offer.platform !== platform || !offer.choice)
+        [code, reason] = ['no-matching-device', `no matching ${platform} device choice`];
+      else if (offer.resources.memoryPressure !== 'normal')
+        [code, reason] = ['memory', 'host memory pressure unknown or elevated'];
+      else if (offer.capacity.available === 0) [code, reason] = ['no-capacity', 'no hosted device capacity available'];
       else if (!cannotTake && (offer.resources.loadPerCore === null || offer.resources.loadPerCore >= here.loadPerCore))
-        reason =
+        [code, reason] = [
+          'load',
           offer.resources.loadPerCore === null
             ? 'host load unknown while this Mac has room'
-            : 'host is not less loaded than this Mac';
+            : 'host is not less loaded than this Mac',
+        ];
       else admitted.push({ machine: probe.machine, offer, index });
     }
-    if (reason) skipped.push({ machine: probe.machine, reason });
+    if (reason) skipped.push({ machine: probe.machine, code, reason });
   });
   admitted.sort(
     (a, b) =>
@@ -94,13 +128,15 @@ export function decideDevicePlacement(
       a.index - b.index,
   );
   if (!admitted.length)
-    return local(
-      `${localReason}; no host admits${cannotTake && !noWait ? '; waiting locally if needed' : ''}`,
+    return nowhere(
+      'no-host-admits',
+      `${localReason}; no host admits`,
       skipped,
+      cannotTake && !noWait ? '; waiting locally if needed' : '',
     );
   const machines = admitted.map(({ machine, offer }) => ({
     machine,
     reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote Mac,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
   }));
-  return { kind: 'host', machines, reason: machines[0]!.reason, skipped };
+  return { kind: 'host', code: 'placed', machines, reason: machines[0]!.reason, skipped };
 }

@@ -632,15 +632,15 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
     : environments.map((env) => env.disk?.buildBytes ?? null);
   const inventoried = (sizes: (number | null)[]) => (inventory ? total(sizes) : { bytes: 0, complete: false });
   const categories: Category[] = [
-    { key: 'stimDevices', title: t`Stim devices`, total: total(devices.filter((d) => d.stim).map((d) => d.bytes)) },
-    { key: 'stimOutputs', title: t`Stim caches and outputs`, total: total(stimOutputs) },
+    { key: 'stimDevices', title: t`Stim Devices`, total: total(devices.filter((d) => d.stim).map((d) => d.bytes)) },
+    { key: 'stimOutputs', title: t`Stim Caches and Outputs`, total: total(stimOutputs) },
     { key: 'nodeModules', title: 'node_modules', total: total(modules) },
     {
       key: 'otherDevices',
-      title: t`Other simulators and AVDs`,
+      title: t`Other Simulators and AVDs`,
       total: inventoried(devices.filter((d) => !d.stim).map((d) => d.bytes)),
     },
-    { key: 'runtimes', title: t`Runtimes and system images`, total: inventoried(runtimes.map((r) => r.bytes)) },
+    { key: 'runtimes', title: t`Runtimes and System Images`, total: inventoried(runtimes.map((r) => r.bytes)) },
   ];
 
   return {
@@ -663,7 +663,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
             { id: 'recordings', title: t`Recordings`, bytes: status.archivedUsage.byKind.recordings, detail: null },
             {
               id: 'agentActions',
-              title: t`Agent actions`,
+              title: t`Agent Actions`,
               bytes: status.archivedUsage.byKind.agentActions,
               detail: null,
             },

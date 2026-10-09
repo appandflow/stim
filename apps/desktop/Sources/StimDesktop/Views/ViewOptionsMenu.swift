@@ -120,12 +120,12 @@ struct ViewOptionsMenu: View {
           }
         }),
       MenuItem(
-        id: "git", title: "Show git status", accessory: .check(options.showsGitStatus), dividerBefore: true, keepsOpen: true
+        id: "git", title: "Show Git Status", accessory: .check(options.showsGitStatus), dividerBefore: true, keepsOpen: true
       ) {
         prefs.showsGitStatus.toggle()
       },
       MenuItem(
-        id: "empty", title: "Show empty projects", accessory: .check(options.showsEmptyProjects), keepsOpen: true
+        id: "empty", title: "Show Empty Projects", accessory: .check(options.showsEmptyProjects), keepsOpen: true
       ) { prefs.showsEmptyProjects.toggle() },
     ]
     if options.differsFromDefaults(projects: projects) {
@@ -160,7 +160,7 @@ struct ViewOptionsMenu: View {
   private func projectItems(hidden: Set<String>) -> [MenuItem] {
     let all = projects.allSatisfy { !hidden.contains($0.root) }
     var items = [
-      MenuItem(id: "all", title: "All projects", accessory: .check(all), keepsOpen: true) {
+      MenuItem(id: "all", title: "All Projects", accessory: .check(all), keepsOpen: true) {
         prefs.hiddenProjects = ""
       }
     ]

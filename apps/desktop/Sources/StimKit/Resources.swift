@@ -55,12 +55,13 @@ public enum ProcessTable {
   }
 }
 
-/// The pids whose process trees make up a workspace: its supervisor and Metro, each owned
-/// simulator's `launchd_sim`, and each emulator's qemu process.
+/// The pids whose process trees make up a workspace: its supervisor and Metro, its owned macOS
+/// app, each owned simulator's `launchd_sim`, and each emulator's qemu process.
 public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Set<Int> {
   var roots = Set<Int>()
   if env.live, let pid = env.supervisor?.pid { roots.insert(pid) }
   if let metro = env.metro, metro.running, let pid = metro.pid { roots.insert(pid) }
+  if env.live, let app = env.macos?.app { roots.insert(Int(app.pid)) }
   for device in env.devices {
     switch device {
     case .ios where device.localSimulatorUDID != nil:
@@ -73,7 +74,7 @@ public func workspaceRoots(_ env: Workspace, in processes: [ProcessEntry]) -> Se
       for p in processes where isEmulator(p.args, avd: avd.name, port: port) {
         roots.insert(p.pid)
       }
-    case .ios, .android, .remote, .web:
+    case .ios, .android, .remote, .web, .macos:
       break
     }
   }

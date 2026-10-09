@@ -49,18 +49,18 @@ extension OversightTarget {
   /// The call to action that opens the target.
   public var actionTitle: String {
     switch self {
-    case .machine: return "Show machine"
-    case .workspace: return "Open workspace"
-    case .device(_, let platform, _): return platform == "web" ? "Show page" : "Show device"
-    case .build: return "Show build"
-    case .url: return "Open pull request"
+    case .machine: return "Show Machine"
+    case .workspace: return "Open Workspace"
+    case .device(_, let platform, _): return platform == "web" ? "Show Page" : "Show Device"
+    case .build: return "Show Build"
+    case .url: return "Open Pull Request"
     case .buildRequest: return "Review"
     }
   }
 
   /// Every string `actionTitle` can render, for UI that reserves a column sized to the widest one.
   public static let actionTitles: [String] = [
-    "Show machine", "Open workspace", "Show device", "Show page", "Show build", "Open pull request", "Review",
+    "Show Machine", "Open Workspace", "Show Device", "Show Page", "Show Build", "Open Pull Request", "Review",
   ]
 }
 

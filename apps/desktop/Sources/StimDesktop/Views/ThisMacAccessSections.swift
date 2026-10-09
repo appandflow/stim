@@ -15,14 +15,14 @@ struct ThisMacAccessSections: View {
 
   var body: some View {
     if !clients.isEmpty {
-      Section("Macs using this Mac") {
+      Section("Macs Using This Mac") {
         ForEach(clients) { device in
           BuildClientRow(device: device, review: { review(device) }, revoke: { revoke(device) })
         }
       }
     }
     if !sessions.isEmpty {
-      Section("Running here") {
+      Section("Running Here") {
         ForEach(sessions) { session in
           HostedSessionRow(session: session, stopping: stopping.contains(session.id)) { stop(session) }
         }

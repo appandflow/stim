@@ -73,6 +73,7 @@ import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
+import type { IosSimSnapshot } from '../devices/ios.ts';
 import { COMPILATION_CACHE_UNAVAILABLE, type BuildIosResult } from '../engine/xcode.ts';
 import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import {
@@ -520,6 +521,8 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
 });
 
 describe('the Metro gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   afterEach(() => vi.unstubAllEnvs());
 
   test.each(['25062', '80'])('pin %s bypasses the healthy old port and surfaces the start refusal', async (pin) => {
@@ -710,6 +713,8 @@ function tick() {
 }
 
 describe('the simulator boot gate', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('the fingerprint starts with the boot, and each line reports its own wall time', async () => {
     reserve();
     let clock = 1_000_000;
@@ -790,6 +795,8 @@ describe('the simulator boot gate', () => {
 });
 
 describe('parked simulator adoption', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test('sweeps old apps before install, uses the parked cache key, and reports adopted', async () => {
     reserve();
     const events: string[] = [];
@@ -1078,6 +1085,8 @@ describe('the boot this run performed', () => {
 });
 
 describe('Metro prefetch', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
   test.each([null, '/custom.bundle?platform=ios&dev=true'])(
     'starts before native work without waiting for the bundle: %s',
     async (bundleUrl) => {
@@ -3307,6 +3316,35 @@ describe('concurrency limits', () => {
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
+  test('the budget gate, capacity check and device setup share one simulator snapshot', async () => {
+    reserve();
+    let budgetSnapshot: IosSimSnapshot | undefined;
+    let capacityArgs: CheckDeviceCapacityArgs | undefined;
+    const { calls } = await run(
+      { json: true, wait: false },
+      {
+        getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
+        budgetGate: async (args) => {
+          budgetSnapshot = args.simSnapshot;
+          return { reclaimed: [], refusal: null };
+        },
+        checkDeviceCapacity: (args) => {
+          capacityArgs = args;
+          return null;
+        },
+      },
+    );
+    const ensured = calls.args.ensureOwnedDevice as { simSnapshot?: IosSimSnapshot } | undefined;
+    assert(budgetSnapshot && capacityArgs?.sims && ensured?.simSnapshot);
+    expect(ensured.simSnapshot).toBe(budgetSnapshot);
+    const sim = { udid: 'U1', name: 'stim-x', state: 'Booted', runtime: 'r', deviceTypeIdentifier: 't' };
+    vi.spyOn(budgetSnapshot, 'read').mockReturnValue([
+      { ...sim, available: true },
+      { ...sim, udid: 'U2', available: false },
+    ]);
+    expect((capacityArgs.sims as () => { udid: string }[])().map((entry) => entry.udid)).toEqual(['U1']);
+  });
+
   test('a non-capacity device refusal is not recorded', async () => {
     reserve();
     const recordCapacityRefusal = vi.fn<typeof recordRefusal>();
@@ -3515,6 +3553,34 @@ describe('--remote', () => {
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
     expect(calls.order.includes('installIosApp')).toBeFalsy();
+  });
+
+  test('auto on a full Mac with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
+    const remote = remoteStub();
+    reserve();
+    const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
+    const { calls, exitCode } = await run(
+      { remote: 'auto' },
+      {
+        ...remote.deps,
+        resolveSettings: () => ({ remote: { easFallback: true } }),
+        checkEasFallback,
+        automaticDevicePlacement: (args) =>
+          automaticDevicePlacement(args, {
+            machines: () => [],
+            peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+            capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+            memory: () => 'normal',
+            budget: async () => null,
+          }),
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(checkEasFallback).toHaveBeenCalledOnce();
+    expect(remote.backends).toEqual(['eas']);
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
+    expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
   });
 
   test.each([false, true])('host-memory recovery is limited to local launch failures (remote=%s)', async (isRemote) => {

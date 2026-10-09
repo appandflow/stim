@@ -198,6 +198,7 @@ export function printPlan(plan: BuildPlanPayload, json: boolean): void {
   }
   const slot = plan.slot ? ` [${plan.slot}]` : '';
   console.log(phaseLine('plan', `${plan.platform}${slot} ${shortHash(plan.fingerprint)} -> ${cacheLine(plan)}`));
+  if (plan.placement) console.log(phaseLine('placement', plan.placement));
   if (plan.missReason) console.log(phaseLine('cache', `miss: ${plan.missReason.summary}`));
   if (plan.refusal) {
     console.log(phaseLine('error', plan.refusal.message));

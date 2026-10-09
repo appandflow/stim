@@ -467,9 +467,26 @@ Hosts rank by the build preference (flag > STIM_REMOTE_BUILD > remote.build)
 when it names a machine, then lowest load, most free memory and remote.machines order. Automatic build
 offload resolves later, after the device architecture is known.
 
-When no host admits, auto runs here and may wait in the existing FIFO device
+When no host admits and this Mac is at its concurrency.maxDevices cap (or runs
+are queued ahead), remote.easFallback (default false; EAS Simulator is billed)
+runs the device on an EAS Simulator exactly as --remote eas would: the build
+stays here, nothing starts an EAS cloud build, stop ends the session, and
+status reports it under remoteDevices. A busy Mac with a free slot never uses
+it. Before choosing it Stim checks, without starting a session, that eas-cli
+has simulator commands (and 22.2.0+ for --device-type), eas
+simulator:availability says this project's account can use it, agent-device
+is on PATH, the slot is default, no --runtime, --system-image or
+--device-profile flag is given, no EAS Simulator session of this workspace runs
+another platform or model, and a Debug run's Metro is reachable (not
+metro.tunnel off; on an Expo tunnel, run stim start --remote first). A recorded
+EAS session is not sticky: once this Mac has room, auto runs here and the
+session bills until stim stop. If any check fails, or the
+setting is off, auto runs here and may wait in the existing FIFO device
 slot queue; --no-wait and --wait 0 refuse with STIM_AT_CAPACITY. The placement
-line explains the decision and the skipped hosts. JSON progress goes to stderr.
+line explains the decision, the skipped hosts and why EAS was not used
+(machine "eas"). JSON progress goes to stderr.
+The same decision, with a reason code per host, is a src: placement record in
+stim logs (stim guide logs).
 A recorded hosted session wins over load; a live local owned slot stays here.
 A stopped recorded session places again; unreachable or unknown sessions refuse.
 
@@ -1223,8 +1240,17 @@ PREDICTING THE NEXT BUILD (--plan)
   An Android plan reads the ABI from the emulator the slot records, or from
   the system image a new one would use. A plan refuses --device, --remote,
   --wait, --no-wait, --no-metro-check and --simulator-app with STIM_BAD_ARG.
-  Without --eas-profile it also refuses the ios.remote and android.remote
-  settings with STIM_BAD_ARG. Without --eas-profile an Android plan also
+  With ios.remote or android.remote set to a Mac name, a plan reads the
+  architecture or ABI from that Mac's device offer, the question a run asks
+  before it reserves anything. With auto it repeats the placement decision a
+  run would make now and reports where in the payload's placement field, for
+  example "this Mac; auto may use janics-mac-mini". When the plan stays on
+  this Mac and a listed Mac would build for another architecture, placement
+  says so, since that Mac's key differs. The plan only predicts the key: a
+  run reads the architecture of the device it actually gets. A Mac that does
+  not answer, ios.remote or android.remote set to eas or proxy, or auto that
+  would use an EAS Simulator now (remote.easFallback), refuses with
+  STIM_BAD_ARG. Without --eas-profile an Android plan also
   refuses the experimental compiler CAS with STIM_BAD_ARG, and refuses with
   STIM_NO_DEVICE when no system image is installed.
 
@@ -1980,6 +2006,24 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   for the destination checkout on its next build. Warm also skips paths
   overlapping a nested destination worktree or below a symlink ancestor.
   Tracked .idea settings come from Git and stay untouched by warm.
+
+  A carried ios/Pods still names the source checkout's path in its generated
+  files and in the checksum of a podspec that embeds that path (the
+  precompiled ExpoModulesCore). When ios/Podfile.lock and the carried
+  ios/Pods/Manifest.lock differ only by those checksums, warm rewrites the
+  source path to the worktree's path in Pods/Target Support Files,
+  Pods.xcodeproj, Local Podspecs and absolute symlinks, then makes
+  Manifest.lock equal Podfile.lock, so the first \`stim ios\` skips
+  \`pod install\`. Any other difference, a missing podspec, or a podspec
+  that does not embed the source path, any other file in Pods that names
+  the source path, or carried node_modules that do not match the worktree's
+  lockfile leaves Pods as copied, and \`pod install\` runs. Warm does not edit Podfile.lock.
+
+  When the two locks already match but the copied Pods still name the source
+  path, warm applies the same rewrite and scan so builds do not read the
+  source checkout's files (entitlements, Podfile.properties.json). If it
+  cannot (stale node_modules, a leftover path, an error), warm deletes
+  ios/Pods/Manifest.lock so \`stim ios\` runs \`pod install\`.
 
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about

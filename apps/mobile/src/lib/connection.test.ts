@@ -1,3 +1,5 @@
+import * as Sentry from '@sentry/react-native';
+
 import capturedStatus from '../../mock-server/fixtures/status.json';
 import {
   receiveStatus,
@@ -10,6 +12,8 @@ import {
 import type { StatusPayload, Methods } from '@/protocol/types';
 import { pair, pairingScope, StimConnection, type ConnectionState } from '@/lib/connection';
 import type { ServerEvent } from '@/protocol/types';
+
+jest.mock('@sentry/react-native', () => ({ captureMessage: jest.fn(), addBreadcrumb: jest.fn() }));
 
 class FakeSocket {
   sent: { id: number; method: string; params: unknown }[] = [];
@@ -483,4 +487,65 @@ test.each(eventEnumCases)('keeps the socket open for future event values at %s',
   expect(sockets[0]!.closed).toBe(false);
   expect(timers).toEqual([]);
   connection.close();
+});
+
+describe('failure reports', () => {
+  const captured = () =>
+    (Sentry.captureMessage as jest.Mock).mock.calls as [string, { tags: Record<string, string> }][];
+
+  it('names the failing schema keyword and path of an invalid result, but none of its values', async () => {
+    const { connection, sockets } = setup();
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    const result = connection.request('machine.get', {});
+    const rejected = expect(result).rejects.toThrow('invalid RPC response');
+    sockets[0].reply('machine.get', { leaked: 'janics-mac.tail1a2b3.ts.net' });
+    await rejected;
+
+    const [message, options] = captured().find(([, o]) => o.tags.name === 'machine.get')!;
+    expect(message).toBe('rpc-validation-failed');
+    expect(options.tags).toMatchObject({ stage: 'result', name: 'machine.get' });
+    expect(options.tags.keyword).toMatch(/^\w+$/);
+    expect(options.tags.schema_path).toMatch(/^#/);
+    expect(JSON.stringify(captured())).not.toContain('janics-mac');
+    connection.close();
+  });
+
+  it('reports an invalid event by event name and schema location without its payload', async () => {
+    const { connection, sockets } = setup();
+    connection.subscribe('status.subscribe', {}, () => {});
+    connection.start();
+    sockets[0].onopen?.();
+    sockets[0].reply('hello', hello);
+    await flush();
+    sockets[0].reply('status.subscribe', { subscription: 's1' });
+    await flush();
+    sockets[0].emit({ event: 'notification', payload: { leaked: '/Users/janic/secret-app' } });
+
+    const call = captured().find(([, o]) => o.tags.stage === 'event' && o.tags.name === 'notification');
+    expect(call?.[1].tags.keyword).toBeTruthy();
+    expect(JSON.stringify(captured())).not.toContain('secret-app');
+    connection.close();
+  });
+
+  it('reports a pairing failure by its class only', async () => {
+    const socket = new FakeSocket();
+    const promise = pair(
+      'wss://janics-mac.tail1a2b3.ts.net:7433',
+      'pairing-secret-token',
+      'Janic phone',
+      { name: 't', version: '0' },
+      () => socket as unknown as WebSocket,
+    );
+    const rejected = expect(promise).rejects.toThrow();
+    socket.close();
+    await rejected;
+
+    const call = captured().find(([m]) => m === 'pairing-failed');
+    expect(call?.[1].tags).toEqual({ error_class: 'closed' });
+    expect(JSON.stringify(captured())).not.toContain('tail1a2b3');
+    expect(JSON.stringify(captured())).not.toContain('pairing-secret');
+  });
 });

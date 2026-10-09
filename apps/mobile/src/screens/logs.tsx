@@ -223,7 +223,7 @@ export function Logs({
         ) : null}
         {slots.length > 1 ? (
           <View style={styles.row}>
-            <Toggle label={t`All slots`} on={active.slot === null} onPress={() => update({ slot: null })} />
+            <Toggle label={t`All Slots`} on={active.slot === null} onPress={() => update({ slot: null })} />
             {slots.map((slot) => (
               <Toggle key={slot} label={slot} on={active.slot === slot} onPress={() => update({ slot })} />
             ))}
@@ -254,7 +254,7 @@ export function Logs({
         ListHeaderComponent={
           tail < MAX_RECORDS && records.length >= tail ? (
             <Button
-              title={t`Load older logs`}
+              title={t`Load Older Logs`}
               variant="secondary"
               size="small"
               disabled={!listening}
@@ -310,7 +310,7 @@ export function Logs({
           style={[styles.jump, { bottom: insets.bottom + theme.space.huge }]}
         >
           <Text weight="semibold" tone="onBrand">
-            <Trans>Jump to latest</Trans>
+            <Trans>Jump to Latest</Trans>
           </Text>
         </Touch>
       ) : null}
@@ -457,14 +457,14 @@ const LogRow = memo(function LogRow({
         <View style={styles.actions}>
           <Touch
             onPress={() => void copy(copyText(view))}
-            accessibilityLabel={copied ? t`Copied` : t`Copy message and location`}
+            accessibilityLabel={copied ? t`Copied` : t`Copy Message and Location`}
             style={styles.action}
           >
             <CopyPill copied={copied} filled={false} showsIcon={false} />
           </Touch>
           <Touch
             onPress={() => void Share.share({ message: shareText(view, entry, workspace) }).catch(() => {})}
-            accessibilityLabel={t`Share entry`}
+            accessibilityLabel={t`Share Entry`}
             style={styles.action}
           >
             <Text weight="semibold" tone="brand">

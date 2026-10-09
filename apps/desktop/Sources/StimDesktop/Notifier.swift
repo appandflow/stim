@@ -157,11 +157,11 @@ final class NotificationResponder: NSObject, UNUserNotificationCenterDelegate, @
     center.setNotificationCategories([
       UNNotificationCategory(
         identifier: Notifier.pressureCategory,
-        actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do it", options: [.foreground])],
+        actions: [UNNotificationAction(identifier: Notifier.doItAction, title: "Do It", options: [.foreground])],
         intentIdentifiers: []),
       UNNotificationCategory(
         identifier: Notifier.discoveryCategory,
-        actions: [UNNotificationAction(identifier: Notifier.discoveryNeverAction, title: "Don't suggest again", options: [])],
+        actions: [UNNotificationAction(identifier: Notifier.discoveryNeverAction, title: "Don't Suggest Again", options: [])],
         intentIdentifiers: []),
     ])
     center.delegate = self

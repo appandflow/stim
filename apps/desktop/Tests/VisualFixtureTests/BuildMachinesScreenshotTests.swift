@@ -15,13 +15,14 @@
           [{"machine":"mini","state":"approved","offloadable":false,"dnsName":"mini.tail1234.ts.net",
             "reasons":["CocoaPods 1.17.0 there, 1.16.2 here"],
             "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
-            "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}},
+            "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2,
+                         "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}},
            {"machine":"studio","state":"pending","deviceId":"a1b2c3d4","dnsName":"studio.tail1234.ts.net","expiresAt":"2099-01-01T21:05:00.000Z"}]
           """#.utf8))
     }
 
     @MainActor private func content(
-      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool, updates: [String: MachineUpdatePhase] = [:]
+      entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:]
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
@@ -46,6 +47,21 @@
             "reasons":["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here","no CocoaPods there"],
             "problems":[{"code":"stim-build","reason":"Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"},
                         {"code":"cocoapods","reason":"no CocoaPods there"}]}]
+          """#.utf8))
+    }
+
+    private func busy() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"mini","state":"approved","offloadable":false,"dnsName":"mini.tail1234.ts.net",
+            "reasons":["busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"],
+            "problems":[{"code":"busy","reason":"busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"}],
+            "capacity":{"running":1,"max":1,"diskFreeBytes":824000000000,"cpus":10,"loadPerCore":1.4,"maxLoadPerCore":2,"builds":1,"maxBuilds":2,
+                        "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}},
+           {"machine":"studio","state":"approved","offloadable":true,"dnsName":"studio.tail1234.ts.net",
+            "capacity":{"running":0,"max":1,"diskFreeBytes":412000000000,"cpus":12,"loadPerCore":0.2,"maxLoadPerCore":2,"builds":0,"maxBuilds":2}}]
           """#.utf8))
     }
 
@@ -86,8 +102,10 @@
                 )
               ]))
         ),
+        ("busy", AnyView(content(entries: ["mini", "studio"], statuses: try busy(), tailscale: true))),
         ("tailscale-off", AnyView(content(entries: ["mini", "studio"], statuses: try statuses(), tailscale: false))),
         ("empty-tailscale-off", AnyView(content(entries: [], statuses: [], tailscale: false))),
+        ("empty-checking", AnyView(content(entries: [], statuses: [], tailscale: nil))),
       ]
       for (name, view) in fixtures {
         for dark in [false, true] {

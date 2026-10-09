@@ -1,7 +1,9 @@
 import { automaticDevicePlacement, devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { budgetGate } from '../../budget.ts';
+import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
 import type { DevicePlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
+import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
@@ -93,9 +95,12 @@ export async function selectAndroidPlacement({
   checkBudget = budgetGate,
   note,
   phase,
+  log,
+  fromFlag,
   noWait,
   buildMachine,
   localSelectors,
+  eas,
   ...args
 }: Omit<Parameters<typeof connectAndroidHosting>[0], 'machine' | 'selectors'> & {
   target: AndroidRunPlan['target'];
@@ -103,8 +108,11 @@ export async function selectAndroidPlacement({
   checkBudget?: typeof budgetGate;
   note: (line: string) => void;
   phase: (label: string, line: string) => void;
+  log?: (record: PlacementRecord) => void;
+  fromFlag: boolean;
   noWait: boolean;
   buildMachine?: string;
+  eas?: () => Promise<EasFallbackCheck>;
   localSelectors: (target: {
     systemImage: string | null;
     deviceProfile: string | null;
@@ -150,8 +158,23 @@ export async function selectAndroidPlacement({
       selectors,
       buildMachine,
       noWait,
+      ...(eas ? { eas } : {}),
     });
     phase('placement:', devicePlacementLine(placed.placement, placed.skipped));
+    log?.(devicePlacementRecord({ platform: 'android', fromFlag: fromFlag, easFallback: Boolean(eas), placed }));
+    if (placed.placement.decision === 'eas')
+      return {
+        target: {
+          kind: 'remote',
+          backend: 'eas',
+          systemImage: selected.systemImage,
+          deviceProfile: selected.deviceProfile,
+        },
+        hostedTarget: null,
+        selectors,
+        budget: await checkBudget({ root: args.root, note }),
+        devicePlacement: placed.placement,
+      };
     if (placed.target && !args.release && !args.metroCheck)
       return {
         failure: {

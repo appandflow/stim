@@ -13,13 +13,9 @@ public struct IdleProject: Hashable, Identifiable, Sendable {
 }
 
 public enum Overview {
-  public static let archivedShown = 5
-  public static let idleShown = 6
-
-  /// The idle projects to show: all of them when `expanded`, otherwise the first `idleShown`.
-  public static func visibleIdle(_ items: [IdleProject], expanded: Bool) -> (shown: [IdleProject], hidden: Int) {
-    guard !expanded, items.count > idleShown else { return (items, 0) }
-    return (Array(items.prefix(idleShown)), items.count - idleShown)
+  public static func visibleIdle(_ items: [IdleProject], expanded: Bool, limit: Int) -> (shown: [IdleProject], hidden: Int) {
+    guard !expanded, items.count > limit else { return (items, 0) }
+    return (Array(items.prefix(limit)), items.count - limit)
   }
 
   /// The projects without an active workspace, most recently used first, then by name.
@@ -56,9 +52,6 @@ public enum Overview {
     return dates.max()
   }
 
-  public static func recentlyArchived(_ archives: [ArchivedWorkspace]) -> [ArchivedWorkspace] {
-    Array(ArchivedWorkspace.newestFirst(archives).prefix(archivedShown))
-  }
 }
 
 /// A feature the Overview suggests trying, with a prompt the user can hand to an agent.
@@ -67,14 +60,14 @@ public enum TryThisTip: String, CaseIterable, Codable, Sendable {
 
   public var title: String {
     switch self {
-    case .easProfile: "Run on an EAS development build"
-    case .easSimulator: "Use a simulator hosted by EAS"
-    case .remoteBuild: "Build on another Mac"
-    case .hostedSimulator: "Run the simulator on another Mac"
-    case .macos: "Run your Mac app with Stim"
-    case .physicalDevice: "Run on your phone"
-    case .web: "Open the web build with stim web"
-    case .logs: "Ask for just the errors"
+    case .easProfile: "Run on an EAS Development Build"
+    case .easSimulator: "Use a Simulator Hosted by EAS"
+    case .remoteBuild: "Build on Another Mac"
+    case .hostedSimulator: "Run the Simulator on Another Mac"
+    case .macos: "Run Your Mac App with Stim"
+    case .physicalDevice: "Run on Your Phone"
+    case .web: "Open the Web Build with stim web"
+    case .logs: "Ask for Just the Errors"
     }
   }
 
@@ -112,8 +105,6 @@ public struct TryThisInputs: Sendable {
 }
 
 public enum TryThis {
-  public static let limit = 3
-
   public static func applicable(_ tip: TryThisTip, inputs: TryThisInputs) -> Bool {
     let remoteMacsSet = inputs.remoteMachines?.isEmpty == false
     switch tip {
@@ -148,29 +139,77 @@ public enum TryThis {
     return runs.contains { $0.offloadedTo != nil }
   }
 
-  /// At most `limit` tips: the ones that apply and are neither dismissed nor the sidebar's current tip, with features
-  /// the workspaces have not used first.
-  public static func select(
+  /// The tips that apply and are neither dismissed nor the sidebar's current tip.
+  public static func candidates(
     inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?
   ) -> [TryThisTip] {
-    let candidates = TryThisTip.allCases.filter {
+    TryThisTip.allCases.filter {
       applicable($0, inputs: inputs) && !dismissed.contains($0)
         && ($0.sidebarTopic == nil || $0.sidebarTopic != sidebarTopic)
     }
-    let inUse = candidates.filter { used($0, workspaces: inputs.workspaces) }
-    let notInUse = candidates.filter { !inUse.contains($0) }
-    return Array((notInUse + inUse).prefix(limit))
   }
+
+  /// Today's tip: the one already shown today while it is still a candidate, otherwise the least recently shown, with
+  /// features the workspaces have not used first.
+  public static func select(
+    inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?, state: TryThisState, now: Date,
+    calendar: Calendar
+  ) -> TryThisTip? {
+    let tips = candidates(inputs: inputs, dismissed: dismissed, sidebarTopic: sidebarTopic)
+    if let current = state.current, current.day == Tips.day(now, calendar: calendar), tips.contains(current.tip) {
+      return current.tip
+    }
+    return tips.min {
+      let (a, b) = (used($0, workspaces: inputs.workspaces), used($1, workspaces: inputs.workspaces))
+      return a == b ? (state.lastShown[$0] ?? .distantPast) < (state.lastShown[$1] ?? .distantPast) : !a
+    }
+  }
+
+  /// The tip after `current` in catalog order, or nil when no other tip is a candidate.
+  public static func next(
+    after current: TryThisTip, inputs: TryThisInputs, dismissed: Set<TryThisTip>, sidebarTopic: TipTopic?
+  ) -> TryThisTip? {
+    let tips = candidates(inputs: inputs, dismissed: dismissed, sidebarTopic: sidebarTopic)
+    let catalog = TryThisTip.allCases
+    let index = catalog.firstIndex(of: current)!
+    return (1..<catalog.count).lazy.map { catalog[(index + $0) % catalog.count] }.first { tips.contains($0) }
+  }
+
+  public static func record(_ tip: TryThisTip, state: inout TryThisState, now: Date, calendar: Calendar) {
+    state.current = .init(tip: tip, day: Tips.day(now, calendar: calendar))
+    state.lastShown[tip] = now
+  }
+}
+
+public struct TryThisState: Codable, Equatable, Sendable {
+  public struct Current: Codable, Equatable, Sendable {
+    public var tip: TryThisTip
+    public var day: String
+  }
+
+  public var current: Current?
+  public var lastShown: [TryThisTip: Date] = [:]
+
+  public init() {}
 }
 
 public struct TryThisStore {
   private static let key = "tips.tryThis.dismissed"
+  private static let stateKey = "tips.tryThis.state"
   private let defaults: UserDefaults
 
   public init(defaults: UserDefaults) { self.defaults = defaults }
 
   public var dismissed: Set<TryThisTip> {
     Set((defaults.stringArray(forKey: Self.key) ?? []).compactMap(TryThisTip.init(rawValue:)))
+  }
+
+  public var state: TryThisState {
+    get {
+      defaults.data(forKey: Self.stateKey).flatMap { try? JSONDecoder().decode(TryThisState.self, from: $0) }
+        ?? TryThisState()
+    }
+    nonmutating set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Self.stateKey) }
   }
 
   public func dismiss(_ tip: TryThisTip) {
@@ -218,7 +257,7 @@ public enum ProjectPage {
   }
 
   /// A project page shows all worktrees only for the project the user opened from an idle row; any other
-  /// navigation starts at the active worktrees.
+  /// navigation starts at the active workspaces.
   public static func scope(of project: Project, showingAll: Project?) -> ProjectScope {
     showingAll == project ? .all : .active
   }

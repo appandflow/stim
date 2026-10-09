@@ -21,30 +21,6 @@ public func deviceOpenRequest(fromOpenURL url: URL) -> DeviceOpenRequest? {
   return nil
 }
 
-/// What the main window shows when a device open request arrives.
-public enum LaunchPage: Equatable, Sendable {
-  case allDevices
-  case workspace(String)
-  case other
-}
-
-public enum LaunchResponse: Equatable, Sendable {
-  case navigate
-  case notice
-}
-
-/// A device open request comes from `stim ios` or `stim android` launching on its own, so it navigates only when
-/// nothing the user was looking at is replaced: no main window was open, or the window already shows the launched
-/// workspace, the Overview or the Active worktrees page. Any other page keeps the selection and gets a notice card with a Show action.
-public func launchResponse(page: LaunchPage, mainWindowOpen: Bool, workspacePath: String) -> LaunchResponse {
-  guard mainWindowOpen else { return .navigate }
-  switch page {
-  case .allDevices: return .navigate
-  case .workspace(let path): return path == workspacePath ? .navigate : .notice
-  case .other: return .notice
-  }
-}
-
 extension StatusPayload {
   public func lists(workspace path: String) -> Bool {
     environments.contains { $0.path == path || $0.worktree?.path == path }

@@ -121,7 +121,20 @@ describe('offloadPlacement', () => {
       'device builds build here',
     ],
   ])('%s', (_, input, offload, reason) => {
-    expect(offloadPlacement(input)).toEqual({ offload, reason });
+    expect(offloadPlacement(input)).toMatchObject({ offload, reason });
+  });
+
+  it.each([
+    ['auto, a free slot and low load', {}, 'this-mac-free'],
+    ['auto, every slot busy', { here: { ...IDLE, builds: 3 } }, 'this-mac-busy'],
+    ['force', { mode: 'force' as const }, 'forced'],
+    ['off', { mode: 'off' as const }, 'mode-off'],
+    ['no paired machine', { machines: 0 }, 'no-remote-mac'],
+    ['an unsupported build', { unsupported: 'device builds build here' }, 'unsupported'],
+    ['--remote-build local', { selected: 'local' }, 'local-selected'],
+    ['a named machine', { selected: 'mini' }, 'named'],
+  ])('gives a stable code for %s', (_, input, code) => {
+    expect(offloadPlacement({ ...base, ...input }).code).toBe(code);
   });
 });
 
@@ -219,10 +232,40 @@ describe('pickOffer', () => {
       ['mac0: busy (all 2 build slots busy; load 0.2/core, 2 of 2 build slots busy)'],
     ],
   ] as const)('%s', (_, mode, here, offered, index, reasons) => {
-    expect(pick([offer({ capacity: offered })], { mode, here })).toEqual({
+    const picked = pick([offer({ capacity: offered })], { mode, here });
+    expect({ order: picked.order, reasons: picked.reasons }).toEqual({
       order: index === null ? [] : [index],
       reasons,
     });
+  });
+
+  it('gives every machine a reason code next to its message, accepted machines included', () => {
+    const picked = pick([
+      null,
+      offer({ toolchain: { xcode: 'Xcode 26.4', runtimes: [] } }),
+      offer({ toolchain: { runtimes: [] } }),
+      offer({ capacity: capacity({ loadPerCore: 8.2, builds: 2, declined: 'load at or above 2/core' }) }),
+      offer({ capacity: capacity({ diskFreeBytes: 1024 ** 3, declined: 'low disk' }) }),
+      offer({ capacity: capacity({ loadPerCore: 0.1 }) }),
+    ]);
+    expect(picked.candidates.map(({ machine, code, detail }) => ({ machine, code, detail }))).toEqual([
+      { machine: 'mac0', code: 'unreachable', detail: undefined },
+      { machine: 'mac1', code: 'version-mismatch', detail: ['xcode', 'runtime'] },
+      { machine: 'mac2', code: 'no-matching-device', detail: ['runtime'] },
+      { machine: 'mac3', code: 'busy', detail: ['busy'] },
+      { machine: 'mac4', code: 'disk', detail: ['disk'] },
+      { machine: 'mac5', code: 'accepted', detail: undefined },
+    ]);
+    expect(picked.candidates[1]!.msg).toContain('Xcode');
+  });
+
+  it('gives a load code to a machine that is not less loaded or reports no load', () => {
+    const here = { ...IDLE, maxBuilds: 0, loadPerCore: 2.4 };
+    const noLess = pick([offer({ capacity: capacity({ loadPerCore: 2.4 }) })], { here });
+    const unknown = pick([offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } })], {
+      here,
+    });
+    expect([noLess.candidates[0]!.code, unknown.candidates[0]!.code]).toEqual(['load', 'load']);
   });
 
   it('names every problem of one machine, as doctor reports them', () => {
@@ -264,7 +307,8 @@ describe('pickOffer', () => {
   it('ranks the warmest machine first, then the least loaded, and names the machines it passed over', () => {
     const cold = offer();
     const warm = offer({ warm: { checkout: true, dependencies: true, build: false } });
-    expect(pick([cold, null, warm])).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
+    const ranked = pick([cold, null, warm]);
+    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [2, 0], reasons: ['mac1: unreachable'] });
     const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
     const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
     expect(pick([older, loaded, cold]).order).toEqual([2, 1, 0]);
@@ -453,7 +497,7 @@ describe('explicit build placement', () => {
         offers: [{ ...offers[1]!, offer: null, failure: 'unreachable' }, offers[0]!],
         target: IOS,
       }),
-    ).toEqual({ order: [], reasons: ['mini: unreachable'] });
+    ).toMatchObject({ order: [], reasons: ['mini: unreachable'] });
   });
 
   it.each([

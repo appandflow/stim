@@ -61,7 +61,7 @@ struct AppPreferencesView: View {
       }
       .id("top")
 
-      Section("Workspace list") {
+      Section("Workspace List") {
         LabeledContent("Status") {
           Menu(StatusFilter.summary(StatusFilter.decode(statuses))) {
             Button("All") { statuses = StatusFilter.encode(StatusFilter.all) }
@@ -84,7 +84,7 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Device wall") {
+      Section("Device Wall") {
         Picker("Tile size", selection: $tileSize) {
           ForEach(TileSize.allCases, id: \.self) { Text($0.title).tag($0) }
         }
@@ -130,11 +130,18 @@ struct AppPreferencesView: View {
         if removesFinishedWorktrees, let problem = autopilot.pullRequestCheck {
           Text(problem).font(.stim(.footnote)).foregroundStyle(Palette.warning)
         }
+        if let maintenance = autopilot.cliMaintenance, maintenance.cleansAutomatically {
+          Text(
+            "Stim's automatic maintenance is on, so it frees disk space and removes worktrees of finished pull requests. The two switches above do not run those cleanups while it is on."
+              + (maintenance.lastPassLine.map { " \($0)" } ?? "")
+          )
+          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+        }
       } header: {
         Text("Autopilot")
       } footer: {
         Text(
-          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is notified as Needs you with the reason."
+          "Idle shutdown runs stim gc --idle, which shuts owned simulators and emulators down and never deletes them. A device whose screen changed in this app is left running. Nightly cleanup runs stim gc --delete --worktrees --older-than with the chosen days (7 by default): it removes merged worktrees and clean ones idle that long, clears the build outputs of workspaces and the cache entries unused that long, and deletes devices parked or unused that long. Disk pressure runs stim gc --delete with no age limit: it clears the build outputs of every workspace not in use, so their next build installs from the shared cache, removes merged worktrees, and deletes parked and unused owned devices. The budget is budget.minFreeDiskGb. Disk pressure and finished pull requests do nothing here while stim's automatic maintenance is on (maintenance.mode on, the default from stim 1.18.0); an older stim, or maintenance.mode report or off, leaves them to this app, and the nightly run still deletes unused and parked devices. A nightly run the Mac slept through runs at the next check. Finished pull requests: every 5 minutes and when the app becomes active, gh lists each repository's merged and closed pull requests. When a linked worktree's branch is among them, stim gc checks it, and stim worktree remove removes it only when it is clean, has no commit that exists only locally (a merged pull request's own commits excepted), no Metro, build, device or warm of it is live, and 2 hours have passed since the merge or its last activity (gc.worktreeGraceMinutes). A worktree it keeps is notified as Needs you with the reason, also while automatic maintenance removes the finished ones."
         )
         .multilineTextAlignment(.leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -149,7 +156,7 @@ struct AppPreferencesView: View {
         }
       } header: {
         HStack {
-          Text("Autopilot activity")
+          Text("Autopilot Activity")
           Spacer()
           if !autopilot.log.isEmpty {
             Button("Clear") { autopilot.clearLog() }.buttonStyle(.stim())
@@ -168,7 +175,7 @@ struct AppPreferencesView: View {
           ForEach(NotificationSettings.quietHoursChoices, id: \.value) { Text($0.label).tag($0.value) }
         }
       } header: {
-        Text("Notify when")
+        Text("Notify When")
       } footer: {
         Text(
           PhoneApp.Copy.notificationRulesPrefix(phoneApp: FeatureFlags.isEnabled(.phoneApp))
@@ -267,7 +274,7 @@ struct AppPreferencesView: View {
   private func appPicker(_ title: String, selection: Binding<String>, apps: [ExternalApp]) -> some View {
     let installed = apps.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
     return Picker(title, selection: selection) {
-      Text("First installed").tag("")
+      Text("First Installed").tag("")
       ForEach(installed) { Text($0.name).tag($0.bundleID) }
     }
   }

@@ -7,7 +7,7 @@ struct NativeViewerPermissionsView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.xl) {
-      Label("Native app viewer", systemImage: "macwindow")
+      Label("Native App Viewer", systemImage: "macwindow")
         .font(.stim(.title))
       Text(
         "Allow Stim to show your native Mac app and send clicks, scrolling and typing to its owned window. You choose the permissions in macOS; builds, status and logs work without them."
@@ -30,13 +30,13 @@ struct NativeViewerPermissionsView: View {
           .foregroundStyle(Palette.secondary)
       }
       HStack {
-        Button("Not now") { permissions.showsSetup = false }.buttonStyle(.stim(.plain))
+        Button("Not Now") { permissions.showsSetup = false }.buttonStyle(.stim(.plain))
         Spacer()
-        Button("Check again") { permissions.refresh() }.buttonStyle(.stim())
+        Button("Check Again") { permissions.refresh() }.buttonStyle(.stim())
         if permissions.screenRecording && permissions.accessibility {
           Button("Done") { permissions.showsSetup = false }.buttonStyle(.stim(.primary))
         } else {
-          Button("Request permissions") { permissions.requestPermissions() }.buttonStyle(.stim(.primary))
+          Button("Request Permissions") { permissions.requestPermissions() }.buttonStyle(.stim(.primary))
         }
       }
     }

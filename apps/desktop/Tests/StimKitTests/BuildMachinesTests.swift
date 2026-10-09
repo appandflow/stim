@@ -202,6 +202,45 @@ import Testing
     }
   }
 
+  @Test func showsTheBuildsAMachineRunsInItsBusyPillAndNoBusyReasonLine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let busy = try status(
+      #"""
+      {"machine":"mini","state":"approved","offloadable":false,
+       "reasons":["busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"],
+       "problems":[{"code":"busy","reason":"busy (already running 1 offloaded build(s), its limit; load 1.4/core, 1 of 2 build slots busy)"}],
+       "capacity":{"running":1,"max":1,"builds":1,"maxBuilds":2,"loadPerCore":1.4,"maxLoadPerCore":2,"diskFreeBytes":824e9,
+                   "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}
+      """#)
+    #expect(busy.listStatus == MachineListStatus(title: "Busy (1/2 builds)", tone: .warning))
+    #expect(busy.problemLines.isEmpty)
+    #expect(busy.rowDetail.isEmpty)
+    #expect(
+      busy.capacity?.resources == [
+        MachineResource(kind: .cpu, label: "Load", value: "1.4/core", tone: .normal),
+        MachineResource(kind: .memory, label: "RAM", value: "9.0/16 GB", tone: .normal),
+        MachineResource(kind: .disk, label: "Disk", value: "824 GB free", tone: .normal),
+      ])
+
+    let unlimited = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"builds":3,"maxBuilds":0,"loadPerCore":0.5,"maxLoadPerCore":2}}"#
+    )
+    #expect(unlimited.listStatus.title == "Busy (3 builds)")
+    let loaded = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}],"capacity":{"builds":0,"maxBuilds":2,"loadPerCore":8.2,"maxLoadPerCore":2}}"#
+    )
+    #expect(loaded.listStatus.title == "Busy (load 8.2/core)")
+    #expect(
+      try status(#"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}]}"#).listStatus
+        .title == "Busy")
+    let both = try status(
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"b"},{"code":"stim-build","reason":"s"}]}"#
+    )
+    #expect(both.problemLines.map(\.reason) == ["s"])
+  }
+
   @Test func describesAMachineRowFromDoctorsReport() throws {
     func status(_ json: String) throws -> BuildMachineStatus {
       try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
@@ -212,7 +251,12 @@ import Testing
        "problems":[{"code":"cocoapods","reason":"CocoaPods 1.17.0 there, 1.16.2 here"}],
        "capacity":{"running":0,"max":1,"diskFreeBytes":825196154880,"cpus":10,"loadPerCore":0.6,"builds":0,"maxBuilds":2}}
       """#)
-    #expect(mini.rowDetail == "0/2 builds \u{00B7} 825 GB free")
+    #expect(mini.rowDetail.isEmpty)
+    #expect(
+      mini.capacity?.resources == [
+        MachineResource(kind: .cpu, label: "Load", value: "0.6/core", tone: .normal),
+        MachineResource(kind: .disk, label: "Disk", value: "825.2 GB free", tone: .normal),
+      ])
     #expect(
       mini.problemLines == [
         .init(reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
@@ -230,10 +274,10 @@ import Testing
 
     let ready = try status(
       #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
-    #expect(ready.rowDetail == "3 builds")
+    #expect(ready.rowDetail == "Builds can run on this Mac.")
     #expect(ready.problemLines.isEmpty)
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
-    #expect(older.rowDetail == "1/2 offloaded builds")
+    #expect(older.rowDetail == "Builds can run on this Mac.")
     #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run on this Mac.")
     #expect(try status(#"{"machine":"m","state":"pending","deviceId":"d"}"#).rowDetail.isEmpty)
   }

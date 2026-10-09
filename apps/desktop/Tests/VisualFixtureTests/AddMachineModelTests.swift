@@ -102,6 +102,15 @@ final class AddMachineModelTests: XCTestCase {
     private enum Failure: Error { case refused }
   }
 
+  @MainActor func testTailscaleIsCheckingUntilTheFirstReadReturns() async {
+    let harness = Harness()
+    let model = harness.make()
+    XCTAssertTrue(model.checkingTailscale)
+    await model.refreshPeers()
+    XCTAssertFalse(model.checkingTailscale)
+    XCTAssertEqual(model.reachability, .peerOffline)
+  }
+
   @MainActor func testMacListSeparatesNoMacOfflineOnlyAndAvailable() async {
     let harness = Harness()
     let model = harness.make()
@@ -186,6 +195,88 @@ final class AddMachineModelTests: XCTestCase {
       try await Task.sleep(for: .milliseconds(1100))
     }
     XCTAssertGreaterThan(reads(), before, "the poll must read doctor every 5 seconds while it reads the journal every second")
+  }
+
+  @MainActor func testBackFromCapabilitiesReturnsToPickingAMac() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    XCTAssertFalse(model.canGoBack, "nothing precedes picking a Mac")
+    model.selectedId = "nMini"
+    await model.pick()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .pick)
+    XCTAssertNil(model.wizard.mac)
+    XCTAssertNil(model.wizard.build)
+    await model.pick()
+    XCTAssertEqual(model.wizard.phase, .choose)
+  }
+
+  @MainActor func testBackFromAnUnrunCommandDropsItsTicketAndIssuesANewOne() async throws {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    let shown = try XCTUnwrap(model.command)
+    let shownTicket = try XCTUnwrap(model.wizard.ticket)
+    XCTAssertEqual(model.wizard.phase, .command)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertNil(model.wizard.ticket)
+    XCTAssertNotEqual(model.draftTicket, shownTicket)
+    model.setCapability(.deviceHost, enabled: false)
+    await model.next()
+    XCTAssertNotEqual(model.wizard.ticket, shownTicket)
+    XCTAssertNotEqual(model.command, shown)
+    XCTAssertFalse(try XCTUnwrap(model.command).contains("--device-host"))
+    XCTAssertTrue(harness.writes.isEmpty)
+  }
+
+  @MainActor func testBackFromAnExpiredUnrunCommandReturnsToCapabilities() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    harness.now = harness.now.addingTimeInterval(1801)
+    await model.send(.tick)
+    XCTAssertEqual(model.wizard.phase, .expiredCommand)
+    XCTAssertTrue(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .choose)
+    XCTAssertNil(model.wizard.ticket)
+  }
+
+  @MainActor func testBackIsRefusedOnceSetupStartedOrFinished() async {
+    let harness = Harness()
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.selectedId = "nMini"
+    await model.pick()
+    await model.next()
+    await waitUntil { model.wizard.journal != nil }
+    XCTAssertEqual(model.wizard.phase, .running)
+    XCTAssertFalse(model.canGoBack)
+    model.goBack()
+    XCTAssertEqual(model.wizard.phase, .running)
+    XCTAssertNotNil(model.wizard.ticket)
+    harness.grantReady = true
+    await checkUntilApproved(model)
+    XCTAssertFalse(model.canGoBack)
+    await model.openTools()
+    XCTAssertFalse(model.canGoBack, "Tools")
+    await model.openSummary()
+    XCTAssertFalse(model.canGoBack, "Done")
   }
 
   @MainActor func testDoneKeepsASimulatorTargetTheWizardDoesNotOffer() async {

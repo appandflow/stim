@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -25,12 +25,18 @@ registerCache({ dir: process.argv[2], name: process.argv[3], prune: 'entries', n
 `;
 
 let home: string;
+const children: { child: ChildProcess; settled: Promise<void> }[] = [];
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-core-manifest-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const { child } of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+  await Promise.all(children.map(({ settled }) => settled));
+  children.length = 0;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -59,18 +65,18 @@ function registerInChild({
   goFile?: string;
   delayRead?: boolean;
 }): Promise<void> {
-  return new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, dir, name], {
+    env: {
+      ...process.env,
+      STIM_HOME: home,
+      STIM_READY_FILE: readyFile,
+      ...(goFile ? { STIM_GO_FILE: goFile } : {}),
+      ...(delayRead ? { STIM_DELAY_MANIFEST_READ: '1' } : {}),
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const done = new Promise<void>((resolve, reject) => {
     let stderr = '';
-    const child = spawn(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, dir, name], {
-      env: {
-        ...process.env,
-        STIM_HOME: home,
-        STIM_READY_FILE: readyFile,
-        ...(goFile ? { STIM_GO_FILE: goFile } : {}),
-        ...(delayRead ? { STIM_DELAY_MANIFEST_READ: '1' } : {}),
-      },
-      stdio: ['ignore', 'ignore', 'pipe'],
-    });
     child.stderr?.setEncoding('utf-8');
     child.stderr?.on('data', (chunk) => {
       stderr += String(chunk);
@@ -81,6 +87,8 @@ function registerInChild({
       else reject(new Error(`registration child failed (${signal || code}): ${stderr}`));
     });
   });
+  children.push({ child, settled: done.catch(() => {}) });
+  return done;
 }
 
 test('cache registration waits for the manifest lock', async () => {

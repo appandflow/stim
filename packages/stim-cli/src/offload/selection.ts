@@ -1,5 +1,6 @@
 import { InvalidArgumentError } from 'commander';
-import { parseMachine } from '@stim-cli/core/state';
+import { OFFLOAD_MODES, parseMachine } from '@stim-cli/core/state';
+import type { PlacementSetting, SettingSource } from '../placement-log.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines } from './build-machines.ts';
 
@@ -50,11 +51,36 @@ export function requireConfiguredMachine(selected: string, machines: unknown): s
   return match;
 }
 
+const settingSource = (flag: string | undefined, env: string | undefined, setting: unknown): SettingSource =>
+  flag !== undefined ? 'flag' : env?.trim() ? 'env' : setting !== undefined ? 'setting' : 'default';
+
+let buildMachineFlag: string | undefined;
+
+/** The settings that decide where a build runs, with the layer each value came from, for this run's `--remote-build`. */
+export function buildPlacementSettings(selected: string): PlacementSetting[] {
+  const flag = buildMachineFlag;
+  const remote = loadConfig()?.remote;
+  const rawMode = process.env.STIM_REMOTE_BUILD_MODE || remote?.buildMode;
+  return [
+    {
+      key: 'remote.build',
+      value: selected,
+      from: settingSource(flag, process.env.STIM_REMOTE_BUILD, remote?.build),
+    },
+    {
+      key: 'remote.buildMode',
+      value: selected === 'local' ? 'off' : OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
+      from: settingSource(undefined, process.env.STIM_REMOTE_BUILD_MODE, remote?.buildMode),
+    },
+  ];
+}
+
 export function resolveBuildPlacement(flag?: string): {
   selected: string;
   failure?: { code: string; message: string; remedy: string };
 } {
   const remote = loadConfig()?.remote;
+  buildMachineFlag = flag;
   let selected = 'auto';
   try {
     selected = resolveBuildMachine(flag, process.env.STIM_REMOTE_BUILD, remote?.build);

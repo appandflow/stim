@@ -55,6 +55,7 @@ import Foundation
     guard let server else { return }
     generation += 1
     let current = generation
+    DebugLog.info(.stream, "frames subscribe \(target.params)")
     unobserve = server.observeControlEnded { [weak self] ended in
       guard let self, case .on(let session) = self.control, ended.session == nil || ended.session == session else {
         return
@@ -91,6 +92,7 @@ import Foundation
         case "error":
           self.subscriptionID = nil
           self.problem = event.error?.message
+          DebugLog.error(.stream, "frames error \(target.params): \(event.error?.message ?? "unknown")")
         default: break
         }
       },
@@ -102,6 +104,7 @@ import Foundation
   }
 
   public func stop() {
+    DebugLog.info(.stream, "frames stop \(target.params)")
     end()
     connect(nil)
   }
@@ -138,6 +141,7 @@ import Foundation
       } catch {
         guard current == beginGeneration, control == .starting, server === self.server else { return }
         control = .failed(error.localizedDescription)
+        DebugLog.error(.stream, "control begin failed \(target.params): \(error.localizedDescription)")
       }
     }
   }

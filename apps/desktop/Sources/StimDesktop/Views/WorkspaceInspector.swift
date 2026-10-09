@@ -20,7 +20,7 @@ struct Inspector: View {
         if let archive {
           ArchiveStatusSection(page: archive)
         }
-        if archive != nil || env.runPlatforms.contains(where: { $0 == "ios" || $0 == "android" }) || env.macos != nil {
+        if archive != nil || env.runPlatforms.contains(where: { ["ios", "android", "macos"].contains($0) }) || env.macos != nil {
           BuildSection(
             cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
@@ -46,7 +46,7 @@ struct Inspector: View {
             SectionLabel(title: archive == nil ? "App / native logs" : "Logs")
             Spacer(minLength: Space.sm)
             if archive?.logsExpired != true {
-              Button("Show logs") {
+              Button("Show Logs") {
                 var query = LogQuery()
                 if archive == nil { query.sources = [.client, .device] }
                 openLogs(query)
@@ -283,7 +283,7 @@ struct MetroLogsSection: View {
         HStack {
           SectionLabel(title: "Metro")
           Spacer(minLength: Space.sm)
-          Button("Show logs", action: openLogs)
+          Button("Show Logs", action: openLogs)
             .buttonStyle(.stim())
             .fixedSize()
             .help("Open Metro logs in the workspace log viewer")
@@ -300,7 +300,7 @@ struct MetroLogsSection: View {
           Text(health.rawValue).foregroundStyle(Palette.tertiary)
           if !showsHeading {
             Spacer(minLength: Space.sm)
-            Button("Show logs", action: openLogs).buttonStyle(.stim()).fixedSize()
+            Button("Show Logs", action: openLogs).buttonStyle(.stim()).fixedSize()
           }
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
@@ -376,7 +376,7 @@ struct WorktreeInspector: View {
           HStack {
             SectionLabel(title: "App / native logs")
             Spacer(minLength: Space.sm)
-            Button("Show logs") {
+            Button("Show Logs") {
               var query = LogQuery()
               query.sources = [.client, .device]
               openLogs(nil, query)
@@ -421,16 +421,9 @@ struct WorktreeInspector: View {
   }
 
   @ViewBuilder private func buildEntry(_ entry: WorktreePage.Entry, app: Workspace) -> some View {
-    let section = BuildSection(
+    BuildSection(
       cli: cli, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
       projectSubtitle: page.subtitle(for: entry, among: page.buildEntries))
-    if entry.platform == "macos" {
-      Card(radius: Radius.control, border: nil, clipsContent: false) {
-        section.padding(Space.lg).frame(maxWidth: .infinity, alignment: .leading)
-      }
-    } else {
-      section
-    }
   }
 }
 
@@ -467,7 +460,7 @@ struct WorkspaceWorkSection: View {
           if actions.expired {
             InlineEmpty("Agent actions expired")
           } else {
-            Button("Show agent actions", action: openActions).buttonStyle(.stim())
+            Button("Show Agent Actions", action: openActions).buttonStyle(.stim())
           }
         }
       }

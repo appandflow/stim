@@ -115,6 +115,22 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+Doctor reports a checkout that holds linked worktrees inside it, such as
+`.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
+`ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started
+there registers, crawls every worktree's files, `node_modules`, and build output,
+which grows the shared Watchman daemon's memory and its recrawls. The finding
+says when Watchman watches the checkout now. `--fix` merges the worktrees' shared
+parent directory (such as `.worktrees`) when Git tracks nothing in it, otherwise
+each worktree path, into that `.watchmanconfig`, keeping every other key and
+entry. It refuses a file that is not a JSON object or whose `ignore_dirs` is not
+an array, and names the entries to add by hand. Watchman matches entries
+literally, so `.worktrees/` or `./.worktrees` ignores nothing. Commit
+the file: Watchman reads `ignore_dirs` only from a root's `.watchmanconfig`, with
+no global equivalent. It reads the file only when it adds a root, so for a root
+it already watches run `watchman watch-del <checkout>`, then restart Watchman to
+free its memory now. Doctor never runs either command.
+
 When [`remote.machines`](./settings.md#machine-settings) names remote Macs,
 doctor reports their separate device-host approval in `deviceHosts`. Only
 `--fix` requests approval, retries a revoked or lapsed request, and
@@ -181,7 +197,9 @@ its reported load:
     "maxLoadPerCore": 2,
     "declined": null,
     "diskFreeBytes": 812000000000,
-    "minDiskFreeBytes": 10737418240
+    "minDiskFreeBytes": 10737418240,
+    "memoryUsedBytes": 9663676416,
+    "memoryTotalBytes": 17179869184
   }
 }
 ```
@@ -521,7 +539,7 @@ the fingerprint before that prebuild. With
 `--eas-profile`, it asks EAS for a matching build and downloads nothing.
 
 `--json` prints
-`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, refusal? }`.
+`{ platform, slot?, fingerprint, cacheKey, cacheHit, provider, cacheSkipped, prebuild, outcome, expectedMs, basis, missReason?, placement?, refusal? }`.
 `missReason` has the shape of `lastBuilds.<platform>.missReason` in
 [`stim status --json`](#status).
 `cacheHit` is `"local"`, `"remote"` or `false`. `expectedMs` is the median of
@@ -535,8 +553,11 @@ and the run then checks the new key. A Release hit whose JavaScript swap fails
 builds from scratch. An Android plan uses the ABI of the emulator the slot
 records, or of the system image a new emulator would use. A plan refuses
 `--device`, `--remote`, `--wait`, `--no-wait`, `--no-metro-check` and
-`--simulator-app` with `STIM_BAD_ARG`. Without `--eas-profile`, it also refuses
-the `ios.remote` and `android.remote` settings and the experimental compiler CAS.
+`--simulator-app` with `STIM_BAD_ARG`. With `ios.remote` or `android.remote`
+set to `auto` or a Mac name, it asks that Mac for its device (a read-only
+probe) and prints a `placement` line; it refuses `eas`, `proxy` and a Mac that
+does not answer. Without `--eas-profile`, it also refuses the experimental
+compiler CAS.
 
 Try it with an agent:
 
@@ -689,8 +710,8 @@ result.
   `--slot <ios-slot>` still shows it. General device logs require
   an explicit `--source device` or `--source all`.
 - `--source device` includes operating-system device logs.
-- `--source maintenance` shows report-only maintenance actions and failures
-  for this workspace. Add `--errors` to show only maintenance failures from it;
+- `--source maintenance` shows maintenance actions, planned (report mode) or taken (on mode),
+  and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
 - `--source agent` shows what agent-device did on this workspace's owned
   simulators and emulators: taps, typing, app opens, screenshots, and failed
@@ -1795,7 +1816,7 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 
 A person on the worker Mac runs `stim-server setup` to set it up and approve
 at most one build and/or device-host request from one tailnet node, carrying
-one ticket, until one expiry. Each grant asks y/N in a terminal; `--yes` is
+one ticket, until one expiry. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve new requests without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.

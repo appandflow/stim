@@ -23,6 +23,7 @@ import {
   untrackedMissLine,
 } from '../../cache/build-cache.ts';
 import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
+import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-lock.ts';
 import type { BuildSlotHandle } from '../../engine/build-slots.ts';
@@ -285,7 +286,20 @@ export async function acquireIosArtifact(
   let hereReason = 'no remote Mac is paired';
   let slotWaitMs: number | undefined;
   let builtOn: string | undefined;
-  const fallBack = (reason: string, line: string = reason) => {
+  const fallBack = (
+    reason: string,
+    line: string = reason,
+    info: { code?: string; machine?: string; candidates?: PlacementCandidate[] } = {},
+  ) => {
+    logWriter().write(
+      buildPlacementRecord({
+        platform: PLATFORM,
+        buildMachine,
+        candidates: info.candidates,
+        event: 'placement_fallback',
+        fallback: { code: info.code ?? 'fallback', reason, machine: info.machine },
+      }),
+    );
     if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, reason);
     offloadFallback = reason;
     buildFailure = { ...buildFailure, offloadFallback: reason };
@@ -722,6 +736,7 @@ export async function acquireIosArtifact(
   interface Candidate {
     mode: OffloadMode;
     here: MachineCapacity;
+    code: string;
     reason: string;
     runtime: string;
     machines: ReturnType<typeof pairedMachines>;
@@ -748,14 +763,22 @@ export async function acquireIosArtifact(
     const placement = offloadPlacement({ mode, machines: machines.length, here, unsupported, selected: buildMachine });
     if (!placement.offload) {
       hereReason = placement.reason;
+      logWriter().write(
+        buildPlacementRecord({
+          platform: PLATFORM,
+          buildMachine,
+          stays: { code: placement.code, reason: placement.reason },
+        }),
+      );
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { mode, here, reason: placement.reason, runtime: runtime!, machines };
+    return { mode, here, code: placement.code, reason: placement.reason, runtime: runtime!, machines };
   }
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
+    let asked: PlacementCandidate[] = [];
     const choice = await chooseBuildMachine({
       projectRoot: root,
       target: {
@@ -772,14 +795,23 @@ export async function acquireIosArtifact(
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,
       selected: buildMachine,
+      onCandidates: (each) => (asked = each),
     });
     if (typeof choice === 'string') {
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
-      fallBack(choice);
+      fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
       return null;
     }
     openOffload.choice = choice;
+    logWriter().write(
+      buildPlacementRecord({
+        platform: PLATFORM,
+        buildMachine,
+        candidates: asked,
+        chose: { machine: choice.machine, reason: `${candidate.reason}${placementLoad(choice)}` },
+      }),
+    );
     phase('build', `placement: ${choice.machine} (${candidate.reason}${placementLoad(choice)})`);
     return choice;
   }
@@ -846,7 +878,10 @@ export async function acquireIosArtifact(
     if (!outcome.ok || !prepared) {
       const why = reason ?? 'the stored app is not installable';
       fallbackMachine = choice.machine;
-      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`);
+      fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
+        code: 'offload-failed',
+        machine: choice.machine,
+      });
       logWriter().write({ src: 'build', level: 'warn', event: 'offload_failed', msg: reason, machine: choice.machine });
       return false;
     }

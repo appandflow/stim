@@ -590,7 +590,7 @@ import Testing
     #expect(StatusFilter.summary(StatusFilter.all) == "All")
     #expect(StatusFilter.summary([.live, .idle, .notSetUp]) == "3 selected")
     #expect(StatusFilter.summary([]) == "None")
-    #expect(StatusFilter.summary([.notSetUp]) == "Not set up")
+    #expect(StatusFilter.summary([.notSetUp]) == "Not Set Up")
     #expect(StatusFilter.summary([.idle, .live]) == "Active, Idle")
     #expect(StatusFilter.summary([.idle, .notSetUp, .archived]) == "3 selected")
   }
@@ -972,6 +972,16 @@ import Testing
     #expect(roots == [500, 501, 600, 700])
   }
 
+  @Test func countsAnOwnedMacosAppAsARoot() throws {
+    let json = """
+      {"path":"/w","live":true,"warnings":[],
+       "macos":{"launchId":"l","product":"App","bundle":"/b","bundleId":"id","executable":"/e","state":"running",
+                "app":{"pid":502,"startedAtMicros":1},"build":{"state":"ok","startedAt":"2026-10-08T00:00:00Z"}}}
+      """
+    let env = try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+    #expect(workspaceRoots(env, in: ProcessTable.parse(ps)) == [502])
+  }
+
   @Test func ignoresASupervisorPidOfAWorkspaceThatIsNotLive() throws {
     let roots = workspaceRoots(try workspace(metro: nil, live: false), in: ProcessTable.parse(ps))
     #expect(!roots.contains(500))
@@ -1062,17 +1072,6 @@ import Testing
     #expect(emulator.device.id == "android:default:stim-wide-insets-mobile")
     #expect(payload.owner(of: .simulator(udid: "emulator-5554")) == nil)
     #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
-  }
-
-  @Test func aLaunchNavigatesOnlyWhenNothingIsReplaced() {
-    func response(_ page: LaunchPage, open: Bool = true) -> LaunchResponse {
-      launchResponse(page: page, mainWindowOpen: open, workspacePath: "/w/a")
-    }
-    #expect(response(.other, open: false) == .navigate)
-    #expect(response(.allDevices) == .navigate)
-    #expect(response(.workspace("/w/a")) == .navigate)
-    #expect(response(.workspace("/w/b")) == .notice)
-    #expect(response(.other) == .notice)
   }
 
   @Test func readsAWorkspaceLink() {
