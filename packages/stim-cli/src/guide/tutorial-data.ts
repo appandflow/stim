@@ -1,9 +1,6 @@
 export const TUTORIAL_REPO = 'appandflow/stim-tutorial';
 
-/** The test app's single color file and the names it exports; the repo owns them. */
-export const TUTORIAL_THEME = { file: 'theme.js', exports: ['titleColor', 'backgroundColor'] };
-
-export const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
+const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 

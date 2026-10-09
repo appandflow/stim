@@ -140,7 +140,8 @@ public struct TutorialInput: Sendable {
   public var record: TutorialRecord?
 
   public init(
-    environment: TutorialEnvironment?, siblings: [TutorialEnvironment] = [], archivedProjectRoots: [String] = [], logRecords: [LogRecord] = [],
+    environment: TutorialEnvironment?, siblings: [TutorialEnvironment] = [], archivedProjectRoots: [String] = [],
+    logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
     machineApproved: Bool = false, approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true,
     now: Date, record: TutorialRecord? = nil
@@ -250,8 +251,9 @@ public struct TutorialProgress: Sendable {
     }
     let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
     if record?.secondPath == nil, let tracked {
-      record?.secondPath = TutorialEnvironment.newest(
-        input.siblings.filter { $0.repository == tracked.repository && $0.path != tracked.path })?.path
+      record?.secondPath =
+        TutorialEnvironment.newest(
+          input.siblings.filter { $0.repository == tracked.repository && $0.path != tracked.path })?.path
     }
     let second = input.siblings.first { $0.path == record?.secondPath }
     if let restartAfter = record?.restartAfter, input.now > restartAfter {
@@ -416,7 +418,8 @@ public struct TutorialProgress: Sendable {
       }
       guard let last = second.lastBuild, last.status == "ok" else { return Checkpoint(detail: "Waiting for the second build") }
       return Checkpoint(
-        completed: last.cacheHit == .none ? nil : last.endedAt, detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
+        completed: last.cacheHit == .none ? nil : last.endedAt,
+        detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
     case "device":
       guard environment?.ios?.app?.state == "running" else {
         return Checkpoint(failure: "Ask your agent to run the app again")

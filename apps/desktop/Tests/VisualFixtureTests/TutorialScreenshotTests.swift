@@ -42,9 +42,10 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let variants = [
-        "done", "failure", "manual", "begin-timeout", "restarting", "phone-not-paired", "phone-server-off",
+        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout", "restarting",
+        "phone-not-paired", "phone-server-off",
         "phone-already-paired", "phone-paired-during-step",
-        "machine-none", "machine-approved", "machine-offloaded", "machine-approved-manual",
+        "machine-none", "machine-approved", "machine-offloaded", "machine-approved-commands",
       ]
       for name in TutorialSteps.all.map(\.id) + variants {
         for dark in [false, true] {
@@ -78,7 +79,7 @@
 
     private var storage: UserDefaults {
       let defaults = UserDefaults(suiteName: "TutorialFixture")!
-      defaults.set(name == "manual" || name == "machine-approved-manual", forKey: "tutorial.commandsExpanded")
+      defaults.set(name.hasSuffix("-commands"), forKey: "tutorial.commandsExpanded")
       return defaults
     }
 
@@ -88,6 +89,7 @@
         snapshot: snapshot, fixtureRendering: true, restarting: name == "restarting",
         message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
+        canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
         commands: { step in
           tutorialCommands(
             step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
@@ -96,7 +98,7 @@
         }
       )
       .defaultAppStorage(storage)
-      .frame(width: 320, height: name == "machine-approved-manual" ? 1440 : machineState.showsPrompt ? 1120 : 960)
+      .frame(width: 320, height: name == "machine-approved-commands" ? 1440 : machineState.showsPrompt ? 1120 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
@@ -106,12 +108,16 @@
         : name.hasPrefix("machine-")
           ? "machine"
           : ["failure", "restarting"].contains(name)
-            ? "build" : name == "manual" ? "agent" : name == "begin-timeout" ? "begin" : name
+            ? "build"
+            : name == "agent-commands"
+              ? "agent"
+              : name == "finish-commands"
+                ? "finish" : name == "build-no-agent-device" ? "build" : name == "begin-timeout" ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
       var record = TutorialRecord(
-        version: 1, startedAt: now, step: id, done: done)
+        version: 2, startedAt: now, step: id, done: done)
       if name == "phone-paired-during-step" { record.phonePairedAtStart = false }
       if ["machine", "finish"].contains(id) {
         record.done.removeAll { $0 == "phone" }
@@ -125,7 +131,8 @@
         Workspace.self,
         from: Data(
           """
-          {"path":"/Users/example/stim-tutorial-tour","live":true,"warnings":[],"tutorial":{"version":1},
+          {"path":"/Users/example/stim-tutorial-tour","live":true,"warnings":[],"tutorial":{"version":2},
+           "agentDevice":{"stateDir":"/Users/example/.stim/agent-device","installed":\(name != "build-no-agent-device")},
            "ios":{"udid":"tutorial-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
       var workspace = deviceWorkspace
@@ -140,7 +147,7 @@
       }
       var snapshot = engine.update(
         TutorialInput(
-          environment: id == "device" || id == "machine" ? TutorialEnvironment(workspace) : nil,
+          environment: ["device", "machine", "agent"].contains(id) ? TutorialEnvironment(workspace) : nil,
           pairedPhoneCount: phoneCount, machineApproved: machineState.showsPrompt,
           approvedMachine: machineState.showsPrompt ? "Studio" : nil, now: now, record: record))
       if let index = snapshot.steps.firstIndex(where: { $0.id == id }), !["phone", "machine"].contains(id) {
@@ -148,14 +155,14 @@
         snapshot.steps[index].detail =
           name == "failure" ? "compile-failed: App.js: Unexpected token" : snapshot.steps[index].detail
       }
-      if let index = snapshot.steps.firstIndex(where: { $0.id == "build" }), id != "build", id != "begin", id != "sidebar" {
+      if let index = snapshot.steps.firstIndex(where: { $0.id == "build" }), id != "build", id != "begin" {
         snapshot.steps[index].detail = "Built in 4m 24s: no earlier build"
       }
-      if let index = snapshot.steps.firstIndex(where: { $0.id == "rebuild" }), done.contains("rebuild") {
+      if let index = snapshot.steps.firstIndex(where: { $0.id == "parallel" }), done.contains("parallel") {
         snapshot.steps[index].detail = "Local cache hit in 7.7s"
       }
-      if name == "finish" {
-        snapshot.steps[snapshot.steps.count - 1].ticks[0].done = true
+      if name == "finish", let index = snapshot.steps.firstIndex(where: { $0.id == "finish" }) {
+        snapshot.steps[index].ticks[0].done = true
       }
       if name == "done", let index = snapshot.steps.firstIndex(where: { $0.id == "phone" }) {
         snapshot.steps[index].state = .skipped

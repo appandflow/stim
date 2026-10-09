@@ -52,7 +52,7 @@ Check that app.json in the clone has expo.extra.stimTutorial equal to
 ${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user needs a newer Stim.
 Enter the clone, run the project's package install (npm install), and follow
 stim guide agent to run the app on iOS (stim start, stim ios). Tell the user the
-first build can take about four minutes on a cold cache. Relay the Open in Stim
+first build can take about five minutes on a cold cache, and the parallel one about one. Relay the Open in Stim
 Desktop link printed by stim ios once. On npm or network failure, report stderr
 and stop.
 

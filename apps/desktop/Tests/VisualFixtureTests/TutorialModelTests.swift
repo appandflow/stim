@@ -18,7 +18,7 @@
         Workspace.self,
         from: Data(
           """
-          {"path":"/tmp/tutorial-tour","live":true,"warnings":[],"tutorial":{"version":1},
+          {"path":"/tmp/tutorial-tour","live":true,"warnings":[],"tutorial":{"version":2},
            "phase":"ready","phaseSince":"\(since)"}
           """.utf8))
     }
@@ -57,22 +57,22 @@
       XCTAssertTrue(anotherLaunch.isOpen)
     }
 
-    @MainActor func testResumeRestoresSkippedStepsAndManualMode() throws {
+    @MainActor func testResumeRestoresSkippedSteps() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "build",
-        done: ["begin"], skipped: ["sidebar"])
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "build",
+        done: ["begin"], skipped: ["device"])
       let model = TutorialModel(defaults: defaults)
       model.update(workspaces: [try workspace()], archived: [], sheetOpen: false)
       XCTAssertTrue(model.isOpen)
       XCTAssertEqual(model.snapshot?.currentStep, "build")
-      XCTAssertEqual(model.snapshot?.record.skipped, ["sidebar"])
+      XCTAssertEqual(model.snapshot?.record.skipped, ["device"])
     }
 
     @MainActor func testMachineApprovalAdvancesAndSurvivesLocalRefresh() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "machine",
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "machine",
         done: TutorialSteps.all.prefix { $0.id != "machine" }.map(\.id))
       let model = TutorialModel(defaults: defaults)
       let env = try workspace()
@@ -82,7 +82,6 @@
       model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved, approvedMachine: "Studio")
       XCTAssertEqual(model.snapshot?.currentStep, "finish")
       XCTAssertTrue(model.machineState.showsPrompt)
-      model.setManual(true)
       XCTAssertEqual(model.machineState, .approved)
       let step = try XCTUnwrap(TutorialSteps.all.first { $0.id == "machine" })
       XCTAssertTrue(model.commands(for: step).contains("--remote-build \"Studio\""))
@@ -98,7 +97,7 @@
     @MainActor func testResumeArchivedTourShowsDone() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
         step: "finish")
       let model = TutorialModel(defaults: defaults)
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
@@ -109,8 +108,8 @@
     @MainActor func testOpeningBeforeStatusLoadsPreservesArchivedResumeDetection() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
-        step: "build", done: ["begin", "sidebar"])
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
+        step: "build", done: ["begin"])
       let model = TutorialModel(defaults: defaults)
       model.open()
       XCTAssertNil(model.snapshot)
@@ -129,8 +128,8 @@
     @MainActor func testOldArchiveCannotCompleteFinishInRestartedRun() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:02:00Z")!,
-        step: "finish", done: TutorialSteps.all.dropLast().map(\.id))
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:02:00Z")!,
+        step: "finish", done: TutorialSteps.all.prefix { $0.id != "finish" }.map(\.id))
       let model = TutorialModel(defaults: defaults)
       model.open()
       var entry = try archive()
@@ -145,8 +144,8 @@
       let defaults = isolatedDefaults()
       let start = ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: start, step: "build",
-        done: ["begin"], skipped: ["sidebar"])
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: start, step: "build",
+        done: ["begin"], skipped: ["device"])
       let model = TutorialModel(defaults: defaults)
       let env = try workspace()
       model.update(workspaces: [env], archived: [], sheetOpen: false, now: start)
@@ -157,14 +156,14 @@
         workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(61))
       XCTAssertTrue(model.restarting)
       XCTAssertEqual(model.snapshot?.record.startedAt, start)
-      XCTAssertEqual(model.snapshot?.record.skipped, ["sidebar"])
+      XCTAssertEqual(model.snapshot?.record.skipped, ["device"])
       XCTAssertEqual(model.snapshot?.currentStep, "build")
       model.update(workspaces: [], archived: [], sheetOpen: false, now: start.addingTimeInterval(62))
       model.update(workspaces: [newerPhase], archived: [], sheetOpen: false, now: start.addingTimeInterval(63))
       XCTAssertFalse(model.restarting)
       XCTAssertEqual(model.snapshot?.record.skipped, [])
       XCTAssertEqual(model.snapshot?.record.startedAt, start.addingTimeInterval(63))
-      XCTAssertEqual(model.snapshot?.currentStep, "sidebar")
+      XCTAssertEqual(model.snapshot?.currentStep, "build")
     }
 
     @MainActor func testWaitingTimeoutStartsWhenPromptIsCopied() {
@@ -180,11 +179,7 @@
       relaunched.open()
       relaunched.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(480))
       XCTAssertEqual(relaunched.message, "No tutorial workspace yet. Ask your agent what failed")
-      relaunched.setManual(true)
-      XCTAssertEqual(relaunched.message, "Waiting for the tutorial workspace...")
       model.open(beginning: true)
-      model.setManual(true)
-      model.copiedPrompt(now: now)
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(300))
       XCTAssertNil(model.snapshot?.record.runPromptCopiedAt)
       XCTAssertEqual(model.message, "Waiting for the tutorial workspace...")
@@ -195,7 +190,7 @@
         Workspace.self,
         from: Data(
           """
-          {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":1},"phase":"ready",
+          {"path":"/tmp/new-tour","live":true,"warnings":[],"tutorial":{"version":2},"phase":"ready",
            "ios":{"udid":"reused-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
       for (count, beginning) in [(62, false), (64, false), (64, true)] {
@@ -207,21 +202,21 @@
         let model = TutorialModel(defaults: isolatedDefaults())
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
         if beginning { model.open(beginning: true) }
-        for _ in 0..<3 { model.skip() }
+        for _ in 0..<2 { model.skip() }
         XCTAssertEqual(model.snapshot?.currentStep, "device")
         events.opened("reused-simulator")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
         XCTAssertEqual(model.snapshot?.currentStep, "device")
         events.input("reused-simulator")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
-        XCTAssertEqual(model.snapshot?.currentStep, "logs")
+        XCTAssertEqual(model.snapshot?.currentStep, "agent")
       }
     }
 
     @MainActor func testSetupEntryBeginsWhileHelpResumes() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, startedAt: Date(), step: "build", done: ["begin", "sidebar"])
+        version: 2, startedAt: Date(), step: "build", done: ["begin"])
       let model = TutorialModel(defaults: defaults)
       model.open()
       XCTAssertNil(model.snapshot)
@@ -236,8 +231,8 @@
     @MainActor func testDeletedWorkspaceRequiresRestartWithoutObservedStop() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "finish",
-        done: TutorialSteps.all.dropLast().map(\.id))
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "finish",
+        done: TutorialSteps.all.prefix { $0.id != "finish" }.map(\.id))
       let model = TutorialModel(defaults: defaults)
       model.update(workspaces: [try workspace()], archived: [], sheetOpen: false)
       let now = Date()
@@ -250,8 +245,8 @@
     @MainActor func testFinishWithoutArchiveWaitsForGraceAndObservedStop() throws {
       let defaults = isolatedDefaults()
       var record = TutorialRecord(
-        version: 1, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "finish",
-        done: TutorialSteps.all.dropLast().map(\.id))
+        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "finish",
+        done: TutorialSteps.all.prefix { $0.id != "finish" }.map(\.id))
       record.stopped = true
       TutorialRecordStore(defaults).record = record
       let model = TutorialModel(defaults: defaults)

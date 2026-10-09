@@ -304,17 +304,18 @@ struct TutorialPanel: View {
         "You will see two agents work on two changes at once, each in its own worktree with its own simulator and dev server, each checking its own work on the device. First, get the test app and run it."
     case "build":
       return
-        "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Watch the build in Desktop."
+        "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Stim waited until the app said it was ready, not just launched, so the agent knows the app works before it checks the change: look for the readiness phase in the build details. The first build takes a few minutes. Watch it in Desktop."
     case "parallel":
       return
-        "While that runs, ask for another change, for example: \"Try a dark background and check it on the simulator.\" Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap. Look at the cache badge and both simulators."
+        "While that runs, ask for another change, for example: \"Try a dark background and check it on the simulator.\" Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
     case "device": return "Optional. Open the live view of either simulator and tap around while your agents work."
     case "agent":
       return
-        "Optional. Your agent verifies UI changes itself with screenshots, taps and logs. Desktop shows what it did and lets you replay it. Try a prompt like this, then watch Agent actions."
+        "Optional. Your agent verifies UI changes itself with screenshots, taps and logs. Desktop shows what it did and lets you replay it. Apps can declare readiness with two log lines (stim guide lifecycle readiness), so agents can check their own apps the same way. Try a prompt like this, then watch Agent actions."
     case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
     case "phone":
-      return "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
+      return
+        "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
     case "machine":
       return "Optional. An approved Mac can build the same app. Choose one in Settings > Remote Macs, or skip this step."
     case "share":
