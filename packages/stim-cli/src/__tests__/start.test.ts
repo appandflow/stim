@@ -38,10 +38,18 @@ import {
   registerStart,
   startFacts,
   supervisorEntry,
+  supervisorSignalable,
   tailLines,
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
+import {
+  IMPOSSIBLE_PID,
+  asProcessExit,
+  goneClaimOwner,
+  liveClaimOwner,
+  makeChildProcess,
+  recycledClaimOwner,
+} from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
@@ -456,6 +464,22 @@ describe('liveSupervisor', () => {
   test('no record at all is null, not a throw', () => {
     expect(liveSupervisor({ port: 8082 })).toBe(null);
     expect(liveSupervisor()).toBe(null);
+  });
+});
+
+describe('supervisorSignalable', () => {
+  test('a child this process spawned is signalled without a recorded identity', () => {
+    expect(supervisorSignalable({})).toBe(true);
+  });
+
+  test('a recorded supervisor is signalled only while its identity still matches', () => {
+    expect(supervisorSignalable({ recordedIdentity: liveClaimOwner() })).toBe(true);
+    expect(supervisorSignalable({ recordedIdentity: recycledClaimOwner() })).toBe(false);
+    expect(supervisorSignalable({ recordedIdentity: goneClaimOwner() })).toBe(false);
+  });
+
+  test('a recorded supervisor without a verifiable token is not signalled', () => {
+    expect(supervisorSignalable({ recordedIdentity: { pid: process.pid } })).toBe(false);
   });
 });
 

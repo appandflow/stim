@@ -227,6 +227,20 @@ test('signalProcessTree kills the whole tree with taskkill on Windows and signal
   signal.mockRestore();
 });
 
+test.each([0, 1, -5, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+  'signalProcessTree refuses pid %s on every platform without signalling',
+  (pid) => {
+    const runFile = vi.fn(() => '');
+    setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: runFile, spawn: () => {} });
+    const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
+    expect(() => signalProcessTree(pid, 'SIGTERM', { group: true, platform: 'darwin' })).toThrow(/Refusing to signal/);
+    expect(() => signalProcessTree(pid, 'SIGTERM', { platform: 'win32' })).toThrow(/Refusing to signal/);
+    expect(signal).not.toHaveBeenCalled();
+    expect(runFile).not.toHaveBeenCalled();
+    signal.mockRestore();
+  },
+);
+
 test('signalProcessTree reports a taskkill that found no such process', () => {
   setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   expect(signalProcessTree(4242, 'SIGTERM', { platform: 'win32' })).toBe(false);

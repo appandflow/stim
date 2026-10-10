@@ -9,7 +9,7 @@ import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devic
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
@@ -242,11 +242,23 @@ interface StartCommandDeps {
 export interface SupervisorProcess extends TerminableChild {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   unref(): void;
+  /** On win32, the identity the supervisor wrote for itself; absent for a child this process spawned. */
+  recordedIdentity?: ProcessRecord;
 }
 
-function recordedSupervisorProcess(pid: number | undefined): SupervisorProcess {
+/** Whether `child` may be signalled: a stand-in for a recorded supervisor only while its recorded identity holds. */
+export function supervisorSignalable(
+  child: Pick<SupervisorProcess, 'recordedIdentity'>,
+  inspectIdentity: typeof inspectProcessIdentity = inspectProcessIdentity,
+): boolean {
+  return !child.recordedIdentity || inspectIdentity(child.recordedIdentity) === 'same';
+}
+
+function recordedSupervisorProcess(recorded: ProcessRecord | null): SupervisorProcess {
+  const pid = typeof recorded?.pid === 'number' ? recorded.pid : undefined;
   return Object.assign(new EventEmitter(), {
     pid,
+    ...(recorded ? { recordedIdentity: recorded } : {}),
     stdout: null,
     stderr: null,
     kill: (signal: NodeJS.Signals | number = 'SIGTERM') =>
@@ -609,7 +621,7 @@ export async function startDevServer(
         return child;
       };
 
-      const recordedSupervisorPid = async (since: number): Promise<number | null> => {
+      const recordedSupervisor = async (since: number): Promise<ProcessRecord | null> => {
         const deadline = Date.now() + RECORDED_SUPERVISOR_WAIT_MS;
         while (Date.now() < deadline) {
           const record = readWorkspaceState(root)?.supervisor as SupervisorStateRecord | undefined;
@@ -619,7 +631,7 @@ export async function startDevServer(
             Date.parse(String(record.startedAt)) >= since &&
             pidExists(record.pid)
           )
-            return record.pid;
+            return { pid: record.pid, processToken: record.processToken };
           await sleep(25);
         }
         return null;
@@ -647,15 +659,15 @@ export async function startDevServer(
           shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
         });
         const launcherFailed = exit.code !== 0 || exit.error;
-        const pid = launcherFailed ? null : await recordedSupervisorPid(since);
-        if (pid === null) {
+        const recorded = launcherFailed ? null : await recordedSupervisor(since);
+        if (recorded === null) {
           const reason = launcherFailed
             ? `the supervisor launcher exited (${exit.error ? exit.error.message : `code ${exit.code}`})`
             : `the supervisor did not record itself within ${RECORDED_SUPERVISOR_WAIT_MS / 1000}s`;
           appendFileSync(logFile, `Stim start: ${reason}.\n${stderr.join('')}`);
           childExit = { code: exit.code, signal: exit.signal, ...(exit.error ? { error: exit.error } : {}) };
         }
-        return recordedSupervisorProcess(pid ?? undefined);
+        return recordedSupervisorProcess(recorded);
       };
 
       const spawnSupervisor = async (origin: string | null): Promise<SupervisorProcess> => {
@@ -883,7 +895,11 @@ export async function startDevServer(
               }
               const handoffRecord = {
                 pid: child.pid as number,
-                processToken: child.pid ? captureProcessToken(child.pid) : null,
+                processToken: child.recordedIdentity
+                  ? (child.recordedIdentity.processToken ?? null)
+                  : child.pid
+                    ? captureProcessToken(child.pid)
+                    : null,
                 port,
                 mode: serverMode,
                 startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
@@ -893,7 +909,7 @@ export async function startDevServer(
               } catch {
                 const handedOff = await waitForSupervisorHandoff(child);
                 if (!handedOff) {
-                  const stopped = await d.terminateSupervisorChild(child);
+                  const stopped = supervisorSignalable(child) && (await d.terminateSupervisorChild(child));
                   return {
                     failed: {
                       code: 'STIM_SUPERVISOR_EXITED',
