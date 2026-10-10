@@ -79,19 +79,43 @@ public func isScratchPath(_ path: String) -> Bool {
   ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].contains { path == $0 || path.hasPrefix($0 + "/") }
 }
 
+/// Whether `path` is inside a git checkout that still exists: a `.git` folder, or a `.git` file whose gitdir is there.
+public func isGitCheckout(_ path: String) -> Bool {
+  let fileManager = FileManager.default
+  var directory = URL(fileURLWithPath: path)
+  while true {
+    let dotGit = directory.appendingPathComponent(".git")
+    var isFolder: ObjCBool = false
+    if fileManager.fileExists(atPath: dotGit.path, isDirectory: &isFolder) {
+      if isFolder.boolValue { return true }
+      guard let text = try? String(contentsOf: dotGit, encoding: .utf8),
+        let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") })
+      else { return false }
+      let target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
+      return fileManager.fileExists(atPath: URL(fileURLWithPath: target, relativeTo: directory).path)
+    }
+    let parent = directory.deletingLastPathComponent()
+    if parent.path == directory.path { return false }
+    directory = parent
+  }
+}
+
 /// One workspace per app to run `stim doctor` in, the most recently active app first: the app's folder in the
 /// project's own checkout when status lists it, else the first worktree workspace of that folder. Only listed
 /// workspaces qualify, because doctor records its run in the Stim project registry and would add an unlisted
-/// checkout to `stim status`. A workspace in a scratch folder never qualifies.
-public func doctorCheckouts(_ environments: [Workspace], project: (String) -> Project) -> [DoctorCheckout] {
-  doctorCheckoutsBySource(environments, project: project).map(\.checkout)
+/// checkout to `stim status`. A workspace in a scratch folder, or outside a git checkout, never qualifies.
+public func doctorCheckouts(
+  _ environments: [Workspace], project: (String) -> Project, isCheckout: (String) -> Bool = isGitCheckout
+) -> [DoctorCheckout] {
+  doctorCheckoutsBySource(environments, project: project, isCheckout: isCheckout).map(\.checkout)
 }
 
 /// The checkout doctor runs in for `workspace`'s app, else the first one.
 public func doctorCheckout(
-  for workspace: String?, in environments: [Workspace], project: (String) -> Project
+  for workspace: String?, in environments: [Workspace], project: (String) -> Project,
+  isCheckout: (String) -> Bool = isGitCheckout
 ) -> DoctorCheckout? {
-  let checkouts = doctorCheckoutsBySource(environments, project: project)
+  let checkouts = doctorCheckoutsBySource(environments, project: project, isCheckout: isCheckout)
   let source = environments.first { $0.path == workspace }.map { doctorSource(of: $0, project: project) }
   return (checkouts.first { $0.source == source } ?? checkouts.first)?.checkout
 }
@@ -105,9 +129,9 @@ private func doctorSource(of env: Workspace, project: (String) -> Project) -> St
 }
 
 private func doctorCheckoutsBySource(
-  _ environments: [Workspace], project: (String) -> Project
+  _ environments: [Workspace], project: (String) -> Project, isCheckout: (String) -> Bool
 ) -> [(source: String, checkout: DoctorCheckout)] {
-  let usable = environments.filter { !isScratchPath($0.path) }
+  let usable = environments.filter { !isScratchPath($0.path) && isCheckout($0.path) }
   let listed = Set(usable.map(\.path))
   var order: [String] = []
   var chosen: [String: DoctorCheckout] = [:]

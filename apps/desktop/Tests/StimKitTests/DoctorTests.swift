@@ -53,16 +53,20 @@ struct DoctorTests {
          {"path":"/r/.worktrees/a/apps/w","live":false,"warnings":[],"worktree":{"path":"/r/.worktrees/a"}},
          {"path":"/solo","live":false,"warnings":[]}]
         """#.utf8))
-    let checkouts = doctorCheckouts(envs) { $0 == "/solo" ? Project(root: "/solo") : Project(root: "/r") }
+    let checkouts = doctorCheckouts(
+      envs, project: { $0 == "/solo" ? Project(root: "/solo") : Project(root: "/r") }, isCheckout: { _ in true })
     #expect(checkouts.map(\.path) == ["/r/apps/m", "/r/.worktrees/a/apps/w", "/solo"])
     #expect(checkouts.map(\.repository) == ["/r", "/r", "/solo"])
 
     let project = { (path: String) in path == "/solo" ? Project(root: "/solo") : Project(root: "/r") }
-    #expect(doctorCheckout(for: "/r/.worktrees/a/apps/w", in: envs, project: project)?.path == "/r/.worktrees/a/apps/w")
-    #expect(doctorCheckout(for: "/r/.worktrees/b/apps/m", in: envs, project: project)?.path == "/r/apps/m")
-    #expect(doctorCheckout(for: "/solo", in: envs, project: project)?.path == "/solo")
-    #expect(doctorCheckout(for: nil, in: envs, project: project)?.path == "/r/apps/m")
-    #expect(doctorCheckout(for: "/unlisted", in: envs, project: project)?.path == "/r/apps/m")
+    #expect(
+      doctorCheckout(for: "/r/.worktrees/a/apps/w", in: envs, project: project, isCheckout: { _ in true })?.path
+        == "/r/.worktrees/a/apps/w")
+    #expect(
+      doctorCheckout(for: "/r/.worktrees/b/apps/m", in: envs, project: project, isCheckout: { _ in true })?.path == "/r/apps/m")
+    #expect(doctorCheckout(for: "/solo", in: envs, project: project, isCheckout: { _ in true })?.path == "/solo")
+    #expect(doctorCheckout(for: nil, in: envs, project: project, isCheckout: { _ in true })?.path == "/r/apps/m")
+    #expect(doctorCheckout(for: "/unlisted", in: envs, project: project, isCheckout: { _ in true })?.path == "/r/apps/m")
   }
 
   @Test func neverRunsInAScratchFolderAndPrefersTheMostRecentlyActiveApp() throws {
@@ -78,12 +82,12 @@ struct DoctorTests {
          {"path":"/never","live":false,"warnings":[]}]
         """#.utf8))
     let project = { (path: String) in Project(root: path) }
-    #expect(doctorCheckouts(envs, project: project).map(\.path) == ["/new", "/old", "/never"])
-    #expect(doctorCheckout(for: "/tmp/x", in: envs, project: project)?.path == "/new")
-    #expect(doctorCheckout(for: nil, in: envs, project: project)?.path == "/new")
-    #expect(doctorCheckout(for: "/old", in: envs, project: project)?.path == "/old")
+    #expect(doctorCheckouts(envs, project: project, isCheckout: { _ in true }).map(\.path) == ["/new", "/old", "/never"])
+    #expect(doctorCheckout(for: "/tmp/x", in: envs, project: project, isCheckout: { _ in true })?.path == "/new")
+    #expect(doctorCheckout(for: nil, in: envs, project: project, isCheckout: { _ in true })?.path == "/new")
+    #expect(doctorCheckout(for: "/old", in: envs, project: project, isCheckout: { _ in true })?.path == "/old")
     let onlyScratch = Array(envs.prefix(3))
-    #expect(doctorCheckout(for: nil, in: onlyScratch, project: project) == nil)
+    #expect(doctorCheckout(for: nil, in: onlyScratch, project: project, isCheckout: { _ in true }) == nil)
     #expect(isScratchPath("/private/tmp") && !isScratchPath("/Users/me/tmpfiles/app") && !isScratchPath("/temp/app"))
   }
 
@@ -96,5 +100,31 @@ struct DoctorTests {
     #expect(DoctorRun.due(last, version: "1.13.0", inputsChangedAt: inputs, now: now))
     #expect(DoctorRun.due(last, version: "1.12.0", inputsChangedAt: now, now: now))
     #expect(DoctorRun.due(last, version: "1.12.0", inputsChangedAt: inputs, now: now.addingTimeInterval(8 * 86_400)))
+  }
+
+  @Test func skipsWorkspacesWhoseCheckoutIsGoneOrNotGit() throws {
+    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".stim-doctor-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let real = root.appendingPathComponent("real")
+    let linkedTarget = root.appendingPathComponent("repo/.git/worktrees/live")
+    let linked = root.appendingPathComponent("linked/apps/m")
+    let stale = root.appendingPathComponent("stale")
+    let plain = root.appendingPathComponent("plain")
+    for dir in [real.appendingPathComponent(".git"), linkedTarget, linked, stale, plain] {
+      try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    try "gitdir: \(linkedTarget.path)\n".write(
+      to: root.appendingPathComponent("linked/.git"), atomically: true, encoding: .utf8)
+    try "gitdir: \(root.path)/removed/.git/worktrees/x\n".write(
+      to: stale.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+    #expect(isGitCheckout(real.path) && isGitCheckout(linked.path))
+    #expect(!isGitCheckout(stale.path) && !isGitCheckout(plain.path) && !isGitCheckout(root.path + "/gone"))
+
+    let paths = [stale.path, plain.path, root.path + "/gone", linked.path, real.path]
+    let json = paths.map { #"{"path":"\#($0)","live":false,"warnings":[]}"# }.joined(separator: ",")
+    let envs = try JSONDecoder().decode([Workspace].self, from: Data("[\(json)]".utf8))
+    let project = { (path: String) in Project(root: path) }
+    #expect(doctorCheckouts(envs, project: project).map(\.path) == [linked.path, real.path])
+    #expect(doctorCheckout(for: stale.path, in: envs, project: project)?.path == linked.path)
   }
 }
