@@ -1219,9 +1219,9 @@ this Mac (see [Build access](../../packages/server/README.md#build-access)).
 
 On the Mac that wants to build elsewhere, **Stim > Settings > Remote Macs**
 is a list of the entries of the `remote.machines` machine setting. Each row
-shows the Mac's name, one status pill, a detail line, what it does (**Builds**, plus
-**Simulators** when its device-host access is approved), and a **...** menu with
-**Details...** and **Remove**. The pill reads **Approved**, **Waiting for
+shows the Mac's name, one status pill, its MagicDNS name with its cores and
+offloaded builds, a detail line, what it does (**Builds**, plus **Simulators**
+when its device-host access is approved), and **Remove...**. The pill reads **Approved**, **Waiting for
 approval** (the row keeps the approval command to copy and says when the
 request lapses, such as "Waiting for approval until 21:05", in local time),
 **Unreachable**,
