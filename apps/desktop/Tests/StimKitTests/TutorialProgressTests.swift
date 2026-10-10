@@ -320,10 +320,20 @@ private func disk(_ bytes: Double) throws -> WorkspaceDisk {
       environment: base, siblings: [hit, clone], logRecords: [action, action], now: afterRebuild, record: record))
   #expect(live.currentStep == "device")
   let stats = try #require(live.record.stats)
-  #expect(stats.firstBuild != nil)
+  #expect(stats.firstBuild?.durationMs == 264_197)
+  #expect(stats.firstBuild?.cache == "none")
+  #expect(stats.secondBuild?.durationMs == 7_665)
   #expect(stats.secondBuild?.cache == "local")
+  #expect(stats.savedMs == 256_532)
+  #expect(stats.buildsOverlapped == false)
   #expect(stats.agentActions == 2)
   #expect(stats.measuredBytes == 1000)
+
+  base.disk = try disk(100)
+  let later = progress.update(
+    TutorialInput(
+      environment: base, siblings: [hit, clone], logRecords: [action], now: afterRebuild.addingTimeInterval(30)))
+  #expect(later.record.stats == stats)
 
   let gone = progress.update(TutorialInput(environment: nil, siblings: [], now: afterRebuild.addingTimeInterval(60)))
   #expect(gone.record.stats == stats)

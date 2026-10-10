@@ -109,7 +109,7 @@ public struct TutorialStats: Codable, Equatable, Sendable {
   public var firstBuild: Build?
   public var secondBuild: Build?
   public var agentActions: Int?
-  /// The last measured size of each tutorial folder, keyed by path: both worktrees and the clone.
+  /// The largest measured size of each tutorial folder, keyed by path: both worktrees and the clone.
   public var worktreeBytes: [String: Double]?
 
   public init() {}
@@ -493,7 +493,7 @@ public struct TutorialProgress: Sendable {
     let folders = [tracked, second, siblings.first { $0.path == record.clonePath }].compactMap { $0 }
     for folder in folders {
       if let bytes = folder.disk?.worktreeBytes {
-        stats.worktreeBytes = (stats.worktreeBytes ?? [:]).merging([folder.path: bytes]) { $1 }
+        stats.worktreeBytes = (stats.worktreeBytes ?? [:]).merging([folder.path: bytes]) { max($0, $1) }
       }
     }
     if stats != (record.stats ?? TutorialStats()) {
