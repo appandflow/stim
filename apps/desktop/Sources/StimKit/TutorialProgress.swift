@@ -13,6 +13,7 @@ public struct TutorialEnvironment: Sendable {
   public var repository: String?
   public var recording: Workspace.Recording?
   public var agentStateDir: String?
+  public var iosDoctorRanAt: Date?
 
   public init?(_ workspace: Workspace) {
     guard let tutorial = workspace.tutorial else { return nil }
@@ -28,6 +29,7 @@ public struct TutorialEnvironment: Sendable {
     repository = workspace.worktree?.repository ?? workspace.path
     recording = workspace.recording
     agentStateDir = workspace.agentDevice?.stateDir
+    iosDoctorRanAt = workspace.doctorRuns?.ios.flatMap { parseTimestamp($0.at) }
   }
 
   public var isLinked: Bool { repository.map { $0 != path } ?? false }
@@ -267,6 +269,10 @@ public struct TutorialProgress: Sendable {
       record?.version = environment.version
       if record?.clonePath == nil { record?.clonePath = environment.repository }
     }
+    if record?.tourPath == nil {
+      let pinned = pinnedClone(input.siblings)
+      record?.clonePath = pinned
+    }
     let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
     let second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
     if launching, record?.tourPath != nil, tracked == nil, second == nil,
@@ -347,6 +353,18 @@ public struct TutorialProgress: Sendable {
       shouldReopen: launching && (tracked != nil || current == nil))
   }
 
+  private func isNewClone(_ clone: TutorialEnvironment) -> Bool {
+    if !(record?.baselineClones ?? []).contains(clone.path) { return true }
+    guard let ran = clone.iosDoctorRanAt, let started = record?.startedAt else { return false }
+    return ran > started
+  }
+
+  private func pinnedClone(_ siblings: [TutorialEnvironment]) -> String? {
+    let fresh = Self.registeredClones(siblings).filter { isNewClone($0) }
+    if let pinned = fresh.first(where: { $0.path == record?.clonePath }) { return pinned.path }
+    return fresh.max { ($0.iosDoctorRanAt ?? .distantPast) < ($1.iosDoctorRanAt ?? .distantPast) }?.path
+  }
+
   private static func registeredClones(_ siblings: [TutorialEnvironment]) -> [TutorialEnvironment] {
     siblings.filter { !$0.isLinked && TutorialSteps.supportedVersions.contains($0.version) }
   }
@@ -413,8 +431,7 @@ public struct TutorialProgress: Sendable {
     switch id {
     case "begin":
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
-      let newClone = Self.registeredClones(input.siblings).first { !(record?.baselineClones ?? []).contains($0.path) }
-      if let newClone, record?.clonePath == nil { record?.clonePath = newClone.path }
+      let newClone = Self.registeredClones(input.siblings).first { isNewClone($0) }
       let exists = environment != nil || newClone != nil
       return Checkpoint(
         completed: exists ? appeared : nil,
@@ -438,7 +455,7 @@ public struct TutorialProgress: Sendable {
       let inClone =
         environment == nil
         && Self.registeredClones(input.siblings).contains { clone in
-          (record?.clonePath == clone.path || !(record?.baselineClones ?? []).contains(clone.path))
+          record?.clonePath == clone.path
             && (clone.build != nil || clone.lastBuild.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true)
         }
       return Checkpoint(

@@ -37,6 +37,7 @@ import {
   sleep,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
@@ -94,10 +95,11 @@ export async function prepareHostedNative(
         session = await settle(
           host,
           await attach(host, recorded.session, undefined, platform),
-          ['preparing', 'stopping'],
-          SESSION_TIMEOUT_MS,
+          ['preparing'],
+          PREPARE_TIMEOUT_MS,
           platform,
         );
+        session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, platform);
       } catch (error) {
         if (!heldNoLonger(error)) throw error;
       }
@@ -130,7 +132,7 @@ export async function prepareHostedNative(
       }
     }
     if (resumeOnly) return null;
-    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 3000);
+    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 45_000);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
       platform === 'ios'
@@ -247,7 +249,7 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     reserved(placement);
-    session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS, platform);
+    session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform);
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
     if (

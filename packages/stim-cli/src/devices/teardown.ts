@@ -145,7 +145,8 @@ export function eraseParkedIosSim(udid: string, { label }: { label?: string } = 
 export function eraseParkedAvd(avdName: string): TeardownOutcome {
   try {
     const erased = eraseParkedAfter('android', avdName, (_record, eraseStarted) => {
-      if (resolveOwnedAvdSerial(avdName).serial) throw new Error(`AVD ${avdName} is running; it was kept`);
+      if (resolveOwnedAvdSerial(avdName, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }).serial)
+        throw new Error(`AVD ${avdName} is running; it was kept`);
       const result = teardownOwnedAvd(avdName, { wipe: true, owner: { pool: true }, onWipeStart: eraseStarted });
       if (result.status !== 'torn-down') throw new Error(result.reason ?? `AVD ${avdName} is ${result.status}`);
     });
@@ -159,6 +160,7 @@ export function eraseParkedAvd(avdName: string): TeardownOutcome {
 
 const IOS_SHUTDOWN_SETTLE_MS = 15_000;
 const ADB_RELEASE_WAIT_MS = 3_000;
+const AVD_INVENTORY_TIMEOUT_MS = 5_000;
 
 function repoRootAbove(workspace: string | undefined): string | undefined {
   if (workspace === undefined || !getExecutor().findExecutable('agent-device')) return undefined;
@@ -458,8 +460,8 @@ export function teardownOwnedAvd(avdName: string, options: AvdTeardownOptions = 
   }
 }
 
-function serialFree(serial: string): boolean {
-  const adb = listAdbDevices();
+function serialFree(serial: string, timeoutMs = AVD_INVENTORY_TIMEOUT_MS): boolean {
+  const adb = listAdbDevices({ timeoutMs });
   return ![...adb.emulators, ...adb.physical, ...adb.unhealthy].some((entry) => entry.serial === serial);
 }
 
@@ -477,7 +479,7 @@ function teardownClaimedAvd(
     onWipeStart,
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = assertOwnedAvdStopped,
-    resolveAvd = resolveOwnedAvdSerial,
+    resolveAvd = (name) => resolveOwnedAvdSerial(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }),
   }: AvdTeardownOptions,
 ): TeardownOutcome {
   let parkFallback: string | undefined;
@@ -521,7 +523,7 @@ function teardownClaimedAvd(
       if (root) {
         // adb keeps listing an emulator as offline for a moment after its process exits.
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
-        while (!serialFree(serial) && Date.now() < deadline) sleepSync(250);
+        while (!serialFree(serial, Math.max(1, deadline - Date.now())) && Date.now() < deadline) sleepSync(250);
         closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillStopped, workspace, root);
       }
     } else {
