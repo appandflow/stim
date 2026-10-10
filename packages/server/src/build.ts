@@ -835,6 +835,7 @@ export class BuildSession {
         typeof input.cacheKey !== 'string' ||
         !input.cacheKey ||
         ![null, 'arm64', 'x86_64'].includes(input.arch as string | null) ||
+        !isJsonObject(input.parameters) ||
         !isJsonObject(optimizations) ||
         typeof optimizations.compilationCache !== 'boolean' ||
         typeof optimizations.prefixMapping !== 'boolean' ||

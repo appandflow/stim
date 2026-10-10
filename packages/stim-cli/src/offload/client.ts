@@ -1029,6 +1029,7 @@ export async function offloadBuild({
                 sourceDigest: synced.digest,
                 cacheKey: native.cacheKey,
                 arch: native.arch,
+                parameters: native.snapshot.parameters,
               },
             }
           : {}),

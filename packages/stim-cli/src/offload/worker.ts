@@ -42,6 +42,7 @@ import { selectNativeXcodeProject } from '../integrations/native-xcode-project.t
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { projectRegistry } from '../integrations/projects.ts';
+import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { writeConfigSetting } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -392,6 +393,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     );
     if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
       return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
+    const refused = await time('fingerprintMs', () => nativeIdentityRefusal(job, root, selected.load));
+    if (refused) return failed('identity-mismatch', refused);
     compiled = await compileNativeIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
@@ -516,6 +519,67 @@ type Compiled =
       temporary?: string;
     }
   | { ok: false; code: string; message: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function differingParameters(here: unknown, there: unknown, path: string): string[] {
+  if (JSON.stringify(here) === JSON.stringify(there)) return [];
+  if (!isRecord(here) || !isRecord(there)) return [path];
+  return [...new Set([...Object.keys(here), ...Object.keys(there)])]
+    .toSorted()
+    .flatMap((key) => differingParameters(here[key], there[key], `${path}.${key}`));
+}
+
+function unused(): never {
+  throw new Error('The native identity check does not prepare or compile.');
+}
+
+async function nativeIdentityRefusal(
+  job: WorkerJob,
+  root: string,
+  load: () => Promise<IosProject>,
+): Promise<string | null> {
+  const native = job.native!;
+  if (!job.optimizations) return 'The native Xcode build has no compiler options.';
+  try {
+    const recipe = (await load()).artifact({
+      root,
+      logFile: join(job.area, 'build.ndjson'),
+      configuration: job.configuration,
+      ...(job.scheme ? { buildScheme: job.scheme } : {}),
+      target: {
+        udid: null,
+        destination: 'generic/platform=iOS Simulator',
+        sdk: 'iphonesimulator',
+        arch: native.arch,
+        keyArch: native.arch,
+        offloadRuntime: () => job.runtime,
+        offloadRefusal: null,
+      },
+      device: null,
+      optimizations: job.optimizations,
+      cache: { read: true, write: true, remote: false },
+      phase: unused,
+      note: unused,
+      logWriter: unused,
+      estimates: unused,
+      step: unused,
+      setPodsMs: unused,
+    });
+    const identity = await recipe.identity();
+    if ('cacheIneligible' in identity) return `This Mac cannot key the native build: ${identity.cacheIneligible}`;
+    if (identity.key === native.cacheKey) return null;
+    const here = recipe.offload?.request(job.runtime ?? '').native?.snapshot.parameters;
+    const differing = differingParameters(native.parameters, here, 'parameters');
+    return differing.length
+      ? `This Mac keys the native build differently in ${differing.join(', ')}.`
+      : 'This Mac keys the native build differently from the same parameters.';
+  } catch (error) {
+    return `This Mac cannot key the native build: ${(error as Error).message}`;
+  }
+}
 
 async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   if (!job.native || !job.optimizations)
