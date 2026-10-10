@@ -1108,6 +1108,7 @@ msgid "Building now"
 msgstr "Building now"
 
 #: src/components/host-label.tsx
+#: src/screens/build-details.tsx
 msgid "Building on {host}"
 msgstr "Building on {host}"
 
@@ -2904,6 +2905,7 @@ msgstr "OK"
 msgid "on {host}"
 msgstr "on {host}"
 
+#: src/components/device-grid-tile.tsx
 #: src/components/host-label.tsx
 msgid "On {host}"
 msgstr "On {host}"
