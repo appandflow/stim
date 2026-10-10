@@ -629,6 +629,8 @@ export interface EnvironmentState {
   platforms?: string[];
   /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */
   tutorial?: { version: number };
+  /** When `stim doctor` last ran in this workspace, per platform; absent until it has run. */
+  doctorRuns?: Partial<Record<'ios' | 'android', { at: string }>>;
   live: boolean;
   phase?: WorkspacePhase;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */

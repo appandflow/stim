@@ -254,6 +254,15 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
   return out;
 }
 
+function doctorRunTimes(proj: ProjectRecord): EnvironmentState['doctorRuns'] {
+  const runs: NonNullable<EnvironmentState['doctorRuns']> = {};
+  for (const platform of ['ios', 'android'] as const) {
+    const at = proj.doctorRuns?.[platform]?.at;
+    if (typeof at === 'string') runs[platform] = { at };
+  }
+  return Object.keys(runs).length ? runs : undefined;
+}
+
 function formatGb(mb: number): string {
   return `${(mb / 1024).toFixed(1)} GB`;
 }
@@ -490,6 +499,8 @@ async function readStatusFacts(
       });
       const tutorial = detectTutorial(readAppJson(path));
       if (tutorial) state.tutorial = tutorial;
+      const doctorRuns = doctorRunTimes(proj);
+      if (doctorRuns) state.doctorRuns = doctorRuns;
     }
     const physicalDevices = physicalDeviceStates(leaseFiles, parseWorkspaceLeases(saved?.deviceLeases), {
       root: path,

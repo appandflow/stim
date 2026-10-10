@@ -703,6 +703,25 @@ test('status reports detected platforms before a run, including resolved project
   expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
+test('status reports when doctor last ran per platform, and nothing before it has', async () => {
+  const root = process.cwd();
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].doctorRuns).toBeUndefined();
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [root]: {
+          label: 'fresh',
+          platforms: {},
+          doctorRuns: { ios: { at: '2026-10-09T12:00:00.000Z', version: '1' } },
+        },
+      },
+    }),
+  );
+  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({ ios: { at: '2026-10-09T12:00:00.000Z' } });
+});
+
 test('a running build reports what its build tool is doing only while it compiles', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   const claim = tryAcquireClaim({
