@@ -849,10 +849,6 @@ msgstr "All Categories"
 msgid "All Machines"
 msgstr "All Machines"
 
-#: src/screens/filters.tsx
-msgid "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
-msgstr "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
-
 #: src/screens/logs.tsx
 msgid "All Slots"
 msgstr "All Slots"
@@ -2821,6 +2817,10 @@ msgstr "Not running"
 msgid "Not running · {deviceState}"
 msgstr "Not running · {deviceState}"
 
+#: src/screens/filters.tsx
+msgid "Not set up"
+msgstr "Not set up"
+
 #: src/screens/mac-status.tsx
 msgid "Not Stim's"
 msgstr "Not Stim's"
@@ -3566,6 +3566,10 @@ msgstr "Search projects"
 #: src/components/viewer-keyboard.tsx
 msgid "Select All"
 msgstr "Select All"
+
+#: src/screens/filters.tsx
+msgid "Select any combination. Not set up shows worktrees Stim has not warmed; Archived shows removed ones."
+msgstr "Select any combination. Not set up shows worktrees Stim has not warmed; Archived shows removed ones."
 
 #: src/lib/build-machines.ts
 #: src/lib/build-machines.ts
