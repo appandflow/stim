@@ -1,5 +1,6 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
-import { createServer } from 'node:net';
+import { createServer, type AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -192,7 +193,11 @@ const placement = (): HostedIosPlacement => ({
   device,
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 });
-async function deliver(release = false, slot = 'default') {
+async function deliver(
+  release = false,
+  slot = 'default',
+  enterPhase?: (phase: 'device' | 'install' | 'launch') => void,
+) {
   const target = await prepareHostedIos(
     'mini',
     { deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' },
@@ -209,12 +214,59 @@ async function deliver(release = false, slot = 'default') {
       devClientScheme: 'exp+fixture',
       reserved: (value) => writeHostedIos(root, slot, value),
       note: () => {},
+      enterPhase,
       metro: async () => ({ gatewayPort: 8111, secret: 'a'.repeat(64) }),
     });
   } finally {
     target.host.connection.close();
   }
 }
+
+test.skipIf(!loopbackAvailable)(
+  'explicit host selection accepts an inventory probe that takes longer than three seconds',
+  async () => {
+    open.mockRestore();
+    const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    tailnet.port = (server.address() as AddressInfo).port;
+    let replyTimer: ReturnType<typeof setTimeout> | undefined;
+    const requests: string[] = [];
+    server.on('connection', (socket) => {
+      socket.on('message', (data) => {
+        const { id, method } = JSON.parse(String(data)) as { id: number; method: string };
+        requests.push(method);
+        if (method === 'hello') {
+          socket.send(JSON.stringify({ id, result: { capabilities: ['device-host'] } }));
+        } else if (method === 'device-host.offer') {
+          replyTimer = setTimeout(() => {
+            socket.send(
+              JSON.stringify({
+                id,
+                result: {
+                  platform: 'ios',
+                  choice: device,
+                  capacity: { available: 1 },
+                  resources: { memoryPressure: 'normal' },
+                },
+              }),
+            );
+          }, 3500);
+        }
+      });
+    });
+    try {
+      const target = await prepareHostedIos('mini', {});
+      expect(target.choice).toEqual(device);
+      expect(target.session).toBeNull();
+      expect(requests).toEqual(['hello', 'device-host.offer']);
+    } finally {
+      clearTimeout(replyTimer);
+      for (const socket of server.clients) socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  },
+  15_000,
+);
 
 test('offers before reservation, uploads digest-matching bytes, and development launch waits for client evidence', async () => {
   const run = await deliver();
@@ -238,6 +290,21 @@ test('offers before reservation, uploads digest-matching bytes, and development 
   for (const [digest, bytes] of blobs) expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
   expect(statSync(workspaceStateFile(root)).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
   expect(workspaceIdleProbe(root).blocker()).toContain('runs on mini');
+});
+
+test('placement moves the build to device before reserving, install before delivery and launch before launching', async () => {
+  await deliver(false, 'default', (phase) => methods.push({ method: `phase:${phase}`, params: {} }));
+  const order = methods.map((entry) => entry.method);
+  expect(order.filter((method) => method.startsWith('phase:'))).toEqual([
+    'phase:device',
+    'phase:install',
+    'phase:launch',
+  ]);
+  expect(order.indexOf('phase:device')).toBeLessThan(order.indexOf('device-host.reserve'));
+  expect(order.indexOf('phase:install')).toBeGreaterThan(order.lastIndexOf('device-host.metro.open'));
+  expect(order.indexOf('phase:install')).toBeLessThan(order.indexOf('device-host.app.offer'));
+  expect(order.indexOf('phase:launch')).toBeGreaterThan(order.lastIndexOf('device-host.app.chunk'));
+  expect(order.indexOf('phase:launch')).toBeLessThan(order.indexOf('device-host.app.launch'));
 });
 
 test.each(['declined', 'capacity', 'pressure', 'changed-node'])(

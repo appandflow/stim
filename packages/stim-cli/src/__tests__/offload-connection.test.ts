@@ -9,6 +9,7 @@ import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/sta
 import { chooseBuildMachine, offloadBuild, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
+import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 
 const ports = new Map<string, number>();
 
@@ -47,6 +48,8 @@ interface FakeMachine {
   methods: string[];
   requests: Array<{ method: string; params: Record<string, unknown> }>;
   closed: Promise<void>;
+  closeCodes: number[];
+  release: () => void;
   stop: () => Promise<void>;
 }
 
@@ -67,6 +70,7 @@ async function fakeMachine(
     dropOnSync = false,
     attach = { result: { outcome: null } },
     artifact = null,
+    pause = null,
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
@@ -74,6 +78,7 @@ async function fakeMachine(
     attach?: object;
     hello?: () => object;
     artifact?: { archive: Buffer; digest: string } | null;
+    pause?: string | null;
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -81,10 +86,19 @@ async function fakeMachine(
   ports.set(machine, (server.address() as AddressInfo).port);
   const methods: string[] = [];
   const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+  const closeCodes: number[] = [];
+  const pending: Array<() => void> = [];
+  const deliver = (method: string, send: () => void) => {
+    if (method === pause) pending.push(send);
+    else send();
+  };
   let closed!: () => void;
   const done = new Promise<void>((resolve) => (closed = resolve));
   server.on('connection', (socket: WebSocket) => {
-    socket.on('close', () => closed());
+    socket.on('close', (code) => {
+      closeCodes.push(code);
+      closed();
+    });
     socket.on('message', (data, isBinary) => {
       if (isBinary) return;
       const { id, method, params } = JSON.parse(String(data)) as {
@@ -94,24 +108,26 @@ async function fakeMachine(
       };
       requests.push({ method, params });
       methods.push(method);
-      const reply = (body: object) => socket.send(JSON.stringify({ id, ...body }));
+      const reply = (body: object) => deliver(method, () => socket.send(JSON.stringify({ id, ...body })));
       if (method === 'hello') return reply(hello());
       if (method === 'build.cancel') return;
       if (method === 'build.offer') return reply({ result: offer });
       if (method === 'build.sync') return dropOnSync ? socket.terminate() : reply({ result: { missing: [] } });
       const fail = (job: string) =>
-        socket.send(
-          JSON.stringify({
-            event: 'build.progress',
-            job,
-            outcome: artifact
-              ? {
-                  ok: true,
-                  artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
-                  compilationCache: {},
-                }
-              : FAILED,
-          }),
+        deliver(pause === 'build.start' || pause === 'build.attach' ? pause : 'build.progress', () =>
+          socket.send(
+            JSON.stringify({
+              event: 'build.progress',
+              job,
+              outcome: artifact
+                ? {
+                    ok: true,
+                    artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
+                    compilationCache: {},
+                  }
+                : FAILED,
+            }),
+          ),
         );
       if (method === 'build.artifact' && artifact) {
         socket.send(Buffer.concat([Buffer.from(artifact.digest, 'hex'), artifact.archive]));
@@ -134,6 +150,12 @@ async function fakeMachine(
     methods,
     requests,
     closed: done,
+    closeCodes,
+    release: () => {
+      pause = null;
+      for (const send of pending.splice(0)) send();
+      artifact = null;
+    },
     stop: () => new Promise((resolve) => server.close(() => resolve())),
   };
 }
@@ -166,10 +188,13 @@ const offer = (loadPerCore: number): BuildOffer => ({
 });
 
 let repo: string;
+let home: string;
 const machines: FakeMachine[] = [];
 
 beforeEach(() => {
   repo = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-offload-')));
+  home = mkdtempSync(join(tmpdir(), 'stim-offload-home-'));
+  vi.stubEnv('STIM_HOME', home);
   execFileSync('git', ['init', '-q', repo]);
   writeFileSync(join(repo, 'package.json'), '{}');
 });
@@ -177,6 +202,8 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(machines.splice(0).map((machine) => machine.stop()));
   rmSync(repo, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+  vi.unstubAllEnvs();
   ports.clear();
 });
 
@@ -210,6 +237,76 @@ async function run(names: string[], note: (line: string) => void) {
 }
 
 describe('offloadBuild', () => {
+  it.each(['build.sync', 'build.start', 'build.progress', 'build.attach', 'build.artifact'])(
+    'cancels a stopped workspace while waiting for %s without fallback or further requests',
+    async (pause) => {
+      const archive = Buffer.from('partial artifact');
+      const machine = await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'j1' } },
+        {
+          pause,
+          drop: pause === 'build.attach',
+          artifact:
+            pause === 'build.artifact' ? { archive, digest: createHash('sha256').update(archive).digest('hex') } : null,
+        },
+      );
+      const backup = await fakeMachine('backup', offer(0.5), { result: { job: 'j2' } });
+      machines.push(machine, backup);
+      await withNativeBuildRun(
+        repo,
+        { command: 'ios', platform: 'ios' },
+        async (claim) => {
+          let finished: unknown;
+          const operation = run(['mini', 'backup'], () => {}).then(
+            (value) => {
+              finished = { value };
+              return finished;
+            },
+            (error: unknown) => {
+              finished = { error };
+              return finished;
+            },
+          );
+          try {
+            await vi.waitFor(() =>
+              expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+            );
+            const before = [...machine.methods];
+            requestNativeRunCancel(repo, claim.claimId);
+            process.emit('SIGINT');
+            await vi.waitFor(() => expect(finished).toMatchObject({ error: { code: 'STIM_CANCELLED' } }));
+            await vi.waitFor(() => expect(machine.closeCodes).toContain(1000));
+            await backup.closed;
+            expect(machine.methods).toEqual(before);
+            expect(backup.methods).toEqual(['hello', 'build.offer']);
+          } finally {
+            machine.release();
+            await operation;
+          }
+        },
+        {
+          write: () => {},
+          exit: () => {
+            throw new Error('A requested stop must unwind the operation.');
+          },
+        },
+      );
+      await withNativeBuildRun(
+        repo,
+        { command: 'ios', platform: 'ios' },
+        async () =>
+          expect(await run(['mini'], () => {})).toEqual({
+            ok: false,
+            machine: 'mini',
+            reason: 'worker-failed: xcodebuild failed',
+          }),
+        { write: () => {} },
+      );
+    },
+  );
+
   it('moves to the next machine in placement order when the chosen one refuses build.start', async () => {
     const busy = await fakeMachine('busy', offer(0.1), {
       error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },

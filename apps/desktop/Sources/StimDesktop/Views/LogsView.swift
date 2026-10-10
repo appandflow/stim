@@ -264,7 +264,7 @@ struct LogsView: View {
 
   static func help(_ source: LogSource) -> String {
     switch source {
-    case .metro: return "metro: the bundler, and everything Expo prints in expo-child mode"
+    case .metro: return "metro: the bundler, and everything Expo or metro.command prints"
     case .client: return "client: in-app console logs and redboxes (bare React Native)"
     case .device: return "device: simulator, emulator or device logs of the app process"
     case .build: return "build: native builds, installs and launches"

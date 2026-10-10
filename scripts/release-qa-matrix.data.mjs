@@ -74,6 +74,9 @@ export const pathRules = [
   { path: 'packages/server', rows: ['loop'] },
   { path: 'packages/server/README.md', exempt: 'documentation' },
   { path: 'packages/server/__tests__', exempt: 'unit tests, run by the section 2 preflight' },
+  { path: 'packages/ci', rows: ['loop'] },
+  { path: 'packages/ci/README.md', exempt: 'documentation' },
+  { path: 'packages/ci/src/__tests__', exempt: 'unit tests, run by the section 2 preflight' },
 
   { path: 'packages/stim-cli', rows: ['loop'] },
   { path: 'packages/stim-cli/bin', rows: ['loop'] },
@@ -335,6 +338,8 @@ export const pathRules = [
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
   { path: '.github', exempt: 'CI configuration, covered by the exact-commit CI in section 4' },
   { path: '.gitignore', exempt: 'repository tooling, not published behavior' },
+  { path: '.gitattributes', exempt: 'repository tooling, not published behavior' },
+  { path: '.watchmanconfig', exempt: 'repository tooling, not published behavior' },
   { path: '.worktreeexclude', exempt: 'repository tooling, not published behavior' },
   { path: '.nvmrc', exempt: 'repository tooling, not published behavior' },
   { path: '.oxfmtrc.json', exempt: 'repository tooling, not published behavior' },

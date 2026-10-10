@@ -12,10 +12,9 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { cacheBlocked, measurePressure } from './measure.ts';
-import { projectMaintenancePinned } from '../workspace/settings.ts';
 import type { WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
-import { recentUse } from './protect.ts';
+import { maintenancePinned, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
@@ -66,6 +65,12 @@ export async function plannedMaintenance(
       blocked: current?.willClear ? undefined : (current?.keptReason ?? 'workspace outputs cannot be resolved'),
     });
   });
+  const pins = new Map<string, boolean>();
+  const pinned = (workspace: string): boolean => {
+    let value = pins.get(workspace);
+    if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
+    return value;
+  };
   const result = plan({
     pressure,
     sizes: currentSizes,
@@ -76,7 +81,7 @@ export async function plannedMaintenance(
     protectedRoot: root,
     scoped: Boolean(process.env.STIM_HOME),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
-    pinned: projectMaintenancePinned,
+    pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
   }) as PlannedMaintenance;
   const merge = (extra: MaintenancePlan) => {
@@ -86,10 +91,9 @@ export async function plannedMaintenance(
     result.blocked.push(...extra.blocked);
     result.skips.push(...extra.skips);
   };
-  if (sweep)
-    merge(planSweep({ settings, sizes, protectedRoot: root, pinned: projectMaintenancePinned, now: Date.now() }));
+  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now() }));
   if (worktrees) {
-    const planned = await planWorktrees({ protectedRoot: root, pinned: projectMaintenancePinned, now: Date.now() });
+    const planned = await planWorktrees({ protectedRoot: root, pinned, now: Date.now() });
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }

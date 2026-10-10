@@ -20,11 +20,10 @@ import { getProject } from '../workspace/config.ts';
 import {
   publicUrlSetting,
   remoteEasFallbackSetting,
-  resolveSettings,
+  resolveProjectSettings,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
 import { checkEasFallback } from '../engine/eas-fallback.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload } from '../commands/build-plan.ts';
 import { planHostedDevice } from '../device-host/plan-placement.ts';
 import { resolveAndroidRunPlan } from '../commands/android/plan.ts';
@@ -121,8 +120,7 @@ export async function planReactNativeAndroid(
 ): Promise<ProjectPlanResult> {
   const deps = { ...DEFAULT_PLAN_DEPS, ...overrides };
   const slot = validateDeviceSlot(opts.slot);
-  const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
-  const settings = resolveSettings(settingsContext);
+  const { context: settingsContext, settings } = resolveProjectSettings(root);
   const planned = resolveAndroidRunPlan(
     {
       settings,

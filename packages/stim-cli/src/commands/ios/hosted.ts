@@ -4,9 +4,10 @@ import type { IosDeps } from './dependencies.ts';
 import type { PreparedIosArtifact } from './artifact.ts';
 import { reportIosResult, type ReportIosResultArgs } from './result.ts';
 import type { FailArgs } from './types.ts';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 import type { IosRunCompletion } from './launch.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
-import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
+import { workspaceDevServerMode } from '../../supervisor/state.ts';
 
 export async function finishHostedIosRun({
   target,
@@ -21,6 +22,7 @@ export async function finishHostedIosRun({
   logsDir,
   fail,
   note,
+  enterPhase,
   selectors,
   ...report
 }: Pick<
@@ -49,6 +51,7 @@ export async function finishHostedIosRun({
   slot: string;
   fail: (failure: FailArgs) => null;
   note: (line: string) => void;
+  enterPhase: (phase: BuildPhase) => void;
   selectors: HostedDeviceSelectors;
 }): Promise<IosRunCompletion | null> {
   const bundleId = artifact.bundleId ?? (d.readBundleId(artifact.path) || d.detectBundleId(root));
@@ -67,6 +70,7 @@ export async function finishHostedIosRun({
       ...(!release && isExpo ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined } : {}),
       reserved: (placement) => d.writeHostedIos(root, slot, placement),
       note,
+      enterPhase,
     });
   } catch (error) {
     return fail({
@@ -99,7 +103,7 @@ export async function finishHostedIosRun({
       logsDir,
       since: launchedAt,
       metroPort,
-      mode: isExpo ? MODE_EXPO : MODE_BARE,
+      mode: workspaceDevServerMode(root, isExpo),
       slot: launchSlotScope(root, slot),
       platformShared: siblingPlatformSlots(root, 'ios', slot).length > 0,
     });

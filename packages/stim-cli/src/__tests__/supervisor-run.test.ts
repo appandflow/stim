@@ -28,6 +28,7 @@ import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/wo
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { goneClaimOwner, liveClaimOwner, recycledClaimOwner } from './_factories.ts';
+import { MODE_COMMAND } from '../supervisor/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -394,6 +395,35 @@ describe('runSupervisor', () => {
     assert(state.supervisor);
     expect(state.supervisor.serverPid).toBe(31337);
     expect(state.supervisor.mode).toBe(MODE_EXPO);
+  });
+
+  test('metro.command hosts the configured command instead of the detected ecosystem', async () => {
+    const command = ['node', 'cli.js', 'start', '--port', '{port}'];
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '58' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { slug: 'app' } }));
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command } }));
+    const server = fakeServer({ mode: MODE_COMMAND, serverPid: 31338 });
+    let received: readonly string[] | null = null;
+    let receivedSettings: unknown = null;
+    const running = await runSupervisor({
+      root,
+      port: 8093,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async () => {
+        throw new Error('the Expo server must not start');
+      },
+      startCommand: async (opts) => {
+        received = opts.command;
+        receivedSettings = opts.settings;
+        return server.handle;
+      },
+    });
+    assert(running);
+    expect(running.mode).toBe(MODE_COMMAND);
+    expect(received).toEqual(command);
+    expect(receivedSettings).toMatchObject({ metro: { command } });
+    expect(readWorkspaceState(root)?.supervisor?.mode).toBe(MODE_COMMAND);
   });
 
   test('records the Expo child with a process token that proves it after the supervisor is gone', async () => {

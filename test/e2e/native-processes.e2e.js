@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import { createCleanupTracker, createHarness, workspaceLogsDir } from './native/harness.mjs';
 
@@ -46,11 +47,21 @@ test('native cleanup inspects only recorded processes and proves their exit', { 
   };
   const cleanup = createCleanupTracker({ h, platform: 'ios', processExitTimeoutMs: 0 });
   cleanup.recordWorkspace(cwd);
-  const capturedPids = captured
-    .trim()
-    .split('\n')
-    .map((line) => Number(line.trim().split(/\s+/)[0]));
-  assert.deepEqual(new Set(capturedPids), new Set([child.pid, process.pid]));
+  if (process.platform === 'darwin') {
+    assert.equal(captured, undefined, 'Darwin process observation must not start a subprocess');
+    const { processStartMicros } = createRequire(import.meta.url)('../../packages/core/dist/process-identity.mjs');
+    const birth = processStartMicros(child.pid);
+    assert.equal(birth.status, 'running');
+    assert.ok(Number.isSafeInteger(birth.startedAtMicros) && birth.startedAtMicros > 0);
+    assert.deepEqual(processStartMicros(child.pid), birth);
+    t.diagnostic(JSON.stringify({ pid: child.pid, birth }));
+  } else {
+    const capturedPids = captured
+      .trim()
+      .split('\n')
+      .map((line) => Number(line.trim().split(/\s+/)[0]));
+    assert.deepEqual(new Set(capturedPids), new Set([child.pid, process.pid]));
+  }
   await assert.rejects(() => cleanup.verifyProcesses(), /a workspace process is still running/);
   child.kill('SIGKILL');
   await ended;

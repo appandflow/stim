@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                                         |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
-| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
@@ -112,9 +112,10 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.variant`             | Gradle build variant                                                                                                              |
 | `android.keystore`            | Release keystore path                                                                                                             |
 | `android.keystorePassword`    | Release keystore password source                                                                                                  |
-| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `android.remote`              | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
+| `metro.command`               | Argv that starts this app's dev server; `{port}` becomes the reserved Metro port                                                  |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |
 | `metro.publicUrl`             | Existing public Metro URL                                                                                                         |
 | `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                                                   |
@@ -481,7 +482,7 @@ in that order:
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build. The comparison uses
-  `.ruby-version` when installed and the same UTF-8 locale defaults as `pod install`.
+  `.ruby-version` when installed, otherwise the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS

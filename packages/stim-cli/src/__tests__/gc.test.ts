@@ -311,6 +311,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
 });
 
 test('--older-than keeps devices parked more recently, or at an unknown time, out of the report', async () => {
+  installExecutor();
   const now = Date.parse('2026-09-25T03:00:00.000Z');
   const parkedDaysAgo = (days: number) => new Date(now - days * DAY_MS).toISOString();
   const park = (platform: 'ios' | 'android', id: string, parkedAt: string) => {
@@ -357,6 +358,7 @@ test('--older-than keeps devices parked more recently, or at an unknown time, ou
 });
 
 test('parked deletion keeps ownership records when simulator listing was unavailable', async () => {
+  installExecutor();
   upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
   const record = {
     udid: 'P1',
@@ -661,7 +663,9 @@ describe('android ledger names', () => {
         return listing;
       },
       runQuiet: () => null,
-      runFile: () => '',
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
     });
   });
 
@@ -749,7 +753,10 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       }
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runFile: () => JSON.stringify({ devices: {} }),
+    runFile(file, args = []) {
+      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
+      return JSON.stringify({ devices: {} });
+    },
     runQuiet: () => null,
     runFileQuiet: () => null,
     spawn: () => null,
@@ -2657,6 +2664,7 @@ test("Stim Desktop's disk-pressure run (gc --delete --json) deletes this home's 
 });
 
 test('gc --json lists every device with its owner and every runtime and system image with its use, under a scoped STIM_HOME', async () => {
+  installExecutor();
   const otherHome = mkdtempSync(join(tmpdir(), 'stim-other-home-'));
   process.env.STIM_HOME = otherHome;
   recordCreatedDevice('ios', 'FOREIGN');
@@ -2756,6 +2764,7 @@ test('gc --json lists every device with its owner and every runtime and system i
   setExecutor({
     ...getExecutor(),
     runFile(file, args: string[] = []) {
+      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
       const cmd = [file, ...args].join(' ');
       execCalls.push(cmd);
       if (cmd === 'xcrun simctl list devices --json') return iosListJson(devices);
@@ -4131,6 +4140,10 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
     ...original,
     findExecutable: (name) => (name === 'lsof' ? '/usr/sbin/lsof' : null),
     runFile: (file, args, opts) => {
+      if (file === 'netstat') {
+        inspected.push(args.join(' '));
+        return 'Proto Local Address Foreign Address State PID\n';
+      }
       if (file === 'lsof') {
         inspected.push(args[1]);
         return '';
@@ -4152,7 +4165,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   await cli(['--delete']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-  expect(inspected).toEqual(['-iTCP:8900', '-iTCP:8900']);
+  expect(inspected).toEqual(process.platform === 'win32' ? ['-ano', '-ano'] : ['-iTCP:8900', '-iTCP:8900']);
 });
 
 test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {
