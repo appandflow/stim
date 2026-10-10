@@ -209,10 +209,10 @@ workspace, repo or committed value overrides the machine default),
 or per run `stim android --remote auto` / `stim android --remote <machine>`.
 New runs pass no `--remote` flag; recorded hosted sessions keep their machine
 until `stim stop`. When a device is not on this Mac, Desktop shows
-**on &lt;machine&gt;** on its tile, workspace page, viewer toolbar and sidebar row,
+the machine's name on its tile, workspace page, viewer toolbar and sidebar row,
 with the placement reason as hover text. Local devices show no placement label.
 
-Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
+Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
 hosted Android through the client Mac's local stim-server relay. Turn on
 **Serve to phones** in Desktop and pair the phone with the client Mac. Named
 slots stream independently. Touch, text and hardware buttons reach the exact

@@ -36,7 +36,8 @@ in the workspace directory:
   or per run with `stim ios --remote auto` / `stim ios --remote <machine>`.
   Desktop passes no remote flag for a new run. Recorded hosted sessions stay
   fixed to their machine until `stim stop`. When a device is not on this Mac,
-  its tile, workspace page, viewer toolbar and sidebar row show **on &lt;machine&gt;**,
+  its tile, workspace page, viewer toolbar and sidebar row show the machine's name
+  with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
   with the placement reason as hover text. Local devices show no placement label. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them

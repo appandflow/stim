@@ -39,7 +39,7 @@ brew install --cask appandflow/tap/stim
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
-tiles with an **on &lt;machine&gt;** label. You view and control them through this
+tiles labeled with the machine's name. You view and control them through this
 Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
@@ -54,7 +54,7 @@ or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
 Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
-sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
