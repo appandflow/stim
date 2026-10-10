@@ -453,7 +453,7 @@ it.each(['ios', 'android'] as const)(
         <DeviceView workspace="/fixture" platform={platform} slot="default" />
       </I18nProvider>,
     );
-    expect(screen.getAllByText('on mini').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Running on mini').length).toBeGreaterThan(0);
     expect(mockStream.mock.calls.at(-1)?.[0]).toEqual({
       workspace: '/fixture',
       platform,

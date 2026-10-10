@@ -569,6 +569,10 @@ msgstr "{slot}: {message}"
 msgid "{speed}x"
 msgstr "{speed}x"
 
+#: src/components/workspace-cards.tsx
+msgid "{spokenTitle}, {phaseText}, {timing}"
+msgstr "{spokenTitle}, {phaseText}, {timing}"
+
 #: src/lib/logs.ts
 msgid "{src} {level} at {time} in {workspace}"
 msgstr "{src} {level} at {time} in {workspace}"
@@ -616,10 +620,6 @@ msgstr "{title}, {body}, {detail}, {ago} ago"
 #: src/screens/menu.tsx
 msgid "{title}, {count} unread"
 msgstr "{title}, {count} unread"
-
-#: src/components/workspace-cards.tsx
-msgid "{title}, {phaseText}, {timing}"
-msgstr "{title}, {phaseText}, {timing}"
 
 #: src/screens/menu.tsx
 msgid "{title}, active"
@@ -1106,6 +1106,10 @@ msgstr "Building {platform}, slot {slot}"
 #: src/screens/filters.tsx
 msgid "Building now"
 msgstr "Building now"
+
+#: src/components/host-label.tsx
+msgid "Building on {host}"
+msgstr "Building on {host}"
 
 #: src/screens/workspace-resources.tsx
 msgid "Builds"
@@ -2896,11 +2900,13 @@ msgstr "offload skipped"
 msgid "OK"
 msgstr "OK"
 
-#: src/components/device-grid-tile.tsx
-#: src/components/host-label.tsx
 #: src/lib/format.ts
 msgid "on {host}"
 msgstr "on {host}"
+
+#: src/components/host-label.tsx
+msgid "On {host}"
+msgstr "On {host}"
 
 #: src/lib/workspace-view.ts
 #: src/lib/worktree-row.ts
@@ -2910,11 +2916,6 @@ msgstr "on {machine}"
 #: src/lib/home-list.ts
 msgid "on {macName}"
 msgstr "on {macName}"
-
-#: src/screens/build-details.tsx
-#: src/screens/build-details.tsx
-msgid "on {remoteHost}"
-msgstr "on {remoteHost}"
 
 #: src/components/read-only.tsx
 msgid "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
@@ -3462,6 +3463,11 @@ msgstr "running"
 #: src/lib/workspace-view.ts
 msgid "Running"
 msgstr "Running"
+
+#: src/components/device-grid-tile.tsx
+#: src/components/host-label.tsx
+msgid "Running on {host}"
+msgstr "Running on {host}"
 
 #: src/lib/workspace-view.ts
 msgid "Running scripts"
