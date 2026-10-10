@@ -24,6 +24,7 @@
   "rules": {
     "complexity": ["error", { "max": 80 }],
     "no-unused-vars": "warn",
+    "typescript/ban-ts-comment": "error",
     "typescript/no-explicit-any": "error",
     "vitest/no-commented-out-tests": "off",
     "no-underscore-dangle": ["warn", { "allow": ["_load", "_resolveFilename", "_root", "__path"] }],

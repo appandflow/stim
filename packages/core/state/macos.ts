@@ -50,9 +50,11 @@ export interface MacosAppState extends MacosAppRecord {
 function processRecord(value: unknown): MacosProcess | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const { pid, processToken, startedAtMicros } = value as Record<string, unknown>;
-  if (!Number.isSafeInteger(pid) || (pid as number) <= 0 || typeof processToken !== 'string') return undefined;
-  if (!Number.isSafeInteger(startedAtMicros) || (startedAtMicros as number) <= 0) return undefined;
-  return { pid: pid as number, processToken, startedAtMicros: startedAtMicros as number };
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0 || typeof processToken !== 'string')
+    return undefined;
+  if (typeof startedAtMicros !== 'number' || !Number.isSafeInteger(startedAtMicros) || startedAtMicros <= 0)
+    return undefined;
+  return { pid, processToken, startedAtMicros };
 }
 
 export function parseMacosRecord(value: unknown): MacosAppRecord | null {

@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit -p packages/core/tsconfig.json && tsc --noEmit -p packages/cache/tsconfig.json && tsc --noEmit -p packages/stim-cli/tsconfig.json && tsc --noEmit -p packages/metro/tsconfig.json && tsc --noEmit -p packages/expo-build-cache/tsconfig.json && tsc --noEmit -p packages/server/tsconfig.json && tsc --noEmit -p packages/ci/tsconfig.json && tsc --noEmit -p .github/actions/stim-ci/tsconfig.json",
-    "lint": "oxlint .",
+    "lint": "oxlint . && node scripts/type-assertion-ratchet.mjs",
     "lint:fix": "oxlint --fix .",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",

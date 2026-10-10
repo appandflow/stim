@@ -1,0 +1,102 @@
+{
+  ".github/actions/stim-ci": {
+    "src": {
+      "as": 2,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 2,
+      "nonNull": 5
+    }
+  },
+  "apps/demo-server": {
+    "src": {
+      "as": 9,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 5,
+      "nonNull": 3
+    }
+  },
+  "apps/mobile": {
+    "src": {
+      "as": 66,
+      "nonNull": 83
+    },
+    "test": {
+      "as": 171,
+      "nonNull": 373
+    }
+  },
+  "packages/cache": {
+    "src": {
+      "as": 16,
+      "nonNull": 2
+    },
+    "test": {
+      "as": 2,
+      "nonNull": 0
+    }
+  },
+  "packages/ci": {
+    "src": {
+      "as": 8,
+      "nonNull": 6
+    },
+    "test": {
+      "as": 5,
+      "nonNull": 17
+    }
+  },
+  "packages/core": {
+    "src": {
+      "as": 169,
+      "nonNull": 31
+    },
+    "test": {
+      "as": 33,
+      "nonNull": 37
+    }
+  },
+  "packages/expo-build-cache": {
+    "src": {
+      "as": 1,
+      "nonNull": 4
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
+  "packages/metro": {
+    "src": {
+      "as": 5,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 14,
+      "nonNull": 2
+    }
+  },
+  "packages/server": {
+    "src": {
+      "as": 308,
+      "nonNull": 140
+    },
+    "test": {
+      "as": 272,
+      "nonNull": 390
+    }
+  },
+  "packages/stim-cli": {
+    "src": {
+      "as": 846,
+      "nonNull": 338
+    },
+    "test": {
+      "as": 559,
+      "nonNull": 791
+    }
+  }
+}

@@ -1357,12 +1357,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
       const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
-      if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > maxFps)) {
+      if (fps !== undefined && (typeof fps !== 'number' || !Number.isInteger(fps) || fps < 1 || fps > maxFps)) {
         return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
       }
       if (
         maxEdge !== undefined &&
-        (!Number.isInteger(maxEdge) || (maxEdge as number) < FRAME_EDGE.min || (maxEdge as number) > FRAME_EDGE.max)
+        (typeof maxEdge !== 'number' ||
+          !Number.isInteger(maxEdge) ||
+          maxEdge < FRAME_EDGE.min ||
+          maxEdge > FRAME_EDGE.max)
       ) {
         return error(
           id,
@@ -1403,8 +1406,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'bad-request', 'Replay needs a video subscription: pass video: ["h264"].');
       }
       const hint: FrameHint = {
-        fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
-        maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
+        fps: Math.min(fps ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
+        maxEdge: maxEdge ?? FRAME_EDGE.default,
       };
       const replayDir =
         platform === 'macos'
@@ -2495,11 +2498,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'notifications.list') {
         const params = message.params ?? {};
         const since = isJsonObject(params) ? params.since : undefined;
-        if (!isJsonObject(params) || (since !== undefined && !(Number.isInteger(since) && (since as number) >= 0))) {
+        if (
+          !isJsonObject(params) ||
+          (since !== undefined && !(typeof since === 'number' && Number.isInteger(since) && since >= 0))
+        ) {
           return error(id, 'bad-request', 'notifications.list takes an optional since, a cursor of 0 or more.');
         }
         listeners.add(socket);
-        return send(socket, { id, result: notificationLog.list(device.id, since as number | undefined) });
+        return send(socket, { id, result: notificationLog.list(device.id, since) });
       }
       if (message.method === 'push.unregister') {
         setDevicePush(device.id, null);

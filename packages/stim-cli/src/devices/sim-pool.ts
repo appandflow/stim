@@ -10,7 +10,7 @@ import {
   withConfigLock,
 } from '../workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { getParkedMax, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
+import { getParkedMax, isJsonObject, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
 export type { ParkedMax } from '@stim-cli/core/state';
 
 export type PoolPlatform = 'ios' | 'android';
@@ -53,8 +53,8 @@ export function parkedMaxSetting(
 }
 
 function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRecords[PoolPlatform] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return false;
+  const record = value;
   return (
     typeof record.udid === 'string' &&
     typeof record.name === 'string' &&

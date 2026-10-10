@@ -55,7 +55,7 @@ export function parseSetupJournal(value: unknown): SetupJournal | null {
         isJsonObject(grant) && knownKeys(grant, ['capability', 'id']) && capability(grant.capability) && text(grant.id),
     ) ||
     typeof value.done !== 'boolean' ||
-    (value.exit !== undefined && (!Number.isInteger(value.exit) || (value.exit as number) < 0))
+    (value.exit !== undefined && (typeof value.exit !== 'number' || !Number.isInteger(value.exit) || value.exit < 0))
   )
     return null;
   return value as unknown as SetupJournal;

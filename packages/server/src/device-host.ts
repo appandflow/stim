@@ -1140,7 +1140,11 @@ export class DeviceHost {
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       if (installed) owned.installedAttempt = attempt;
-      if (installed && (record.platform !== 'macos' || (Number.isSafeInteger(value.pid) && (value.pid as number) > 0)))
+      if (
+        installed &&
+        (record.platform !== 'macos' ||
+          (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
+      )
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';

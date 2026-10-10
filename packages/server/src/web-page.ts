@@ -1,3 +1,4 @@
+import { isJsonObject } from '@stim-cli/core/state';
 import { WebSocket } from 'ws';
 
 export interface OwnedPage {
@@ -20,17 +21,24 @@ function connect(url: string, timeoutMs: number): Promise<{ socket: WebSocket; s
       reject(new Error(`DevTools did not accept a connection at ${url} within ${timeoutMs} ms.`));
     }, timeoutMs);
     socket.on('message', (data) => {
-      let message: { id?: number; result?: Record<string, unknown>; error?: { message?: string } };
+      let message: unknown;
       try {
-        message = JSON.parse(String(data)) as typeof message;
+        message = JSON.parse(String(data));
       } catch {
         return;
       }
-      const waiter = typeof message.id === 'number' ? pending.get(message.id) : undefined;
+      if (!isJsonObject(message) || typeof message.id !== 'number') return;
+      const waiter = pending.get(message.id);
       if (!waiter) return;
-      pending.delete(message.id!);
-      if (message.error) waiter.reject(new Error(message.error.message ?? 'DevTools command failed.'));
-      else waiter.resolve(message.result ?? {});
+      pending.delete(message.id);
+      const { error, result } = message;
+      if (error)
+        waiter.reject(
+          new Error(
+            isJsonObject(error) && typeof error.message === 'string' ? error.message : 'DevTools command failed.',
+          ),
+        );
+      else waiter.resolve(isJsonObject(result) ? result : {});
     });
     socket.on('close', () => {
       for (const waiter of pending.values()) waiter.reject(new Error('The DevTools connection closed.'));
