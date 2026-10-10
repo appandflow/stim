@@ -9,6 +9,8 @@
     "website/.docusaurus/**",
     "website/static/img/branding/stim-jar-*.json",
     "website/static/img/branding/stim-build-*.json",
+    "website/static/img/branding/stim-tutorial-*.json",
+    "website/static/img/branding/stim-step-done-*.json",
     ".claude/**",
     "apps/mobile/**",
     "apps/desktop/Support/Assets.xcassets/**",
