@@ -39,7 +39,7 @@ brew install --cask appandflow/tap/stim
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
-tiles with an **on &lt;machine&gt;** label. You view and control them through this
+tiles labeled with the machine's name. You view and control them through this
 Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
@@ -54,7 +54,7 @@ or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
 Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
-sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
@@ -98,7 +98,7 @@ a tiny Expo app, and shows:
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
-- **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
+- **Build on Another Mac (optional):** **Add Remote Machine** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 
@@ -548,18 +548,18 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a remote Mac
 
-**Settings > Remote Macs** also shows **Automatic builds** and **Automatic simulators**
-for **This Mac** and each remote. These switches control new automatic placement
+**Settings > Remote Macs** also shows **Builds enabled** and **Simulators enabled**
+for this Mac, in a card under **This Machine**, and on each remote machine's card. These switches control new automatic placement
 requested by this Mac without unpairing or stopping anything. Each pool retains at
 least one local or configured, approved remote member. Explicit placement is unchanged.
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Remote Macs** lists your remote Macs with a status
-(**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
+(**Approved**, **Waiting for approval**, **Unreachable**, **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Remote Mac…**, which guides you through five steps:
+offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac on your tailnet.
 2. Choose Builds and/or Hosted simulators.
@@ -631,9 +631,9 @@ matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
-**File > Add Remote Mac…** (**Cmd+Shift+B**) always opens the existing build
+**File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Mac…**; otherwise it explains how to connect both Macs
+offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link Machine** button is also available. Build
 machines are not a step in the first-run setup guide.

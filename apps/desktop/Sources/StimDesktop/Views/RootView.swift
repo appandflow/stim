@@ -564,7 +564,7 @@ struct RootView: View {
   @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
     if #available(macOS 26.0, *) {
       ToolbarItem(placement: .navigation) {
-        sidebarToggleButton.glassEffect(.regular.interactive(), in: Capsule())
+        sidebarToggleButton.glassEffect(.regular, in: Capsule())
       }
       .sharedBackgroundVisibility(.hidden)
     } else {
@@ -578,13 +578,12 @@ struct RootView: View {
     Button {
       withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
     } label: {
-      Image(systemName: "sidebar.left")
-        .font(.system(size: 17))
-        .frame(width: ToolbarMetrics.glassHeight, height: ToolbarMetrics.glassHeight)
+      Label(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
     }
-    .buttonStyle(.plain)
-    .foregroundStyle(Palette.secondary)
-    .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    .buttonStyle(.icon())
+    .labelStyle(.iconOnly)
+    .padding(.horizontal, Space.md + Space.xxs)
+    .frame(height: ToolbarMetrics.glassHeight)
     .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
   }
 
@@ -1384,6 +1383,8 @@ struct LogsToggleButton: View {
           .font(.system(size: 9, weight: .bold))
           .monospacedDigit()
           .foregroundStyle(.white)
+          .lineLimit(1)
+          .fixedSize()
           .padding(.horizontal, 4)
           .frame(minWidth: 15, minHeight: 15)
           .background(Capsule().fill(Palette.error))

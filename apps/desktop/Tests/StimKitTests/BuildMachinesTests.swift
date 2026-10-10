@@ -184,10 +184,14 @@ import Testing
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
-        "Not offloading", .warning
+        "Needs update", .warning
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"disk","reason":"r"}]}"#,
+        "Low on disk", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"new-code","reason":"r"}]}"#,
         "Not offloading", .warning
       ),
       (
@@ -259,7 +263,7 @@ import Testing
       ])
     #expect(
       mini.problemLines == [
-        .init(reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
+        .init(code: "cocoapods", reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
       ])
 
     let missingPods = try status(
@@ -267,9 +271,10 @@ import Testing
     )
     #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
     let build = try status(
-      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build a there, b here"},{"code":"other","reason":"odd"}]}"#
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
     #expect(build.problemLines.map(\.fix) == [.advice("Update the remote Mac."), nil])
+    #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(

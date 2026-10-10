@@ -296,8 +296,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
-  /// The one pill a row of the remote Mac list shows: Approved, Waiting for approval, Unreachable or Not
-  /// offloading for the states that matter most, else the readiness title (Busy, Revoked, Not asked, ...).
+  /// The one pill a row of the remote Mac list shows: Approved, Waiting for approval, Unreachable, Needs update or
+  /// the first problem's short title for the states that matter most, else the readiness title (Busy, Revoked, ...).
   public var listStatus: MachineListStatus {
     let ready = readiness
     switch state {
@@ -306,7 +306,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       let code = problems?.first?.code
       if code == "unreachable" { return MachineListStatus(title: "Unreachable", tone: .warning) }
       if code == "busy" { return MachineListStatus(title: ready.title, tone: ready.tone) }
-      return MachineListStatus(title: "Not offloading", tone: .warning)
+      if code == "stim-build" { return MachineListStatus(title: "Needs update", tone: .warning) }
+      return MachineListStatus(title: code.flatMap { MachineReadiness.problems[$0]?.0 } ?? "Not offloading", tone: .warning)
     case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
     default: return MachineListStatus(title: state.title, tone: state.readinessTone)
     }
@@ -320,6 +321,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       case advice(String)
     }
 
+    public var code = ""
     public var reason: String
     public var fix: Fix?
   }
@@ -330,11 +332,19 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     guard state == .approved, offloadable == false else { return [] }
     return (problems ?? []).filter { $0.code != "busy" }.map { problem in
       if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
-        return ProblemLine(reason: problem.reason, fix: .command(command))
+        return ProblemLine(code: problem.code, reason: problem.reason, fix: .command(command))
       }
+      let reason = problem.code == "stim-build" ? Self.shortStimBuild(problem.reason) : problem.reason
       let advice = MachineReadiness.problems[problem.code]?.1
-      return ProblemLine(reason: problem.reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
+      return ProblemLine(
+        code: problem.code, reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
     }
+  }
+
+  /// "Stim build 5773060 there, d9b8bdb here" from doctor's full 16-digit build digests.
+  static func shortStimBuild(_ reason: String) -> String {
+    guard let match = reason.wholeMatch(of: /Stim build (\S+) there, (\S+) here/) else { return reason }
+    return "Stim build \(match.1.prefix(7)) there, \(match.2.prefix(7)) here"
   }
 
   /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, 1.16.2 here".

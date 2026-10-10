@@ -667,7 +667,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim doctor --fix
 
 Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Automatic builds and Automatic simulators for this Mac or a configured remote.
+use Builds enabled and Simulators enabled for this Mac or a configured remote.
 The equivalent machine settings list the excluded members; both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'
