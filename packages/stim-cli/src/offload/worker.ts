@@ -47,7 +47,7 @@ import { buildIosOperation } from '../commands/ios/build.ts';
 import { writeConfigSetting } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 
-/** One file of the client's checkout, as `git ls-files -co --exclude-standard` lists it. */
+/** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
 export interface ManifestEntry {
   path: string;
   kind: 'file' | 'exec' | 'link' | 'directory';
@@ -171,12 +171,6 @@ interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
 
-/**
- * Makes `src` hold exactly the manifest's files: a file the manifest names is rewritten unless this process
- * wrote that same content there and nothing touched it since; a file that git would list as untracked and not
- * ignored, and that the manifest does not name, is deleted, as is one the previous manifest named. Ignored
- * files (dependencies, generated native projects) stay, and the fingerprint check covers them.
- */
 function materialize(job: WorkerJob, src: string): { written: number; removed: number } {
   const recordFile = join(job.area, 'mirror.json');
   let previous: MirrorRecord = {};
