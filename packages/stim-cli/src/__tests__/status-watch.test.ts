@@ -6,10 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
-import { makeConfig } from './_factories.ts';
+import { makeConfig, makeEnvironmentState } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { createRefreshScheduler, statusChange, watchStatusSources, type RefreshKind } from '../status-watch.ts';
+import {
+  createRefreshScheduler,
+  statusChange,
+  watchPayload,
+  watchStatusSources,
+  type RefreshKind,
+} from '../status-watch.ts';
+import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
 
@@ -160,6 +167,88 @@ test('a log append or build detail needs only a log refresh; other state changes
   expect(statusChange('leases', null)).toBe('full');
   expect(statusChange('eas', 'sessions.json')).toBe('full');
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
+});
+
+describe('watchPayload', () => {
+  const owner = (overrides: Partial<MachineOwner> = {}): MachineOwner => ({
+    kind: 'simulator',
+    name: 'sim',
+    workspace: '/w/a',
+    id: 'UDID',
+    owned: true,
+    cpuPercent: 10,
+    residentMb: 500,
+    memoryMb: 300,
+    processes: 6,
+    ...overrides,
+  });
+  const payload = (overrides: Partial<StatusPayload> = {}): StatusPayload => ({
+    environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 300 })],
+    capacity: { liveCount: 1, committedMb: 300, totalMemoryMb: 16384, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+    machine: { memorySource: 'footprint', owners: [owner()] },
+    ...overrides,
+  });
+  const jittered = (): StatusPayload =>
+    payload({
+      environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 311 })],
+      capacity: { liveCount: 1, committedMb: 311, totalMemoryMb: 16384, overCapacity: false },
+      machine: {
+        memorySource: 'footprint',
+        owners: [owner({ cpuPercent: 14, residentMb: 490, memoryMb: 311, processes: 7 })],
+      },
+    });
+
+  test('usage that moved less than a step prints the previous payload byte for byte', () => {
+    const previous = watchPayload(null, payload());
+    expect(JSON.stringify(watchPayload(previous, jittered()))).toBe(JSON.stringify(previous));
+  });
+
+  test.each([
+    ['cpu', { cpuPercent: 15 }],
+    ['footprint memory', { memoryMb: 284 }],
+  ])('a %s move of one step prints the owner row with its current process count', (_name, change) => {
+    const previous = watchPayload(null, payload());
+    const next = payload({ machine: { memorySource: 'footprint', owners: [owner({ ...change, processes: 9 })] } });
+    expect(watchPayload(previous, next).machine?.owners[0]).toEqual(owner({ ...change, processes: 9 }));
+  });
+
+  test('a step is measured from the last printed value, so slow drift still prints', () => {
+    const at = (memoryMb: number) => payload({ environments: [makeEnvironmentState({ path: '/w/a', memoryMb })] });
+    const first = watchPayload(null, at(300));
+    const second = watchPayload(first, at(310));
+    const third = watchPayload(second, at(317));
+    expect([first, second, third].map((p) => p.environments[0]!.memoryMb)).toEqual([300, 300, 317]);
+  });
+
+  test('capacity keeps its sum below a step and changes at a step or when overCapacity flips', () => {
+    const previous = watchPayload(null, payload());
+    const capacity = (committedMb: number, overCapacity = false) =>
+      watchPayload(previous, payload({ capacity: { liveCount: 1, committedMb, totalMemoryMb: 16384, overCapacity } }))
+        .capacity;
+    expect(capacity(315).committedMb).toBe(300);
+    expect(capacity(316).committedMb).toBe(316);
+    expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
+  });
+
+  test('a new, gone or changed-ownership owner prints the current rows', () => {
+    const previous = watchPayload(null, payload());
+    const rows = (owners: MachineOwner[]) =>
+      watchPayload(previous, payload({ machine: { memorySource: 'footprint', owners } })).machine?.owners;
+    expect(rows([owner(), owner({ name: 'metro', id: '8081' })])).toHaveLength(2);
+    expect(rows([])).toEqual([]);
+    expect(rows([owner({ owned: false })])?.[0]?.owned).toBe(false);
+  });
+
+  test('machine usage appearing or its memory source changing prints the current machine', () => {
+    const previous = watchPayload(null, payload());
+    expect(watchPayload(previous, payload({ machine: null })).machine).toBeNull();
+    const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
+    expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
+    expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
+  });
 });
 
 test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
@@ -371,9 +460,8 @@ describe('stim status --watch --json', () => {
     40_000,
   );
 
-  test.skipIf(process.platform !== 'darwin')(
-    'machine usage refreshes on the light interval with no state change; skipped off macOS, where no simulator runs',
-    async () => {
+  describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
+    async function settledWatch(cpuExpr: string) {
       const udid = 'AAAAAAAA-0000-4000-8000-000000000001';
       saveConfig(
         makeConfig({
@@ -398,12 +486,11 @@ describe('stim status --watch --json', () => {
         [
           '#!/bin/sh',
           `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
-          `echo "100 1 1024 $n.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
+          `echo "100 1 1024 ${cpuExpr}.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
         ].join('\n'),
       );
       chmodSync(join(bin, 'xcrun'), 0o755);
       chmodSync(join(bin, 'ps'), 0o755);
-      const cpu = (line: string) => JSON.parse(line).machine.owners[0].cpuPercent;
       const startedAt = Date.now();
       const { lines } = startWatch();
       await until(() => lines.length > 0);
@@ -412,12 +499,32 @@ describe('stim status --watch --json', () => {
         seen = lines.length;
         await new Promise((resolve) => setTimeout(resolve, 6000));
       }
+      return {
+        lines,
+        seen,
+        cpu: (line: string) => JSON.parse(line).machine.owners[0].cpuPercent as number,
+        reads: () => Number(readFileSync(count, 'utf-8')),
+        remainingMs: () => 28_000 - (Date.now() - startedAt),
+      };
+    }
+
+    test('a CPU move past a step prints a new line without any state change; skipped off macOS, where no simulator runs', async () => {
+      const { lines, seen, cpu, remainingMs } = await settledWatch('$((n * 10))');
       const before = cpu(lines.at(-1)!);
-      await until(() => lines.length > seen, 28_000 - (Date.now() - startedAt));
+      await until(() => lines.length > seen, remainingMs());
       expect(cpu(lines.at(-1)!)).toBeGreaterThan(before);
-    },
-    40_000,
-  );
+    }, 40_000);
+
+    test('CPU jitter below a step prints no line even though the process table is read again', async () => {
+      const { lines, seen, cpu, reads, remainingMs } = await settledWatch('$((50 + n % 2))');
+      const before = cpu(lines.at(-1)!);
+      const readsBefore = reads();
+      await until(() => reads() > readsBefore, remainingMs());
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      expect(lines).toHaveLength(seen);
+      expect(cpu(lines.at(-1)!)).toBe(before);
+    }, 40_000);
+  });
 
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',

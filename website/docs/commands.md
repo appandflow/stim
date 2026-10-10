@@ -1144,7 +1144,10 @@ lists every field.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
-one per change, never two identical payloads in a row. It reacts to changes in
+one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
+its value from the previous line until it moves by 5 percentage points or 16 MB;
+resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
+It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, adb device arrivals and
 departures, and simulator state, and recomputes every 30 seconds as a
 fallback. A log append updates only the log error count and device activity,

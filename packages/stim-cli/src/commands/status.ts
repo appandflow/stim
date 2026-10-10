@@ -11,6 +11,7 @@ import {
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
   WATCH_LIGHT_INTERVAL_MS,
+  watchPayload,
   watchStatusSources,
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
@@ -684,6 +685,7 @@ function renderStatus(
     machine,
   }: StatusSnapshot,
   json: boolean,
+  settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -695,21 +697,20 @@ function renderStatus(
 
   const maintenance = maintenanceStatus();
   if (json) {
-    out.push(
-      JSON.stringify({
-        environments: states.map((state, i) =>
-          withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
-        ),
-        archived,
-        archivedUsage: usage,
-        capacity: cap,
-        deviceLeases: leases,
-        unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
-        simctlAvailable: simsAvailable,
-        machine,
-        maintenance,
-      } satisfies StatusPayload),
-    );
+    const payload = {
+      environments: states.map((state, i) =>
+        withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
+      ),
+      archived,
+      archivedUsage: usage,
+      capacity: cap,
+      deviceLeases: leases,
+      unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
+      simctlAvailable: simsAvailable,
+      machine,
+      maintenance,
+    } satisfies StatusPayload;
+    out.push(JSON.stringify(settle(payload)));
     return out;
   }
 
@@ -862,6 +863,7 @@ function renderStatus(
 
 async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
+  let lastPayload: StatusPayload | null = null;
   let archiveStamp: number | null = null;
   let archives: ArchivedWorkspace[] | undefined;
   let snapshot: StatusSnapshot | null = null;
@@ -873,6 +875,7 @@ async function watchStatus(json: boolean): Promise<void> {
     run: async (kind) => {
       triggerMaintenance('status-watch');
       let text: string;
+      let payload = null as StatusPayload | null;
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
         else {
@@ -887,7 +890,7 @@ async function watchStatus(json: boolean): Promise<void> {
           snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing(), archives);
         }
         measurer.schedule(snapshot.states, snapshot.worktrees);
-        text = renderStatus(snapshot, json).join('\n');
+        text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full))).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
         return;
@@ -896,6 +899,7 @@ async function watchStatus(json: boolean): Promise<void> {
       }
       if (text === last) return;
       last = text;
+      lastPayload = payload;
       process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
     },
   });
