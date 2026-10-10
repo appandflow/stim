@@ -15,6 +15,18 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     }
   }
 
+  public var body: String {
+    switch self {
+    case .buildMachine: "Send native builds to another Mac on your tailnet and run the app here."
+    case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
+    case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
+    case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."
+    case .statusFilter: "Choose which workspaces the sidebar lists: active, idle, not set up or archived."
+    case .replay: "Stim records each simulator's screen with the agent's actions marked on a timeline you can scrub."
+    case .hostedSimulators: "Another Mac on your tailnet can run simulators for your workspaces when this Mac is full."
+    }
+  }
+
   public var actionTitle: String {
     switch self {
     case .buildMachine: "Add a Remote Mac"

@@ -119,9 +119,10 @@ Progress stays in this app's preferences. Closing the panel preserves it;
 Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
 its path, and an archived tour opens as complete. **Skip Step** advances without
 waiting for a signal. **Mark Done** appears after two minutes. The **…** menu
-also offers **Restart Tutorial**, which shows a restart prompt and resets
-checkpoints when the tracked tour disappears and returns, or its oldest build
-starts after Restart. A newer phase timestamp alone does not reset progress.
+also offers **Restart Tutorial**, which starts over at Get the Test App as on a
+first start; worktrees from before the restart stay and no longer count. When
+the tutorial workspace comes from an older tutorial version, the panel says so
+and offers only **Restart Tutorial**.
 
 Each step shows a plain request to copy for your coding agent, with the paths
 filled in from the tour's repository. Below it, a collapsed **Commands your agent

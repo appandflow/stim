@@ -202,8 +202,9 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
 }
 
 @Test func tutorialUnsupportedVersionsFailBeforeAcceptingSignals() throws {
-  for (version, message) in [
-    (3, "Update Stim Desktop to follow this tutorial"), (1, "Restart the tutorial with the current Stim CLI"),
+  for (version, message, action) in [
+    (3, "Update Stim Desktop to follow this tutorial", TutorialAction.updateDesktop),
+    (1, "This tutorial was started with an older version. Restart it to follow the new steps.", .restart),
   ] {
     var env = try environment()
     env.version = version
@@ -211,6 +212,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
     let result = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "parallel")))
     #expect(result.currentStep == "parallel")
     #expect(state("parallel", in: result).state == .failed(message))
+    #expect(state("parallel", in: result).action == action)
   }
 }
 
@@ -308,7 +310,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   _ = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "finish")))
   let missing = progress.update(TutorialInput(environment: nil, now: afterRebuild))
   #expect(missing.currentStep == "finish")
-  #expect(state("finish", in: missing).detail.contains("Restart"))
+  #expect(state("finish", in: missing).action == .restart)
   let result = progress.update(TutorialInput(environment: nil, archiveEnabled: false, now: afterRebuild))
   #expect(result.isComplete)
   #expect(state("finish", in: result).detail == "Archived is off")
@@ -612,25 +614,6 @@ private func clone(_ path: String, doctorRanAt: Date? = nil) throws -> TutorialE
   fresh.lastBuild?.startedAt = "2026-10-07T05:03:00.000Z"
   let done = progress.update(TutorialInput(environment: base, siblings: [fresh], now: afterRebuild))
   #expect(done.currentStep == "device")
-}
-
-@Test func tutorialRestartForgetsTheOldTourEvenWhileItIsStillPresent() throws {
-  var old = try environment()
-  old.repository = "/Users/example/stim-tutorial"
-  var progress = TutorialProgress()
-  _ = progress.update(TutorialInput(environment: old, now: afterRebuild, record: saved(at: "device")))
-  progress.requestRestart(now: afterRebuild)
-  #expect(progress.record?.tourPath == nil)
-  #expect(progress.record?.startedAt == afterRebuild)
-  var fresh = try environment("01-started")
-  fresh.path = "/Users/example/new-tour"
-  fresh.repository = old.repository
-  fresh.phaseSince = afterRebuild.addingTimeInterval(60)
-  let result = progress.update(
-    TutorialInput(environment: fresh, siblings: [old, fresh], now: afterRebuild.addingTimeInterval(61)))
-  #expect(result.record.tourPath == "/Users/example/new-tour")
-  #expect(result.currentStep == "build")
-  #expect(result.record.done == ["begin"])
 }
 
 @Test func tutorialSelectAdoptsTheOldestWorktreeAfterTheStartAndIgnoresOlderOnes() throws {

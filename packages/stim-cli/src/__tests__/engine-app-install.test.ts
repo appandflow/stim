@@ -76,7 +76,7 @@ function recordingExec({
   failStderr = 'device not booted',
   outputs = {},
 }: {
-  fail?: string | null;
+  fail?: string | string[] | null;
   failCode?: string;
   failStderr?: string;
   outputs?: Record<string, string | string[]>;
@@ -91,7 +91,7 @@ function recordingExec({
       calls.push([file, ...args]);
       options.push(opts);
       const key = [file, ...args].join(' ');
-      if (fail && key.includes(fail)) {
+      if (fail && [fail].flat().some((match) => key.includes(match))) {
         const err = new Error(`Command failed: ${key}`);
         (err as Error & { stderr?: string }).stderr = failStderr;
         if (failCode) (err as NodeJS.ErrnoException).code = failCode;
@@ -543,12 +543,29 @@ describe('ios', () => {
     expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
   });
 
-  test('an unreadable process list neither terminates nor claims a restart', () => {
+  test('an unreadable process list still terminates, without claiming a restart', () => {
     const exec = recordingExec({ fail: 'launchctl list' });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(result.restartedPid).toBeUndefined();
-    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(false);
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'terminate', 'spawn', 'launch']);
+  });
+
+  test('an unreadable process list tolerates simctl terminate finding nothing to terminate', () => {
+    const exec = recordingExec({
+      fail: ['launchctl list', 'simctl terminate'],
+      failStderr: 'Simulator device failed to terminate com.example.app.\nfound nothing to terminate',
+    });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.ok).toBe(true);
+    expect(result.restartedPid).toBeUndefined();
+  });
+
+  test('an unreadable process list and another terminate failure refuses the launch', () => {
+    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failStderr: 'boom' });
+    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(exec.calls.some((call) => call[2] === 'launch')).toBe(false);
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
