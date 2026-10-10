@@ -1,4 +1,4 @@
-import { sleep } from '../commands/native-runtime.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { resolveWorkspaceMetroPort } from '../commands/start.ts';
 import { readMetroRecords } from '../engine/launch-verify.ts';
 import { resolveProjectMetro } from '../metro.ts';
@@ -114,7 +114,7 @@ export function browserWebProject(root: string): WebProject {
             elapsedMs: Date.now() - startedAt,
           });
           if (measured) break;
-          await sleep(POLL_MS);
+          await cancellableSleep(POLL_MS);
         }
         const verdict: WebLaunchVerdict = foreign
           ? { launched: 'unverified', kind: 'no-response', reason: foreign.reason }

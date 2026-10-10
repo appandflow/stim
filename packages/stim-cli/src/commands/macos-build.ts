@@ -4,6 +4,7 @@ import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
+import { cancelledError, throwIfCancelled } from '../cancellation.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { macosDir } from '../macos/state.ts';
@@ -83,16 +84,13 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
           record: build,
           buildMachine: placement.selected,
         });
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The macOS build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(), 'macOS build');
         const executable = realpathSync(join(bundle, 'Contents', 'MacOS', recipe.product));
         build.state = 'ok';
         succeeded = true;
         return { product: recipe.product, bundle, bundleId: recipe.bundleId, executable, build, logs: { dir: logs } };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted
-          ? Object.assign(new Error('The macOS build was cancelled.'), { code: 'STIM_CANCELLED', cause: error })
-          : error;
+        const failure = runCancellationSignal()?.aborted ? cancelledError('macOS build', error) : error;
         build.state = 'failed';
         build.error = failure instanceof Error ? failure.message : String(failure);
         build.errorCode = (failure as { code?: string }).code;

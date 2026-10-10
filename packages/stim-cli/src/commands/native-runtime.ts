@@ -20,8 +20,6 @@ export interface RuntimeReadiness {
   unattributed?: boolean;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
-
 export type DevServerGate =
   | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
   | { ok: false; code: string; message: string; remedy: string | null; lines: string[]; reclaimed: ReclaimedStep[] };

@@ -34,6 +34,7 @@ import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -996,10 +997,7 @@ export async function offloadBuild({
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
   const signal = runCancellationSignal();
-  const throwIfCancelled = () => {
-    if (signal?.aborted)
-      throw Object.assign(new Error('The offloaded build was cancelled.'), { code: 'STIM_CANCELLED' });
-  };
+  const checkCancelled = () => throwIfCancelled(signal, 'offloaded build');
   let settle!: (outcome: Record<string, unknown>) => void;
   let settled = false;
   const outcome = new Promise<Record<string, unknown>>((resolve) => {
@@ -1014,7 +1012,7 @@ export async function offloadBuild({
   };
   signal?.addEventListener('abort', cancel, { once: true });
   try {
-    throwIfCancelled();
+    checkCancelled();
     if (!validArtifactIdentity(request, expectedFingerprint))
       return fail('The build request has an invalid reusable artifact identity.');
     if (native?.provider === 'xcode' && native.snapshot.hash !== expectedFingerprint)
@@ -1075,7 +1073,7 @@ export async function offloadBuild({
         return fail(reason);
       }
       const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
-      throwIfCancelled();
+      checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
         return fail(synced.failure);
@@ -1090,7 +1088,7 @@ export async function offloadBuild({
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (choice.automatic) requireAutomaticMachine('build', choice.machine);
-      throwIfCancelled();
+      checkCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
         project: identity.project,
@@ -1130,7 +1128,7 @@ export async function offloadBuild({
             }),
         stimBuild: choice.target.local.stimBuild,
       });
-      throwIfCancelled();
+      checkCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;
         break;
@@ -1147,7 +1145,7 @@ export async function offloadBuild({
     );
     const result = await outcome;
     clearTimeout(timer);
-    throwIfCancelled();
+    checkCancelled();
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
@@ -1163,7 +1161,7 @@ export async function offloadBuild({
     }
 
     onEnter('fetch');
-    throwIfCancelled();
+    checkCancelled();
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
@@ -1190,7 +1188,7 @@ export async function offloadBuild({
     const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
     connection.onBinary(null);
     closeSync(fd);
-    throwIfCancelled();
+    checkCancelled();
     const fetchFailure = replyError(fetched);
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
@@ -1202,7 +1200,7 @@ export async function offloadBuild({
       );
     }
     await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
-    throwIfCancelled();
+    checkCancelled();
     rmSync(archive, { force: true });
     const artifactPath = join(stagingDir, name);
     if (stagedArtifactEscapes(stagingDir, artifactPath, request.platform === 'macos')) {
@@ -1249,7 +1247,7 @@ export async function offloadBuild({
     };
   } catch (error) {
     closeOffload(choice);
-    throwIfCancelled();
+    checkCancelled();
     return fail((error as Error).message.split('\n')[0] ?? String(error));
   } finally {
     signal?.removeEventListener('abort', cancel);

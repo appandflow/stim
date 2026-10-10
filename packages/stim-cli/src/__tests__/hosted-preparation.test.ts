@@ -1,13 +1,25 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type {
-  HostedMacosPlacement,
-  HostedNativePlacement,
-  HostedIosDevice,
-  HostedAndroidDevice,
+import {
+  DEVICE_HOST_LIMITS,
+  type HostedMacosPlacement,
+  type HostedNativePlacement,
+  type HostedIosDevice,
+  type HostedAndroidDevice,
 } from '@stim-cli/core/state';
-import { connectHost, type HostConnection } from '../device-host/hosted-client.ts';
+import {
+  connectHost,
+  settle,
+  HOSTED_POLL_MARGIN_MS,
+  HOSTED_REQUEST_MARGIN_MS,
+  INSTALL_TIMEOUT_MS,
+  OFFER_TIMEOUT_MS,
+  POLL_MS,
+  PREPARE_TIMEOUT_MS,
+  SESSION_TIMEOUT_MS,
+  type HostConnection,
+} from '../device-host/hosted-client.ts';
 import { placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { placeHostedNative, prepareHostedNative } from '../device-host/hosted-native.ts';
 import { BuildConnection } from '../offload/client.ts';
@@ -248,5 +260,55 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(String(await result)).toMatch(/reserved architecture|offered architecture|reserved macOS app slot/);
     expect(recorded?.session).toBe(session);
     expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
+  });
+});
+
+describe('hosted session settle cancellation', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('a cancelled run stops waiting within one poll interval', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const connection = Object.create(BuildConnection.prototype) as BuildConnection;
+    connection.request = async () => ({ result: { id: session, platform: 'ios', state: 'preparing', device: null } });
+    const host = { machine: 'mini', connection } as HostConnection;
+    const controller = new AbortController();
+    let outcome: unknown;
+    void settle(
+      host,
+      { id: session, state: 'preparing', device: null },
+      ['preparing'],
+      PREPARE_TIMEOUT_MS,
+      'ios',
+      controller.signal,
+    ).then(
+      (value) => (outcome = { value }),
+      (error: unknown) => (outcome = { error }),
+    );
+    await vi.advanceTimersByTimeAsync(10 * POLL_MS + 1);
+    expect(outcome).toBeUndefined();
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toMatchObject({ error: { code: 'STIM_CANCELLED' } });
+  });
+});
+
+describe('hosted client limits', () => {
+  const settleMs = 2 * DEVICE_HOST_LIMITS.killGraceMs;
+  const worker = (deadlineMs: number) => deadlineMs + settleMs;
+  test.each([
+    ['prepare', PREPARE_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
+    ['install', INSTALL_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
+    [
+      'stop',
+      SESSION_TIMEOUT_MS,
+      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + worker(DEVICE_HOST_LIMITS.stopMs),
+      HOSTED_POLL_MARGIN_MS,
+    ],
+    ['offer', OFFER_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.offerMs), HOSTED_REQUEST_MARGIN_MS],
+  ])('the %s wait outlasts the server worker bound plus its margin', (_phase, client, server, margin) => {
+    expect(client).toBeGreaterThanOrEqual(server + margin);
   });
 });

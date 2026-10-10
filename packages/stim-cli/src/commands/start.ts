@@ -72,6 +72,7 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
+import { cancellableSleep } from '../cancellation.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -210,8 +211,6 @@ export function readLogTail(file: string, n: number = LOG_TAIL_LINES): string[] 
   }
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 export default function startCommand(program: Command): void {
   registerStart(program);
 }
@@ -279,7 +278,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
       alreadyExited: false,
       timeoutMs: 1_000,
       now: Date.now,
-      sleep,
+      sleep: cancellableSleep,
       isAlive: pidExists,
     }),
   withWorktreeLock: withManagedRemoteWorktreeLock,
@@ -620,7 +619,7 @@ export async function startDevServer(
             pidExists(record.pid)
           )
             return record.pid;
-          await sleep(25);
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -694,7 +693,7 @@ export async function startDevServer(
           const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
           if (found?.pid === child.pid) return found;
           if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
-          await sleep(25);
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -1250,7 +1249,7 @@ async function waitForMetro({
     const resolution = await probe(port, root);
     if (resolution.metro) return true;
     if (aborted()) return false;
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
   }
   const last = await probe(port, root);
   return Boolean(last.metro);
@@ -1269,7 +1268,7 @@ async function waitForExpoTunnel({
   while (Date.now() < deadline) {
     if (aborted()) return false;
     if (readMetroTunnel(root)?.kind === 'expo') return true;
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
   }
   return !aborted() && readMetroTunnel(root)?.kind === 'expo';
 }

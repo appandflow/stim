@@ -10,6 +10,7 @@ import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engi
 import type { CompilationCacheActivity } from '../../engine/build-facts.ts';
 import { readBundleId } from '../../engine/xcode.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../../engine/native-run.ts';
+import { cancelledError, throwIfCancelled } from '../../cancellation.ts';
 import { checkEasAuth, resolveRemote, uploadRemote } from '../../engine/remote-cache.ts';
 import { createRunRecorder, readRunEstimates, recordRunStats, statsProjectKey } from '../../engine/stats.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
@@ -229,16 +230,14 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
         artifact = acquired.artifact;
         artifact.bundleId ??= readBundleId(artifact.path) ?? integration.bundleId();
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The iOS build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(), 'iOS build');
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });
         directory = mkdtempSync(join(artifacts, 'ios-'));
         const appPath = join(directory, basename(artifact.path));
         cpSync(artifact.path, appPath, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
         await artifact.completeUploads();
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The iOS build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(), 'iOS build');
         finish('ok', appPath);
         stats.record({
           failed: false,
@@ -264,9 +263,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           logs: { dir: logs },
         };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted
-          ? Object.assign(new Error('The iOS build was cancelled.'), { code: 'STIM_CANCELLED', cause: error })
-          : error;
+        const failure = runCancellationSignal()?.aborted ? cancelledError('iOS build', error) : error;
         finish('failed', undefined, (failure as { code?: string }).code);
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;
