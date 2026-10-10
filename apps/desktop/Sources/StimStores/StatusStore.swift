@@ -221,7 +221,10 @@ public final class StatusStore: ObservableObject {
     let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
     let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
     Task.detached {
-      let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
+      let resolved = await withTaskGroup(of: (String, Project).self) { group in
+        for path in Set(missing) { group.addTask { (path, Project.resolve(workspace: path)) } }
+        return await group.reduce(into: [String: Project]()) { $0[$1.0] = $1.1 }
+      }
       await MainActor.run {
         DebugLog.debug(
           .cli,
