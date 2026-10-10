@@ -321,6 +321,11 @@ async function lifecycle(label, revision) {
   assert.equal(hostedAndroidPlacements(state).tablet.session, session.id);
   const before = await appPid(`${label}-before-ui`, session, facts.bundleId);
   activeFacts = facts;
+  const connection = JSON.parse(await agent(`${label}-connect`, facts, ['connect', '--force', '--json']));
+  assert.equal(connection.success, true);
+  assert.equal(connection.data.connected, true);
+  assert.equal(connection.data.session, 'hosted-native-android');
+  assert.equal(connection.data.remoteConfig, facts.host.agent.remoteConfig);
   await agent(`${label}-open`, facts, ['open', facts.bundleId, '--platform', 'android', '--foreground']);
   assert.equal(await appPid(`${label}-after-open`, session, facts.bundleId), before);
   await agent(`${label}-revision`, facts, ['wait', 'text', `Native QA ${revision}`, '30000']);
@@ -443,7 +448,7 @@ try {
   writeFileSync(kotlin, original.replace('Native QA initial', 'Native QA recovered'));
   await lifecycle('recovered', 'recovered');
   await assert.rejects(
-    () => stim('native-reload', ['reload', 'android', '--slot', 'tablet']),
+    () => stim('native-reload', ['reload', 'android']),
     (error) => error.code === 1 && String(error.stdout).includes('STIM_NO_METRO'),
   );
   const methods = readFileSync(join(evidence, 'host-requests.ndjson'), 'utf8')
