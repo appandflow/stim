@@ -5,13 +5,23 @@ import StimKit
 public final class StatusStore: ObservableObject {
   static let pollInterval: TimeInterval = 10
 
-  @Published public private(set) var payload: StatusPayload?
+  @Published public private(set) var payload: StatusPayload? {
+    didSet {
+      newestArchiveCache = nil
+      sidebarCache = nil
+    }
+  }
   @Published public private(set) var error: String?
   @Published public private(set) var updatedAt: Date?
   @Published public private(set) var projects: [String: Project] = [:] {
-    didSet { projectTitleMap = projectTitles(roots: projects.values.map(\.root)) }
+    didSet {
+      projectTitleMap = projectTitles(roots: projects.values.map(\.root))
+      sidebarCache = nil
+    }
   }
   private var projectTitleMap: [String: String] = [:]
+  private var newestArchiveCache: [ArchivedWorkspace]?
+  private var sidebarCache: SidebarCache?
   @Published public private(set) var watching = false
   @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim" {
     didSet { syncServerFeed() }
@@ -266,22 +276,48 @@ public final class StatusStore: ObservableObject {
       project: project(ofPath:))
   }
 
+  /// The payload's archives, newest first.
+  public var newestArchives: [ArchivedWorkspace] {
+    if let newestArchiveCache { return newestArchiveCache }
+    let newest = ArchivedWorkspace.newestFirst(payload?.archived ?? [])
+    newestArchiveCache = newest
+    return newest
+  }
+
   public func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
-    StimKit.sidebarTrees(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let trees = cache.trees { return trees }
+    let trees = StimKit.sidebarTrees(
+      visible: cache.visible, environments: payload?.environments ?? [],
+      unprovisioned: payload?.unprovisionedWorktrees ?? [], project: project(ofPath:), options: options)
+    cache.trees = trees
+    sidebarCache = cache
+    return trees
   }
 
   public func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
-    StimKit.sidebarList(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let list = cache.list { return list }
+    let list = StimKit.sidebarList(visible: cache.visible, project: project(ofPath:), options: options)
+    cache.list = list
+    sidebarCache = cache
+    return list
   }
 
   public func sidebarStatusCounts(_ options: SidebarOptions) -> [StatusFilter: Int] {
-    StimKit.sidebarStatusCounts(
+    sidebar(options).counts
+  }
+
+  private func sidebar(_ options: SidebarOptions) -> SidebarCache {
+    if let sidebarCache, sidebarCache.options == options { return sidebarCache }
+    let entries = sidebarEntries(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+      project: project(ofPath:), options: options, newestArchives: newestArchives)
+    let cache = SidebarCache(
+      options: options, visible: visibleSidebarEntries(entries, options),
+      counts: StimKit.sidebarStatusCounts(entries, hidden: options.hiddenWorkspaces))
+    sidebarCache = cache
+    return cache
   }
 
   private func checkDoctor() {
@@ -335,4 +371,12 @@ public final class StatusStore: ObservableObject {
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
       stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
   }
+}
+
+private struct SidebarCache {
+  var options: SidebarOptions
+  var visible: [SidebarEntry]
+  var counts: [StatusFilter: Int]
+  var trees: [ProjectTree]?
+  var list: [SidebarEntry]?
 }

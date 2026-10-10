@@ -87,6 +87,31 @@ struct StatusStoreTests {
     #expect(store.error == nil)
   }
 
+  @Test func theSidebarFollowsEachNewPayloadAndOptionsChange() async {
+    func worktrees(_ paths: [String]) -> StatusPayload {
+      let rows = paths.map { #"{"path":"\#($0)","repository":"/repo"}"# }.joined(separator: ",")
+      let json = #"{"environments":[],"unprovisionedWorktrees":[\#(rows)]}"#
+      return try! JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
+    }
+    let store = makeStore(Scripted<StatusPayload>())
+    var options = SidebarOptions()
+    options.statuses = [.notSetUp]
+
+    store.accept(.success(worktrees(["/repo-a"])))
+    #expect(await until { store.payload != nil })
+    #expect(store.sidebarList(options).map(\.path) == ["/repo-a"])
+
+    store.accept(.success(worktrees(["/repo-a", "/repo-b"])))
+    #expect(await until { store.payload?.unprovisionedWorktrees?.count == 2 })
+    #expect(store.sidebarList(options).map(\.path) == ["/repo-a", "/repo-b"])
+    #expect(store.sidebarTrees(options).flatMap(\.entries).map(\.path) == ["/repo-a", "/repo-b"])
+    #expect(store.sidebarStatusCounts(options)[.notSetUp] == 2)
+
+    options.statuses = [.live]
+    #expect(store.sidebarList(options).isEmpty)
+    #expect(store.sidebarStatusCounts(options)[.notSetUp] == 2)
+  }
+
   private func watchingCLI(in directory: URL) throws -> StimCLI {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let executable = directory.appendingPathComponent("stim")
