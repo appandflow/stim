@@ -91,6 +91,47 @@ test('appProjectProblem names the package.json of a directory that is not an app
   }
 });
 
+test('appProjectProblem accepts a package whose committed .stim.json sets metro.command, reading only that file', () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-app-')));
+  const previousHome = process.env.STIM_HOME;
+  try {
+    process.env.STIM_HOME = join(tmp, 'home');
+    mkdirSync(process.env.STIM_HOME);
+    writeFileSync(join(process.env.STIM_HOME, 'config.json'), '{bad');
+
+    const library = join(tmp, 'ui');
+    mkdirSync(library);
+    writeFileSync(
+      join(library, 'package.json'),
+      JSON.stringify({ name: 'ui', peerDependencies: { 'react-native': '*' } }),
+    );
+    expect(appProjectProblem(library)?.kind).toBe('not-an-app');
+
+    const tester = join(tmp, 'tester');
+    mkdirSync(join(tester, 'android'), { recursive: true });
+    writeFileSync(join(tester, 'android', 'settings.gradle'), '');
+    writeFileSync(
+      join(tester, 'package.json'),
+      JSON.stringify({ name: 'tester', peerDependencies: { 'react-native': '*' } }),
+    );
+    writeFileSync(
+      join(tester, '.stim.json'),
+      JSON.stringify({ metro: { command: ['yarn', 'start', '--port', '{port}'] } }),
+    );
+    expect(appProjectProblem(tester)).toBe(null);
+    expect(detectPlatforms(tester, {})).toEqual(['android']);
+
+    const noPackage = join(tmp, 'swift');
+    mkdirSync(noPackage);
+    writeFileSync(join(noPackage, '.stim.json'), JSON.stringify({ metro: { command: ['metro', '{port}'] } }));
+    expect(appProjectProblem(noPackage)?.kind).toBe('not-an-app');
+  } finally {
+    if (previousHome === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = previousHome;
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('appProjectProblem separates a package.json that does not parse from one with no app dependency', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
   try {

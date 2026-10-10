@@ -25,6 +25,41 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+## Start Metro with your own command
+
+Some apps only start Metro through their own command, for example an app
+inside a monorepo whose packages need the repository's Babel setup. Set
+`metro.command` in the app's `.stim.json` to the argv that starts it, and pass
+`{port}` where the port goes:
+
+```json
+{
+  "metro": {
+    "command": ["node", "../react-native/cli.js", "start", "--port", "{port}"]
+  }
+}
+```
+
+Stim runs it from the app directory without a shell, in its own process group,
+and replaces `{port}` with the workspace's reserved port. Metro must keep
+running from inside the app directory, which is how Stim proves it belongs to
+the app. Set it in the workspace layer or the app's `.stim.json`. Set in the
+committed `.stim.json`, it also makes a package that does not depend on
+`react-native` or `expo` count as an app, as RNTester needs. `stim start --reset-cache` refuses for this server: put the
+command's own reset flag in `metro.command` instead. Windows is not supported.
+The output is captured as text, with levels inferred from each line, under
+`command_stdout` and `command_stderr` events. Stim adds no reporter to this
+server, so `stim ios` and `stim android` report the launch as unverified;
+check `stim logs --source metro` for the bundle lines.
+
+Try it with an agent:
+
+```text
+This app only starts Metro through its own command. Add a metro.command entry
+to its .stim.json that runs that command with {port}, then run stim start and
+show me stim logs --source metro.
+```
+
 ## Choose the port
 
 Stim picks a free Metro port from 8082 up. It finds listeners in the native

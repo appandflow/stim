@@ -24,7 +24,7 @@ import { reserveMetroPort } from '../ports.ts';
 import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
-import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
+import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -42,6 +42,8 @@ import {
   deviceIdleShutdownMinutesSetting,
   metroIdleStopMinutesSetting,
   metroPortSetting,
+  metroCommandSetting,
+  metroCommandSettingError,
   metroTunnelSettingError,
   remoteAndroidSetting,
   cacheProviderSettingError,
@@ -472,6 +474,9 @@ export async function startDevServer(
     throw new StartRefusal(refusal);
   };
   const isExpo = detectIsExpo(root);
+  const metroCommand = metroCommandSetting(settings);
+  const serverMode = metroCommand ? MODE_COMMAND : isExpo ? MODE_EXPO : MODE_BARE;
+  const expoServer = serverMode === MODE_EXPO;
   const worktreeRoot = repoRoot(root) ?? root;
   const cacheProvider = resolveCacheProviderConfig({
     projectPath: root,
@@ -487,6 +492,31 @@ export async function startDevServer(
         remedy: 'Set metro.tunnel to "ngrok" and metro.ngrokUrl to an HTTPS URL, or remove metro.ngrokUrl.',
       });
     }
+    if (metroCommand && d.platform === 'win32') {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message:
+          'metro.command is not supported on Windows: Stim cannot read a process working directory there, so it cannot prove the Metro a wrapper starts belongs to this app.',
+        remedy: 'Remove metro.command on Windows, or run this app from macOS or Linux.',
+      });
+    }
+    if (metroCommand && resetCache) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: '--reset-cache cannot reach a dev server started by metro.command; Stim does not know its reset flag.',
+        remedy:
+          "Add the command's own cache-reset flag to metro.command (for React Native, --reset-cache), then run stim stop and stim start.",
+      });
+    }
+    const commandError = metroCommandSettingError(settings);
+    if (commandError) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: commandError,
+        remedy:
+          'Set metro.command to the argv that starts the dev server, e.g. ["npx", "react-native", "start", "--port", "{port}"], or remove it.',
+      });
+    }
     const remote =
       remoteFlag ||
       remoteIosSetting(settings)?.kind === 'backend' ||
@@ -494,7 +524,7 @@ export async function startDevServer(
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({
-      isExpo,
+      isExpo: expoServer,
       remote,
       mode: tunnelMode,
       publicUrl,
@@ -652,14 +682,7 @@ export async function startDevServer(
           d.platform === 'win32'
             ? await spawnThroughWindowsShell(supervisorArgs, childEnv)
             : spawnDirect(supervisorArgs, childEnv);
-        out(
-          chalk.dim(
-            phaseLine(
-              'metro',
-              `starting on port ${port} (${isExpo ? 'expo-child' : 'bare-inproc'}, supervisor pid ${child.pid})`,
-            ),
-          ),
-        );
+        out(chalk.dim(phaseLine('metro', `starting on port ${port} (${serverMode}, supervisor pid ${child.pid})`)));
         spawnedChild = child;
         return child;
       };
@@ -677,7 +700,7 @@ export async function startDevServer(
 
       if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
         const available = d.providers(tunnelMode);
-        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo, available });
+        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
         if ('failed' in plan) {
           return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
         }
@@ -861,7 +884,7 @@ export async function startDevServer(
                 pid: child.pid as number,
                 processToken: child.pid ? captureProcessToken(child.pid) : null,
                 port,
-                mode: isExpo ? 'expo-child' : 'bare-inproc',
+                mode: serverMode,
                 startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
               };
               try {

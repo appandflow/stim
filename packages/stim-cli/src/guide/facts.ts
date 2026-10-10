@@ -173,7 +173,8 @@ leased until <time>" for each one.`,
   port            the Metro port RESERVED for this workspace
   supervisorPid   the detached supervisor's pid, or NULL when a dev server was
                   already answering that Stim did not start
-  mode            "bare-inproc" | "expo-child" | null (see \`guide metro\`)
+  mode            "bare-inproc" | "expo-child" | "command-child" | null
+                  (see \`guide metro\`)
   logsDir         where the NDJSON timeline is written
   agentDevice     { stateDir }: absolute workspace agent-device state path;
                   set AGENT_DEVICE_STATE_DIR to it (see guide logs)

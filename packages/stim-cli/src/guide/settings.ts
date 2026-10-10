@@ -287,6 +287,23 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         foreground serve process, never Funnel; "auto" never
                         selects it. The device must share the tailnet. See
                         \`guide metro\`. Any other value is refused as invalid.
+  metro.command         argv array that starts this app's dev server, for an
+                        app whose Metro only runs through its own command,
+                        e.g. ["node", "../react-native/cli.js", "start",
+                        "--port", "{port}"]. No shell; it runs from the app
+                        directory, and {port} becomes the reserved Metro port,
+                        which the command must pass. It replaces bare-inproc
+                        and expo-child with command-child (see \`guide
+                        metro\`). Workspace or committed scope; set in the
+                        committed .stim.json, it also makes a package with no
+                        react-native or expo dependency count as an app.
+                        Metro must keep running from inside the app, which
+                        is how Stim proves it is this app's. Without Stim's
+                        Metro reporter, launches stay UNVERIFIED. start
+                        refuses with STIM_BAD_ARG a value that is not such an
+                        array or has no {port}, --reset-cache (put the
+                        command's own reset flag in metro.command instead),
+                        and any use on Windows.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.

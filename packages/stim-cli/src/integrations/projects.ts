@@ -12,7 +12,7 @@ import {
   readAppJson,
   readPackageJson,
 } from '../workspace/project-files.ts';
-import { settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import { commitsMetroCommand, settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
 
 import {
   createProjectRegistry,
@@ -51,7 +51,7 @@ const reactNative: NativeProjectIntegration = {
   mode: MODE_BARE,
   loadDevServer: async () => (await import('../supervisor/server-bare.ts')).startBareServer,
   platforms(root) {
-    if (!declaresAppDependency(readPackageJson(root))) return [];
+    if (!declaresAppDependency(readPackageJson(root)) && !commitsMetroCommand(root)) return [];
     const platforms: ProjectPlatform[] = [];
     let ios: string[] = [];
     try {

@@ -115,6 +115,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.remote`              | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
+| `metro.command`               | Argv that starts this app's dev server; `{port}` becomes the reserved Metro port                                                  |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |
 | `metro.publicUrl`             | Existing public Metro URL                                                                                                         |
 | `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                                                   |

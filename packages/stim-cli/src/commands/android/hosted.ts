@@ -2,7 +2,7 @@ import { rmSync } from 'node:fs';
 import { hostedAndroidStatus, type HostedDeviceSelectors } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroid } from '../../device-host/ios-state.ts';
-import { writeWorkspaceLaunch, MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
+import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
 import { verifyLaunch } from '../../engine/launch-verify.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import type { PreparedAndroidArtifact } from './artifact.ts';
@@ -108,7 +108,7 @@ export async function finishHostedAndroidRun({
         logsDir: logsDir ?? undefined,
         since: launchedAt,
         metroPort,
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        mode: workspaceDevServerMode(root, isExpo),
         slot: launchSlotScope(root, slot),
         platformShared: siblingPlatformSlots(root, 'android', slot).length > 0,
       });

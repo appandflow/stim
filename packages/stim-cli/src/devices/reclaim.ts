@@ -19,6 +19,7 @@ import { releaseClaim } from '../ownership-claim.ts';
 import { parkedMaxSetting } from './sim-pool.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import {
+  MODE_COMMAND,
   clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
@@ -440,7 +441,9 @@ async function reclaimIdleProject(
   } else if (orphanIdentity === 'same') {
     let signalled = false;
     try {
-      signalled = signalProcessTree(orphanServer.pid, 'SIGTERM');
+      signalled = signalProcessTree(orphanServer.pid, 'SIGTERM', {
+        group: initialState?.supervisor?.mode === MODE_COMMAND,
+      });
     } catch {}
     const exited = signalled
       ? await waitForProcessExit(orphanServer, 10_000)

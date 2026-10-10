@@ -571,6 +571,33 @@ export function projectMetroSharedCache(root: string): boolean {
   return resolveMetroSharedCache(settingsForProject(root));
 }
 
+export const METRO_COMMAND_PORT = '{port}';
+
+export function metroCommandSetting(settings: SettingsObject): string[] | null {
+  const value = settingValueAt(settings, 'metro.command');
+  if (!Array.isArray(value) || !value.every((arg) => typeof arg === 'string')) return null;
+  return typeof value[0] === 'string' && value[0].trim() !== '' ? value : null;
+}
+
+export function metroCommandSettingError(settings: SettingsObject): string | null {
+  if (settingValueAt(settings, 'metro.command') === undefined) return null;
+  const command = metroCommandSetting(settings);
+  if (!command) return 'metro.command must be a non-empty array of strings whose first entry is the program to run.';
+  if (!command.some((arg) => arg.includes(METRO_COMMAND_PORT))) {
+    return `metro.command must pass ${METRO_COMMAND_PORT} so the dev server listens on this workspace's reserved port.`;
+  }
+  return null;
+}
+
+export function commitsMetroCommand(root: string): boolean {
+  return settingValueAt(readCommittedSettings(root), 'metro.command') !== undefined;
+}
+
+export function projectMetroCommand(root: string): string[] | null {
+  const settings = settingsForProject(root);
+  return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
+}
+
 interface CacheSettingsLayer {
   settings: SettingsObject;
   baseDir: string | null;
