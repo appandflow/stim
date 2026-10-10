@@ -1690,7 +1690,9 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
     git('git config user.name test');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add package.json app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add package.json app.json ios');
     git('git commit -q -m init');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
 
@@ -1730,7 +1732,9 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
     git('git config user.email test@example.com');
     git('git config user.name test');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add app.json ios');
     git('git commit -q -m init');
 
     const createFingerprint = async (dir: string) => {
@@ -1759,6 +1763,8 @@ test.skipIf(process.platform === 'win32')(
       git('git config user.email test@example.com');
       git('git config user.name test');
       writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+      mkdirSync(join(repo, 'ios'));
+      writeFileSync(join(repo, 'ios', 'Podfile'), '');
       writeMarkerScript(join(repo, '.husky', 'post-checkout'), marker, '');
       git('git config core.hooksPath .husky');
       git('git add . && git commit -q -m init');
@@ -1785,14 +1791,22 @@ test('detectFingerprintParity fingerprints only the selected platform', async ()
     mkdirSync(join(base, 'ios'));
     mkdirSync(join(base, 'android'));
     execSync('git add . && git commit -q -m init', { cwd: base });
-    const platforms: string[][] = [];
-    const createFingerprint = async (_root: string, options?: { platforms?: string[] }) => {
-      platforms.push(options?.platforms ?? []);
+    const calls: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean }[] = [];
+    const createFingerprint = async (
+      _root: string,
+      options?: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean },
+    ) => {
+      calls.push(options ?? {});
       return { hash: 'same', sources: [] };
     };
 
-    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'android' })).toBe(null);
-    expect(platforms).toEqual([['android'], ['android']]);
+    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'ios' })).toBe(null);
+    expect(calls.map((options) => options.platforms)).toEqual([['ios'], ['ios']]);
+    expect(calls.every((options) => options.useRNCoreAutolinkingFromExpo === true)).toBe(true);
+
+    const android = await detectFingerprintParity(base, { createFingerprint, platform: 'android' });
+    expect(android?.code).toBe('fingerprint-parity-skipped');
+    expect(calls.length).toBe(2);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1832,6 +1846,44 @@ test('detectFingerprintParity skips a cold comparison when dependencies are inst
   }
 });
 
+test('detectFingerprintParity never fingerprints or adds a worktree when an app without node_modules resolves Expo from the repository root', async () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
+  const base = join(outside, 'repo');
+  const commands: string[][] = [];
+  setExecutor({
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[]) => {
+      commands.push([file, ...args]);
+      return file === 'git' && args.includes('rev-parse') ? '.git' : null;
+    },
+  });
+  try {
+    const app = join(base, 'apps', 'mobile');
+    mkdirSync(join(app, 'ios'), { recursive: true });
+    for (const name of ['expo', 'expo-modules-autolinking']) {
+      mkdirSync(join(base, 'node_modules', name), { recursive: true });
+      writeFileSync(join(base, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '2.0.0' }));
+    }
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+
+    const finding = await detectFingerprintParity(app, { createFingerprint });
+    expect(finding?.code).toBe('fingerprint-parity-skipped');
+    expect(finding?.fix).toBeTruthy();
+    const link = join(outside, 'linked-app');
+    symlinkSync(app, link);
+    expect((await detectFingerprintParity(link, { createFingerprint }))?.code).toBe('fingerprint-parity-skipped');
+    expect(called).toBe(false);
+    expect(commands.filter((command) => command.includes('worktree'))).toEqual([]);
+  } finally {
+    resetExecutor();
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test('detectFingerprintParity never fingerprints a checkout whose fingerprint.config.js would run, in the tree or at HEAD', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-config-'));
@@ -1842,6 +1894,8 @@ test('detectFingerprintParity never fingerprints a checkout whose fingerprint.co
     git('git config user.name test');
     writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
     writeFileSync(join(base, 'fingerprint.config.js'), 'module.exports = {};\n');
+    mkdirSync(join(base, 'ios'));
+    writeFileSync(join(base, 'ios', 'Podfile'), '');
     git('git add . && git commit -q -m init');
     let called = false;
     const createFingerprint = async () => {
