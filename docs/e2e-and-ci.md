@@ -275,7 +275,7 @@ PATH).
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
   | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
-  | nightly schedule    | loop on every platform                                                                              |
+  | nightly schedule    | loop on iOS and Linux Android; the Windows loop is off until #3086 is fixed                         |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
 
@@ -284,9 +284,9 @@ PATH).
   `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
   turns event, labels and input into one suite list per platform, filtered by
   what the platform supports: iOS smoke, loop, caches, pool; Linux Android
-  smoke, loop, caches; Windows Android smoke (its loop is off until #3086 is
-  fixed). Each platform job reads its
-  list as the `suite` matrix axis and is skipped when the list is empty. The
+  smoke, loop, caches; Windows Android smoke (loop off until #3086). Each
+  platform job reads its list as the `suite` matrix axis and is skipped when
+  the list is empty. The
   smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
   The `caches` selection raises the job timeout to 120 minutes (per
   variant it pays one more cold compile than the loop suite -- the single-flight
