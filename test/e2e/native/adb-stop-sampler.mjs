@@ -14,14 +14,16 @@ $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 2 | ForEach-Object 
   [pscustomobject]@{ pid = [int]$_.ProcessId; parent = [int]$_.ParentProcessId; birth = $_.CreationDate.ToUniversalTime().ToString('o'); name = $_.Name; workingSet = [string]$_.WorkingSetSize; privateBytes = [string]$_.PrivatePageCount; kernelTime = [string]$_.KernelModeTime; userTime = [string]$_.UserModeTime; handles = $_.HandleCount; threads = $_.ThreadCount }
 })
 Mark 'processes.end'
+[Console]::Out.WriteLine((@{ kind = 'processes'; rows = $rows } | ConvertTo-Json -Depth 4 -Compress))
 Mark 'listeners.start'
 $listeners = @(Get-NetTCPConnection -State Listen -ErrorAction Stop | Where-Object { $_.LocalPort -eq 5037 } | ForEach-Object { [pscustomobject]@{ address = $_.LocalAddress; port = $_.LocalPort; pid = [int]$_.OwningProcess } })
 Mark 'listeners.end'
+[Console]::Out.WriteLine((@{ kind = 'listeners'; listeners = $listeners } | ConvertTo-Json -Depth 4 -Compress))
 Mark 'memory.start'
 $memory = Get-CimInstance Win32_OperatingSystem -Property FreePhysicalMemory,TotalVisibleMemorySize,FreeVirtualMemory,TotalVirtualMemorySize -OperationTimeoutSec 2
 Mark 'memory.end'
 Mark 'serialization.start'
-@{ rows = $rows; listeners = $listeners; memory = @{ freePhysicalKiB = [string]$memory.FreePhysicalMemory; totalPhysicalKiB = [string]$memory.TotalVisibleMemorySize; freeVirtualKiB = [string]$memory.FreeVirtualMemory; totalVirtualKiB = [string]$memory.TotalVirtualMemorySize } } | ConvertTo-Json -Depth 4 -Compress
+[Console]::Out.WriteLine((@{ kind = 'memory'; memory = @{ freePhysicalKiB = [string]$memory.FreePhysicalMemory; totalPhysicalKiB = [string]$memory.TotalVisibleMemorySize; freeVirtualKiB = [string]$memory.FreeVirtualMemory; totalVirtualKiB = [string]$memory.TotalVirtualMemorySize } } | ConvertTo-Json -Depth 4 -Compress))
 Mark 'serialization.end'
 `;
 function snapshot() {
@@ -37,13 +39,23 @@ function snapshot() {
           return match ? [{ stage: `${match[1]}.${match[2]}`, at: match[3] }] : [];
         });
         record('observer.query-stages', { pid: child.pid, stages });
-        if (error) reject(Object.assign(new Error('CIM snapshot failed'), { code: error.code, signal: error.signal }));
-        else {
-          try {
-            resolve({ ...JSON.parse(stdout), observerPid: child.pid });
-          } catch (parseError) {
-            reject(parseError);
-          }
+        try {
+          const lines = stdout.split(/\r?\n/);
+          if (error) lines.pop();
+          const sections = lines.filter(Boolean).map((line) => JSON.parse(line));
+          const rows = sections.find((section) => section.kind === 'processes')?.rows;
+          const listeners = sections.find((section) => section.kind === 'listeners')?.listeners ?? null;
+          const memory = sections.find((section) => section.kind === 'memory')?.memory ?? null;
+          if (!Array.isArray(rows)) throw new Error('CIM process record unavailable');
+          if (!error && (listeners === null || memory === null)) throw new Error('CIM snapshot incomplete');
+          const query = {
+            status: error ? 'partial' : 'complete',
+            error: error ? { code: error.code ?? null, signal: error.signal ?? null } : null,
+          };
+          record('observer.query-result', { pid: child.pid, ...query });
+          resolve({ rows, listeners, memory, query, observerPid: child.pid });
+        } catch (parseError) {
+          reject(Object.assign(parseError, { code: error?.code, signal: error?.signal }));
         }
       },
     );
@@ -91,15 +103,15 @@ function processes(result) {
 const servers = new Map();
 function adbObservations(result) {
   const rows = new Map(result.rows.map((row) => [row.pid, row]));
-  for (const listener of result.listeners) {
+  for (const listener of result.listeners ?? []) {
     const process = rows.get(listener.pid);
     if (process && !servers.has(`${process.pid}:${process.birth}`))
       servers.set(`${process.pid}:${process.birth}`, process);
   }
   return {
-    listeners: result.listeners.map((listener) =>
-      Object.assign({}, listener, { process: rows.get(listener.pid) ?? null }),
-    ),
+    listeners:
+      result.listeners?.map((listener) => Object.assign({}, listener, { process: rows.get(listener.pid) ?? null })) ??
+      null,
     servers: [...servers.values()].map((initial) => ({
       initial,
       observation:
@@ -114,7 +126,12 @@ function adbObservations(result) {
 let failed = false;
 try {
   const first = await snapshot();
-  record('sample', { processes: processes(first), memory: first.memory, adb: adbObservations(first) });
+  record('sample', {
+    processes: processes(first),
+    memory: first.memory,
+    adb: adbObservations(first),
+    query: first.query,
+  });
   Atomics.store(state, 0, 1);
   Atomics.notify(state, 0);
   const deadline = Date.now() + 290000;
@@ -123,7 +140,13 @@ try {
     Atomics.wait(state, 1, 0, 1000);
     const final = Atomics.load(state, 1) === 1;
     const sample = await snapshot();
-    record('sample', { processes: processes(sample), memory: sample.memory, adb: adbObservations(sample), final });
+    record('sample', {
+      processes: processes(sample),
+      memory: sample.memory,
+      adb: adbObservations(sample),
+      query: sample.query,
+      final,
+    });
     if (final) {
       completed = true;
       break;
