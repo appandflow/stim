@@ -192,12 +192,13 @@ As soon as the pull request is open, assign a fresh agent that did not implement
 the change to review the issue, diff, tests, and user-facing guidance. Address
 every actionable finding and rerun the affected checks. Mark the pull request
 ready only after that fresh review is clear. Merge only after all required CI
-checks pass; if CI fails, fix the branch, repeat the review when behavior
-changes, and wait for the new checks.
+checks pass; if CI fails, fix the branch, repeat the review, and wait for the
+new checks.
 
-The fresh reviewer records the outcome with labels. When the review is clear, it
-adds `review: ai-approved`. The reviewer also adds `review: needs-human` when
-the diff has a change no maintainer has approved in one of these:
+The fresh reviewer recThe fresh reviewer records the outcome with labels. When the review is clear, it
+adds `review: ai-approved`. When the diff has a change in one of these that no
+maintainer has approved, it adds `review: needs-human` and removes any
+`review: human-approved`:
 
 - authentication, pairing, tokens, secrets, or the capabilities stim-server
   grants (read, control, build, device-host) and what it exposes on the network;
@@ -211,19 +212,19 @@ the diff has a change no maintainer has approved in one of these:
 - this issue and pull request workflow, including the review labels.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
-and lists each `path:lines` to check with one line saying why. A maintainer
-reviews those lines and replaces `review: needs-human` with
-`review: human-approved`; `review: ai-approved` stays. GitHub approvals cannot
-record this because every agent uses the same account.
+and lists each unapproved `path:lines`, linked at the reviewed commit, with one
+line saying why. A maintainer reviews those lines and replaces
+`review: needs-human` with `review: human-approved`; `review: ai-approved`
+stays. A change counts as approved when its lines are unchanged since the
+commit a `Human review:` comment linked before that approval. GitHub approvals
+cannot record this because every agent uses the same account.
 
-The agent that pushes a behavior change after a review removes
-`review: ai-approved` until the next clear review. When the push changes lines
-a maintainer approved or adds another change in those categories, that agent
-also replaces `review: human-approved` with `review: needs-human`. Merge, including with `gh stack merge`, only when every
-pull request involved has `review: ai-approved` and none has
+Any push after a review removes `review: ai-approved`, and the pull request
+gets a new fresh review. Merge, including with `gh stack merge`, only when
+every pull request involved has `review: ai-approved` and none has
 `review: needs-human`.
 
-Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
+s/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
 layout, styles, copy, icons, animation. It does not change which commands the
 app runs, which Stim data it reads or how it decodes it, navigation,
