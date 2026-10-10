@@ -198,7 +198,7 @@ async function agent(label, facts, args) {
   return run(
     label,
     env.STIM_AGENT_DEVICE_BIN,
-    [...args, '--remote-config', facts.host.agent.remoteConfig, '--session', 'hosted-native-acceptance'],
+    [...args, '--remote-config', facts.host.agent.remoteConfig, '--session', `hosted-native-acceptance-${facts.slot}`],
     { timeout: 5 * 60_000 },
   );
 }
@@ -267,6 +267,14 @@ async function verify(label, facts, revision, interact) {
   ).subscription;
   try {
     await frame(`${label}-before-ui`, session.id);
+    const connection = JSON.parse(await agent(`${label}-connect`, facts, ['connect', '--force', '--json']));
+    assert.equal(connection.success, true);
+    assert.equal(connection.data.connected, true);
+    assert.equal(connection.data.session, `hosted-native-acceptance-${facts.slot}`);
+    assert.equal(connection.data.remoteConfig, facts.host.agent.remoteConfig);
+    assert.equal(connection.data.tenant, `stim.${session.id}`);
+    assert.equal(connection.data.runId, session.id);
+    assert.equal(connection.data.leaseBackend, 'ios-instance');
     await agent(`${label}-open`, facts, ['open', facts.bundleId, '--platform', 'ios', '--foreground']);
     assert.equal(await pid(`${label}-pid-after-open`, session.device, facts.bundleId), beforePid);
     await agent(`${label}-revision`, facts, ['wait', 'text', revision, '30000']);
