@@ -383,11 +383,11 @@ private struct BuildMachineRow<Toggles: View>: View {
           VStack(alignment: .leading, spacing: Space.sm) {
             ForEach(Array(problems.enumerated()), id: \.offset) { _, line in
               VStack(alignment: .leading, spacing: Space.xs) {
-                Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).lineLimit(1)
+                Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning)
                   .textSelection(.enabled)
                 switch line.fix {
                 case .command(let command)?: CopyableCommand(command: command)
-                case .advice(let advice)? where update?.isDone ?? true:
+                case .advice(let advice)? where line.code != "stim-build" || update?.isDone ?? true:
                   Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
                 default: EmptyView()
                 }

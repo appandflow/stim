@@ -263,7 +263,7 @@ import Testing
       ])
     #expect(
       mini.problemLines == [
-        .init(reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
+        .init(code: "cocoapods", reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
       ])
 
     let missingPods = try status(

@@ -321,6 +321,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       case advice(String)
     }
 
+    public var code = ""
     public var reason: String
     public var fix: Fix?
   }
@@ -331,11 +332,12 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     guard state == .approved, offloadable == false else { return [] }
     return (problems ?? []).filter { $0.code != "busy" }.map { problem in
       if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
-        return ProblemLine(reason: problem.reason, fix: .command(command))
+        return ProblemLine(code: problem.code, reason: problem.reason, fix: .command(command))
       }
       let reason = problem.code == "stim-build" ? Self.shortStimBuild(problem.reason) : problem.reason
       let advice = MachineReadiness.problems[problem.code]?.1
-      return ProblemLine(reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
+      return ProblemLine(
+        code: problem.code, reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
     }
   }
 
