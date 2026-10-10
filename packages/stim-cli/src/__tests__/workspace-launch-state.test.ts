@@ -139,7 +139,7 @@ test.each([
   upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
   setExecutor({
     runFile: () => 'List of devices attached\nemulator-5554\tdevice\n',
-    runQuiet: () => avdName,
+    runFileQuiet: () => avdName,
   });
   try {
     expect(siblingPlatformSlots(root, 'android')).toEqual(siblings);

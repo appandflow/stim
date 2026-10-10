@@ -427,8 +427,8 @@ test('a created simulator stays Stim-owned through the ledger until Stim deletes
     });
   let name = 'stim-wt';
   setExecutor({
-    run: (cmd: string) => (cmd.includes('simctl create') ? 'NEW-1\n' : cmd.includes('list') ? list(name) : ''),
-    runFile: (_file: string, args: string[] = []) => (args.includes('list') ? list(name) : ''),
+    runFile: (_file: string, args: string[] = []) =>
+      args[1] === 'create' ? 'NEW-1\n' : args.includes('list') ? list(name) : '',
   });
   expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
   createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null });
@@ -438,6 +438,24 @@ test('a created simulator stays Stim-owned through the ledger until Stim deletes
   name = 'stim-wt';
   deleteIosSim('NEW-1');
   expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
+});
+
+test('createOwnedIosSim passes a display name with spaces to simctl as one argument', () => {
+  const created: string[][] = [];
+  setExecutor({
+    runFile: (file: string, args: string[] = []) => {
+      if (args[1] !== 'create') return JSON.stringify({ devices: {} });
+      created.push([file, ...args]);
+      return 'NEW-1\n';
+    },
+  });
+  const { name } = createOwnedIosSim(
+    'wt',
+    {},
+    { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: 'iPhone 17 Pro', runtime: 'iOS 26.5' },
+  );
+  expect(name).toContain(' ');
+  expect(created).toEqual([['xcrun', 'simctl', 'create', name, 'dt', 'rt']]);
 });
 
 const BOOTED_OWNED_SIM_LIST = OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
@@ -472,7 +490,11 @@ test.each([
     },
     runFile: (file, args = [], opts) => {
       record([file, ...args].join(' '), opts);
-      return BOOTED_OWNED_SIM_LIST;
+      return args[1] === 'create' ? 'NEW-UDID' : BOOTED_OWNED_SIM_LIST;
+    },
+    runFileQuiet: (file, args = [], opts) => {
+      record([file, ...args].join(' '), opts);
+      return '';
     },
   });
   operation();
@@ -482,25 +504,24 @@ test.each([
 });
 
 test('deleteIosSim deletes a Stim-owned sim', () => {
-  const ran: string[] = [];
+  const ran: string[][] = [];
   setExecutor({
-    run: (cmd) => {
-      ran.push(cmd);
-      return null;
+    runFile: (file, args = []) => {
+      ran.push([file, ...args]);
+      return OWNED_SIM_LIST;
     },
-    runFile: () => OWNED_SIM_LIST,
     runQuiet: () => null,
     spawn: () => null,
   });
   deleteIosSim('UDID-B');
-  expect(ran.some((c) => /xcrun simctl delete UDID-B/.test(c))).toBeTruthy();
+  expect(ran).toContainEqual(['xcrun', 'simctl', 'delete', 'UDID-B']);
 });
 
 test('deleteIosSim propagates a simctl failure instead of swallowing it', () => {
   setExecutor({
-    runFile: () => OWNED_SIM_LIST,
-    run: () => {
-      throw new Error('simctl: Unable to delete device');
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') throw new Error('simctl: Unable to delete device');
+      return OWNED_SIM_LIST;
     },
     runQuiet: () => null,
     spawn: () => null,
@@ -509,31 +530,30 @@ test('deleteIosSim propagates a simctl failure instead of swallowing it', () => 
 });
 
 test('deleteIosSim no-ops quietly when the udid is already gone', () => {
-  let ranQuiet = false;
+  let deleted = false;
   setExecutor({
-    runFile: () => JSON.stringify({ devices: {} }),
-    runQuiet: () => {
-      ranQuiet = true;
-      return null;
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') deleted = true;
+      return JSON.stringify({ devices: {} });
     },
     spawn: () => null,
   });
   expect(() => deleteIosSim('UDID-GONE')).not.toThrow();
-  expect(ranQuiet).toBe(false);
+  expect(deleted).toBe(false);
 });
 
 test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runFileQuiet: () => null, spawn: () => {} });
   expect(occupyingApps('UDID-X')).toBe(null);
   resetExecutor();
 });
 
 test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim', async () => {
-  setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
+  setExecutor({ run: () => '', runFileQuiet: () => '', spawn: () => {} });
   expect(occupyingApps('UDID-X')).toEqual([]);
   setExecutor({
     run: () => '',
-    runQuiet: () => '1\t0\tUIKitApplication:com.example.app.xctrunner[a][rb-legacy]',
+    runFileQuiet: () => '1\t0\tUIKitApplication:com.example.app.xctrunner[a][rb-legacy]',
     spawn: () => {},
   });
   expect(occupyingApps('UDID-X')).toEqual(['com.example.app.xctrunner']);
@@ -557,7 +577,7 @@ test('occupyingApps reports a shut-down device free without probing', async () =
   let probed = false;
   setExecutor({
     runFile: () => devices,
-    runQuiet: () => {
+    runFileQuiet: () => {
       probed = true;
       return null;
     },
@@ -582,7 +602,7 @@ test('occupyingApps still returns null (doubt) for a booted device whose probe c
       ],
     },
   });
-  setExecutor({ run: () => devices, runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => devices, runFileQuiet: () => null, spawn: () => {} });
   expect(occupyingApps('UDID-X')).toBe(null);
   resetExecutor();
 });

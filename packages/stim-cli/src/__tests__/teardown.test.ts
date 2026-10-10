@@ -91,6 +91,7 @@ function iosExecutor({ sims = [], occupied = '', throwOn = null, shutdownSettles
     run: answer,
     runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
     runQuiet: answer,
+    runFileQuiet: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
     spawn: () => {},
   };
 }
@@ -251,6 +252,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
         return '';
       },
       runQuiet: () => '',
+      runFileQuiet: () => '',
       spawn: () => null,
     });
     const result = teardownOwnedIosSim('U1', {
@@ -317,6 +319,7 @@ test("teardownOwnedIosSim carries the workspace record's scheme approvals into t
         return '';
       },
       runQuiet: () => '',
+      runFileQuiet: () => '',
       spawn: () => null,
     });
     const result = teardownOwnedIosSim('U1', {
@@ -391,8 +394,8 @@ test('a failed overflow eviction retains its parked ownership record', () => {
         if (args[1] === 'delete' && args[2] === 'U0') throw new Error('simctl busy');
         return '';
       },
-      runQuiet(cmd) {
-        if (cmd.includes('simctl shutdown U1')) shutdown = true;
+      runFileQuiet(_file, args = []) {
+        if (args.join(' ') === 'simctl shutdown U1') shutdown = true;
         return '';
       },
       spawn: () => null,
@@ -448,6 +451,7 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
         return this.run!([file, ...args].join(' '));
       },
       runQuiet: () => '',
+      runFileQuiet: () => '',
       spawn: () => null,
     });
     const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
@@ -523,6 +527,7 @@ test('parking fallback re-resolves ownership immediately before deletion', () =>
         return this.run!([file, ...args].join(' '));
       },
       runQuiet: () => '',
+      runFileQuiet: () => '',
       spawn: () => null,
     });
 
@@ -574,8 +579,8 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
         calls.push([file, ...args].join(' '));
         return '';
       },
-      runQuiet(cmd) {
-        calls.push(cmd);
+      runFileQuiet(file, args = []) {
+        calls.push([file, ...args].join(' '));
         return '';
       },
       spawn: () => null,
@@ -637,7 +642,8 @@ test('teardownOwnedIosSim waits for a lagging shutdown before parking the simula
         }
         return '';
       },
-      runQuiet(cmd) {
+      runFileQuiet(file, args = []) {
+        const cmd = [file, ...args].join(' ');
         calls.push(cmd);
         if (cmd === 'xcrun simctl shutdown U1') bootedReportsLeft = 3;
         return '';
@@ -758,6 +764,7 @@ function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }
     run: answer,
     runFile: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
     runQuiet: answer,
+    runFileQuiet: (file: string, args: string[] = []) => answer([file, ...args].join(' ')),
     spawn: () => {},
   };
 }
@@ -1180,18 +1187,17 @@ test.each([
     setExecutor({
       ...exec,
       findExecutable: () => '/bin/agent-device',
-      runFileQuiet: (file: string, args: string[]) =>
-        file === 'git' && args.includes('--show-toplevel') ? `${repo}\n` : null,
+      runFileQuiet: (file: string, args: string[]) => {
+        if (file === 'git') return args.includes('--show-toplevel') ? `${repo}\n` : null;
+        if (args[1] === 'shutdown') events.push('shutdown');
+        return exec.runFileQuiet(file, args);
+      },
       runFile: (file: string, args: string[] = []) => {
         if (file !== 'agent-device') return exec.runFile(file, args);
         if (args[0] !== 'close') return JSON.stringify({ success: true, data: { sessions } });
         events.push(`agent-device close --session ${args[2]}`);
         sessions = sessions.filter((entry) => entry.name !== args[2]);
         return '{"success":true}';
-      },
-      runQuiet: (cmd: string) => {
-        if (/simctl shutdown/.test(cmd)) events.push('shutdown');
-        return exec.runQuiet(cmd);
       },
     });
     const previous = process.env.AGENT_DEVICE_CLAIMS_DIR;

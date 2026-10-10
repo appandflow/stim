@@ -1,5 +1,5 @@
 import { TUTORIAL_VERSION } from '@stim-cli/core/state';
-import { TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT, TUTORIAL_STEPS } from './tutorial-data.ts';
+import { TUTORIAL_BUNDLE_ID, TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT, TUTORIAL_STEPS } from './tutorial-data.ts';
 import type { GuideTopic } from './types.ts';
 
 const paths = `Use {base} = ~/stim-tutorial unless the user named another folder. Expand ~
@@ -11,6 +11,24 @@ from a worktree of {base}, use stim ios --remote local --remote-build local,
 even when the user's settings would place the device or the build on another
 Mac. Only an explicit request to build on another Mac changes the build, with
 stim ios --remote local --remote-build "<machine>"; the device stays here.`;
+
+const screenshots = `Before and after screenshots, for a pull request: in each change's worktree,
+run the app on iOS before you edit anything, open it with agent-device and save
+the screen, then make the change and, once Fast Refresh applies it, save the
+same screen on the same device:
+
+  mkdir -p .expo/screenshots
+  export AGENT_DEVICE_STATE_DIR="<agentDevice.stateDir from stim status --json>"
+  agent-device open ${TUTORIAL_BUNDLE_ID} --platform ios --udid <ios.udid>
+  agent-device screenshot .expo/screenshots/before.png
+  (make the change)
+  agent-device screenshot .expo/screenshots/after.png
+
+Without agent-device, use xcrun simctl io <ios.udid> screenshot
+.expo/screenshots/before.png, using that worktree's udid from stim status --json,
+never booted. Take both with the same tool so they match in size. .expo/ is
+ignored and outside the native fingerprint, so the files are never committed,
+never change the build, and never block stim worktree remove. Keep each PNG under 1 MB.`;
 
 function commands(id: string): string {
   return TUTORIAL_STEPS.find((step) => step.id === id)!.commands.join('\n');
@@ -77,6 +95,8 @@ and stop.
 
 ${local}
 
+${screenshots}
+
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
 making the title purple, in their own words. Each change runs in a new linked
 worktree of {base} (stim guide agent), and its first iOS build takes a few
@@ -141,7 +161,7 @@ Never use --force in this step, and never delete any path other than {base}. Rep
 what you removed and end the turn.`,
     },
     share: {
-      summary: 'Optionally open a public pull request with a screenshot of the change',
+      summary: 'Optionally open a public pull request with before and after screenshots of the change',
       body: () => `SHARE YOUR FINISH (OPTIONAL)
 
 Only on the user's explicit request, which the share prompt is, and before the
@@ -149,31 +169,50 @@ finish step removes the worktrees. The pull request is public: the user's GitHub
 name and change appear on ${TUTORIAL_REPO}, and a bot replies and closes it. It
 needs gh signed in. Never open it unprompted or from any other step.
 
-Work from the worktree holding the user's change, {tour}. Commit the change
-there, fork the repository and push the branch to the fork, since the user has
-no write access:
+Work from the worktree holding the user's change, {tour}. Commit only the
+change's files there, never .expo/screenshots/. Fork the repository and push the
+branch to the fork, since the user has no write access:
 
   gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork
   git push -u fork HEAD
 
-Screenshot: take a PNG under 1 MB of the app showing the change, with
-agent-device screenshot when it is installed, otherwise
-xcrun simctl io <ios.udid> screenshot finish.png, using the udid of that
-worktree from stim status --json, never booted. If the app is no longer
-running, run it again from the branch first.
+Screenshots: use .expo/screenshots/before.png and .expo/screenshots/after.png from that
+worktree (stim guide tutorial run). If either is missing, take it now on the same
+device, that worktree's ios.udid from stim status --json, never booted, with the
+app running from the branch (run it again first if needed). For
+a missing before, show the original screen with
+git checkout origin/main -- <changed files>, capture it once Fast Refresh applies,
+then restore the change with git checkout HEAD -- <changed files> and capture the
+after again with the same tool, so both match in size.
 
-Open the pull request with gh pr create --repo ${TUTORIAL_REPO} --fill. Put one
-short line with the build time and whether the second worktree's first iOS build
-was a cache hit, when you know them from stim status --json or stim stats, in the
-commit message body (git commit -m "<title>" -m "<that line>"), so --fill carries it
-into the pull request body.
+Body: write .expo/screenshots/body.md from the clone's
+.github/pull_request_template.md, keeping its headings, table and Stim link and
+dropping its <!-- --> comments. An older clone without the template gets the
+same parts, in this order:
+- the first line: one sentence saying what changed and why;
+- the table, with ![Before](./.expo/screenshots/before.png) and
+  ![After](./.expo/screenshots/after.png) in its cells;
+- a How it was verified section, with only what you observed: Device is ios.name from
+  stim status --json; Readiness is the "app reported ready" time stim ios
+  printed; Build is lastBuilds.ios.durationMs and whether lastBuilds.ios.cacheHit
+  was local or remote (a cache hit) or false (a full build), plus, when you know
+  it, whether the second worktree's first iOS build was a cache hit; Logs is the
+  result of stim logs --errors. Drop a line you did not observe rather than
+  guess it;
+- the closing line: Built and verified with [Stim](https://github.com/appandflow/stim).
 
-Attach the screenshot with gh: gh pr create --attach "finish.png#The change
-running in the simulator" uploads the image and appends it to the body. gh
-2.99.0 (2026-09-01) has --attach; confirm with gh pr create --help rather than
-guessing a version. When gh has no --attach, commit the PNG on the PR branch as
-finish/<github-login>.png before pushing and embed it in the body with a
-relative link: ![the change](finish/<github-login>.png).`,
+Open the pull request from {tour}:
+
+  gh pr create --repo ${TUTORIAL_REPO} --title "<the one-line summary>" \\
+    --body-file .expo/screenshots/body.md \\
+    --attach ".expo/screenshots/before.png#Before" --attach ".expo/screenshots/after.png#After"
+
+--attach uploads each image and rewrites the matching ./.expo/screenshots/ reference in
+the body to the uploaded file, so the table shows both images. gh 2.99.0
+(2026-09-01) has --attach; confirm with gh pr create --help rather than guessing
+a version. When gh has no --attach, open the pull request with --body-file alone
+and tell the user to drag the two images into the table on GitHub. Give the user
+the pull request URL.`,
     },
     restart: {
       summary: 'Start the tutorial again without removing anything',

@@ -797,15 +797,14 @@ function dfExecutor(byVolume: Record<string, string>) {
     run() {
       return '';
     },
-    runQuiet(cmd) {
-      const m = /^df -k '(.*)'$/.exec(cmd);
-      if (!m) return null;
-      const vol = m[1];
+    runQuiet: () => null,
+    runFileQuiet(file: string, args: string[]) {
+      if (file !== 'df' || args.length !== 2 || args[0] !== '-k') return null;
+      const vol = args[1];
       assert(vol !== undefined);
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
-    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -983,9 +982,12 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
       },
       runQuiet(cmd) {
         commands.push(cmd);
-        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+        return null;
       },
-      runFileQuiet: () => null,
+      runFileQuiet(file: string, args: string[] = []) {
+        commands.push([file, ...args].join(' '));
+        return args.join(' ') === '-s emulator-5556 emu avd name' ? 'stim-app\nOK' : null;
+      },
       spawn() {
         throw new Error('status must not spawn a device');
       },
