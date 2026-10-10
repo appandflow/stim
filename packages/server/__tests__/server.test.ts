@@ -890,6 +890,7 @@ describe('pairing', () => {
           'workspace-diff',
           'hosted-congestion',
           'hosted-ios-data',
+          'hosted-ios-process',
           'hosted-android-data',
           'server-update',
         ],

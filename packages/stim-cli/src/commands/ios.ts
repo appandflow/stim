@@ -548,6 +548,9 @@ async function runIos(
   builtConfiguration = configuration ?? 'Debug';
   const buildScheme = opts.scheme;
   const release = isReleaseConfiguration(configuration);
+  const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
+    integration.runtimeKind(configuration)
+  ];
   const cachePolicy = artifactCachePolicy(
     optimizations,
     opts.buildCache !== false,
@@ -603,6 +606,8 @@ async function runIos(
     settings,
     physical,
     release,
+    appMode,
+    supportsRemote: integration.targets.includes('remote'),
     metroCheck,
     d,
     deviceType,
@@ -656,7 +661,7 @@ async function runIos(
   });
   if (modelRefusal) return fail(modelRefusal);
   const selectors = hostedIosSelectors(deviceType, runtime);
-  const connected = await connectIosTarget(remoteSelection, selectors, d);
+  const connected = await connectIosTarget(remoteSelection, selectors, d, appMode);
   if ('failure' in connected) return fail(connected.failure);
   const hostedTarget = connected.target;
   try {
@@ -1058,6 +1063,7 @@ async function runIos(
           configuration,
           buildScheme,
           release,
+          appMode,
           isExpo,
           metroCheck,
           metroPort,

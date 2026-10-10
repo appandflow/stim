@@ -47,6 +47,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
+ * `hosted-ios-process` accepts native iOS app offers in process mode, with live process readiness and no Metro.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -68,6 +69,7 @@ export const FEATURES = [
   'workspace-diff',
   'hosted-congestion',
   'hosted-ios-data',
+  'hosted-ios-process',
   'hosted-android-data',
   'server-update',
 ] as const;

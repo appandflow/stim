@@ -96,22 +96,31 @@ function receipt(extra: { path: string; kind: HostedAppFile['kind']; content: st
   );
 }
 
-test('materializes verified files and contained links, drives only the recorded UDID, and proves a release process', async () => {
-  receipt([
-    { path: 'Resources/data', kind: 'file', content: 'payload' },
-    { path: 'data-link', kind: 'link', content: 'Resources/data' },
-  ]);
-  expect(await installHostedApp(home, session, 'app', device)).toBe(true);
-  expect(readFileSync(join(area, 'App.app', 'data-link'), 'utf8')).toBe('payload');
-  expect(
-    native.runFile.mock.calls
-      .filter(([, args]) => args?.[0] === 'simctl' && ['install', 'launch'].includes(args[1] ?? ''))
-      .map(([, args]) => args?.slice(0, 3)),
-  ).toEqual([
-    ['simctl', 'install', device.udid],
-    ['simctl', 'launch', device.udid],
-  ]);
-});
+test.each(['release', 'process'])(
+  'materializes verified files and contained links, drives only the recorded UDID, and proves a %s process',
+  async (mode) => {
+    receipt(
+      [
+        { path: 'Resources/data', kind: 'file', content: 'payload' },
+        { path: 'data-link', kind: 'link', content: 'Resources/data' },
+      ],
+      mode,
+    );
+    expect(await installHostedApp(home, session, 'app', device)).toBe(true);
+    expect(readFileSync(join(area, 'App.app', 'data-link'), 'utf8')).toBe('payload');
+    expect(
+      native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation') || args?.includes('openurl')),
+    ).toBe(false);
+    expect(
+      native.runFile.mock.calls
+        .filter(([, args]) => args?.[0] === 'simctl' && ['install', 'launch'].includes(args[1] ?? ''))
+        .map(([, args]) => args?.slice(0, 3)),
+    ).toEqual([
+      ['simctl', 'install', device.udid],
+      ['simctl', 'launch', device.udid],
+    ]);
+  },
+);
 
 test('keeps development launch unverified despite a live native process', async () => {
   receipt([], 'development');
@@ -167,14 +176,35 @@ test('rejects a device Mach-O disguised by simulator plist metadata without inst
   expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
 });
 
-test('refuses altered bytes and a lost device ledger before installing onto a simulator', async () => {
-  receipt();
-  const sha256 = createHash('sha256').update('plist fixture').digest('hex');
-  writeFileSync(join(home, '..', 'blobs', sha256), 'altered');
-  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('digest');
-  expect(native.runFile).not.toHaveBeenCalled();
-  receipt();
-  rmSync(join(home, 'created-devices.json'));
-  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/ENOENT/);
-  expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
+test.each(['release', 'process'])(
+  'refuses altered %s bytes and a lost device ledger before installing onto a simulator',
+  async (mode) => {
+    receipt([], mode);
+    const sha256 = createHash('sha256').update('plist fixture').digest('hex');
+    writeFileSync(join(home, '..', 'blobs', sha256), 'altered');
+    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('digest');
+    expect(native.runFile).not.toHaveBeenCalled();
+    receipt([], mode);
+    rmSync(join(home, 'created-devices.json'));
+    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/ENOENT/);
+    expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
+  },
+);
+
+test('process mode remains unverified when launch succeeds without a live app process', async () => {
+  receipt([], 'process');
+  const original = native.runFile.getMockImplementation()!;
+  native.runFile.mockImplementation((file, args = [], options) =>
+    args.includes('launchctl') ? '' : original(file, args, options),
+  );
+  vi.useFakeTimers();
+  try {
+    const pending = installHostedApp(home, session, 'app', device, 14321);
+    await vi.waitFor(() => expect(launched).toBe(true));
+    await vi.runAllTimersAsync();
+    expect(await pending).toBe('unverified');
+    expect(native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation'))).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
 });

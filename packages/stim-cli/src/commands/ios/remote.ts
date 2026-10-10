@@ -5,7 +5,7 @@ import { devicePlacementLine } from '../../device-host/auto-placement.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../../command-output.ts';
-import { type DevicePlacement, type HostedIosPlacement } from '@stim-cli/core/state';
+import { type DevicePlacement, type HostedIosPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import {
   parseIosRemote,
   remoteEasFallbackSetting,
@@ -59,7 +59,7 @@ export function selectIosTarget({
   opts,
   settings,
   physical,
-  release,
+  appMode,
   metroCheck,
   d,
 }: {
@@ -69,6 +69,7 @@ export function selectIosTarget({
   settings: SettingsObject;
   physical: boolean;
   release: boolean;
+  appMode: HostedAppOffer['mode'];
   metroCheck: boolean;
   d: IosDeps;
 }): ReturnType<typeof resolveIosRemote> {
@@ -104,7 +105,7 @@ export function selectIosTarget({
         },
       };
   }
-  if (selection.machine !== 'auto' && selection.machine && !release && !metroCheck)
+  if (selection.machine !== 'auto' && selection.machine && appMode === 'development' && !metroCheck)
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -117,6 +118,7 @@ export function selectIosTarget({
 
 export async function selectIosPlacement(
   args: Parameters<typeof selectIosTarget>[0] & {
+    supportsRemote: boolean;
     validateSelectors: () => FailArgs | null;
     deviceType: string | null;
     runtime: string | null;
@@ -136,18 +138,19 @@ export async function selectIosPlacement(
 > {
   const selection = selectIosTarget(args);
   if ('failure' in selection || selection.machine !== 'auto') return selection;
-  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, metroCheck } = args;
+  const { root, slot, d, opts, deviceType, runtime, noWait, phase, log, release, appMode, metroCheck } = args;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
   if ('refusal' in viewer) return { failure: viewer.refusal };
   const refusal = args.validateSelectors();
   if (refusal) return { failure: refusal };
-  const easFallback = remoteEasFallbackSetting(args.settings);
+  const easFallback = args.supportsRemote && remoteEasFallbackSetting(args.settings);
   try {
     const placed = await d.automaticDevicePlacement({
       root,
       slot,
       platform: 'ios',
       selectors: hostedIosSelectors(deviceType, runtime),
+      appMode,
       buildMachine: opts.remoteBuild,
       noWait,
       ...(easFallback
@@ -178,7 +181,7 @@ export async function selectIosPlacement(
         auto: { target: null },
         devicePlacement: placed.placement,
       };
-    if (placed.target && !release && !metroCheck)
+    if (placed.target && appMode === 'development' && !metroCheck)
       return {
         failure: {
           code: 'STIM_BAD_ARG',
@@ -222,11 +225,12 @@ export async function connectIosTarget(
   },
   selectors: ReturnType<typeof hostedIosSelectors>,
   d: IosDeps,
+  appMode?: HostedAppOffer['mode'],
 ): Promise<{ target: HostedIosTarget | null } | { failure: FailArgs }> {
   if (selection.auto) return { target: selection.auto.target };
   if (!selection.machine) return { target: null };
   try {
-    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded) };
+    return { target: await d.prepareHostedIos(selection.machine, selectors, selection.recorded, appMode) };
   } catch (error) {
     return {
       failure: {

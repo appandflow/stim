@@ -301,9 +301,21 @@ C-family header graphs, Swift package graphs and unresolved external input
 paths or compiler overrides. The miss reason explains the exclusion. --plan
 refuses such a prediction; omit --plan to prepare and build the app.
 
-Native Xcode builds currently run locally. Build offload, hosted/remote devices
-and EAS artifact profiles are not supported by this integration. These limits
-do not change the React Native and Expo paths.
+Native Xcode builds run locally and can install on an already approved hosting
+Mac with process-mode support:
+  stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json
+
+The host must advertise hosted-ios-process; older hosts refuse with an update
+remedy before reservation or upload. --remote auto skips incompatible hosts,
+but an existing session stays on its recorded host until stim stop. Debug,
+Release and custom configurations use the offered simulator architecture,
+report metroPort: null, and close any previous session Metro bridge. Logs,
+view/control, agent access and scoped stop use the existing hosted-ios services.
+Verify UI and interaction separately from the host's live process evidence.
+
+Build offload, hosted --plan, eas/proxy devices and EAS artifact profiles remain
+unsupported for native Xcode apps. These limits do not change React Native or
+Expo support.
 
 Copyable agent request:
   Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
@@ -606,7 +618,7 @@ sessions.
 
 
 Stim builds or fetches before reserving, records the session immediately, then
-uploads the app on every run. Debug keeps Metro here; its supervisor owns a
+uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
 private gateway bound to this Mac's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
@@ -614,7 +626,8 @@ Debug requires a running supervisor with private gateway support before reservin
 a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
 If its supervisor is missing or older, run stim stop; stim start, then retry.
 Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
-provides bundle evidence, or the host proves a live release process.
+provides bundle evidence, or the host proves a live release process. Native Xcode
+apps use process mode in every configuration and require no Metro; see native-ios.
 
 A rerun on the same named Mac reattaches and delivers a new app attempt. A
 stopped or missing session is replaced; an unreachable or unknown owner refuses

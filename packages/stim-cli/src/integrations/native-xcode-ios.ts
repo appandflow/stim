@@ -299,8 +299,8 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
     if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
     if (remoteIosSetting(settings))
       throw new NativeXcodeError(
-        'The native Xcode integration does not yet support hosted placement.',
-        'Unset ios.remote to build and run on a local owned simulator.',
+        'Native Xcode planning does not resolve hosted placement.',
+        'Unset ios.remote to plan a local build, or run stim ios without --plan.',
       );
     const layers = DEFAULT_DEPS.settingsLayers(context);
     const modelRefusal = deviceModelRefusal({
@@ -371,7 +371,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
 export function nativeXcodeIosProject(root: string): IosProject {
   return {
     isExpo: false,
-    targets: ['simulator', 'physical'],
+    targets: ['simulator', 'physical', 'hosted'],
     eas: false,
     runtimeKind: () => 'process',
     plan: (options) => planNativeXcode(root, options),

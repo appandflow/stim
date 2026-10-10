@@ -453,8 +453,21 @@ reports why: examples include shell build phases, custom build rules, C-family
 header graphs, Swift package graphs and unresolved external inputs or compiler
 overrides. Planning refuses these cases; run without `--plan` to build locally.
 
-Native Xcode build offload, hosted/remote devices and EAS artifact profiles are
-not supported yet. These limits do not change React Native or Expo support.
+An already approved hosting Mac can run the locally built app:
+
+<StimTabs code={`stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json`} />
+
+The host must support `hosted-ios-process`; older hosts refuse with an update
+remedy before reservation or upload. `--remote auto` skips incompatible hosts,
+while recorded sessions stay on their host until `stim stop`. Every native
+configuration builds for the offered simulator architecture, uses process
+readiness with `metroPort: null`, and closes a previous session's Metro bridge.
+The existing [hosted iOS](./remote-machines.md) logs, view/control, agent access
+and scoped cleanup apply. Verify UI and interaction separately from process
+readiness.
+
+Native Xcode build offload, hosted `--plan`, eas/proxy devices and EAS artifact
+profiles remain unsupported. These limits do not change React Native or Expo support.
 
 Copy this request to your agent, substituting your scheme:
 
