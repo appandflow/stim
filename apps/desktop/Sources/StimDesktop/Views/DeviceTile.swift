@@ -380,7 +380,21 @@ struct DeviceTile: View {
     }
   }
 
-  private var canShowFrame: Bool { viewer && !replaying && frameSizes[1] != nil }
+  /// The reported size, else the installed artwork's upright size, so the first layout of a single-screen
+  /// device is already framed instead of waiting for the display view's asynchronous report.
+  private func frameSize(_ screenID: UInt32) -> CGSize? {
+    if let size = frameSizes[screenID] { return size }
+    guard viewer, screenID == 1, device.formFactor != .dual else { return nil }
+    switch device {
+    case .ios(_, let sim) where !sim.physical && device.isRunning:
+      return device.localSimulatorUDID.flatMap { SimulatorDisplayView.frameSize(udid: $0) }
+    case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil && device.isRunning:
+      return EmulatorDisplayView.frameSize(avdName: avd.name)
+    default: return nil
+    }
+  }
+
+  private var canShowFrame: Bool { viewer && !replaying && frameSize(1) != nil }
   private var framed: Bool { canShowFrame && showsDeviceFrame }
 
   private var showsDeviceFrame: Bool {
@@ -402,7 +416,7 @@ struct DeviceTile: View {
           DeviceFramePreference.set($0, device.frameType)
           frameRevision += 1
         }),
-      unavailableReason: frameSizes[1] != nil ? nil : frameUnavailableReason)
+      unavailableReason: frameSize(1) != nil ? nil : frameUnavailableReason)
   }
 
   private var frameUnavailableReason: String {
@@ -902,7 +916,7 @@ struct DeviceTile: View {
   }
 
   private func layoutSize(_ screenID: UInt32) -> CGSize? {
-    framed ? frameSizes[screenID] ?? pixelSizes[screenID] : pixelSizes[screenID]
+    framed ? frameSize(screenID) ?? pixelSizes[screenID] : pixelSizes[screenID]
   }
 
   private func screenWidth(_ screenID: UInt32) -> CGFloat? {
