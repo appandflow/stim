@@ -286,7 +286,10 @@ describe('startExpoServer', () => {
         requestId,
         msg: `ios bundle response ${stage}`,
       })}\n`;
-    for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('started', id));
+    child.stderr!.emit('data', line('started', 'a'));
+    child.stdout!.emit('data', 'iOS Bundling index.js\n');
+    child.stderr!.emit('data', line('started', 'b'));
+    child.stderr!.emit('data', line('started', 'c'));
     for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('finished', id));
 
     const bundle = written.filter((r) => String(r.event).startsWith('bundle_response_'));
