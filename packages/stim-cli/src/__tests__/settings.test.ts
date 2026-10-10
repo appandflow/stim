@@ -18,6 +18,7 @@ import {
   iosSimSlimProfileSetting,
   iosSimSlimProfileSettingError,
   mergeSettingsLayers,
+  metroTunnelSettingError,
   ngrokUrlSetting,
   parseAndroidAvdConfigIni,
   publicUrlSetting,
@@ -36,6 +37,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
+import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
@@ -633,6 +635,18 @@ describe('ngrokUrlSetting', () => {
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
   });
+});
+
+test('metroTunnelSettingError accepts the hosted overlay that clears the public tunnel keys', () => {
+  expect(metroTunnelSettingError(hostedMetroSettings({ ios: { remote: 'auto' } }, true))).toBeNull();
+  expect(
+    metroTunnelSettingError(
+      hostedMetroSettings({ metro: { tunnel: 'auto', ngrokUrl: 'https://stable.ngrok.app' } }, true),
+    ),
+  ).toBeNull();
+  expect(metroTunnelSettingError({ metro: { ngrokUrl: null } })).toBe(
+    'metro.ngrokUrl requires metro.tunnel to be "ngrok".',
+  );
 });
 
 test('resolveCacheProviderConfig reports no provider when nothing configures one', () => {

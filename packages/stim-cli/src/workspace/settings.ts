@@ -704,7 +704,7 @@ export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
 
 export function metroTunnelSettingError(settings: SettingsObject): string | null {
   const block = settings.metro;
-  if (!isPlainObject(block) || !('ngrokUrl' in block)) return null;
+  if (!isPlainObject(block) || block.ngrokUrl === undefined) return null;
   if (block.tunnel !== 'ngrok') {
     return 'metro.ngrokUrl requires metro.tunnel to be "ngrok".';
   }
