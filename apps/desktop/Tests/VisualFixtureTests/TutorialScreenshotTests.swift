@@ -16,7 +16,7 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let variants = [
-        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout",
+        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout", "begin-installing",
         "phone-not-paired", "phone-server-off",
         "phone-already-paired", "phone-paired-during-step",
       ]
@@ -54,7 +54,6 @@
       let snapshot = fixture()
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true,
-        message: name == "begin" ? TutorialNotice("Waiting for the tutorial workspace...") : nil,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount),
         canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
         asks: { step in
@@ -86,7 +85,7 @@
           : name == "agent-commands"
             ? "agent"
             : name == "finish-commands"
-              ? "finish" : name == "build-no-agent-device" ? "build" : name == "begin-timeout" ? "begin" : name
+              ? "finish" : name == "build-no-agent-device" ? "build" : name.hasPrefix("begin-") ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
@@ -115,7 +114,10 @@
       var snapshot = engine.update(
         TutorialInput(
           environment: ["device", "agent"].contains(id) ? TutorialEnvironment(workspace) : nil,
-          pairedPhoneCount: phoneCount, now: now, record: record))
+          pairedPhoneCount: phoneCount,
+          newCloneFolder: name == "begin-installing"
+            ? TutorialCloneFolder(created: now, checkedOut: true, dependenciesFolder: true) : nil,
+          now: now, record: record))
       if let index = snapshot.steps.firstIndex(where: { $0.id == id }), id != "phone" {
         snapshot.steps[index].state = name == "failure" ? .failed("compile-failed: App.js: Unexpected token") : .current
         snapshot.steps[index].detail =

@@ -704,3 +704,53 @@ private func clone(_ path: String, doctorRanAt: Date? = nil) throws -> TutorialE
   let result = progress.update(TutorialInput(environment: nil, siblings: [clone], now: afterBuild))
   #expect(result.currentStep == "begin")
 }
+
+@Test func tutorialCloneFolderStagesFollowTheCheckoutAndTheNpmMarker() {
+  let start = tourStart
+  let fresh = start.addingTimeInterval(5)
+  #expect(TutorialCloneFolder(created: nil).stage(since: start) == .absent)
+  #expect(
+    TutorialCloneFolder(created: start.addingTimeInterval(-60), checkedOut: true, dependenciesInstalled: true)
+      .stage(since: start) == .absent)
+  #expect(TutorialCloneFolder(created: fresh).stage(since: start) == .cloning)
+  #expect(TutorialCloneFolder(created: fresh, checkedOut: true).stage(since: start) == .cloned)
+  #expect(TutorialCloneFolder(created: fresh, checkedOut: true, dependenciesFolder: true).stage(since: start) == .installing)
+  #expect(
+    TutorialCloneFolder(created: fresh, checkedOut: true, dependenciesFolder: true, dependenciesInstalled: true)
+      .stage(since: start) == .installed)
+}
+
+@Test func tutorialCloneFolderReadsTheCloneLayout() throws {
+  let root = FileManager.default.temporaryDirectory.appendingPathComponent("tutorial-clone-" + UUID().uuidString)
+  defer { try? FileManager.default.removeItem(at: root) }
+  let start = Date().addingTimeInterval(-5)
+  #expect(TutorialCloneFolder(path: root.path).stage(since: start) == .absent)
+  try FileManager.default.createDirectory(at: root.appendingPathComponent(".git"), withIntermediateDirectories: true)
+  #expect(TutorialCloneFolder(path: root.path).stage(since: start) == .cloning)
+  try Data("ref: refs/heads/main\n".utf8).write(to: root.appendingPathComponent(".git/HEAD"))
+  try Data("{}".utf8).write(to: root.appendingPathComponent("package.json"))
+  #expect(TutorialCloneFolder(path: root.path).stage(since: start) == .cloned)
+  try FileManager.default.createDirectory(at: root.appendingPathComponent("node_modules"), withIntermediateDirectories: true)
+  #expect(TutorialCloneFolder(path: root.path).stage(since: start) == .installing)
+  try Data("{}".utf8).write(to: root.appendingPathComponent("node_modules/.package-lock.json"))
+  #expect(TutorialCloneFolder(path: root.path).stage(since: start) == .installed)
+}
+
+@Test func tutorialBeginShowsCloneProgressAndStillOffersRestartAfterTheTimeout() throws {
+  var record = TutorialRecord(version: 2, startedAt: tourStart)
+  record.runPromptCopiedAt = tourStart
+  let late = tourStart.addingTimeInterval(600)
+  var progress = TutorialProgress()
+  let installing = progress.update(
+    TutorialInput(
+      environment: nil,
+      newCloneFolder: TutorialCloneFolder(
+        created: tourStart.addingTimeInterval(10), checkedOut: true, dependenciesFolder: true),
+      now: late, record: record))
+  #expect(state("begin", in: installing).detail == "Installing dependencies...")
+  #expect(state("begin", in: installing).action == .restart)
+  #expect(state("begin", in: installing).ticks.map(\.done) == [true, false, false])
+  let stale = progress.update(
+    TutorialInput(environment: nil, newCloneFolder: TutorialCloneFolder(created: tourStart.addingTimeInterval(-10)), now: late))
+  #expect(state("begin", in: stale).detail == "No tutorial workspace yet. Ask your agent what failed")
+}

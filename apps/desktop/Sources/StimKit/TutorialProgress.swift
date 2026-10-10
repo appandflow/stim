@@ -157,6 +157,7 @@ public struct TutorialInput: Sendable {
   public var replayOff: Bool
   public var archiveEnabled: Bool
   public var cloneFolderExists: Bool?
+  public var newCloneFolder: TutorialCloneFolder?
   public var now: Date
   public var record: TutorialRecord?
 
@@ -165,6 +166,7 @@ public struct TutorialInput: Sendable {
     logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
     replayOff: Bool = false, archiveEnabled: Bool = true, cloneFolderExists: Bool? = nil,
+    newCloneFolder: TutorialCloneFolder? = nil,
     now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
@@ -177,6 +179,7 @@ public struct TutorialInput: Sendable {
     self.replayOff = replayOff
     self.archiveEnabled = archiveEnabled
     self.cloneFolderExists = cloneFolderExists
+    self.newCloneFolder = newCloneFolder
     self.now = now
     self.record = record
   }
@@ -445,11 +448,24 @@ public struct TutorialProgress: Sendable {
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
       let newClone = Self.registeredClones(input.siblings).first { isNewClone($0) }
       let exists = environment != nil || newClone != nil
+      let stage = input.newCloneFolder?.stage(since: record?.startedAt ?? now) ?? .absent
       let timedOut = record?.beginWaitTimedOut(now: now) == true && environment == nil
+      let detail: String
+      switch stage {
+      case .absent:
+        detail =
+          timedOut ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
+      case .cloning: detail = "Cloning the test app..."
+      case .cloned: detail = "Cloned. Waiting for its dependencies..."
+      case .installing: detail = "Installing dependencies..."
+      case .installed: detail = "Dependencies installed. Waiting for Stim to register the clone..."
+      }
       return Checkpoint(
-        completed: exists ? appeared : nil,
-        detail: timedOut ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace",
-        action: timedOut ? .restart : nil)
+        completed: exists ? appeared : nil, detail: detail, action: timedOut ? .restart : nil,
+        ticks: [
+          tick("cloned", [.cloned, .installing, .installed].contains(stage)), tick("installed", stage == .installed),
+          tick("registered", exists),
+        ])
     case "build":
       if let last, last.status == "failed", parseTimestamp(last.startedAt).map({ $0 >= since }) == true {
         return Checkpoint(

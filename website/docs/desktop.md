@@ -93,7 +93,7 @@ clone with its own simulator and dev server, and each checks its own work on the
 device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
 a tiny Expo app, and shows:
 
-- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it.
+- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
 - **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.

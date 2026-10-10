@@ -323,6 +323,9 @@ struct TutorialPanel: View {
     case "action": return "Agent action received"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
+    case "cloned": return "Test app cloned"
+    case "installed": return "Dependencies installed"
+    case "registered": return "Registered with Stim"
     case "worktrees": return "Tutorial worktrees removed"
     case "clone": return "Clone removed and deleted"
     default: return PhaseStep.name(id)

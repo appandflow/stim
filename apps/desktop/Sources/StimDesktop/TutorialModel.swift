@@ -32,8 +32,11 @@ final class TutorialModel: ObservableObject {
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
 
-  init(defaults: UserDefaults = .standard) {
+  private let cloneBase: String
+
+  init(defaults: UserDefaults = .standard, cloneBase: String = NSHomeDirectory() + "/stim-tutorial") {
     self.defaults = defaults
+    self.cloneBase = cloneBase
     records = TutorialRecordStore(defaults)
   }
 
@@ -60,11 +63,6 @@ final class TutorialModel: ObservableObject {
   var notice: TutorialNotice? {
     if let cliFailure { return TutorialNotice(cliFailure, action: .updateCLI) }
     if let notice = workspace?.tutorial.flatMap({ TutorialNotice.version($0.version) }) { return notice }
-    if snapshot?.currentStep == "begin" {
-      return snapshot?.record.beginWaitTimedOut(now: now) == true
-        ? TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart)
-        : TutorialNotice("Waiting for the tutorial workspace...")
-    }
     if workspace == nil, tourPath != nil, snapshot?.isComplete == false, snapshot?.currentStep != "delete",
       !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
     {
@@ -155,6 +153,8 @@ final class TutorialModel: ObservableObject {
         replayOff: workspace?.replayOff ?? false,
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
         cloneFolderExists: saved?.clonePath.map { FileManager.default.fileExists(atPath: $0) },
+        newCloneFolder: saved?.step == "begin"
+          ? TutorialCloneFolder(path: cloneBase) : nil,
         now: now, record: records.record))
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
