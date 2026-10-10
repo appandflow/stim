@@ -5,6 +5,12 @@ description: 'Project, repository, machine, and environment settings'
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
+import ArchiveSettings from './_generated/settings-archive.md';
+import BudgetSettings from './_generated/settings-budget.md';
+import EnvSettings from './_generated/settings-env.md';
+import MachineSettings from './_generated/settings-machine.md';
+import MaintenanceSettings from './_generated/settings-maintenance.md';
+import ProjectSettings from './_generated/settings-project.md';
 
 :::note[Command examples]
 
@@ -92,50 +98,12 @@ When upgrading, move runtime settings to each relevant app and make profile,
 AVD-fragment and committed-provider paths relative to that app directory.
 Explicit machine project/repository overrides keep their existing precedence.
 
-`.stim.json` supports these keys:
+These settings can be set for a project. The Layers column lists where each
+one can live; `committed` means `.stim.json`. The
+[build optimizations](./build-optimizations.md) page explains the
+`optimizations` switches.
 
-| Key                           | Purpose                                                                                                                           |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `ios.deviceType`              | iOS Simulator device type                                                                                                         |
-| `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
-| `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
-| `ios.scheme`                  | Shared Xcode scheme to build when the workspace has several; `--scheme` overrides it                                              |
-| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
-| `ios.projectPath`             | Directory of a bare app's Xcode project and Podfile, relative to the app; default `ios`                                           |
-| `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
-| `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
-| `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
-| `ios.lanHost`                 | Address a phone uses to reach this workspace's Metro                                                                              |
-| `android.systemImage`         | Android SDK system image                                                                                                          |
-| `android.deviceProfile`       | AVD hardware profile, such as `pixel_tablet` or `pixel_fold`                                                                      |
-| `android.dataPartitionSizeGb` | AVD data partition size                                                                                                           |
-| `android.avdConfigFile`       | Additional AVD config file                                                                                                        |
-| `android.avdConfig`           | Validated AVD config values                                                                                                       |
-| `android.gradleRoot`          | Directory of `gradlew` and `settings.gradle`, relative to the app; default `android`                                              |
-| `android.module`              | The app's Gradle project path; default `:app`                                                                                     |
-| `android.variant`             | Gradle build variant                                                                                                              |
-| `android.keystore`            | Release keystore path                                                                                                             |
-| `android.keystorePassword`    | Release keystore password source                                                                                                  |
-| `android.remote`              | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
-| `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
-| `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
-| `metro.command`               | Argv that starts this app's dev server; `{port}` becomes the reserved Metro port                                                  |
-| `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |
-| `metro.publicUrl`             | Existing public Metro URL                                                                                                         |
-| `metro.port`                  | This workspace's Metro port, reserved instead of one Stim picks                                                                   |
-| `metro.warmupUrl.ios`         | Bundle URL `stim ios` prefetches to warm Metro                                                                                    |
-| `metro.warmupUrl.android`     | Bundle URL `stim android` prefetches to warm Metro                                                                                |
-| `metro.idleStopMinutes`       | Minutes of no use before the dev server stops; `0` never, default 60                                                              |
-| `devices.idleShutdownMinutes` | Minutes idle before an owned device shuts down; `0` never, default 30                                                             |
-| `devices.reclaimIdleMinutes`  | Minutes idle before a waiting run reclaims an owned device slot; `0` disables, default 10                                         |
-| `web.url`                     | Page `stim web` opens; `{port:<label>}` is a named or the Metro port                                                              |
-| `web.ignoreCertificateErrors` | Accept self-signed dev certificates in the owned Chrome profile                                                                   |
-| `web.viewport`                | Owned Chrome viewport: `desktop` (default) or `phone`                                                                             |
-| `worktree.exclude`            | Ignored paths skipped by `worktree warm`                                                                                          |
-| `worktree.defaultBranch`      | Branch `worktree warm --refresh` expects the source checkout on                                                                   |
-| `cache.provider`              | Optional second-tier cache provider module                                                                                        |
-| `cache.options`               | Options passed to that provider                                                                                                   |
-| `optimizations`               | [Build optimization switches and defaults](./build-optimizations.md)                                                              |
+<ProjectSettings />
 
 `metro.port` and `STIM_METRO_PORT` pin Metro for `stim start`, `stim ios`,
 `stim android` and pages using Metro in `stim web`. Changing the pin while
@@ -261,13 +229,18 @@ Run `stim guide settings` for the complete key and value list.
   "androidEmulatorApp": "emulator",
   "tempDir": "/Volumes/SSD/stim-tmp",
   "pool": { "iosParkedMax": 3, "androidParkedMax": 3 },
-  "offload": { "machines": ["janics-mac-mini"], "machine": "auto", "mode": "auto" },
+  "remote": { "machines": ["janics-mac-mini"], "build": "auto", "buildMode": "auto" },
   "caches": {
     "buildCache": "/Volumes/Cache/stim/build-cache",
     "metroCache": "/Volumes/Cache/stim/metro-cache"
   }
 }
 ```
+
+These settings live only in the machine file. The budget, archive and
+maintenance settings are listed in their own sections below.
+
+<MachineSettings />
 
 `concurrency.maxDevices` limits booted or booting owned devices. At the cap,
 new devices wait in FIFO order across the Stim home for 600 seconds by default.
@@ -628,12 +601,7 @@ default. Before `stim start`, `stim ios`, or `stim android` builds or boots
 anything, Stim checks free disk on the volumes that hold the app and
 `$STIM_HOME`, and the estimated memory of active environments:
 
-| Key                           | Default                | Effect                                                                                   |
-| ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------- |
-| `budget.minFreeDiskGb`        | 20                     | Below this much free disk, Stim reclaims before it starts.                               |
-| `budget.hardFloorDiskGb`      | 5                      | Still below this after reclaiming, the command refuses with `STIM_LOW_DISK`.             |
-| `budget.maxCommittedMemoryGb` | 60% of physical memory | Above this estimate, Stim shuts down idle devices and stops idle dev servers first.      |
-| `budget.maxLiveWorkspaces`    | unset                  | Above this many workspaces with a booted device or running dev server, the same applies. |
+<BudgetSettings />
 
 Stim reclaims in order and stops once it is back under budget: it shuts down
 idle owned devices in other workspaces, stops idle dev servers in other
@@ -706,30 +674,18 @@ recordings are otherwise cleaned up.
 
 ## Environment variables
 
-| Variable                              | Purpose                                                                                                                                                                          |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `STIM_HOME`                           | Runtime state root. Default: `~/.stim`                                                                                                                                           |
-| `STIM_BUILD_CACHE`                    | Native artifact cache root                                                                                                                                                       |
-| `STIM_METRO_CACHE`                    | Metro transform cache root                                                                                                                                                       |
-| `STIM_TMPDIR`                         | Directory for large temporary copies; overrides the machine `tempDir`                                                                                                            |
-| `STIM_MAX_BUILDS`                     | Maximum concurrent native builds                                                                                                                                                 |
-| `STIM_MAX_DEVICES`                    | Maximum booted owned devices                                                                                                                                                     |
-| `STIM_BUDGET_MIN_FREE_DISK_GB`        | Free disk, in GB, below which `start`, `ios`, and `android` reclaim first; overrides `budget.minFreeDiskGb`                                                                      |
-| `STIM_BUDGET_HARD_FLOOR_DISK_GB`      | Free disk, in GB, below which they refuse with `STIM_LOW_DISK`; overrides `budget.hardFloorDiskGb`                                                                               |
-| `STIM_BUDGET_MAX_COMMITTED_MEMORY_GB` | Estimated memory of active environments, in GB, before idle ones are reclaimed                                                                                                   |
-| `STIM_BUDGET_MAX_LIVE_WORKSPACES`     | Active workspaces before idle ones are reclaimed                                                                                                                                 |
-| `STIM_POOL_ANDROID_PARKED_MAX`        | Maximum parked Android emulators; 0 disables parking and adoption                                                                                                                |
-| `STIM_POOL_IOS_PARKED_MAX`            | Maximum parked simulators                                                                                                                                                        |
-| `STIM_GC_WORKTREE_GRACE_MINUTES`      | Minutes `gc --delete` waits after a worktree's last activity or merge; overrides `gc.worktreeGraceMinutes`                                                                       |
-| `STIM_METRO_PUBLIC_URL`               | Public Metro URL for remote use                                                                                                                                                  |
-| `STIM_METRO_PORT`                     | This workspace's Metro port, reserved instead of one Stim picks; overrides `metro.port`                                                                                          |
-| `STIM_ANDROID_CAS_TOOLCHAIN`          | Absolute path to the [Android CAS toolchain manifest](./build-optimizations.md#experimental-android-cas)                                                                         |
-| `STIM_NO_UPDATE_CHECK`                | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
-| `STIM_RECORDING`                      | `0` or `false` stops `stim-server` recording device screens; overrides `recording.enabled`                                                                                       |
-| `STIM_RUN_ID`                         | Id for this run, stamped as `runId` on its log records and sent to stim-server                                                                                                   |
-| `STIM_RUN_ID`                         | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
+These variables override a setting and win over every layer:
 
-Processes a run starts, such as the Metro supervisor, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
+<EnvSettings />
+
+Stim also reads these variables, which have no setting:
+
+| Variable                | Purpose                                                                                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `STIM_HOME`             | Runtime state root. Default: `~/.stim`                                                                                                                                           |
+| `STIM_METRO_PUBLIC_URL` | Public Metro URL for remote use                                                                                                                                                  |
+| `STIM_NO_UPDATE_CHECK`  | Set to disable the daily check for a newer Stim release in `stim guide`                                                                                                          |
+| `STIM_RUN_ID`           | Id for this `stim` invocation (letters, digits, `.`, `_`, `-`, at most 64); stamped as `runId` on every log record it writes and sent to stim-server. Default: generated per run |
 
 Processes a command starts, such as the Metro supervisor and the collectors, inherit its `STIM_RUN_ID`, so their records carry the id of the command that started them.
 
@@ -752,17 +708,7 @@ The other archive settings are machine settings. Environment overrides win.
 With `STIM_HOME`, archiving defaults off unless `STIM_ARCHIVE_ENABLED` is set.
 Sizes use binary GB and MB; 0 means keep none.
 
-| Key                               | Default | Environment override                      |
-| --------------------------------- | ------- | ----------------------------------------- |
-| `archive.enabled`                 | true    | `STIM_ARCHIVE_ENABLED`                    |
-| `archive.maxAgeDays`              | 30      | `STIM_ARCHIVE_MAX_AGE_DAYS`               |
-| `archive.maxCount`                | 200     | `STIM_ARCHIVE_MAX_COUNT`                  |
-| `archive.maxTotalGb`              | 5       | `STIM_ARCHIVE_MAX_TOTAL_GB`               |
-| `archive.logs.maxAgeDays`         | 14      | `STIM_ARCHIVE_LOGS_MAX_AGE_DAYS`          |
-| `archive.logs.maxMbPerWorkspace`  | 100     | `STIM_ARCHIVE_LOGS_MAX_MB_PER_WORKSPACE`  |
-| `archive.recordings.maxAgeDays`   | 3       | `STIM_ARCHIVE_RECORDINGS_MAX_AGE_DAYS`    |
-| `archive.recordings.maxTotalGb`   | 2       | `STIM_ARCHIVE_RECORDINGS_MAX_TOTAL_GB`    |
-| `archive.agentActions.maxAgeDays` | 7       | `STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS` |
+<ArchiveSettings />
 
 Retention runs on every worktree removal, archived or not, once an archive
 exists. It deletes records past their age or count limit first, then expires
@@ -786,30 +732,7 @@ All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs
 or remove its worktree. GB and MB below mean GiB and MiB.
 
-| Setting                               | Type                     | Default           | Environment override                         |
-| ------------------------------------- | ------------------------ | ----------------- | -------------------------------------------- |
-| `maintenance.mode`                    | off / report / on        | on                | `STIM_MAINTENANCE`                           |
-| `maintenance.pressureCheckMinutes`    | integer >= 1             | 1 minute          | `STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES`    |
-| `maintenance.sizeCheckMinutes`        | integer >= 1             | 60 minutes        | `STIM_MAINTENANCE_SIZE_CHECK_MINUTES`        |
-| `maintenance.maxLoadPerCore`          | number > 0               | 4                 | `STIM_MAINTENANCE_MAX_LOAD_PER_CORE`         |
-| `maintenance.logMaxMb`                | number > 0               | 1 MB              | `STIM_MAINTENANCE_LOG_MAX_MB`                |
-| `maintenance.logRetentionDays`        | integer >= 1             | 30 days           | `STIM_MAINTENANCE_LOG_RETENTION_DAYS`        |
-| `maintenance.logChecks`               | boolean                  | false             | `STIM_MAINTENANCE_LOG_CHECKS`                |
-| `maintenance.memoryPressureLevel`     | warning / critical / off | warning           | `STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL`     |
-| `maintenance.memoryWarningMinutes`    | integer >= 0             | 10 minutes        | `STIM_MAINTENANCE_MEMORY_WARNING_MINUTES`    |
-| `maintenance.minAvailableMemoryGb`    | number >= 0              | unset: 10% of RAM | `STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB`   |
-| `maintenance.capTargetPercent`        | integer 10..100          | 80                | `STIM_MAINTENANCE_CAP_TARGET_PERCENT`        |
-| `maintenance.workspaceOutputsMaxGb`   | number >= 0; 0 = no cap  | 20 GB             | `STIM_MAINTENANCE_WORKSPACE_OUTPUTS_MAX_GB`  |
-| `maintenance.worktreeCheckMinutes`    | integer >= 1             | 15 minutes        | `STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES`    |
-| `maintenance.sweepHours`              | integer >= 0; 0 = off    | 24 hours          | `STIM_MAINTENANCE_SWEEP_HOURS`               |
-| `maintenance.olderThanDays`           | integer >= 1             | 7 days            | `STIM_MAINTENANCE_OLDER_THAN_DAYS`           |
-| `maintenance.protectRecentHours`      | integer >= 0             | 2 hours           | `STIM_MAINTENANCE_PROTECT_RECENT_HOURS`      |
-| `maintenance.removeFinishedWorktrees` | boolean                  | true              | `STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES` |
-| `maintenance.keep`                    | boolean (project)        | false             | none                                         |
-| `caches.buildCacheMaxGb`              | number >= 0; 0 = no cap  | 10 GB             | `STIM_CACHES_BUILD_CACHE_MAX_GB`             |
-| `caches.metroCacheMaxGb`              | number >= 0; 0 = no cap  | 5 GB              | `STIM_CACHES_METRO_CACHE_MAX_GB`             |
-| `caches.swiftCompilationCacheMaxGb`   | number >= 0; 0 = no cap  | 15 GB             | `STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB` |
-| `caches.ccacheMaxGb`                  | number > 0               | 5 GB              | `STIM_CACHES_CCACHE_MAX_GB`                  |
+<MaintenanceSettings />
 
 Size scans defer above `maintenance.maxLoadPerCore`; pressure checks continue.
 On macOS the memory signal is the sysctl pressure level, with no signal when
