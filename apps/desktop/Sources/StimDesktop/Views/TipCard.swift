@@ -11,7 +11,8 @@ struct TipCard: View {
   var body: some View {
     Banner(tone: .accent, icon: "lightbulb", onDismiss: close) {
       Text("Tip").textStyle(.caption, weight: .semibold).foregroundStyle(Palette.secondary)
-      Text(topic.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+      Text(topic.title).font(.stim(.headline))
+      Text(topic.body).font(.stim(.callout)).foregroundStyle(Palette.secondary)
       VStack(alignment: .leading, spacing: Space.xs) {
         Button(topic.actionTitle, action: perform).buttonStyle(.stim(.primary, .small))
         if hasNext { Button("Next Tip", action: next).buttonStyle(.stim(.plain, .small)) }

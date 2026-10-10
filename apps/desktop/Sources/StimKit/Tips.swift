@@ -15,13 +15,25 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     }
   }
 
+  public var body: String {
+    switch self {
+    case .buildMachine: "Send native builds to another Mac on your tailnet and run the app here."
+    case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
+    case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
+    case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."
+    case .statusFilter: "Choose which workspaces the sidebar lists: active, idle, not set up or archived."
+    case .replay: "Stim records each simulator's screen with the agent's actions marked on a timeline you can scrub."
+    case .hostedSimulators: "Another Mac on your tailnet can run simulators for your workspaces when this Mac is full."
+    }
+  }
+
   public var actionTitle: String {
     switch self {
     case .buildMachine: "Add a Remote Mac"
     case .phone: "Pair a Phone"
     case .tutorial: "Open Tutorial"
     case .hideWorkspaces, .statusFilter: "View Options"
-    case .replay: "Open Workspace"
+    case .replay: "Open Replay"
     case .hostedSimulators: "Add a Hosting Mac"
     }
   }
@@ -97,6 +109,10 @@ public struct TipInputs {
   public var sidebar = SidebarOptions()
   public var rows = 0
   public var workspaces: [Workspace] = []
+  public var archived: [ArchivedWorkspace] = []
+  /// Whether Stim Desktop's stim-server runs, which reads archived recordings.
+  public var serverRunning = false
+  public var now = Date()
 
   public init() {}
 }
@@ -157,8 +173,19 @@ public enum Tips {
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
-    case .replay: inputs.workspaces.contains { $0.recording?.enabled == true }
+    case .replay: replayArchive(inputs) != nil
     case .hostedSimulators: noMacPaired(inputs) && inputs.macs?.isEmpty == false
+    }
+  }
+
+  /// The newest archived workspace with unexpired recordings, which the replay tip opens. An archive whose path is a
+  /// listed workspace again is skipped, since a link to that path opens the workspace instead.
+  public static func replayArchive(_ inputs: TipInputs) -> ArchivedWorkspace? {
+    guard inputs.serverRunning else { return nil }
+    let listed = Set(inputs.workspaces.map(\.path))
+    return ArchivedWorkspace.newestFirst(inputs.archived).first { archive in
+      archive.bytes.recordings > 0 && !listed.contains(archive.projectRoot)
+        && archive.expires.recordings.flatMap(parseTimestamp).map { $0 < inputs.now } != true
     }
   }
 
