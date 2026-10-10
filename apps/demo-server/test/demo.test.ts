@@ -1,7 +1,7 @@
 import type { Method } from '@stim-cli/core/phone-protocol';
 import { isRpcError, isRpcEvent, isRpcResult } from '@stim-cli/core/receive-protocol';
 
-import { DemoMachine, type Device } from '../src/demo.ts';
+import { DemoMachine, upgradeFromWebPage, type Device } from '../src/demo.ts';
 import { loadFixtures } from './load-fixtures.ts';
 
 const TOKEN = 'review-token-for-tests';
@@ -99,6 +99,33 @@ describe('pairing', () => {
   it('answers nothing but hello before pairing', async () => {
     const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
     expect((await client.request('status.subscribe')).error?.code).toBe('unauthorized');
+  });
+
+  it('closes a socket that keeps sending before hello, and one that never sends hello', async () => {
+    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
+    for (let sent = 0; sent < 3; sent++) {
+      expect((await client.request('status.subscribe')).error?.code).toBe('unauthorized');
+    }
+    expect(client.closed()).toBe(false);
+    await client.connection.receive(JSON.stringify({ id: 4, method: 'status.subscribe' }));
+    expect(client.closed()).toBe(true);
+
+    vi.useFakeTimers();
+    try {
+      const silent = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(silent.closed()).toBe(false);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(silent.closed()).toBe(true);
+
+      const paired = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
+      await paired.hello;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(paired.closed()).toBe(false);
+      paired.connection.close();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('accepts the device token kept in the socket attachment after hibernation', async () => {
@@ -207,6 +234,24 @@ describe('the phone protocol', () => {
     client.connection.close();
   });
 
+  it('refuses subscriptions beyond the per-connection limits and frees a slot on unsubscribe', async () => {
+    const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
+    const frames = { workspace: SEARCH, platform: 'ios', slot: 'default' };
+    const subscriptions: unknown[] = [];
+    for (let open = 0; open < 16; open++) subscriptions.push((await client.request('frames.subscribe', frames)).result);
+    expect((await client.request('frames.subscribe', frames)).error?.code).toBe('limit-exceeded');
+    await client.request('unsubscribe', subscriptions[0] as Record<string, unknown>);
+    expect((await client.request('frames.subscribe', frames)).result?.subscription).toEqual(expect.any(String));
+
+    await client.request('status.subscribe');
+    await client.request('status.subscribe');
+    expect((await client.request('status.subscribe')).error?.code).toBe('limit-exceeded');
+
+    for (let open = 0; open < 8; open++) await client.request('logs.subscribe', { workspace: SEARCH });
+    expect((await client.request('logs.subscribe', { workspace: SEARCH })).error?.code).toBe('limit-exceeded');
+    client.connection.close();
+  });
+
   it('answers reload and stop after a short delay', async () => {
     const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
     await client.hello;
@@ -285,5 +330,22 @@ describe('Control', () => {
     await client.hello;
     const reply = await client.request('control.begin', { workspace: '/elsewhere', platform: 'ios' });
     expect(reply.error?.code).toBe('bad-request');
+  });
+});
+
+describe('upgradeFromWebPage', () => {
+  const url = 'https://stim-demo.example.workers.dev/';
+  const headers = (entries: Record<string, string>) => new Headers(entries);
+
+  it('accepts the phone app, which sends no Origin or one derived from its own wss URL', () => {
+    expect(upgradeFromWebPage(headers({}), url)).toBe(false);
+    expect(upgradeFromWebPage(headers({ origin: 'https://stim-demo.example.workers.dev' }), url)).toBe(false);
+    expect(upgradeFromWebPage(headers({ origin: 'http://127.0.0.1:8787' }), 'http://127.0.0.1:8787/')).toBe(false);
+  });
+
+  it('refuses a browser page, which sends another Origin or Fetch Metadata', () => {
+    expect(upgradeFromWebPage(headers({ origin: 'https://evil.example' }), url)).toBe(true);
+    expect(upgradeFromWebPage(headers({ origin: 'null' }), url)).toBe(true);
+    expect(upgradeFromWebPage(headers({ 'sec-fetch-site': 'cross-site' }), url)).toBe(true);
   });
 });

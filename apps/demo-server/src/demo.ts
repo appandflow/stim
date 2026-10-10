@@ -111,6 +111,13 @@ const MAX_DEVICE_NAME = 64;
 const SIMULATOR = { canShake: false, slowAnimations: null };
 const DEVICE_TOKEN_CONTEXT = 'stim-demo-device:';
 const ROOT = '/Users/demo/Developer';
+const SUBSCRIPTION_LIMITS = new Map([
+  ['status.subscribe', 2],
+  ['logs.subscribe', 8],
+  ['frames.subscribe', 16],
+]);
+const MAX_PRE_HELLO_MESSAGES = 3;
+const PRE_HELLO_MS = 10_000;
 
 interface FrameFeed {
   connection: DemoConnection;
@@ -119,6 +126,17 @@ interface FrameFeed {
   key: string;
   platform: string;
   slot: string;
+}
+
+export function upgradeFromWebPage(headers: Pick<Headers, 'get'>, url: string): boolean {
+  if (headers.get('sec-fetch-site') !== null) return true;
+  const origin = headers.get('origin');
+  if (origin === null) return false;
+  try {
+    return new URL(origin).host !== new URL(url).host;
+  } catch {
+    return true;
+  }
 }
 
 export class DemoMachine {
@@ -202,6 +220,9 @@ export class DemoConnection {
   private nextSubscription = 1;
   private nextSession = 1;
   private readonly timers = new Map<string, Timer>();
+  private readonly kinds = new Map<string, string>();
+  private preHelloMessages = 0;
+  private helloTimer: Timer | undefined;
   private readonly sessions = new Map<
     string,
     { target: string; key: string; platform: string; down?: { x: number; y: number } }
@@ -216,6 +237,7 @@ export class DemoConnection {
     this.machine = machine;
     this.peer = peer;
     this.device = device;
+    if (!device) this.helloTimer = setTimeout(() => this.refuse(), PRE_HELLO_MS);
   }
 
   receive(text: string): Promise<void> {
@@ -225,6 +247,7 @@ export class DemoConnection {
 
   close(): void {
     this.closed = true;
+    if (this.helloTimer !== undefined) clearTimeout(this.helloTimer);
     for (const subscription of this.timers.keys()) this.stop(subscription);
     for (const feed of this.machine.feeds) if (feed.connection === this) this.machine.feeds.delete(feed);
     this.sessions.clear();
@@ -243,11 +266,19 @@ export class DemoConnection {
     });
   }
 
+  private refuse(): void {
+    if (this.closed) return;
+    this.close();
+    this.peer.close();
+  }
+
   private send(message: unknown): void {
     if (!this.closed) this.peer.send(JSON.stringify(message));
   }
 
   private async handle(text: string): Promise<void> {
+    if (this.closed) return;
+    if (!this.device && ++this.preHelloMessages > MAX_PRE_HELLO_MESSAGES) return this.refuse();
     let message: { id?: unknown; method?: unknown; params?: Params };
     try {
       message = JSON.parse(text) as typeof message;
@@ -293,6 +324,7 @@ export class DemoConnection {
   private async welcome(deviceToken: string, name: string): Promise<Record<string, unknown>> {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(deviceToken));
     this.device = { id: hex(new Uint8Array(digest)).slice(0, 8), name };
+    if (this.helloTimer !== undefined) clearTimeout(this.helloTimer);
     this.peer.remember(this.device);
     const { fixtures } = this.machine;
     return {
@@ -310,8 +342,9 @@ export class DemoConnection {
     };
   }
 
-  private every(ms: number, tick: (subscription: string) => void): string {
+  private every(method: string, ms: number, tick: (subscription: string) => void): string {
     const subscription = `s${this.nextSubscription++}`;
+    this.kinds.set(subscription, method);
     this.timers.set(
       subscription,
       setInterval(() => tick(subscription), ms),
@@ -323,6 +356,7 @@ export class DemoConnection {
     const timer = this.timers.get(subscription);
     if (timer !== undefined) clearInterval(timer);
     this.timers.delete(subscription);
+    this.kinds.delete(subscription);
     for (const feed of this.machine.feeds) {
       if (feed.connection === this && feed.subscription === subscription) this.machine.feeds.delete(feed);
     }
@@ -330,6 +364,10 @@ export class DemoConnection {
 
   private call(method: string, params: Params, id: unknown): Outcome {
     const machine = this.machine;
+    const limit = SUBSCRIPTION_LIMITS.get(method);
+    if (limit !== undefined && [...this.kinds.values()].filter((kind) => kind === method).length >= limit) {
+      return { error: ['limit-exceeded', `A connection can hold ${limit} ${method} subscriptions.`] };
+    }
     switch (method) {
       case 'status.subscribe': {
         const event = (subscription: string): unknown => {
@@ -341,7 +379,7 @@ export class DemoConnection {
             usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
           };
         };
-        const subscription = this.every(STATUS_MS, (sub) => this.send(event(sub)));
+        const subscription = this.every(method, STATUS_MS, (sub) => this.send(event(sub)));
         setTimeout(() => this.timers.has(subscription) && this.send(event(subscription)), 0);
         return { result: { subscription } };
       }
@@ -357,7 +395,7 @@ export class DemoConnection {
       case 'logs.subscribe': {
         const logs = machine.logs.filter((record) => record.workspace === params.workspace);
         let cursor = 0;
-        const subscription = this.every(LOGS_MS, (sub) => {
+        const subscription = this.every(method, LOGS_MS, (sub) => {
           if (!logs.length) return;
           const record = { ...logs[cursor++ % logs.length], ts: Date.now() };
           const records = filterRecords([record], { ...params, tail: undefined });
@@ -376,7 +414,7 @@ export class DemoConnection {
         if (!machine.fixtures.frames[target.key]) {
           return { error: ['no-frames', `The demo server has no ${String(params.platform)} screen.`] };
         }
-        const subscription = this.every(FRAME_MS, () => this.sendFrame(feed));
+        const subscription = this.every(method, FRAME_MS, () => this.sendFrame(feed));
         const feed: FrameFeed = { connection: this, subscription, ...target };
         machine.feeds.add(feed);
         setTimeout(() => this.timers.has(subscription) && this.sendFrame(feed), 0);
