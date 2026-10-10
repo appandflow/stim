@@ -1,7 +1,7 @@
 import { readdirSync, rmSync } from 'fs';
-import { homedir, tmpdir } from 'os';
-import { dirname, isAbsolute, join, relative } from 'path';
+import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
+import { cacheDirRefusal } from '@stim-cli/core';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
@@ -110,10 +110,7 @@ export function previewScopedEmptying(caches: CacheDescriptor[]): GcCache[] {
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.
 function ownsItsDirectory(cache: CacheDescriptor): boolean {
-  if (Array.isArray(cache.files)) return false;
-  const dir = canonicalPath(cache.dir);
-  if (dirname(dir) === dir) return false;
-  return ![homedir(), tmpdir(), getConfigDir()].map(canonicalPath).includes(dir);
+  return !Array.isArray(cache.files) && !cacheDirRefusal(cache.dir);
 }
 
 function emptyCache(cache: CacheDescriptor): {
