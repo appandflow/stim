@@ -203,7 +203,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a Phone**, or takes the endpoint and pairing token typed
-  in. A failed QR pairing keeps its error visible and pauses scanning until
+  in. Either way, the app shows the endpoint host and connects only after
+  **Connect**; a host that is not a `.ts.net` name or this device gets a warning.
+  A failed QR pairing keeps its error visible and pauses scanning until
   **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
   The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
@@ -272,7 +274,7 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     running or ended, shows as a link that opens it in the Claude app, or
     claude.ai/code without the app. Below come the upstream, ahead, behind, changed and untracked
     files, merged into, and the pull request's title, state, checks and review
-    with **Open in GitHub**. **Changed** and **Untracked** open a file list on a
+    with **Open in GitHub**, offered only for a `github.com` pull request link. **Changed** and **Untracked** open a file list on a
     Mac that supports workspace diffs. Select a file to read its staged and
     unstaged patches or new text. These requests run only when opening the list
     or selecting a file; home and status updates fetch no diff data. The list
