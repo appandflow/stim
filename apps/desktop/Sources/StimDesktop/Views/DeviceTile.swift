@@ -380,15 +380,14 @@ struct DeviceTile: View {
     }
   }
 
-  /// The reported size, else the installed artwork's upright size, so the first layout of a single-screen
-  /// device is already framed instead of waiting for the display view's asynchronous report.
   private func frameSize(_ screenID: UInt32) -> CGSize? {
     if let size = frameSizes[screenID] { return size }
     guard viewer, screenID == 1, device.formFactor != .dual else { return nil }
     switch device {
     case .ios(_, let sim) where !sim.physical && device.isRunning:
       return device.localSimulatorUDID.flatMap { SimulatorDisplayView.frameSize(udid: $0) }
-    case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil && device.isRunning:
+    case .android(_, let avd)
+    where avd.owned && !avd.physical && avd.host == nil && device.isRunning && device.localEmulatorSerial != nil:
       return EmulatorDisplayView.frameSize(avdName: avd.name)
     default: return nil
     }

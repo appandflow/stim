@@ -54,7 +54,6 @@ public struct SimulatorDisplayView: NSViewRepresentable {
     self.onInput = onInput
   }
 
-  /// The upright size of the simulator's installed device frame, which the first layout needs before the view reports it.
   @MainActor public static func frameSize(udid: String) -> CGSize? {
     SimulatorFrameArtwork.cached(udid: udid)?.geometry.size
   }

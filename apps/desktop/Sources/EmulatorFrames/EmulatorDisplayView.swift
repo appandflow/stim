@@ -46,7 +46,6 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     self.accurateScreenSize = accurateScreenSize
   }
 
-  /// The upright size of the emulator skin, which the first layout needs before the view reports it.
   @MainActor public static func frameSize(avdName: String) -> CGSize? {
     EmulatorFrameArtwork.cached(avdName: avdName)?.geometry.size
   }

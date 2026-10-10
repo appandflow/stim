@@ -7,12 +7,12 @@ import AppKit
 
 @MainActor
 enum SimulatorFrameArtwork {
-  private static var cache: [String: DeviceFrameArtwork?] = [:]
+  private static var cache: [String: DeviceFrameArtwork] = [:]
 
   static func cached(udid: String) -> DeviceFrameArtwork? {
     if let hit = cache[udid] { return hit }
     let artwork = load(udid: udid)
-    cache[udid] = .some(artwork)
+    if let artwork { cache[udid] = artwork }
     return artwork
   }
 
