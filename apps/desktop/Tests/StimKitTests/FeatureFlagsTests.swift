@@ -92,6 +92,8 @@ private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
     [
       PhoneApp.Copy.screenPermissionUse(phoneApp: false),
       PhoneApp.Copy.screenPermissionRequest(phoneApp: false),
+      PhoneApp.Copy.screenPermissionDone(allowed: true, phoneApp: false),
+      PhoneApp.Copy.screenPermissionDone(allowed: false, phoneApp: false),
       PhoneApp.Copy.viewerAppError(phoneApp: false),
       PhoneApp.Copy.notificationRulesPrefix(phoneApp: false),
       PhoneApp.Copy.serverPopupTitle(missing: true, phoneApp: false),

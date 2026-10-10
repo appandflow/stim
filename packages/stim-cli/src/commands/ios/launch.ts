@@ -30,7 +30,7 @@ import {
 } from '../../command-output.ts';
 import { localNetworkPending, iosDeviceBounds, isWirelessIosDevice } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
+import { workspaceDevServerMode } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
@@ -272,7 +272,7 @@ async function verifyIosMetroRun({
         since: launchedAt,
         metroPort,
         platform: 'ios',
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
         processAlive: remoteDevice
           ? null
@@ -391,6 +391,7 @@ async function verifyIosMetroRun({
   }
 
   return reportUnverified({
+    root,
     verification,
     siblings,
     slot,
@@ -413,6 +414,7 @@ async function verifyIosMetroRun({
 }
 
 function reportUnverified({
+  root,
   verification,
   siblings,
   slot,
@@ -433,6 +435,7 @@ function reportUnverified({
   launched,
 }: Pick<
   VerifyIosRunArgs,
+  | 'root'
   | 'slot'
   | 'phase'
   | 'note'
@@ -467,7 +470,7 @@ function reportUnverified({
     devClientUrl: scheme
       ? (launched?.url ?? devClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, lanAddress ?? undefined))
       : null,
-    mode: isExpo ? MODE_EXPO : MODE_BARE,
+    mode: workspaceDevServerMode(root, isExpo),
     remote: remoteDevice,
     physical,
     devClient: Boolean(scheme),

@@ -1,0 +1,119 @@
+name: Stim CI dogfood
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'scripts/ci/**'
+      - '.github/actions/stim-ci/**'
+      - '.github/workflows/stim-ci.yml'
+      - 'pnpm-lock.yaml'
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+    paths:
+      - 'apps/mobile/**'
+      - 'apps/desktop/**'
+      - 'packages/**'
+      - 'scripts/ci/**'
+      - '.github/actions/stim-ci/**'
+      - '.github/workflows/stim-ci.yml'
+      - 'pnpm-lock.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stim-ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e-smoke')
+    name: ${{ matrix.platform }} app lifecycle
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ios
+            runner: xcode-27-xlarge
+            project: apps/mobile
+          - platform: android
+            runner: ubuntu-latest
+            project: apps/mobile
+          - platform: macos
+            runner: macos-15
+            project: apps/desktop
+    env:
+      APP_VARIANT: development
+      STIM_HOME: ${{ github.workspace }}/.stim-ci-home
+      STIM_BIN: ${{ github.workspace }}/packages/stim-cli/dist/cli.mjs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+
+      - uses: ruby/setup-ruby@v1
+        if: matrix.platform == 'ios'
+        with:
+          ruby-version: '3.4'
+
+      - name: Select Xcode
+        if: matrix.platform != 'android'
+        env:
+          XCODE_PATH: ${{ matrix.platform == 'ios' && '/Applications/Xcode_27.0.app' || '/Applications/Xcode_26.3.app' }}
+        run: sudo xcode-select -s "$XCODE_PATH"
+
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android tools and KVM
+        if: matrix.platform == 'android'
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          mkdir -p "${GRADLE_USER_HOME:-$HOME/.gradle}"
+          echo 'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' >> "${GRADLE_USER_HOME:-$HOME/.gradle}/gradle.properties"
+          node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
+
+      - name: Build, launch, probe and stop
+        uses: ./.github/actions/stim-ci
+        with:
+          cli-path: packages/ci/dist/stim-ci.mjs
+          platform: ${{ matrix.platform }}
+          project: ${{ matrix.project }}
+          command: node ../../scripts/ci/app-smoke.mjs
+          artifacts: stim-ci-results/${{ matrix.platform }}/first
+          timeout: '2400'
+          artifact-name: stim-ci-${{ matrix.platform }}-first
+          retention-days: '7'
+
+      - name: Repeat with the job's warm build state
+        uses: ./.github/actions/stim-ci
+        with:
+          cli-path: packages/ci/dist/stim-ci.mjs
+          platform: ${{ matrix.platform }}
+          project: ${{ matrix.project }}
+          command: node ../../scripts/ci/app-smoke.mjs
+          artifacts: stim-ci-results/${{ matrix.platform }}/warm
+          timeout: '600'
+          artifact-name: stim-ci-${{ matrix.platform }}-warm
+          retention-days: '7'
+
+      - name: Record Android Gradle heap
+        if: always() && matrix.platform == 'android'
+        shell: bash
+        run: |
+          grep -h 'DefaultDaemonContext' "${GRADLE_USER_HOME:-$HOME/.gradle}"/daemon/*/daemon-*.out.log |
+            grep -oE -- '-Xmx[0-9]+[kKmMgG]?' | sort -u

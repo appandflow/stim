@@ -480,7 +480,7 @@ function isFatalLaunchError(record: NdjsonRecord, platform: 'ios' | 'android' | 
     record.event === 'bundle_build_failed' ||
     record.event === 'bundling_error' ||
     record.event === 'transformer_error' ||
-    ((record.event === 'expo_stdout' || record.event === 'expo_stderr') &&
+    (['expo_stdout', 'expo_stderr', 'command_stdout', 'command_stderr'].includes(String(record.event)) &&
       typeof record.msg === 'string' &&
       /\bBundling failed\b/.test(record.msg))
   );

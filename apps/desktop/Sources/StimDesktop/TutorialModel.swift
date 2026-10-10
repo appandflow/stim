@@ -40,32 +40,39 @@ final class TutorialModel: ObservableObject {
   }
 
   var tourPath: String? { snapshot?.record.tourPath ?? records.record?.tourPath }
-  var manual: Bool { snapshot?.record.manual == true }
-  var prompt: String? {
-    if restarting { return TutorialSteps.restartPrompt }
-    if let step = snapshot?.currentStep,
-      ["build", "device"].contains(step),
-      snapshot?.steps.first(where: { $0.id == step }).map({
+
+  func ask(for step: TutorialStep) -> String? {
+    var template = step.ask
+    if step.id == snapshot?.currentStep, step.id == "build",
+      snapshot?.steps.first(where: { $0.id == step.id }).map({
         if case .failed = $0.state { return true }
         return false
       }) == true
     {
-      return "Continue the Stim tutorial: run"
+      template = TutorialSteps.retryAsk
     }
-    return TutorialSteps.all.first { $0.id == snapshot?.currentStep }?.prompt
+    let existing = Set(workspaces.map(\.path))
+    return template.map {
+      tutorialAsk(
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine,
+        second: snapshot?.record.secondPath, existing: existing)
+    }
   }
 
   var message: String? {
     if let cliFailure { return cliFailure }
     if restarting { return "Waiting for a restarted tutorial workspace..." }
     if let version = workspace?.tutorial?.version, !TutorialSteps.supportedVersions.contains(version) {
-      return "Update Stim Desktop to follow this tutorial"
+      return version < TutorialSteps.supportedVersions.min()!
+        ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
     }
     if snapshot?.currentStep == "begin" {
       return snapshot?.record.beginWaitTimedOut(now: now) == true
         ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
     }
-    if workspace == nil, tourPath != nil, snapshot?.isComplete == false {
+    if workspace == nil, tourPath != nil, snapshot?.isComplete == false,
+      !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
+    {
       return "Tutorial workspace gone: Restart"
     }
     if snapshot?.currentStep == "finish", removalRefused {
@@ -87,6 +94,15 @@ final class TutorialModel: ObservableObject {
     machineState: TutorialMachineState = .none, approvedMachine: String? = nil, removalRefused: Bool = false
   ) {
     self.now = now
+    if let stored = progress.record ?? records.record, !TutorialSteps.supportedVersions.contains(stored.version) {
+      progress = TutorialProgress()
+      records.record = nil
+      snapshot = nil
+      archiveEnabled = nil
+      logs = []
+      viewerEventSequence = viewerEvents.last?.sequence ?? 0
+      launchPending = false
+    }
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
@@ -97,15 +113,18 @@ final class TutorialModel: ObservableObject {
     statusLoaded = true
     let saved = progress.record ?? records.record
     let archivedRoots = saved?.archivedProjectRoots(in: archived) ?? []
-    let candidate = TutorialEnvironment.select(workspaces, trackedPath: saved?.tourPath)
+    let candidate = TutorialEnvironment.select(
+      workspaces, trackedPath: saved?.tourPath, since: saved.flatMap { $0.tourPath == nil ? $0.startedAt : nil },
+      repository: saved?.clonePath)
     let tracked = saved?.tourPath
-    workspace =
-      workspaces.first { $0.path == (tracked ?? candidate?.path) }
-      ?? (restarting ? workspaces.first { $0.path == candidate?.path } : nil)
+    workspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
     if launchPending, let saved {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
         openPending = saved.step != "done"
+        launchPending = false
+      } else if saved.tourPath == nil, saved.step != "done" {
+        openPending = true
         launchPending = false
       }
     } else if let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
@@ -126,7 +145,6 @@ final class TutorialModel: ObservableObject {
       if opening { checkCLI() }
     }
     guard isOpen || progress.record != nil || records.record != nil else { return }
-    let oldStart = progress.record?.startedAt
     if workspace == nil, tourPath != nil {
       if missingSince == nil { missingSince = now }
     } else {
@@ -137,14 +155,15 @@ final class TutorialModel: ObservableObject {
       && missingSince.map { now.timeIntervalSince($0) >= 10 } == true
     snapshot = progress.update(
       TutorialInput(
-        environment: workspace.flatMap(TutorialEnvironment.init), archivedProjectRoots: archivedRoots,
+        environment: workspace.flatMap(TutorialEnvironment.init), siblings: workspaces.compactMap(TutorialEnvironment.init),
+        archivedProjectRoots: archivedRoots,
         logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
         pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
         machineApproved: machineState == .approved, approvedMachine: approvedMachine, replayOff: workspace?.replayOff ?? false,
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))
     if snapshot?.steps.first(where: { $0.id == "machine" })?.state == .done { self.machineState = .approved }
-    if restarting, oldStart != snapshot?.record.startedAt {
+    if restarting, snapshot?.record.tourPath != nil {
       restarting = false
       logs = []
     }
@@ -156,7 +175,7 @@ final class TutorialModel: ObservableObject {
   func open(beginning: Bool = false) {
     if beginning {
       progress = TutorialProgress()
-      records.record = nil
+      records.record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: Date())
       snapshot = nil
       workspace = nil
       logs = []
@@ -184,12 +203,8 @@ final class TutorialModel: ObservableObject {
     progress.markDone(now: Date())
     refresh()
   }
-  func setManual(_ manual: Bool) {
-    progress.setManual(manual)
-    refresh()
-  }
   func copiedPrompt(now: Date = Date()) {
-    guard !restarting, !manual else { return }
+    guard !restarting else { return }
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
   }
@@ -197,14 +212,16 @@ final class TutorialModel: ObservableObject {
   func restart(now: Date = Date()) {
     viewerEventSequence = viewerEvents.last?.sequence ?? 0
     progress.requestRestart(now: now)
+    records.record = progress.record
     restarting = true
     isOpen = true
   }
 
   func commands(for step: TutorialStep) -> String {
     tutorialCommands(
-      step.manual, tourPath: tourPath, repository: workspace?.worktree?.repository,
-      stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine)
+      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository,
+      stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine,
+      udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
   private func refresh(now: Date = Date()) {

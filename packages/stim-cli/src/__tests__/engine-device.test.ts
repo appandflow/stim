@@ -499,7 +499,10 @@ describe('ensureBooted: android', () => {
         if (cmd.includes('pm path android')) return 'package:/system/framework/framework-res.apk';
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot an emulator that is already running');
       },
@@ -528,7 +531,10 @@ describe('ensureBooted: android', () => {
         if (cmd.includes('pm path android')) return booted ? 'package:/system/framework/framework-res.apk' : '';
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (cmd, args) => {
         spawned.push([cmd, ...args]);
         booted = true;
@@ -559,7 +565,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot the fresh AVD a second time');
       },
@@ -592,7 +601,10 @@ describe('ensureBooted: android', () => {
           return '';
         },
         runQuiet: () => '',
-        runFile: () => '{"devices":{}}',
+        runFile(file, args = []) {
+          if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+          return '{"devices":{}}';
+        },
         spawn: () => {
           throw new Error('must not launch an emulator past the cap');
         },
@@ -631,7 +643,10 @@ describe('ensureBooted: android', () => {
         if (cmd.includes('pm path android')) return ourSerial ? 'package:/system/framework/framework-res.apk' : '';
         return '';
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (cmd, args) => {
         spawned.push([cmd, ...args]);
         ourSerial = `emulator-${args[args.indexOf('-port') + 1]}`;
@@ -673,7 +688,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (_cmd, args) => {
         spawnedPorts.push(Number(args[args.indexOf('-port') + 1]));
         return { unref() {} };
@@ -705,7 +723,10 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runQuiet: () => null,
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => ({ pid: 987654, unref() {} }),
     });
     const started = Date.now();
@@ -738,7 +759,10 @@ describe('ensureBooted: android', () => {
         probes++;
         return probes >= 5 && cmd.includes('sys.boot_completed') ? '1' : null;
       },
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => ({ pid: 987654, unref() {} }),
     });
     const result = await ensureBooted({
@@ -786,7 +810,10 @@ describe('ensureBooted: android', () => {
         }
         return '';
       },
-      runFile: () => '{"devices":{}}',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '{"devices":{}}';
+      },
       spawn,
     });
     const resultPromise = ensureBooted({
@@ -854,7 +881,10 @@ describe('ensureBooted: android', () => {
         return '';
       },
       runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-app\nOK' : ''),
-      runFile: () => '{"devices":{}}',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '{"devices":{}}';
+      },
       spawn,
     });
     const lines: string[] = [];
@@ -890,7 +920,10 @@ describe('ensureBooted: android', () => {
           : cmd.includes('pm path android')
             ? 'package:/system/framework/framework-res.apk'
             : '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: (_cmd: string, _args: string[], o: Record<string, unknown>) => {
         opts.push(o);
         return { pid: 4242, unref() {} };
@@ -916,7 +949,10 @@ describe('ensureBooted: android', () => {
       runFileQuiet: () => null,
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
-      runFile: () => '',
+      runFile(file, args = []) {
+        if (file === 'adb' || file === 'emulator') return this.run!([file, ...args].join(' '));
+        return '';
+      },
       spawn: () => {
         throw new Error('must not boot a foreign AVD');
       },
@@ -1976,7 +2012,8 @@ describe('ensureOwnedDevice: android', () => {
             return null;
           }
         },
-        runFile() {
+        runFile(file: string, args: string[] = []): string {
+          if (file === 'adb' || file === 'emulator') return this.run([file, ...args].join(' '));
           return '';
         },
         runFileQuiet(file: string) {

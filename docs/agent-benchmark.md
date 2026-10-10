@@ -215,6 +215,14 @@ cp /tmp/<run-id>-session.mp4 <run-dir>/proof/session.mp4
 env AGENT_DEVICE_STATE_DIR=<campaign-state> AGENT_DEVICE_SESSION=<run-id> agent-device close
 ```
 
+When a native compatibility adapter is configured, the prompt inserts its
+pinned read-only proof command between recording-copy and session close. Run
+that exact command and await success before continuing. It binds the live
+compatibility check to the saved media; collection still verifies all other
+proof requirements. Leave the app, assigned device and worktree available for
+coordinator teardown. This extra step is identical across arms and does not
+move the screenshot readiness endpoint.
+
 The run-scoped MP4 captures Expo onboarding and Settings navigation for audit
 and promotional use. Every arm records with the same settings so capture
 overhead stays symmetric. Record each proof step as its own top-level shell command. Do not hide proof in

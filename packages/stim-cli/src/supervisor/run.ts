@@ -9,11 +9,12 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { nativeProjectIntegration } from '../integrations/projects.ts';
+import { resolveProjectSettings, runnableMetroCommand, type SettingsObject } from '../workspace/settings.ts';
 import type { ServerHandle, ServerStarter } from './types.ts';
 export type { ServerExitInfo } from './types.ts';
 import { describeError } from './errors.ts';
 import { relaunchWithLogFile } from '../detached-entry.ts';
-import { MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
+import { MODE_COMMAND, MODE_EXPO, clearExpoMetroTunnel, clearWorkspaceSupervisor, writePidFile } from './state.ts';
 import {
   clearWorkspaceStateKeys,
   writeWorkspaceState,
@@ -145,6 +146,10 @@ export interface RunSupervisorOptions {
   isExpo?: (projectRoot: string) => boolean;
   startBare?: ServerStarter | null;
   startExpo?: ServerStarter | null;
+  startCommand?:
+    | ((opts: Parameters<ServerStarter>[0] & { command: readonly string[] }) => Promise<ServerHandle>)
+    | null;
+  settings?: SettingsObject | null;
   now?: () => number;
   onExit?: (code: number) => void;
   attachSignals?: boolean;
@@ -164,6 +169,8 @@ export async function runSupervisor({
   isExpo = detectIsExpo,
   startBare = null,
   startExpo = null,
+  startCommand = null,
+  settings: settingsOverride = null,
   now = Date.now,
   onExit = (code: number) => process.exit(code),
   attachSignals = true,
@@ -179,7 +186,9 @@ export async function runSupervisor({
   const logsDir = workspaceLogsDir(root);
   const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const integration = nativeProjectIntegration(root, isExpo);
-  const mode = integration.mode;
+  const settings = settingsOverride ?? resolveProjectSettings(root).settings;
+  const command = runnableMetroCommand(settings);
+  const mode = command ? MODE_COMMAND : integration.mode;
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);
   if (!processToken) {
@@ -305,7 +314,13 @@ export async function runSupervisor({
   });
 
   try {
-    const start = (mode === MODE_EXPO ? startExpo : startBare) ?? (await integration.loadDevServer());
+    let start: ServerStarter;
+    if (command) {
+      const startServer = startCommand ?? (await import('./server-command.ts')).startCommandServer;
+      start = (opts) => startServer({ ...opts, command });
+    } else {
+      start = (mode === MODE_EXPO ? startExpo : startBare) ?? (await integration.loadDevServer());
+    }
     server = await start({
       root,
       port,
@@ -313,6 +328,7 @@ export async function runSupervisor({
       writer: serverWriter,
       tunnel,
       resetCache,
+      settings,
       onTunnelUrl: (url: string) => {
         try {
           withWorkspaceStateLock(root, () => {

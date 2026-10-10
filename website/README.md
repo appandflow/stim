@@ -19,6 +19,7 @@ The theme and landing page follow the [Stim branding board](https://www.figma.co
 and [landing page reference](https://www.figma.com/design/ENnvWM98Hb0S1jk43T1tx7?node-id=8426-12140).
 The Figma SVG exports, optimized with ImageOptim, live in `static/img/branding`.
 `scripts/build-stim-jar-lottie.py` regenerates the animated hero jar (`stim-jar-*.json`, their first-frame SVGs, and the phone app's copies in `apps/mobile/assets/animations`) and the static `hero-bg*.svg` from `hero.svg` and `hero-dark.svg`; install its pinned dependencies with `pip install -r scripts/requirements-stim-jar-lottie.txt`.
+`scripts/build-stim-build-lottie.py` regenerates Stim Desktop's build animation (`stim-build-*.json` and the phone app's copies) from the fast-builds jar style; it needs only Python.
 The 1200x630 social card that `themeConfig.image` serves as the `og:image` is the Figma PNG export
 `static/img/branding/social-card.png`; re-export it there when the tagline or artwork changes. Inter and JetBrains Mono
 are bundled with their licenses in `src/css/fonts`.

@@ -113,7 +113,8 @@ KEYS STIM READS
   ios.remote            "proxy", "eas", or a named approved Mac from
                         remote.machines, with the same meaning as --remote.
                         "auto" places on an approved Mac when this Mac is full or
-                        busy. Unset runs here. See lifecycle hosted-ios.
+                        busy. Unset runs here; "local" runs here even when a
+                        lower layer says otherwise. See lifecycle hosted-ios.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -255,7 +256,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         means the debug keystore's fixed "android".
   android.remote        "proxy", "eas", or a named approved Mac in
                         remote.machines; "auto" places on an approved Mac when
-                        this Mac is full or busy. Unset runs here.
+                        this Mac is full or busy. Unset runs here; "local"
+                        runs here even when a lower layer says otherwise.
                         See lifecycle hosted-android.
   remote.easFallback    true lets "auto" (ios.remote, android.remote or
                         --remote auto) run the simulator or emulator on a
@@ -285,6 +287,21 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         foreground serve process, never Funnel; "auto" never
                         selects it. The device must share the tailnet. See
                         \`guide metro\`. Any other value is refused as invalid.
+  metro.command         argv array that starts this app's dev server, for an
+                        app whose Metro only runs through its own command,
+                        e.g. ["node", "../react-native/cli.js", "start",
+                        "--port", "{port}"]. No shell; it runs from the app
+                        directory, and {port} becomes the reserved Metro port,
+                        which the command must pass. It replaces bare-inproc
+                        and expo-child with command-child (see \`guide
+                        metro\`). Workspace or committed scope.
+                        Metro must keep running from inside the app, which
+                        is how Stim proves it is this app's. Without Stim's
+                        Metro reporter, launches stay UNVERIFIED. start
+                        refuses with STIM_BAD_ARG a value that is not such an
+                        array or has no {port}, --reset-cache (put the
+                        command's own reset flag in metro.command instead),
+                        and any use on Windows.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.
@@ -824,7 +841,7 @@ iPhone simulator on the target runtime. Its project-selected CocoaPods must matc
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
-the app's .ruby-version when installed, with pod install's UTF-8 locale defaults.
+the app's .ruby-version when installed, and otherwise the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the Mac's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
