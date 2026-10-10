@@ -623,6 +623,7 @@ jobs:
   native-xcode:
     name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
     if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    # ga-large selects macos-26-xlarge, a larger runner billed per minute even on public repositories.
     runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
     timeout-minutes: 45
     env:
