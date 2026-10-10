@@ -1,13 +1,12 @@
 import AppKit
 import SwiftUI
 
-/// Keeps the main window's sidebar at or above its minimum width. A launch with no saved split view
-/// frames starts at the ideal width; a restored width below the minimum is raised to the minimum.
 struct SidebarWidthGuard: NSViewRepresentable {
   static let minimum: CGFloat = 220
   static let ideal: CGFloat = 272
-  private static let autosaveKey = "NSSplitView Subview Frames main, SidebarNavigationSplitView"
-  private static let hadAutosave = UserDefaults.standard.object(forKey: autosaveKey) != nil
+  private static let hadAutosave = UserDefaults.standard.dictionaryRepresentation().keys.contains {
+    $0.hasPrefix("NSSplitView Subview Frames") && $0.hasSuffix("SidebarNavigationSplitView")
+  }
 
   static func target(for width: CGFloat, hadAutosave: Bool) -> CGFloat? {
     if width >= minimum { return nil }
@@ -22,8 +21,8 @@ struct SidebarWidthGuard: NSViewRepresentable {
   private final class GuardView: NSView {
     private var applied = false
 
-    override func viewDidMoveToWindow() {
-      super.viewDidMoveToWindow()
+    override func layout() {
+      super.layout()
       guard window != nil, !applied else { return }
       DispatchQueue.main.async { [weak self] in self?.apply() }
     }
