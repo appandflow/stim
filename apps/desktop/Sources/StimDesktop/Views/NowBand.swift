@@ -26,7 +26,7 @@ struct NowBand: View {
         HStack(alignment: .top, spacing: Space.md) { tiles }
         VStack(spacing: Space.md) { tiles }
       }
-      if metrics.memory?.pressure != .normal {
+      if metrics.memory?.pressure == .warning || metrics.memory?.pressure == .critical {
         ForEach(status.payload?.maintenance?.memoryCulprits ?? []) { culprit in
           culpritRow(culprit)
         }

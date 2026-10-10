@@ -16,6 +16,7 @@ import {
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import { formatBytes } from '../fs-util.ts';
+import { memoryCulpritsUnder } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { resolveBudget } from '../budget.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
@@ -161,6 +162,9 @@ export async function runMaintenance(trigger: string): Promise<void> {
         if (check === 'worktree' || check === 'sweep') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
+          const culprits =
+            settings.memoryPressureLevel === 'off' ? null : memoryCulpritsUnder(state.pressure.memory.level);
+          if (culprits) state.pressure.memory.culprits = culprits;
           const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
           for (const disk of state.pressure.disk)
             record('maintenance_check', 'debug', `Disk free on ${disk.volume}: ${(disk.freeMb / 1024).toFixed(1)}G`, {

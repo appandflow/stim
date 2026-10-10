@@ -50,7 +50,6 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
   public var lastChecks: LastChecks?
   public var pressure: Pressure?
 
-  /// The abnormal processes from the CLI's last memory pressure check.
   public var memoryCulprits: [MemoryCulprit] { pressure?.memory?.culprits ?? [] }
 
   public init(

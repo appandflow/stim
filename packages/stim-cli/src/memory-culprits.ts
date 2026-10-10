@@ -75,10 +75,6 @@ export function parseTopMemory(output: string): TopProcess[] {
   return rows;
 }
 
-/**
- * The processes whose footprint is abnormal: at least a quarter of physical memory and 8 GiB, or a known leaker's
- * lower bar. A known safe-to-restart process carries its command; any other carries none.
- */
 export function findMemoryCulprits(
   processes: readonly TopProcess[],
   totalBytes: number,
@@ -100,7 +96,6 @@ export function findMemoryCulprits(
   return culprits.toSorted((a, b) => b.bytes - a.bytes);
 }
 
-/** One sentence per culprit: its size and, when Stim knows one, the command that frees it. */
 export function memoryCulpritAdvice(culprits: readonly MemoryCulprit[] | null): string | null {
   if (!culprits?.length) return null;
   return culprits
@@ -145,7 +140,6 @@ export function readMemoryCulprits(
   return findMemoryCulprits(processes, totalBytes, commandLines);
 }
 
-/** Doctor findings for the culprits. Watchman is left out: `watchmanFinding` reports it from the same 2 GiB. */
 export function memoryCulpritFindings(culprits: readonly MemoryCulprit[] | null): Finding[] {
   return (culprits ?? [])
     .filter((culprit) => culprit.name !== 'Watchman')

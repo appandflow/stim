@@ -58,7 +58,7 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
-  const culprits = status.pressure?.memory.culprits
+  const culprits = (status.mode === 'off' ? undefined : status.pressure?.memory.culprits)
     ?.map(
       (culprit) =>
         `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,

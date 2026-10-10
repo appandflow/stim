@@ -28,7 +28,6 @@ export function readHostMemoryPressure(
   }
 }
 
-/** The abnormally large processes, read only while `pressure` is warning or critical. */
 export function memoryCulpritsUnder(
   pressure: HostMemoryPressure | null,
   exec: Executor = getExecutor(),

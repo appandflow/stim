@@ -35,7 +35,6 @@ afterEach(() => {
 test('warning requires consecutive observations for the configured duration while critical counts immediately', () => {
   const settings = resolveMaintenanceSettings(null, {})!;
   const level = vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
-  vi.spyOn(hostMemory, 'memoryCulpritsUnder').mockReturnValue(null);
   vi.spyOn(os, 'freemem').mockReturnValue(os.totalmem());
   const first = measurePressure(settings, null, 0);
   expect(first.memory.pressured).toBe(false);
