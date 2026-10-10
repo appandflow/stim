@@ -7,7 +7,15 @@ import { workspaceLogsDir } from '../../workspace/paths.ts';
 import { shortUdid, phaseLine } from '../../command-output.ts';
 import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailArgs } from './types.ts';
 import type { BuildIosResult } from '../../engine/xcode.ts';
-import type { SettingsObject } from '../../workspace/settings.ts';
+import {
+  cacheProviderSettingError,
+  SETTING_SHAPE_REMEDY,
+  settingShapeErrors,
+  unknownSettingKeys,
+  type SettingsObject,
+} from '../../workspace/settings.ts';
+import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {
   DEFAULT_DEVICE_SLOT_WAIT_MS,
@@ -27,6 +35,33 @@ export const PLATFORM = 'ios';
 
 export function buildLogFile(root: string): string {
   return join(workspaceLogsDir(root), `build-${PLATFORM}.ndjson`);
+}
+
+export function resolveIosBuildSetup(
+  remoteBuild: string | undefined,
+  settings: SettingsObject,
+  warn: (label: 'setting' | 'cache', message: string) => void,
+): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
+  const [shapeError, ...lines] = settingShapeErrors(settings);
+  if (shapeError)
+    return { ok: false, failure: { code: 'STIM_BAD_ARG', message: shapeError, lines, remedy: SETTING_SHAPE_REMEDY } };
+  const placement = resolveBuildPlacement(remoteBuild);
+  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
+  let optimizations: Optimizations;
+  try {
+    optimizations = resolveOptimizations(settings);
+  } catch (error) {
+    return {
+      ok: false,
+      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
+    };
+  }
+  for (const key of unknownSettingKeys(settings)) {
+    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+  }
+  const cacheProviderError = cacheProviderSettingError(settings);
+  if (cacheProviderError) warn('cache', `${cacheProviderError} Using the local cache.`);
+  return { ok: true, buildMachine: placement.selected, optimizations };
 }
 
 const MAX_PRINTED_DIAGNOSTICS = 6;

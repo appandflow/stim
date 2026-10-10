@@ -454,7 +454,9 @@ WHAT WRITES WHAT
   build-android.ndjson extracted diagnostics at level error, and the launch as
                        a marker record. One RUN's worth: each build starts the
                        file over, so the first error in it always belongs to
-                       the run that pointed you at it.
+                       the run that pointed you at it. A build from the API's
+                       build() writes build-artifact-<platform>.ndjson
+                       instead, so it never replaces a run's transcript.
 
   Only a dev server Stim hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a
