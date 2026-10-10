@@ -578,7 +578,8 @@ test('relocation, shell location and task metadata preserve warm identities whil
   writeNativeXcodeProject(root);
   const before = fingerprint();
   expect(before).not.toHaveProperty('cacheIneligible');
-  for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID']) vi.stubEnv(name, `changed-${name}`);
+  for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID', 'LANG', 'LC_ALL'])
+    vi.stubEnv(name, `changed-${name}`);
   expect(fingerprint()).toEqual(before);
   const relocated = join(home, 'relocated');
   cpSync(root, relocated, { recursive: true });
