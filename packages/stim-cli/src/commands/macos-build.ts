@@ -11,6 +11,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement } from '../offload/selection.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import { getProject, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
@@ -50,6 +51,7 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
     root,
     { command: 'build', platform: 'macos' },
     async (claim) => {
+      if (!getProject(root)) upsertProject(root, {});
       recordWorkspaceUse(root);
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });

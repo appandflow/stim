@@ -16,7 +16,7 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizations.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
@@ -93,6 +93,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
     root,
     { command: 'build', platform: 'ios' },
     async (claim) => {
+      if (!getProject(root)) upsertProject(root, {});
       recordWorkspaceUse(root);
       const started = Date.now();
       const startedAt = new Date(started).toISOString();

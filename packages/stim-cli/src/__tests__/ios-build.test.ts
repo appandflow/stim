@@ -11,6 +11,8 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
+import { cacheEntryProtection } from '../maintenance/protect.ts';
+import { getProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -167,6 +169,8 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
+  expect(getProject(root)).not.toBeNull();
+  expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();
   expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
 });
 

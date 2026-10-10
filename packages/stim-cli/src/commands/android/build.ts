@@ -15,7 +15,7 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveSettings } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
@@ -82,6 +82,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
     root,
     { command: 'build', platform: 'android' },
     async (claim) => {
+      if (!getProject(root)) upsertProject(root, {});
       recordWorkspaceUse(root);
       const started = Date.now();
       const startedAt = new Date(started).toISOString();
