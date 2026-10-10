@@ -10,7 +10,7 @@ import {
 import { teardownOwnedAvd } from '../../devices/teardown.ts';
 import { formatBytes } from '../../fs-util.ts';
 import type { ChildProcess } from 'node:child_process';
-import { rmSync, statSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
 import type { BuildPhase, recordFinishedBuild } from '../../engine/build-progress.ts';
@@ -433,7 +433,6 @@ interface FinishAndroidRunArgs {
   bootDuration: () => string;
   apkPath: string | null;
   androidPackage: string | null;
-  swapDir: string | null;
   record: AndroidRecord;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
@@ -621,7 +620,6 @@ export async function finishAndroidRun({
   bootDuration,
   apkPath,
   androidPackage: initialPackage,
-  swapDir,
   record,
   waitedForBuild,
   ccache,
@@ -811,11 +809,6 @@ export async function finishAndroidRun({
   if (installed.note) {
     phase('install', chalk.yellow(installed.note));
     writer.write({ src: 'build', level: 'warn', event: 'install_uninstalled_first', msg: installed.note });
-  }
-  if (swapDir) {
-    try {
-      rmSync(swapDir, { recursive: true, force: true });
-    } catch {}
   }
 
   if (androidPackage) upsertProject(root, { androidPackage });
