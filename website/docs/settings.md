@@ -69,9 +69,7 @@ Stim reads the first value found in this order:
    (`--scope repo`).
 3. Committed `.stim.json` beside the app's `package.json` (`--scope committed`).
 4. Machine defaults in `~/.stim/config.json` (`--scope machine`), for the
-   top-level `optimizations` settings, `ios.deviceType`, `ios.runtime`,
-   `android.systemImage`, `android.deviceProfile` and
-   `devices.idleShutdownMinutes` and `devices.reclaimIdleMinutes` only.
+   settings whose Layers column below includes `machine`.
 5. The Stim default.
 
 An environment variable that overrides a setting wins over every layer.
