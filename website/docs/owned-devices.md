@@ -341,8 +341,8 @@ Doctor skips this check when `STIM_HOME` is set, because processes are
 machine-global.
 While pressure stays elevated, the automatic maintenance check also records the
 processes in `stim status --json` under `maintenance.pressure.memory.culprits`,
-and Stim Desktop shows them in the memory popover with a copy button for each
-command.
+and Stim Desktop shows them under **Machines > This Mac > Resource Usage** with
+a copy button for each command.
 
 ## Idle shutdown
 

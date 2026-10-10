@@ -26,6 +26,11 @@ struct NowBand: View {
         HStack(alignment: .top, spacing: Space.md) { tiles }
         VStack(spacing: Space.md) { tiles }
       }
+      if metrics.memory?.pressure != .normal {
+        ForEach(status.payload?.maintenance?.memoryCulprits ?? []) { culprit in
+          culpritRow(culprit)
+        }
+      }
       if let machine = status.payload?.machine, !machine.owners.isEmpty {
         let actionWidth = actionWidth(machine.owners)
         CollapsibleSection("machine.processes", title: "Memory and CPU by Process Group", items: machine.ranked) { shown in
@@ -104,6 +109,31 @@ struct NowBand: View {
           .accessibilityLabel(
             "\(title), recent history. "
               + (values.isEmpty ? "Unavailable" : "\(values.count) measurements, oldest to newest"))
+      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func culpritRow(_ culprit: MaintenanceStatus.MemoryCulprit) -> some View {
+    Card {
+      HStack(alignment: .top, spacing: Space.md) {
+        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(Tone.warning))
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("\(culprit.name) uses \(Format.fileSize(culprit.bytes))").font(.stim(.callout, weight: .semibold))
+          if let command = culprit.command {
+            Text(command).font(.stim(.callout, mono: true)).textSelection(.enabled)
+            if let note = culprit.note { Text(note).foregroundStyle(Palette.secondary) }
+          } else {
+            Text("Stim knows no safe restart for this process. Quit it only if you know what it is.")
+              .foregroundStyle(Palette.secondary)
+          }
+        }
+        Spacer(minLength: 0)
+        if let command = culprit.command {
+          CopyButton(command, help: "Copy the command that frees this memory")
+        }
       }
       .padding(Space.lg)
       .frame(maxWidth: .infinity, alignment: .leading)
