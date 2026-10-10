@@ -45,6 +45,30 @@ function nameTimeout(error: unknown, command: string, timeoutMs: number | undefi
   return error;
 }
 
+const WINDOWS_BATCH_FILE = /\.(?:bat|cmd)$/i;
+const BATCH_UNSAFE_ARGUMENT = /["%\r\n]/;
+
+// cross-spawn runs a .bat/.cmd target through `cmd.exe /d /s /c` with escaping the batch file's own
+// %* expansion undoes (moxystudio/node-cross-spawn#171). Node refuses the same characters for its
+// own batch spawning since CVE-2024-27980.
+export function isUnsafeBatchSpawn(
+  target: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === 'win32' && WINDOWS_BATCH_FILE.test(target) && args.some((arg) => BATCH_UNSAFE_ARGUMENT.test(arg));
+}
+
+function refuseUnsafeBatchArguments(file: string, args: readonly string[]): void {
+  if (process.platform !== 'win32') return;
+  const target = which.sync(file, { nothrow: true }) ?? file;
+  if (isUnsafeBatchSpawn(target, args)) {
+    throw new Error(
+      `Refusing to run ${basename(target)}: an argument contains a double quote, percent sign or line break, which cmd.exe cannot pass to a batch file safely.`,
+    );
+  }
+}
+
 const defaultExecutor: Executor = {
   run(cmd, { timeoutMs, killSignal, cwd, env } = {}) {
     const opts: Parameters<typeof execSync>[1] = {
@@ -86,6 +110,7 @@ const defaultExecutor: Executor = {
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
+    refuseUnsafeBatchArguments(file, args);
     const result = spawn.sync(file, args, opts);
     if (result.error) throw nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs);
     if (result.status !== 0 || (rejectStderr && String(result.stderr ?? '').trim())) {
@@ -99,6 +124,7 @@ const defaultExecutor: Executor = {
   runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn } = {}) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
+      refuseUnsafeBatchArguments(file, args);
       const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
       if (cwd) opts.cwd = cwd;
       if (env || omitEnv?.length) {
@@ -159,6 +185,7 @@ const defaultExecutor: Executor = {
     }
   },
   spawn(cmd, args = [], opts = {}) {
+    refuseUnsafeBatchArguments(cmd, args);
     return spawn(cmd, args, opts);
   },
   findExecutable(name) {

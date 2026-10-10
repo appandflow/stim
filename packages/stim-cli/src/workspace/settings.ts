@@ -79,6 +79,7 @@ export function settingShapeErrors(settings: unknown): string[] {
     const expected =
       setting.key === 'ios.remote' ||
       setting.key === 'android.remote' ||
+      setting.key === 'android.deviceProfile' ||
       (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
         : acceptsShape(setting, value)

@@ -1119,8 +1119,7 @@ export function readVolumes(projectPath: string): VolumeInfo[] {
   const roots = [...new Set(['/', volumeRootFor(getConfigDir()), volumeRootFor(projectPath)])];
   const volumes: VolumeInfo[] = [];
   for (const volume of roots) {
-    const quoted = `'${volume.replace(/'/g, "'\\''")}'`;
-    const disk = parseDfFree(getExecutor().runQuiet(`df -k ${quoted}`, { timeoutMs: 5000 }));
+    const disk = parseDfFree(getExecutor().runFileQuiet('df', ['-k', volume], { timeoutMs: 5000 }));
     if (disk) volumes.push({ volume, disk });
   }
   return volumes;
