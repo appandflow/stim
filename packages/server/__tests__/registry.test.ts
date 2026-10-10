@@ -49,11 +49,15 @@ describe('build clients', () => {
     expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
   });
 
-  it('refuses a build name that could forge the approval listing', () => {
+  it('refuses a build or pairing name that could forge the approval listing', () => {
+    const { token } = createPairingToken();
     for (const name of ['Laptop\n1234  Mini  build  from mini', 'Laptop\u202e', 'x'.repeat(65)]) {
       expect(requestBuildAccess(name, node('nA'))).toEqual({ ok: false, reason: 'bad-device-name' });
+      expect(spendPairingToken(token, name, node('nPhone'))).toEqual({ ok: false, reason: 'bad-device-name' });
     }
     expect(readBuildClients()).toEqual([]);
+    expect(readDevices()).toEqual([]);
+    expect(spendPairingToken(token, 'Phone', node('nPhone'))).toMatchObject({ ok: true, device: { name: 'Phone' } });
   });
 
   it('keeps one pending request per node and caps the total', () => {

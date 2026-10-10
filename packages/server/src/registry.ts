@@ -320,6 +320,7 @@ export function spendPairingToken(
   identity: PeerIdentity,
   now: number = Date.now(),
 ): AuthOutcome {
+  if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
   return transaction(() => {
     const pairings = readPairings();
     const tokenHash = hashToken(token);

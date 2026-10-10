@@ -1,5 +1,11 @@
 import { existsSync, lstatSync, mkdirSync, watch, type FSWatcher } from 'node:fs';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http';
 import { isIP, type AddressInfo, type Socket } from 'node:net';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -367,7 +373,7 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
   },
   'bad-device-name': {
     code: 'bad-request',
-    message: 'A Mac requesting access needs a one-line name of at most 64 characters.',
+    message: 'A device requesting access needs a one-line name of at most 64 characters.',
   },
   'build-requests-full': {
     code: 'limit-exceeded',
@@ -389,6 +395,26 @@ function peerAddress(request: IncomingMessage): string | null {
   const forwarded = request.headers['x-forwarded-for'];
   const first = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim();
   return first || null;
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
+ * React Native derives `Origin` from the ws URL, so an app's names the requested host: over `http:` on loopback, and
+ * `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
+ * `ws://[::1]` is refused.
+ */
+export function upgradeFromWebPage(headers: IncomingHttpHeaders, local: boolean): boolean {
+  if (headers['sec-fetch-site'] !== undefined) return true;
+  if (headers.origin === undefined) return false;
+  const scheme = local ? 'http:' : 'https:';
+  try {
+    const own = new URL(`${scheme}//${headers.host ?? ''}`);
+    return new URL(headers.origin).origin !== own.origin || (local && !LOOPBACK_HOSTS.has(own.hostname));
+  } catch {
+    return true;
+  }
 }
 
 class FailureLimiter {
@@ -1040,7 +1066,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         limiter.record(limitKey);
         const result: HelloResult = {
           protocol: PROTOCOL_VERSION,
-          server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
+          server: { name: options.name, version: options.serverVersion, stim: options.stimVersion },
           capabilities: [],
           features: [...FEATURES],
           actions: [],
@@ -2532,6 +2558,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     const peer = peerAddress(request);
     if (options.loopbackOnly && peer !== null) {
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
+    if (upgradeFromWebPage(request.headers, peer === null)) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }

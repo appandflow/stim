@@ -266,8 +266,9 @@ the server is on a port with Funnel on, `pair` refuses and exits 1 without
 creating a token.
 
 The pairing token works once and expires after 5 minutes. A client spends it in
-`hello` and receives a random device token, which it presents on every later
-connection. The server stores only the SHA-256 hash of each token.
+`hello` with a `deviceName` of at most 64 UTF-16 code units with no control or
+format characters, and receives a random device token, which it presents on
+every later connection. The server stores only the SHA-256 hash of each token.
 
 At pairing, the server records the peer's tailnet node and user from
 `tailscale whois`. A device token presented from any other node is refused, so
@@ -280,6 +281,10 @@ loopback port: a forwarder that omits that header, such as `tailscale serve
 
 A connection must send `hello` within 5 seconds. Five failed attempts from the
 same peer within a minute block new connections from it for up to a minute.
+The server answers 403 to a WebSocket upgrade that carries `Sec-Fetch-Site`, or
+an `Origin` other than the requested host (`http:` on loopback, `https:`
+through the route), and counts no failed attempt, so a web page can neither
+connect nor block this Mac's clients.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
 closes its open connections. The server checks registrations on file changes
@@ -1329,7 +1334,7 @@ Events are `{ "event", "subscription", ... }`.
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
-  `~/...`.
+  `~/...`. A pending approval result omits it.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it, including each
   environment's `physicalDevices`, the phones it leases, and its `agents`, the
