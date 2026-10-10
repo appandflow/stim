@@ -120,35 +120,12 @@ struct RootView: View {
     } detail: {
       HStack(spacing: 0) {
         detail.frame(maxWidth: .infinity, maxHeight: .infinity)
-        if tutorial.isOpen, let snapshot = tutorial.snapshot {
-          Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
-          TutorialPanel(
-            snapshot: snapshot, message: tutorial.notice,
-            issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
-            agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
-            asks: tutorial.ask,
-            copied: { tutorial.copiedPrompt() }, next: tutorial.next,
-            restart: tutorial.restart,
-            close: tutorial.close,
-            openArchived: openTutorialArchive,
-            openBuild: tutorial.tourPath.map { path in
-              {
-                navigate(.environment(path), .click("tutorial Open the build"))
-                focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
-              }
-            },
-            pairPhone: { openRequests.pairsPhone = true },
-            updateCLI: {
-              onboarding.openGuide()
-              onboarding.guideStep = .cli
-            }
-          )
-          .frame(width: WorkspaceDetail.inspectorWidth)
-        }
+        if inspectorFits { tutorialPanel }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(Palette.background)
       .overlay(alignment: .bottom) { onboardingPopup }
+      .overlay(alignment: .trailing) { if !inspectorFits { HStack(spacing: 0) { tutorialPanel }.frame(maxHeight: .infinity) } }
       .background(alignment: .topLeading) {
         machineSummary(measuresNarrowest: true)
           .onGeometryChange(for: CGFloat.self) {
@@ -166,7 +143,7 @@ struct RootView: View {
       } action: {
         detailWidth = $0
       }
-      .navigationSplitViewColumnWidth(min: tutorial.isOpen ? WorkspaceDetail.widthWithInspector : 440, ideal: 900)
+      .navigationSplitViewColumnWidth(min: 440, ideal: 900)
       .toolbar {
         if columnVisibility == .detailOnly { sidebarToggleToolbar }
         let history = HistoryButtons(
@@ -475,6 +452,34 @@ struct RootView: View {
         }
         logWorkspacePath = path
       })
+  }
+
+  @ViewBuilder private var tutorialPanel: some View {
+    if tutorial.isOpen, let snapshot = tutorial.snapshot {
+      Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
+      TutorialPanel(
+        snapshot: snapshot, message: tutorial.notice,
+        issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
+        agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
+        asks: tutorial.ask,
+        copied: { tutorial.copiedPrompt() }, next: tutorial.next,
+        restart: tutorial.restart,
+        close: tutorial.close,
+        openArchived: openTutorialArchive,
+        openBuild: tutorial.tourPath.map { path in
+          {
+            navigate(.environment(path), .click("tutorial Open the build"))
+            focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+          }
+        },
+        pairPhone: { openRequests.pairsPhone = true },
+        updateCLI: {
+          onboarding.openGuide()
+          onboarding.guideStep = .cli
+        }
+      )
+      .frame(width: WorkspaceDetail.inspectorWidth)
+    }
   }
 
   private var detailRoom: CGFloat {
