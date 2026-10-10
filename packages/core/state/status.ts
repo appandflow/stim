@@ -653,6 +653,8 @@ export interface EnvironmentState {
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
   recording?: { enabled: boolean };
+  /** Present when `workspace.hidden` is true: clients list the workspace under Hidden. */
+  hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */

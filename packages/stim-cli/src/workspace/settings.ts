@@ -903,6 +903,10 @@ export function maintenanceKeepSetting(settings: SettingsObject): boolean {
   return value !== undefined && value !== false;
 }
 
+export function workspaceHiddenSetting(settings: SettingsObject | undefined): boolean {
+  return settingValueAt(settings, 'workspace.hidden') === true;
+}
+
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
   const block = settings.metro;
   if (typeof block !== 'object' || block === null) return null;
