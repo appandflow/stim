@@ -288,10 +288,12 @@ The existing owned simulator, device lease, signing, log and teardown services
 still apply. Stim does not change signing accounts or provisioning profiles.
 
 A reusable artifact key includes the selected build configuration, source and
-known dependency inputs, toolchain and build options. Native Release cache
-reuse does not depend on releaseBundleSwap. Xcode compilation uses the shared
-compilation cache when the toolchain and settings support it. --plan predicts
-this same local artifact without preparing dependencies or choosing a device.
+known dependency inputs, toolchain and build options. In a git checkout,
+ignored files the project does not reference are not part of the key. Native
+Release cache reuse does not depend on releaseBundleSwap. Xcode compilation
+uses the shared compilation cache when the toolchain and settings support it.
+--plan predicts this same local artifact without preparing dependencies or
+choosing a device.
 
 Inputs whose complete build closure cannot be established build locally with
 artifact caching skipped. This includes shell build phases, custom build rules,
