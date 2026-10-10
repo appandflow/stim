@@ -65,6 +65,7 @@ struct TutorialPanel: View {
     .foregroundStyle(Palette.text)
     .background(Palette.sidebar)
     .tint(Palette.primary)
+    .accessibilityElement(children: .contain)
     .accessibilityLabel("Stim tutorial")
     .focusable()
     .focusEffectDisabled()
@@ -189,70 +190,70 @@ struct TutorialPanel: View {
       .accessibilityElement(children: .combine)
       .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
       .accessibilityAddTraits(.isHeader)
-        VStack(alignment: .leading, spacing: Space.md) {
-          Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
-          if step.id == "build", current, let openBuild {
-            HStack(spacing: Space.sm) {
-              Text("Click Show to watch the build.")
-              Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
-                .accessibilityLabel("Open the tutorial build")
-            }
-          }
-          if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
-          if current, step.id == "agent", let openAgentActions {
-            Button("Open Agent Actions", action: openAgentActions).buttonStyle(.stim(.primary))
-              .accessibilityLabel("Open Agent Actions for the tutorial simulator")
-          }
-          if current, step.id == "logs", let openLogs {
-            Button("Open Logs", action: openLogs).buttonStyle(.stim(.primary))
-              .accessibilityLabel("Open Logs for the tutorial workspace")
-          }
-          if step.id == "phone", snapshot.record.phonePairedAtStart == true {
-            Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
-          }
-          let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
-          let detail = notice.text
-          if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
-            Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
-          }
-          switch notice.action {
-          case .updateDesktop:
-            Button("Check for Updates", action: updater.checkForUpdates)
-              .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
-              .accessibilityLabel("Check for Stim Desktop updates")
-          case .updateCLI:
-            Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
-              .accessibilityLabel("Open the setup guide to update Stim CLI")
-          case .restart:
-            Button("Restart Tutorial", action: restart).buttonStyle(.stim())
-              .accessibilityLabel("Restart the Stim tutorial")
-          case nil: EmptyView()
-          }
-          ForEach(state.ticks, id: \.id) { tick in
-            Label(
-              Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
-              systemImage: tick.done ? "checkmark.circle.fill" : "circle"
-            )
-            .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
-            .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
-          }
-          if let pull = state.link, let url = URL(string: pull.url) {
-            Link("PR #\(pull.number): \(pull.title)", destination: url).lineLimit(1)
-              .accessibilityLabel("Open pull request \(pull.number)")
-          }
-          if current {
-            ForEach(TutorialIssues.shown(issues, step: step.id), id: \.self) { issue in
-              TutorialIssueRow(issue: issue)
-            }
-            if step.id == "phone", phoneState != .paired {
-              Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
-            }
-            Button("Next", action: next).buttonStyle(.stim(.secondary))
-              .accessibilityLabel("Next: leave \(step.title)")
+      VStack(alignment: .leading, spacing: Space.md) {
+        Text(explanation(step.id)).foregroundStyle(Palette.secondary)
+        if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
+        if step.id == "build", current, let openBuild {
+          HStack(spacing: Space.sm) {
+            Text("Click Show to watch the build.")
+            Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
+              .accessibilityLabel("Open the tutorial build")
           }
         }
-        .padding(.leading, Space.xl)
+        if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
+        if current, step.id == "agent", let openAgentActions {
+          Button("Open Agent Actions", action: openAgentActions).buttonStyle(.stim(.primary))
+            .accessibilityLabel("Open Agent Actions for the tutorial simulator")
+        }
+        if current, step.id == "logs", let openLogs {
+          Button("Open Logs", action: openLogs).buttonStyle(.stim(.primary))
+            .accessibilityLabel("Open Logs for the tutorial workspace")
+        }
+        if step.id == "phone", snapshot.record.phonePairedAtStart == true {
+          Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
+        }
+        let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
+        let detail = notice.text
+        if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
+          Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
+        }
+        switch notice.action {
+        case .updateDesktop:
+          Button("Check for Updates", action: updater.checkForUpdates)
+            .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
+            .accessibilityLabel("Check for Stim Desktop updates")
+        case .updateCLI:
+          Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
+            .accessibilityLabel("Open the setup guide to update Stim CLI")
+        case .restart:
+          Button("Restart Tutorial", action: restart).buttonStyle(.stim())
+            .accessibilityLabel("Restart the Stim tutorial")
+        case nil: EmptyView()
+        }
+        ForEach(state.ticks, id: \.id) { tick in
+          Label(
+            Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
+            systemImage: tick.done ? "checkmark.circle.fill" : "circle"
+          )
+          .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
+        }
+        if let pull = state.link, let url = URL(string: pull.url) {
+          Link("PR #\(pull.number): \(pull.title)", destination: url).lineLimit(1)
+            .accessibilityLabel("Open pull request \(pull.number)")
+        }
+        if current {
+          ForEach(TutorialIssues.shown(issues, step: step.id), id: \.self) { issue in
+            TutorialIssueRow(issue: issue)
+          }
+          if step.id == "phone", phoneState != .paired {
+            Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
+          }
+          Button("Next", action: next).buttonStyle(.stim(.secondary))
+            .accessibilityLabel("Next: leave \(step.title)")
+        }
+      }
+      .padding(.leading, Space.xl)
     }
   }
 

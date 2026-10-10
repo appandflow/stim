@@ -494,38 +494,38 @@ struct RootView: View {
   }
 
   private func tutorialPanelContent(_ snapshot: TutorialSnapshot) -> some View {
-      TutorialPanel(
-        snapshot: snapshot, message: tutorial.notice,
-        issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
-        agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
-        asks: tutorial.ask,
-        copied: { tutorial.copiedPrompt() }, next: tutorial.next,
-        restart: tutorial.restart,
-        close: tutorial.close,
-        openArchived: openTutorialArchive,
-        openBuild: tutorial.tourPath.map { path in
-          {
-            navigate(.environment(path), .click("tutorial Open the build"))
-            focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
-          }
-        },
-        openAgentActions: tutorialShortcut.map { path in { openTutorialAgentActions(path) } },
-        openLogs: tutorialShortcut.map { path in
-          {
-            showLogs(path)
-            logQuery.errorsOnly = false
-            TutorialViewerEvents.shared.logsOpened(path)
-          }
-        },
-        pairPhone: { openRequests.pairsPhone = true },
-        updateCLI: {
-          onboarding.openGuide()
-          onboarding.guideStep = .cli
-        },
-        floating: TutorialPanel.Floating(
-          isOn: tutorialFloats, pinned: tutorialFloatPinned, toggle: { tutorialFloats.toggle() },
-          togglePin: { tutorialFloatPinned.toggle() })
-      )
+    TutorialPanel(
+      snapshot: snapshot, message: tutorial.notice,
+      issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
+      agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
+      asks: tutorial.ask,
+      copied: { tutorial.copiedPrompt() }, next: tutorial.next,
+      restart: tutorial.restart,
+      close: tutorial.close,
+      openArchived: openTutorialArchive,
+      openBuild: tutorial.tourPath.map { path in
+        {
+          navigate(.environment(path), .click("tutorial Open the build"))
+          focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+        }
+      },
+      openAgentActions: tutorialShortcut.map { path in { openTutorialAgentActions(path) } },
+      openLogs: tutorialShortcut.map { path in
+        {
+          showLogs(path)
+          logQuery.errorsOnly = false
+          TutorialViewerEvents.shared.logsOpened(path)
+        }
+      },
+      pairPhone: { openRequests.pairsPhone = true },
+      updateCLI: {
+        onboarding.openGuide()
+        onboarding.guideStep = .cli
+      },
+      floating: TutorialPanel.Floating(
+        isOn: tutorialFloats, pinned: tutorialFloatPinned, toggle: { tutorialFloats.toggle() },
+        togglePin: { tutorialFloatPinned.toggle() })
+    )
   }
 
   private var detailRoom: CGFloat {

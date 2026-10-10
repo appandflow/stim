@@ -115,7 +115,11 @@ When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.
 
-Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
+The panel shows one step at a time. Click a node on the progress track, use the arrows beside it, or press the left and right arrow keys to look at another step; this never changes your progress, and Desktop keeps detecting the current step meanwhile. A later step shows dimmed and read-only, **Go to Current Step** returns, and when the step you are looking at completes, the panel moves on with it. The completion card is the last slide.
+
+**Float (Experimental)** in the **…** menu moves the panel into a small window that stays above other apps without taking focus, so you can keep it beside your editor or terminal. Drag it anywhere; Desktop remembers where. The pin turns staying on top off and on, and **Dock in Sidebar** puts it back.
+
+The tutorial does not start the server, pair phones or
 grant access, and it runs no builds itself.
 
 A soft glow with a short label points at the control a step needs, without

@@ -48,11 +48,15 @@ struct TutorialTrack: View {
         }
       }
     if let select {
-      Button { select(id) } label: { node.contentShape(Circle().inset(by: -4)) }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(viewed == id ? .isSelected : [])
-        .accessibilityHint("Shows this step")
+      Button {
+        select(id)
+      } label: {
+        node.contentShape(Circle().inset(by: -4))
+      }
+      .buttonStyle(.plain)
+      .accessibilityLabel(label)
+      .accessibilityAddTraits(viewed == id ? .isSelected : [])
+      .accessibilityHint("Shows this step")
     } else {
       node.accessibilityLabel(label)
     }

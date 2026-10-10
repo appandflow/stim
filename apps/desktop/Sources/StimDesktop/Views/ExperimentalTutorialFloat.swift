@@ -42,6 +42,9 @@ struct ExperimentalTutorialFloat<Content: View>: NSViewRepresentable {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentMinSize = NSSize(width: WorkspaceDetail.inspectorWidth, height: 420)
         panel.contentView = hosting
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+          panel.standardWindowButton(button)?.isHidden = true
+        }
         if !panel.setFrameUsingName(Self.frameName) {
           if let screen = NSScreen.main?.visibleFrame {
             panel.setFrameOrigin(NSPoint(x: screen.maxX - panel.frame.width - 24, y: screen.maxY - panel.frame.height - 24))
