@@ -19,10 +19,14 @@ npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app --
 This compiles or restores an artifact without starting a simulator, emulator,
 Metro server, or app. It does not stop an existing workspace session. iOS builds
 target the simulator; archives, device distribution and web compilation are
-not supported. iOS and Android builds use the same native artifact cache as
-`run`. A later `run` in the same job validates that cache normally; its
+not supported. By default, iOS and Android builds use the same native artifact
+cache as `run`. A later `run` in the same job validates that cache normally; its
 `run.json` reports `cacheKey` and `cacheHit`, which show whether it reused the
-build. macOS builds are not cached, so a later macOS `run` builds again.
+build. Android reuse requires the run's emulator system image to have the host's
+ABI; a configured `android.systemImage` with another ABI, or a physical device,
+misses. An iOS Debug build with `--arch all` is keyed without an architecture,
+so a later Debug `run` misses. macOS builds are not cached, so a later macOS
+`run` builds again.
 
 The result has `stage: "build"`, `build`, `buildPath`, and `artifactPath`.
 The results directory contains `build.json`, `result.json`, `diagnostics.json`,
@@ -36,7 +40,8 @@ Stim run is not part of this command.
 The library exports `buildCI({ projectRoot, build: { platform: "ios" }, ... })`.
 It accepts the same home/cache, timeout, cancellation and progress options as
 `runCI`. Build cancellation waits for the owned build operation to finish
-cleanup and retains diagnostics; it never calls workspace `stop()`.
+cleanup and retains diagnostics; it never calls workspace `stop()`. A cancel or timeout after the artifact is exported does not fail the build
+stage.
 
 ## Command line
 

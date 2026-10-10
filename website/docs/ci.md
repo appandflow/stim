@@ -38,9 +38,14 @@ stim-ci build --platform android --project ./app --artifacts ./build-results
 ```
 
 `build` needs no test command or device. It preserves existing workspace
-sessions. iOS and Android builds use the same native artifact cache as `run`; a
-later `run` validates it normally, and `cacheKey` and `cacheHit` in its
-`run.json` show whether it reused the build. macOS builds are not cached.
+sessions. By default, iOS and Android builds use the same native artifact cache
+as `run`; a later `run` validates it normally, and `cacheKey` and `cacheHit` in
+its `run.json` show whether it reused the build. Android reuse requires the
+run's emulator system image to have the host's ABI; a configured
+`android.systemImage` with another ABI, or a physical device, misses. An iOS
+Debug build with `--arch all` is keyed without an architecture, so a later Debug
+`run` misses. macOS builds are not cached. A cancel or timeout after the
+artifact is exported does not fail the build stage.
 GitHub-hosted steps automatically share the job's temporary home and cache. Use
 a separate results directory for each step.
 
