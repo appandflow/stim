@@ -160,16 +160,19 @@ export function zipalignArgs({
   return [...(buildToolsMajor >= 35 ? ['-P', '16'] : ['-p']), '-f', '-v', '4', input, output];
 }
 
+export const KEYSTORE_PASSWORD_ENV = 'STIM_KEYSTORE_PASSWORD';
+
 export interface KeystoreConfig {
   path: string;
   pass: string;
+  password: string | null;
 }
 
-export function keystorePassArg(value: unknown): string {
+export function keystorePassArg(value: unknown): { pass: string; password: string | null } {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (text === '') return 'pass:android';
-  if (/^(?:pass|file|env):/.test(text) || text === 'stdin') return text;
-  return `pass:${text}`;
+  if (text === '') return { pass: 'pass:android', password: null };
+  if (/^(?:file|env):/.test(text) || text === 'stdin') return { pass: text, password: null };
+  return { pass: `env:${KEYSTORE_PASSWORD_ENV}`, password: text.startsWith('pass:') ? text.slice(5) : text };
 }
 
 export function resolveKeystore(
@@ -186,7 +189,7 @@ export function resolveKeystore(
         ? configured.trim()
         : join(root, configured.trim())
       : join(layout.moduleDir, 'debug.keystore');
-  return { path, pass: keystorePassArg(bag['keystorePassword']) };
+  return { path, ...keystorePassArg(bag['keystorePassword']) };
 }
 
 export function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
@@ -430,7 +433,13 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(signer.path, apksignerArgs({ keystore, apkPath: final }));
+    e.runFile(
+      signer.path,
+      apksignerArgs({ keystore, apkPath: final }),
+      keystore.password === null
+        ? undefined
+        : { env: { [KEYSTORE_PASSWORD_ENV]: keystore.password }, redact: [keystore.password] },
+    );
   } catch (err) {
     return fail('apksigner', `apksigner sign failed on ${final} with ${keystore.path}: ${describe(err)}`);
   }

@@ -1,16 +1,12 @@
-import { existsSync, mkdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { configDir, withDirLock } from '../index.ts';
+import { configDir, ensurePrivateDir, withDirLock } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 import { configLockPath, getConfigPath } from './paths.ts';
 
 export function withConfigLock<T>(fn: () => T): T {
   return withDirLock(configLockPath(), fn, {
-    ensureParent: () => {
-      const dir = configDir();
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    },
+    ensureParent: () => ensurePrivateDir(configDir()),
   });
 }
 

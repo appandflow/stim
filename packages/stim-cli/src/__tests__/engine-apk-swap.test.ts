@@ -13,6 +13,7 @@ import {
   hermescCandidates,
   jarPath,
   keystorePassArg,
+  KEYSTORE_PASSWORD_ENV,
   readAndroidHermesEnabled,
   resolveKeystore,
   swapApkBundle,
@@ -216,7 +217,10 @@ describe('archive update, alignment and signing', () => {
 
   test('apksigner, never jarsigner, and the keystore argv is the signed one', () => {
     expect(
-      apksignerArgs({ keystore: { path: '/p/debug.keystore', pass: 'pass:android' }, apkPath: '/t/out.apk' }),
+      apksignerArgs({
+        keystore: { path: '/p/debug.keystore', pass: 'pass:android', password: null },
+        apkPath: '/t/out.apk',
+      }),
     ).toEqual(['sign', '--ks', '/p/debug.keystore', '--ks-pass', 'pass:android', '/t/out.apk']);
   });
 });
@@ -228,10 +232,12 @@ describe('keystore resolution', () => {
     expect(resolveKeystore('/w/app', null)).toEqual({
       path: debugKeystore,
       pass: 'pass:android',
+      password: null,
     });
     expect(resolveKeystore('/w/app', {})).toEqual({
       path: debugKeystore,
       pass: 'pass:android',
+      password: null,
     });
     expect(resolveKeystore('/w/app', { android: [] }).path).toBe(debugKeystore);
   });
@@ -244,13 +250,15 @@ describe('keystore resolution', () => {
     expect(resolveKeystore('/w/app', { android: { keystore: '' } }).path).toBe(debugKeystore);
   });
 
-  test('android.keystorePassword is schemed for apksigner, and an explicit scheme passes through', () => {
-    expect(keystorePassArg(undefined)).toBe('pass:android');
-    expect(keystorePassArg('   ')).toBe('pass:android');
-    expect(keystorePassArg('hunter2')).toBe('pass:hunter2');
-    expect(keystorePassArg('env:MY_KS_PASS')).toBe('env:MY_KS_PASS');
-    expect(keystorePassArg('file:/keys/pw.txt')).toBe('file:/keys/pw.txt');
-    expect(keystorePassArg('stdin')).toBe('stdin');
+  test('a literal android.keystorePassword reaches apksigner through its environment, and a reference passes through', () => {
+    const literal = { pass: `env:${KEYSTORE_PASSWORD_ENV}`, password: 'hunter2' };
+    expect(keystorePassArg(undefined)).toEqual({ pass: 'pass:android', password: null });
+    expect(keystorePassArg('   ')).toEqual({ pass: 'pass:android', password: null });
+    expect(keystorePassArg('hunter2')).toEqual(literal);
+    expect(keystorePassArg('pass:hunter2')).toEqual(literal);
+    expect(keystorePassArg('env:MY_KS_PASS')).toEqual({ pass: 'env:MY_KS_PASS', password: null });
+    expect(keystorePassArg('file:/keys/pw.txt')).toEqual({ pass: 'file:/keys/pw.txt', password: null });
+    expect(keystorePassArg('stdin')).toEqual({ pass: 'stdin', password: null });
     expect(resolveKeystore('/w/app', { android: { keystorePassword: 'env:KS' } }).pass).toBe('env:KS');
   });
 });
@@ -258,7 +266,7 @@ describe('keystore resolution', () => {
 let root: string;
 let tmp: string;
 let cachedApk: string;
-const keystore = { path: '/w/app/android/app/debug.keystore', pass: 'pass:android' };
+const keystore = { path: '/w/app/android/app/debug.keystore', pass: 'pass:android', password: null };
 const buildTools: BuildToolsEntry = {
   path: '/sdk/build-tools/36.0.0/zipalign',
   tool: 'zipalign',
@@ -546,6 +554,16 @@ describe('swapApkBundle', () => {
     expect(result.failed).toBe(true);
     expect(result.step).toBe('zipalign');
     expect(calls.some((c) => c.file === apksigner)).toBe(false);
+  });
+
+  test('a literal keystore password is handed to apksigner in its environment, never on its command line', async () => {
+    const { calls, run } = harness();
+    const result = await run({ keystore: resolveKeystore(root, { android: { keystorePassword: 'hunter2' } }) });
+    expect(result.ok).toBe(true);
+    const sign = calls.find((c) => c.file === apksigner);
+    expect(sign?.args).toContain(`env:${KEYSTORE_PASSWORD_ENV}`);
+    expect(sign?.args?.join(' ')).not.toContain('hunter2');
+    expect(sign?.opts).toEqual({ env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' }, redact: ['hunter2'] });
   });
 
   test('an apksigner failure fails at the apksigner step -- an unsigned APK is never handed back', async () => {

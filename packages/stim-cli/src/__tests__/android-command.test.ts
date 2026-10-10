@@ -4530,6 +4530,7 @@ describe('the release APK swap', () => {
     expect(h.calls.swapApk[0]?.keystore).toEqual({
       path: join(root, 'android', 'app', 'debug.keystore'),
       pass: 'pass:android',
+      password: null,
     });
     expect(h.calls.install[0]?.apkPath).toBe(join(root, 'apk-swap', 'app-production-release.apk'));
     assert(result.facts);
@@ -4547,6 +4548,7 @@ describe('the release APK swap', () => {
     expect(h.calls.swapApk[0]?.keystore).toEqual({
       path: join(root, 'android', 'app', 'release.jks'),
       pass: 'env:MY_KS',
+      password: null,
     });
   });
 
