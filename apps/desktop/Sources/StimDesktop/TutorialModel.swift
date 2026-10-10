@@ -55,7 +55,8 @@ final class TutorialModel: ObservableObject {
     let existing = Set(workspaces.map(\.path))
     return template.map {
       tutorialAsk(
-        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, second: snapshot?.record.secondPath,
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
+        second: snapshot?.record.secondPath,
         existing: existing)
     }
   }
@@ -198,7 +199,7 @@ final class TutorialModel: ObservableObject {
 
   func commands(for step: TutorialStep) -> String {
     tutorialCommands(
-      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository,
+      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
       stateDir: workspace?.agentDevice?.stateDir,
       udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }

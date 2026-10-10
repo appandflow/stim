@@ -77,14 +77,27 @@
 
     @MainActor func testResumeArchivedTourOffersTheDeleteStep() throws {
       let defaults = isolatedDefaults()
-      TutorialRecordStore(defaults).record = TutorialRecord(
+      var record = TutorialRecord(
         version: 2, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
         step: "finish")
+      let clone = FileManager.default.temporaryDirectory.appendingPathComponent("tutorial-clone-\(UUID())").path
+      try FileManager.default.createDirectory(atPath: clone, withIntermediateDirectories: true)
+      addTeardownBlock { try? FileManager.default.removeItem(atPath: clone) }
+      record.clonePath = clone
+      TutorialRecordStore(defaults).record = record
       let model = TutorialModel(defaults: defaults, cloneBase: "/nonexistent/stim-tutorial")
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
       XCTAssertTrue(model.isOpen)
       XCTAssertEqual(model.snapshot?.currentStep, "delete")
       XCTAssertNil(model.notice)
+      let delete = try XCTUnwrap(TutorialSteps.all.first { $0.id == "delete" })
+      XCTAssertEqual(
+        model.ask(for: delete),
+        "Remove the Stim tutorial: remove its worktrees and the clone at \(clone) with stim worktree remove, then delete \(clone). Follow stim guide tutorial delete."
+      )
+      try FileManager.default.removeItem(atPath: clone)
+      model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
+      XCTAssertTrue(model.snapshot?.isComplete == true)
     }
 
     @MainActor func testOpeningBeforeStatusLoadsPreservesArchivedResumeDetection() throws {
