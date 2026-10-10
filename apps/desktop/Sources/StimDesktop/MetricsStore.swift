@@ -29,6 +29,8 @@ final class MetricsStore {
   private(set) var volumes: [DiskVolume] = []
   private(set) var hasVolumes = false
   private(set) var memory: MachineMemory?
+  /// The share of all of the Mac's cores in use, from 0 to 1, averaged over the last sampling interval.
+  private(set) var machineCpuFraction: Double?
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   private(set) var memoryUsed: [Double] = []
   private(set) var ownersCpu: [Double] = []
@@ -41,6 +43,7 @@ final class MetricsStore {
   @ObservationIgnored private var poller: VisiblePoller?
   @ObservationIgnored private var observers: [NSObjectProtocol] = []
   @ObservationIgnored private var sampling = false
+  @ObservationIgnored private var cpuTicks: (ticks: MachineCpuTicks, at: Date)?
 
   init(status: StatusStore, gc: GcReportStore, disks: DiskVolumeStore) {
     self.status = status
@@ -68,16 +71,33 @@ final class MetricsStore {
   private static var cores: Int { ProcessInfo.processInfo.activeProcessorCount }
 
   /// The share of the Mac's CPU that every live workspace's processes use, from 0 to 1.
-  var totalCpuFraction: Double? {
+  var workspacesCpuFraction: Double? {
     let values = usage.values.compactMap(\.latest.cpuPercent)
     return values.isEmpty
       ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: Self.cores)
   }
 
   private func tick() {
+    sampleMachineCpu()
     sample()
     if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
   }
+
+  private func sampleMachineCpu() {
+    guard let ticks = MachineCpuTicks.read() else {
+      cpuTicks = nil
+      machineCpuFraction = nil
+      return
+    }
+    let now = Date()
+    // After a pause the delta would span the whole pause, so it only sets a new baseline.
+    if let previous = cpuTicks, now.timeIntervalSince(previous.at) < Self.cpuStaleAfter {
+      machineCpuFraction = MachineCpuTicks.fraction(from: previous.ticks, to: ticks) ?? machineCpuFraction
+    }
+    cpuTicks = (ticks, now)
+  }
+
+  private static let cpuStaleAfter: TimeInterval = 10
 
   private func sample() {
     guard !sampling, let payload = status.payload else { return }

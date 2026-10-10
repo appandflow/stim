@@ -1045,6 +1045,25 @@ import Testing
 
 }
 
+@Suite struct MachineCpuTicksTests {
+  @Test func computesBusyShareOfAllTicksBetweenTwoReadings() {
+    let before = MachineCpuTicks(busy: 1_000, idle: 9_000)
+    let after = MachineCpuTicks(busy: 1_300, idle: 9_700)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.3)
+  }
+
+  @Test func survivesA32BitCounterWrap() {
+    let before = MachineCpuTicks(busy: UInt32.max - 99, idle: 0)
+    let after = MachineCpuTicks(busy: 100, idle: 200)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.5)
+  }
+
+  @Test func reportsNothingWhenNoTickElapsed() {
+    let ticks = MachineCpuTicks(busy: 5, idle: 5)
+    #expect(MachineCpuTicks.fraction(from: ticks, to: ticks) == nil)
+  }
+}
+
 @Suite struct OpenURLTests {
   @Test func readsTheDeviceOnlyFromAnOpenURL() {
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))
