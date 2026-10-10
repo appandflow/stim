@@ -219,7 +219,7 @@ merge check is the one `stim gc` uses, applied to the refs already fetched;
 status never fetches. `git` is `null` when git fails or does not answer within
 3 seconds. One-shot `stim status` reads git only for the worktrees of live
 environments, at most six `git` calls at a time, so `git` is also `null` for the
-worktree of an idle environment and for every unprovisioned worktree;
+worktree of an environment that is not live and for every unprovisioned worktree;
 `stim status --watch` reads all of them.
 `stim status --watch` rereads a worktree's git state when a commit, checkout,
 staging change, push or fetch touches its git files, and at least once a

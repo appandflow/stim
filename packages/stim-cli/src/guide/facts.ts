@@ -59,7 +59,7 @@ worktree, carries git:
                worktree has no environment and sits in ~/Desktop, ~/Documents,
                ~/Downloads, iCloud Drive, ~/Library/CloudStorage or /Volumes,
                which status does not open on macOS; one-shot status also
-               leaves it null for the worktree of an idle environment and
+               leaves it null for a worktree with no live environment and
                for every unprovisioned worktree
   changed      tracked paths with staged or unstaged changes, conflicts included
   untracked    untracked entries as git status lists them; a new directory
