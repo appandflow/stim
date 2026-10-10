@@ -533,7 +533,7 @@ describe('strict client routing', () => {
       runFile: (_file, args) =>
         args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? '' : root,
     });
-    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation((credential) => ({
+    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation(async (credential) => ({
       url: credential.machine,
       servername: credential.machine,
       host: credential.machine,
@@ -620,6 +620,7 @@ describe('strict client routing', () => {
         runtime: RUNTIME,
         configuration: null,
         scheme: null,
+        iosProjectPath: 'ios',
         isExpo: false,
         optimizations: {},
       },
@@ -660,6 +661,7 @@ describe('strict client routing', () => {
           runtime: RUNTIME,
           configuration: null,
           scheme: null,
+          iosProjectPath: 'ios',
           isExpo: false,
           optimizations: {},
         },
@@ -699,4 +701,18 @@ test('excluded local builds require a remote regardless of relative load and ref
       offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 9 }) }) }],
     }).order,
   ).toEqual([0]);
+});
+
+test('native Xcode worker matching ignores CocoaPods while retaining Xcode, SDK, runtime and CPU requirements', () => {
+  const worker = offer({ toolchain: { cocoapods: null, bundler: null } }).toolchain;
+  expect(toolchainMismatches({ ...IOS, native: 'xcode', cocoapodsPinned: true }, worker)).toEqual([]);
+  expect(toolchainMismatches(IOS, worker)).toEqual([expect.objectContaining({ code: 'cocoapods' })]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, simulatorSdk: null, runtimes: [] })).toEqual([
+    expect.objectContaining({ code: 'simulator-sdk' }),
+    expect.objectContaining({ code: 'runtime' }),
+  ]);
+  expect(toolchainMismatches({ ...IOS, native: 'xcode' }, { ...worker, xcode: 'another build', arch: 'x64' })).toEqual([
+    expect.objectContaining({ code: 'arch' }),
+    expect.objectContaining({ code: 'xcode' }),
+  ]);
 });

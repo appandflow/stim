@@ -11,6 +11,7 @@ import {
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
   WATCH_LIGHT_INTERVAL_MS,
+  watchPayload,
   watchStatusSources,
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
@@ -339,7 +340,8 @@ async function readStatusFacts(
     }),
   );
   processes.catch(() => {});
-  const gitRead = readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs);
+  const watching = gitMaxAgeMs > 0;
+  const gitRead = watching ? readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs) : null;
 
   const androidRuntimeOf = androidRuntimeReader();
   const devices = projects.map(([, proj]) => ({
@@ -487,14 +489,14 @@ async function readStatusFacts(
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
       Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
-        platforms: detectPlatforms(
-          path,
-          resolveSettings({
+        platforms: (() => {
+          const context = {
             projectPath: path,
             gitCommonDir: gitCommonDirOnDisk(path),
             repoRoot: state.worktree?.path ?? path,
-          }),
-        ),
+          };
+          return detectPlatforms(path, { context, settings: resolveSettings(context) });
+        })(),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
       const tutorial = detectTutorial(readAppJson(path));
@@ -520,6 +522,11 @@ async function readStatusFacts(
         !state?.macos,
       ),
     );
+  }
+
+  if (!watching) {
+    const live = new Set(states.flatMap((state) => (state.live && state.worktree ? [state.worktree.path] : [])));
+    await readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs, live);
   }
 
   applyStatusMeasures(states, worktrees);
@@ -684,6 +691,7 @@ function renderStatus(
     machine,
   }: StatusSnapshot,
   json: boolean,
+  settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -695,21 +703,20 @@ function renderStatus(
 
   const maintenance = maintenanceStatus();
   if (json) {
-    out.push(
-      JSON.stringify({
-        environments: states.map((state, i) =>
-          withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
-        ),
-        archived,
-        archivedUsage: usage,
-        capacity: cap,
-        deviceLeases: leases,
-        unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
-        simctlAvailable: simsAvailable,
-        machine,
-        maintenance,
-      } satisfies StatusPayload),
-    );
+    const payload = {
+      environments: states.map((state, i) =>
+        withDerivedFacts(labelOnlyRoots[i] ? { ...state, labelOnly: true as const } : state),
+      ),
+      archived,
+      archivedUsage: usage,
+      capacity: cap,
+      deviceLeases: leases,
+      unprovisionedWorktrees: orphanWorktrees.map(withGitChip),
+      simctlAvailable: simsAvailable,
+      machine,
+      maintenance,
+    } satisfies StatusPayload;
+    out.push(JSON.stringify(settle(payload)));
     return out;
   }
 
@@ -862,6 +869,7 @@ function renderStatus(
 
 async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
+  let lastPayload: StatusPayload | null = null;
   let archiveStamp: number | null = null;
   let archives: ArchivedWorkspace[] | undefined;
   let snapshot: StatusSnapshot | null = null;
@@ -873,6 +881,7 @@ async function watchStatus(json: boolean): Promise<void> {
     run: async (kind) => {
       triggerMaintenance('status-watch');
       let text: string;
+      let payload = null as StatusPayload | null;
       try {
         if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
         else {
@@ -887,7 +896,7 @@ async function watchStatus(json: boolean): Promise<void> {
           snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing(), archives);
         }
         measurer.schedule(snapshot.states, snapshot.worktrees);
-        text = renderStatus(snapshot, json).join('\n');
+        text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full))).join('\n');
       } catch (error) {
         console.error(chalk.red(String((error as Error)?.message || error)));
         return;
@@ -896,6 +905,7 @@ async function watchStatus(json: boolean): Promise<void> {
       }
       if (text === last) return;
       last = text;
+      lastPayload = payload;
       process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
     },
   });
@@ -917,11 +927,18 @@ async function watchStatus(json: boolean): Promise<void> {
   await new Promise<never>(() => {});
 }
 
-async function readGitInto(worktrees: WorktreeFacts[], orphans: WorktreeFacts[], maxAgeMs: number): Promise<void> {
+async function readGitInto(
+  worktrees: WorktreeFacts[],
+  orphans: WorktreeFacts[],
+  maxAgeMs: number,
+  only?: ReadonlySet<string>,
+): Promise<void> {
   const home = homedir();
   const byPath = await readWorktreeGit(worktrees, {
     maxAgeMs,
-    skip: (w) => process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home),
+    skip: (w) =>
+      (only !== undefined && !only.has(w.path)) ||
+      (process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home)),
   });
   for (const worktree of worktrees) worktree.git = byPath.get(worktree.path) ?? null;
 }

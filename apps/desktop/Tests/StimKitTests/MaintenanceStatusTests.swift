@@ -41,6 +41,16 @@ import Testing
     #expect(try status(#"{"worktree":null}"#)?.removesFinishedWorktrees(now: now) == false)
   }
 
+  @Test func theCliPressureBlockCarriesMemoryCulpritsWithoutDroppingMaintenance() throws {
+    let status = try payload(
+      #"{"mode":"on","pressure":{"disk":[{"volume":"/","freeMb":90000}],"memory":{"level":"critical","availableBytes":null,"pressured":true,"culprits":[{"pid":76886,"name":"fseventsd","bytes":67645734912,"command":"sudo killall fseventsd","note":"launchd restarts it."},{"pid":4411,"name":"Xcode","bytes":13958643712,"command":null,"note":null}]},"warningSince":null}}"#
+    ).maintenance
+    #expect(status?.cleansAutomatically == true)
+    #expect(status?.memoryCulprits.map(\.name) == ["fseventsd", "Xcode"])
+    #expect(status?.memoryCulprits.first?.command == "sudo killall fseventsd")
+    #expect(try payload(#"{"mode":"on","pressure":null}"#).maintenance?.memoryCulprits.isEmpty == true)
+  }
+
   @Test func aReportPassHasNoSummaryLine() throws {
     let status = try payload(
       #"{"mode":"report","lastPass":{"startedAt":1,"mode":"report","freedBytes":0,"actions":2,"blocked":[]}}"#

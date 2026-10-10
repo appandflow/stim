@@ -43,9 +43,7 @@ inside a monorepo whose packages need the repository's Babel setup. Set
 Stim runs it from the app directory without a shell, in its own process group,
 and replaces `{port}` with the workspace's reserved port. Metro must keep
 running from inside the app directory, which is how Stim proves it belongs to
-the app. Set it in the workspace layer or the app's `.stim.json`. Set in the
-committed `.stim.json`, it also makes a package that does not depend on
-`react-native` or `expo` count as an app, as RNTester needs. `stim start --reset-cache` refuses for this server: put the
+the app. Set it in the workspace layer or the app's `.stim.json`. `stim start --reset-cache` refuses for this server: put the
 command's own reset flag in `metro.command` instead. Windows is not supported.
 The output is captured as text, with levels inferred from each line, under
 `command_stdout` and `command_stderr` events. Stim adds no reporter to this
@@ -500,8 +498,8 @@ available, and check that it actually bound the supplied port.
 prints its PID and command. Stopping listeners requires `lsof` on macOS and
 Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
-server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
-listeners before releasing their named allocations.
+server. Both leave Metro alone. `worktree remove`, `gc --delete` and automatic
+maintenance release named allocations without stopping their listeners.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a

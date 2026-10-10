@@ -1119,7 +1119,9 @@ methods need that approval, not `read`:
   it does not run as a `stim-server service` and so cannot update itself),
   `acceptsClientBuilds`, `running` (the update in progress, with its `state`,
   `missing` package bytes and the last lines of its `log`) and `last` (how the
-  label's last `service update` ended, whoever ran it).
+  label's last `service update` ended, whoever ran it, or how the update this
+  server started ended when that is newer, such as one the update lock refused,
+  with the last line of its log).
 - `server.update.start` takes `{ "release": "<version>" }`, an exact version
   that `stim-server service update --release` installs, or
   `{ "packages": [{ "name", "size", "sha256" }] }`, at most 8 `.tgz` packages
@@ -1189,7 +1191,11 @@ closes its connections and cancels its builds.
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
   `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
-  every offer.
+  every offer. With the `native-xcode-toolchain` feature, an offer can set
+  `native: "xcode"` to collect only Stim, CPU, Xcode, iPhoneSimulator SDK and
+  simulator-runtime facts. Unused report fields are null. This report has its own
+  cache, ignores Ruby selection, and is reused for native Xcode build admission.
+  Clients use the complete report on older native-build-capable hosts.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next

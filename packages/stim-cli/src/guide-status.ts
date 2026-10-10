@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
-import { appProjectProblem } from './workspace/project.ts';
+import { projectRegistry } from './integrations/projects.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
 import type { DoctorRunRecord, ProjectRecord } from '@stim-cli/core/state';
@@ -11,20 +11,21 @@ const DOCTOR_STALE_MS = 7 * DAY_MS;
 const UPDATE_CHECK_INTERVAL_MS = DAY_MS;
 const UPDATE_CHECK_TIMEOUT_MS = 2000;
 const LATEST_URL = 'https://registry.npmjs.org/stim/latest';
-const PLATFORMS: DoctorPlatform[] = ['ios', 'android'];
 
 export function recordDoctorRun(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   version: string,
   now: Date = new Date(),
+  platforms?: readonly DoctorPlatform[],
 ): void {
   const run: DoctorRunRecord = { at: now.toISOString(), version };
   try {
-    if (appProjectProblem(projectRoot)) return;
+    const targets = platforms ?? projectRegistry.selectDoctor(projectRoot, platform).platforms;
+    if (targets.length === 0) return;
     upsertProject(projectRoot, (existing) => {
       const doctorRuns = { ...existing.doctorRuns };
-      for (const target of platform ? [platform] : PLATFORMS) doctorRuns[target] = run;
+      for (const target of targets) doctorRuns[target] = run;
       return { doctorRuns };
     });
   } catch {
@@ -137,7 +138,8 @@ export async function guideStatus({
   fetch?: typeof fetch;
 }): Promise<string | null> {
   const doctor: DoctorDue[] = [];
-  if (projectRoot && !appProjectProblem(projectRoot)) {
+  if (projectRoot) {
+    const platforms = projectRegistry.selectDoctor(projectRoot).platforms;
     let runs: NonNullable<ProjectRecord['doctorRuns']> | null = null;
     try {
       runs = getProject(projectRoot)?.doctorRuns ?? {};
@@ -145,7 +147,7 @@ export async function guideStatus({
       // A corrupt config refuses every stateful command with its remedy; the guide still prints.
     }
     if (runs) {
-      for (const platform of PLATFORMS) {
+      for (const platform of platforms) {
         const reason = doctorDueReason(runs[platform], running, now);
         if (reason) doctor.push({ platform, reason });
       }

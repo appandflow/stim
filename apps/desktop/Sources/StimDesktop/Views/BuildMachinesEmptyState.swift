@@ -52,20 +52,20 @@ struct BuildMachinesEmptyState: View {
         } else {
           BuildMachineArt()
         }
-        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Macs").font(.stim(.headline))
+        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Machines").font(.stim(.headline))
         Text(
           tailscaleOff
-            ? "Turn on Tailscale on this Mac. Remote Macs reach it over your tailnet, and they show up here once it is connected."
+            ? "Turn on Tailscale on this Mac. Remote machines reach it over your tailnet, and they show up here once it is connected."
             : needsTailscale
-              ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
-              : "A remote Mac is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
+              ? "Remote machines need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
+              : "A remote machine is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
         )
         .foregroundStyle(Palette.secondary)
         .multilineTextAlignment(.center)
         .frame(maxWidth: 380)
       }
       if checking || !needsTailscale || tailscaleOff {
-        Button("Add Remote Mac\u{2026}", action: add)
+        Button("Add Remote Machine\u{2026}", action: add)
           .buttonStyle(.stim(.primary, .regular))
           .disabled(addDisabled)
       }

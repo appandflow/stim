@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Finding } from './doctor.ts';
 import { getExecutor } from '../exec.ts';
+import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
 
 interface ArchitectureTarget {
   target: string;
@@ -77,8 +78,11 @@ export function parseIosDebugArchitectures(output: string): ArchitectureReport {
   return { ...report, unknown: report.unknown || !inspected };
 }
 
-export function inspectIosDebugArchitectures(projectRoot: string): Finding[] {
-  const iosRoot = join(projectRoot, 'ios');
+export function inspectIosDebugArchitectures(
+  projectRoot: string,
+  iosProjectPath: string = DEFAULT_IOS_PROJECT_PATH,
+): Finding[] {
+  const iosRoot = join(projectRoot, iosProjectPath);
   if (!existsSync(iosRoot)) return [];
   const findings: Finding[] = [];
   const unknown: string[] = [];

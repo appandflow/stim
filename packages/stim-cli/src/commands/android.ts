@@ -7,7 +7,8 @@ import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
 import { workspaceId } from '@stim-cli/core';
 import { parseMachine } from '@stim-cli/core/state';
-import { buildAndroid } from '../integrations/react-native-build.ts';
+import { projectRegistry } from '../integrations/projects.ts';
+import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -26,13 +27,14 @@ import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import { projectProblem, findProjectRoot, projectShortcut } from '../workspace/project.ts';
-import { detectAppIds } from '../workspace/app-id.ts';
+import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
+  deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
+  projectSettingsContext,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   remoteEasFallbackSetting,
@@ -49,13 +51,6 @@ import {
 } from '../engine/device-lease-run.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../workspace/config.ts';
-import {
-  fingerprintProject,
-  resolveBuild,
-  storeBuild,
-  storedAssetManifest,
-  untrackedNativeFiles,
-} from '../cache/build-cache.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../engine/build-lock.ts';
 import { claimFailure } from '../ownership-claim.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../engine/build-slots.ts';
@@ -112,19 +107,11 @@ import {
 } from '../engine/device-remote.ts';
 import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
-import { planPrebuild, runPrebuild } from '../engine/prebuild.ts';
 
-import { CCACHE_NOT_RUN, resolveCcache } from '../engine/ccache.ts';
-import { swapApkBundle } from '../engine/apk-swap.ts';
-import { captureAssetManifest } from '../engine/asset-manifest.ts';
+import { CCACHE_NOT_RUN } from '../engine/ccache.ts';
+import { checkEasAuth, resolveEasCliBin, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import {
-  checkEasAuth,
-  resolveEasCliBin,
-  loadProjectProvider,
-  resolveRemote,
-  uploadRemote,
-} from '../engine/remote-cache.ts';
-import {
+  androidBuildOptions,
   androidDevClientScheme,
   dumpApkManifest,
   apkPackage,
@@ -136,17 +123,11 @@ import {
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifact } from './android/artifact.ts';
+import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
 import { persistLastBuild } from './android/result.ts';
-import {
-  finishAndroidRun,
-  androidMetroRuntime,
-  androidProcessRuntime,
-  type AndroidRuntimePlan,
-} from './android/launch.ts';
+import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
 
@@ -199,7 +180,7 @@ export function registerAndroid(program: Command): void {
     .command('android')
     .description(
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
-        'emulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
+        'emulator. React Native and Expo Debug runs start the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -318,6 +299,7 @@ export function runAndroidOperation(
 }
 
 interface RunAndroidOptions {
+  projectRegistry?: Pick<ProjectRegistry, 'selectAndroid'>;
   runtimePlan?: AndroidRuntimePlan;
   automaticDevicePlacement?: typeof automaticDevicePlacement;
   checkEasFallback?: typeof checkEasFallback;
@@ -379,30 +361,18 @@ interface RunAndroidOptions {
   verifyCollector?: typeof verifyCollectorOwnership;
   verifyLaunched?: typeof verifyLaunch;
   ensureStorage?: typeof ensureWorkspaceStorageSafely;
-  fingerprint?: typeof fingerprintProject;
-  untracked?: typeof untrackedNativeFiles;
-  resolveCached?: typeof resolveBuild;
-  storeCached?: typeof storeBuild;
-  storedAssets?: typeof storedAssetManifest;
-  captureAssets?: typeof captureAssetManifest;
   acquireLock?: typeof acquireBuildLock;
   releaseLock?: typeof releaseBuildLock;
   waitForBuild?: typeof waitForOtherBuild;
-  loadProvider?: typeof loadProjectProvider;
   easAuth?: typeof checkEasAuth;
   resolveRemoteBuild?: typeof resolveRemote;
   uploadRemoteBuild?: typeof uploadRemote;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   loadCacheProviderModule?: typeof loadCacheProvider;
-  planPrebuildFor?: typeof planPrebuild;
-  prebuild?: typeof runPrebuild;
-  build?: typeof buildAndroid;
-  ccacheFor?: typeof resolveCcache;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
   launchRelease?: typeof launchAndroidReleaseApp;
   verifyReleaseLaunched?: typeof verifyAndroidReleaseLaunch;
-  swapApk?: typeof swapApkBundle;
   resolveDevClientScheme?: typeof androidDevClientScheme;
   spawn?: (cmd: string, args: readonly string[], opts: Record<string, unknown>) => ChildProcess;
   kill?: (pid: number, signal: NodeJS.Signals) => boolean;
@@ -470,30 +440,18 @@ function resolveRunAndroidOptions(
     verifyCollector = verifyCollectorOwnership,
     verifyLaunched = verifyLaunch,
     ensureStorage = ensureWorkspaceStorageSafely,
-    fingerprint = fingerprintProject,
-    untracked = untrackedNativeFiles,
-    resolveCached = resolveBuild,
-    storeCached = storeBuild,
-    storedAssets = storedAssetManifest,
-    captureAssets = captureAssetManifest,
     acquireLock = acquireBuildLock,
     releaseLock = releaseBuildLock,
     waitForBuild = waitForOtherBuild,
-    loadProvider = loadProjectProvider,
     easAuth = checkEasAuth,
     resolveRemoteBuild = resolveRemote,
     uploadRemoteBuild = uploadRemote,
     resolveCacheProvider = resolveCacheProviderConfig,
     loadCacheProviderModule = loadCacheProvider,
-    planPrebuildFor = planPrebuild,
-    prebuild = runPrebuild,
-    build = buildAndroid,
-    ccacheFor = resolveCcache,
     install = installAndroidApp,
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
     verifyReleaseLaunched = verifyAndroidReleaseLaunch,
-    swapApk = swapApkBundle,
     resolveDevClientScheme = androidDevClientScheme,
     spawn = (cmd, args, opts) => getExecutor().spawn(cmd, args, opts),
     kill = (pid, signal) => process.kill(pid, signal),
@@ -560,30 +518,18 @@ function resolveRunAndroidOptions(
     verifyCollector,
     verifyLaunched,
     ensureStorage,
-    fingerprint,
-    untracked,
-    resolveCached,
-    storeCached,
-    storedAssets,
-    captureAssets,
     acquireLock,
     releaseLock,
     waitForBuild,
-    loadProvider,
     easAuth,
     resolveRemoteBuild,
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
-    planPrebuildFor,
-    prebuild,
-    build,
-    ccacheFor,
     install,
     launch,
     launchRelease,
     verifyReleaseLaunched,
-    swapApk,
     resolveDevClientScheme,
     spawn,
     kill,
@@ -697,30 +643,18 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     verifyCollector,
     verifyLaunched,
     ensureStorage,
-    fingerprint,
-    untracked,
-    resolveCached,
-    storeCached,
-    storedAssets,
-    captureAssets,
     acquireLock,
     releaseLock,
     waitForBuild,
-    loadProvider,
     easAuth,
     resolveRemoteBuild,
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
-    planPrebuildFor,
-    prebuild,
-    build,
-    ccacheFor,
     install,
     launch,
     launchRelease,
     verifyReleaseLaunched,
-    swapApk,
     resolveDevClientScheme,
     spawn,
     kill,
@@ -740,9 +674,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const slot = validateDeviceSlot(options.slot);
   const started = now();
   const startedAt = new Date(started).toISOString();
-  const problem = projectProblem(root, 'android');
-  if (problem) {
-    const { message, remedy } = problem;
+  const selectedProject = (options.projectRegistry ?? projectRegistry).selectAndroid(root);
+  if ('problem' in selectedProject) {
+    const { message, remedy } = selectedProject.problem;
     out(phaseLine('error', chalk.red(`STIM_NO_PROJECT: ${message}`)));
     out(phaseLine('remedy', remedy));
     if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
@@ -846,19 +780,19 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
-  const settingsRepoRoot = repoRoot(root);
   const settingsRoot = root;
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsContext = projectSettingsContext(root);
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
+  const integration = await selectedProject.load({ context: settingsContext, settings });
   const placement = resolveBuildPlacement(options.buildMachine);
   record.buildMachine = placement.selected;
   if (placement.failure) {
@@ -882,6 +816,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     },
     {
       resolveCacheProvider,
+      runtimeKind: integration.runtimeKind,
+      variantProblem: integration.variantProblem,
+      detectExpo: () => integration.isExpo,
       listSystemImages,
       listDeviceProfiles,
       warn: (label, message) => out(phaseLine(label, chalk.yellow(message))),
@@ -889,11 +826,24 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   );
   if (!planned.ok) return fail(planned.code, planned.message, planned.remedy, { lines: planned.lines });
   const { plan } = planned;
+  if (!integration.targets.includes(plan.target.kind))
+    return fail(
+      'STIM_BAD_ARG',
+      `This project integration does not support the ${plan.target.kind} Android target.`,
+      'Use a local Android emulator for this integration.',
+    );
+  if (easProfile !== undefined && !integration.eas)
+    return fail(
+      'STIM_BAD_ARG',
+      'This project integration does not support EAS builds.',
+      'Use its local Android build recipe.',
+    );
   const deviceSlotWait = {
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
@@ -902,14 +852,16 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
-  const { variant, release, cache: cachePolicy } = buildPlan;
+  const { variant, release } = buildPlan;
+  const runtimeKind = integration.runtimeKind(buildPlan);
+  const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
-  const useBuildCache = cachePolicy.read;
   const hosting = await selectAndroidPlacement({
     root,
     slot,
     target: plan.target,
     release,
+    appMode,
     metroCheck,
     noWait: plan.deviceSlotWaitMs === 0,
     buildMachine: options.buildMachine,
@@ -917,7 +869,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     resolveSerial: resolveAvdSerial,
     prepare: options.prepareHostedAndroid,
     automatic: options.automaticDevicePlacement,
-    ...(remoteEasFallbackSetting(settings)
+    ...(integration.eas && remoteEasFallbackSetting(settings)
       ? {
           eas: () =>
             (options.checkEasFallback ?? checkEasFallback)({
@@ -964,7 +916,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   if (hostedTarget) {
     if (settings.androidEmulatorApp !== undefined)
       phase('device', 'androidEmulatorApp is ignored on a hosting Mac; the emulator boots headless.');
-    if (publicUrlSetting(settings) || tunnelModeSetting(settings))
+    if (appMode === 'development' && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
       phase(
         'metro',
         'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
@@ -994,7 +946,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     buildCache: requestedBuildCache,
   });
   if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
-  const appIds = detectAppIds(root);
+  const appIds = integration.appIds();
   let androidPackage = appIds.androidPackage;
   record.bundleId = androidPackage;
   const registerProject = () =>
@@ -1019,6 +971,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         port: reservedPort,
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+        settingsContext,
         remote: remoteContext !== null,
         note: out,
         resolve: resolveMetro,
@@ -1037,7 +990,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return { ok: true, prepared: { metroPort } };
     } else {
-      const pin = metroPortSetting(root);
+      const pin = metroPortSetting(settings);
       if (pin.error) {
         return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }
@@ -1052,14 +1005,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: true, prepared: { metroPort } };
   }
 
-  const runtime =
-    options.runtimePlan ??
-    (release
-      ? androidProcessRuntime(async () => {
-          phase('metro', `skipped (${variant}: the JS bundle is embedded, no dev server is used)`);
-          return { ok: true, prepared: { metroPort: null } };
-        })
-      : androidMetroRuntime(prepareMetro));
+  const runtime = options.runtimePlan ?? integration.runtime({ build: buildPlan, prepareMetro, phase });
+  const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
     const { code, message, remedy, lines } = preparation.error;
@@ -1231,6 +1178,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   record.systemImage = device.systemImage;
   record.deviceProfile = device.deviceProfile;
 
+  let preparedArtifact: PreparedAndroidArtifact | undefined;
   const runFromFingerprint = async (): Promise<RunAndroidResult> => {
     if (metroCheck && metroPort !== null && plan.metroWarmup)
       void prewarmMetro({
@@ -1245,12 +1193,31 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         buildLog,
         writer,
-        settings,
-        isExpo,
-        device,
-        physical,
-        hostedAbi: hostedTarget?.choice.architecture,
-        remote: Boolean(remoteDevice),
+        recipe: integration.artifact({
+          root,
+          buildLog,
+          writer,
+          settings,
+          buildPlan,
+          target: androidBuildOptions({
+            release,
+            physical,
+            device,
+            variant,
+            deviceAbi,
+            targetAbiOnly: buildPlan.targetAbiOnly,
+            hostedAbi: hostedTarget?.choice.architecture,
+          }),
+          phase,
+          out,
+          step: progress.step,
+          estimates,
+        }),
+        targetOffloadRefusal: physical
+          ? 'device builds build here'
+          : remoteDevice
+            ? 'remote device builds build here'
+            : null,
         buildPlan,
         cacheProviderConfig,
         requestedBuildCache,
@@ -1261,7 +1228,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         progress: {
           phase,
           out,
-          estimates,
           stats,
           step: progress.step,
           miss: progress.miss,
@@ -1272,29 +1238,15 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         },
       },
       {
-        deviceAbi,
-        fingerprint,
-        untracked,
-        resolveCached,
-        storeCached,
-        storedAssets,
-        captureAssets,
         acquireLock,
         releaseLock,
         waitForBuild,
-        loadProvider,
         easAuth,
         resolveRemoteBuild,
         uploadRemoteBuild,
         loadCacheProviderModule,
         acquireSlot,
         releaseSlot,
-        planPrebuildFor,
-        prebuild,
-        build,
-        ccacheFor,
-        swapApk,
-        readState,
         now,
       },
     );
@@ -1304,6 +1256,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const { artifact } = acquiredArtifact;
+    preparedArtifact = artifact;
     const { apkPath } = artifact;
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
@@ -1317,6 +1270,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         slot,
         release,
+        appMode,
         isExpo,
         metroPort,
         logsDir,
@@ -1447,7 +1401,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         bootDuration: () => bootDuration,
         apkPath,
         androidPackage,
-        swapDir: artifact.swapDir,
         record,
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,
@@ -1462,6 +1415,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         phase,
         fail,
         readApkPackage,
+        readProjectPackage: () => integration.appIds().androidPackage,
+        packageRemedy: integration.packageRemedy,
         install,
         launch,
         launchRelease,
@@ -1503,5 +1458,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } catch (error) {
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
+  } finally {
+    preparedArtifact?.release();
   }
 }

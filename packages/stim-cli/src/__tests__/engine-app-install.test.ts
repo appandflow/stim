@@ -76,7 +76,7 @@ function recordingExec({
   failStderr = 'device not booted',
   outputs = {},
 }: {
-  fail?: string | null;
+  fail?: string | string[] | null;
   failCode?: string;
   failStderr?: string;
   outputs?: Record<string, string | string[]>;
@@ -91,7 +91,7 @@ function recordingExec({
       calls.push([file, ...args]);
       options.push(opts);
       const key = [file, ...args].join(' ');
-      if (fail && key.includes(fail)) {
+      if (fail && [fail].flat().some((match) => key.includes(match))) {
         const err = new Error(`Command failed: ${key}`);
         (err as Error & { stderr?: string }).stderr = failStderr;
         if (failCode) (err as NodeJS.ErrnoException).code = failCode;
@@ -543,12 +543,40 @@ describe('ios', () => {
     expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
   });
 
-  test('an unreadable process list neither terminates nor claims a restart', () => {
-    const exec = recordingExec({ fail: 'launchctl list' });
+  test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', () => {
+    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(result.restartedPid).toBeUndefined();
-    expect(exec.calls.some((call) => call.includes('terminate'))).toBe(false);
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toEqual([
+      'xcrun',
+      'simctl',
+      'launch',
+      '--terminate-running-process',
+      'U1',
+      'com.example.app',
+    ]);
+  });
+
+  test('an unreadable process list relaunches a dev client without console paths instead of an openurl into it', () => {
+    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
+    const result = launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('launch');
+    expect(exec.calls.some((call) => call[2] === 'openurl' || call[2] === 'terminate')).toBe(false);
+    expect(exec.calls.at(-1)?.slice(0, 6)).toEqual([
+      'xcrun',
+      'simctl',
+      'launch',
+      '--terminate-running-process',
+      'U1',
+      'com.example.app',
+    ]);
+    expect(exec.calls.at(-1)?.[6]).toBe('--initialUrl');
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {

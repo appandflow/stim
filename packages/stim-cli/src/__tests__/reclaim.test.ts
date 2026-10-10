@@ -814,32 +814,43 @@ test('reclaimProject releases a lease whose token the recreated workspace lost',
   }
 });
 
-test('worktree reclaim releases named ports and keeps the entry when a listener cannot be identified', async () => {
+test('worktree reclaim releases named ports without inspecting or signalling their listeners', async () => {
   const root = join(tmpHome, 'named-project');
   upsertProject(root, { ports: { web: 8900 } });
-  const identify = vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM' });
+  const identify = vi.spyOn(identity, 'captureProcessIdentity');
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => pid === 41219 || realKill(pid, signal));
+  const commands: string[] = [];
   setExecutor({
     findExecutable: () => '/usr/sbin/lsof',
-    runFile: (file: string) =>
-      file === 'netstat' ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n' : file === 'lsof' ? '41219' : '',
-    runQuiet: (cmd: string) => (cmd.startsWith('lsof ') ? '41219' : null),
-    runFileQuiet: () => null,
-  });
-  await expect(reclaimProject(root)).rejects.toThrow('Cannot identify pid 41219 on web (8900): EPERM');
-  expect(getProject(root)?.ports).toEqual({ web: 8900 });
-  identify.mockRestore();
-  setExecutor({
-    findExecutable: () => '/usr/sbin/lsof',
-    runFile: (file: string) => {
-      if (file === 'netstat') return 'Proto Local Address Foreign Address State PID\n';
-      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
+    runFile: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return file === 'netstat'
+        ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n'
+        : file === 'lsof'
+          ? '41219'
+          : '';
     },
-    runQuiet: () => null,
-    runFileQuiet: () => null,
+    runQuiet: (cmd: string) => {
+      commands.push(cmd);
+      return cmd.startsWith('lsof ') ? '41219' : null;
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return null;
+    },
   });
-  const result = await reclaimProject(root);
-  expect(result.keptEntry).toBe(false);
-  expect(getProject(root)).toBeNull();
+  try {
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(false);
+    expect(getProject(root)).toBeNull();
+    expect(commands.filter((command) => /8900|41219|taskkill/.test(command))).toEqual([]);
+    expect(identify).not.toHaveBeenCalled();
+    expect(kill.mock.calls.filter(([pid]) => Math.abs(pid) === 41219)).toEqual([]);
+  } finally {
+    kill.mockRestore();
+    identify.mockRestore();
+  }
 });
 
 test.each(['success', 'failure', 'missing', 'stale'])(

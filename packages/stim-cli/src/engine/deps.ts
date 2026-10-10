@@ -98,18 +98,19 @@ function extractRubyHead(lines: string[]): PodDiagnostics | null {
 export function podsAreStale(
   lockText: unknown,
   manifestText: unknown,
+  dir = 'ios/',
 ): { noPods?: boolean; stale: boolean; reason?: string } {
   const lock = normalize(lockText);
   const manifest = normalize(manifestText);
   if (lock === null && manifest === null) return { noPods: true, stale: false };
   if (lock === null) {
-    return { stale: true, reason: 'ios/Podfile.lock is missing but ios/Pods exists' };
+    return { stale: true, reason: `${dir}Podfile.lock is missing but ${dir}Pods exists` };
   }
   if (manifest === null) {
-    return { stale: true, reason: 'ios/Pods/Manifest.lock is missing (pods have never been installed here)' };
+    return { stale: true, reason: `${dir}Pods/Manifest.lock is missing (pods have never been installed here)` };
   }
   if (lock !== manifest) {
-    return { stale: true, reason: 'ios/Podfile.lock and ios/Pods/Manifest.lock differ' };
+    return { stale: true, reason: `${dir}Podfile.lock and ${dir}Pods/Manifest.lock differ` };
   }
   return { stale: false };
 }
@@ -119,19 +120,21 @@ function normalize(text: unknown) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
-function podfilePath(root: string) {
-  return join(root, 'ios', 'Podfile');
-}
-
-export function readPodState(root: string): {
+export function readPodState(
+  root: string,
+  directory: string = join(root, 'ios'),
+): {
   hasPodfile: boolean;
   lockText: string | null;
   manifestText: string | null;
+  dir: string;
 } {
+  const rel = relative(root, directory);
   return {
-    hasPodfile: existsSync(podfilePath(root)),
-    lockText: readOrNull(join(root, 'ios', 'Podfile.lock')),
-    manifestText: readOrNull(join(root, 'ios', 'Pods', 'Manifest.lock')),
+    hasPodfile: existsSync(join(directory, 'Podfile')),
+    lockText: readOrNull(join(directory, 'Podfile.lock')),
+    manifestText: readOrNull(join(directory, 'Pods', 'Manifest.lock')),
+    dir: rel ? `${rel}/` : '',
   };
 }
 
@@ -177,6 +180,8 @@ export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
 
 const loginRubyEnvByShell = new Map<string, LoginRubyEnv | null>();
 
+const LOGIN_ENV_OPTIONS = { timeoutMs: 10_000, killSignal: 'SIGKILL', detachedSilent: true } as const;
+
 function readLoginRubyEnv(
   shell: string | undefined = process.env.SHELL,
   platform: NodeJS.Platform = process.platform,
@@ -188,11 +193,29 @@ function readLoginRubyEnv(
   try {
     dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
     const file = join(dir, 'env');
-    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
-      timeoutMs: 10_000,
-      killSignal: 'SIGKILL',
-      detachedSilent: true,
-    });
+    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
+    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
+  } catch {
+    parsed = null;
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+  loginRubyEnvByShell.set(shell, parsed);
+  return parsed;
+}
+
+async function readLoginRubyEnvAsync(
+  shell: string | undefined = process.env.SHELL,
+  platform: NodeJS.Platform = process.platform,
+): Promise<LoginRubyEnv | null> {
+  if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
+  if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
+  let dir: string | null = null;
+  let parsed: LoginRubyEnv | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+    const file = join(dir, 'env');
+    await getExecutor().runFileAsync(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
     parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
   } catch {
     parsed = null;
@@ -273,6 +296,19 @@ export function podEnvForRuby(
   if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
   if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
+}
+
+export async function podEnvForRubyAsync(version: string | null): Promise<NodeJS.ProcessEnv> {
+  let loginNeeded = false;
+  const withoutLogin = podEnvForRuby(version, {
+    loginEnv: () => {
+      loginNeeded = true;
+      return null;
+    },
+  });
+  if (!loginNeeded) return withoutLogin;
+  const login = await readLoginRubyEnvAsync();
+  return podEnvForRuby(version, { loginEnv: () => login });
 }
 
 export function readRubyVersion(
@@ -531,20 +567,22 @@ export async function runPodInstall(
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
+    directory = join(root, 'ios'),
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
+    directory?: string;
   } = {},
 ): Promise<PodInstallResult> {
-  const iosDir = join(root, 'ios');
+  const iosDir = directory;
   if (!existsSync(iosDir)) {
     return {
       failed: true,
       code: DEPS_ERROR,
-      reason: `No ios/ directory in ${root}, so there is nothing to pod install.`,
+      reason: `No ${relative(root, iosDir) || '.'}/ directory in ${root}, so there is nothing to pod install.`,
       remedy: 'Run `stim ios` on a project with native iOS sources, or let prebuild generate them.',
       lastLines: [] as string[],
     };

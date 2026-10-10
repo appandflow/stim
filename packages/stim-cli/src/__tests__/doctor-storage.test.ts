@@ -5,6 +5,7 @@ import { checkStorageLayout } from '../diagnostics/doctor-storage.ts';
 
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { apkOutputsDir } from '../integrations/react-native-build.ts';
+import { defaultAndroidLayout } from '../workspace/settings.ts';
 
 let base: string;
 let project: string;
@@ -24,7 +25,7 @@ afterEach(() => {
 });
 
 test('doctor distinguishes Android project output from iOS workspace output', () => {
-  const output = apkOutputsDir(project);
+  const output = apkOutputsDir(defaultAndroidLayout(project));
   const findings = checkStorageLayout(project, {
     platform: 'android',
     device: (path) => (path === output ? 2 : 1),

@@ -399,7 +399,7 @@ async function reclaimIdleProject(
     stopRequester = { by: 'stim gc --delete' },
   }: ReclaimOptions,
 ): Promise<ReclaimResult> {
-  await clearNamedPorts(path, { stop: true });
+  await clearNamedPorts(path);
   const project = getProject(path);
   for (const { platforms } of projectDeviceSlots(project)) {
     if (platforms.android?.owned && platforms.android.avdName) {

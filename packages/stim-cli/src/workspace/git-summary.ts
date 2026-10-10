@@ -6,6 +6,7 @@ import { getExecutor } from '../exec.ts';
 import { mergeState, type DefaultBranch } from './merge-state.ts';
 
 const GIT_TIMEOUT_MS = 3000;
+const GIT_CONCURRENCY = 6;
 const MERGE_BUDGET_MS = 250;
 const MERGE_TIMEOUT_BACKOFF_MS = 5 * 60_000;
 const ORIGIN_PREFIX = 'refs/remotes/origin/';
@@ -49,13 +50,22 @@ export function inPrivacyProtectedFolder(path: string, home: string): boolean {
   return [...guarded, '/Volumes'].some((dir) => path === dir || path.startsWith(`${dir}/`));
 }
 
+const gitQueue: (() => void)[] = [];
+let gitRunning = 0;
+
 async function git(path: string, args: string[]): Promise<string | null> {
+  if (gitRunning < GIT_CONCURRENCY) gitRunning++;
+  else await new Promise<void>((proceed) => gitQueue.push(proceed));
   try {
     return await getExecutor().runFileAsync('git', ['--no-optional-locks', '-C', path, ...args], {
       timeoutMs: GIT_TIMEOUT_MS,
     });
   } catch {
     return null;
+  } finally {
+    const next = gitQueue.shift();
+    if (next) next();
+    else gitRunning--;
   }
 }
 
@@ -189,7 +199,7 @@ function gitFilesStamp(worktree: WorktreeFacts, refs: StampedRefs): { stamp: str
 }
 
 /**
- * Reads every worktree's git summary in parallel, each git call bounded by a timeout. A worktree `skip` rejects, or
+ * Reads every worktree's git summary, at most six git calls at a time, each bounded by a timeout once it starts. A worktree `skip` rejects, or
  * one git cannot answer in time, maps to null. After every read, merge verdicts missing from the cache are judged one
  * at a time; no new judgement starts 250 ms after the first, and a verdict for the same HEAD judged at an older
  * default-branch commit stands in, because a merged branch stays merged. A judgement that timed out is not retried
@@ -218,7 +228,14 @@ export async function readWorktreeGit(
         git(worktree.path, ['status', '--porcelain=v2', '--branch', '--untracked-files=normal']),
         repository ? targets.get(repository) : null,
       ]);
-      return { path: worktree.path, status: out === null ? null : parseGitStatus(out), target, files, refs };
+      return {
+        path: worktree.path,
+        status: out === null ? null : parseGitStatus(out),
+        target,
+        files,
+        refs,
+        at: Date.now(),
+      };
     }),
   );
   const budget: { deadline?: number } = {};
@@ -229,7 +246,8 @@ export async function readWorktreeGit(
       continue;
     }
     if (!read.status) {
-      if (read.files?.missing) recent.set(read.path, { at: now, files: read.files.stamp, refs: read.refs, git: null });
+      if (read.files?.missing)
+        recent.set(read.path, { at: read.at, files: read.files.stamp, refs: read.refs, git: null });
       summaries.set(read.path, null);
       continue;
     }
@@ -238,7 +256,7 @@ export async function readWorktreeGit(
     const summary = { ...counts, mergedInto: merge?.into ?? null };
     const refs = { upstream: counts.upstream, target: read.target?.ref ?? null };
     const settled = !merge?.deferred && refs.upstream === read.refs.upstream && refs.target === read.refs.target;
-    recent.set(read.path, { at: now, files: settled ? (read.files?.stamp ?? null) : null, refs, git: summary });
+    recent.set(read.path, { at: read.at, files: settled ? (read.files?.stamp ?? null) : null, refs, git: summary });
     summaries.set(read.path, summary);
   }
   return summaries;

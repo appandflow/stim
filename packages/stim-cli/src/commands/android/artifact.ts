@@ -9,28 +9,10 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import type { FingerprintSource } from '@expo/fingerprint';
-import {
-  buildCacheKey,
-  changedDuringBuildLine,
-  configInputsChanged,
-  filesystemBuildCapability,
-  fingerprintDiffRecord,
-  inputsChangedDuringBuild,
-  prepareProviderDownloadDir,
-  providerDownloadPath,
-  refingerprintAfterMutation,
-  untrackedMissLine,
-  type fingerprintProject,
-  type resolveBuild,
-  type storeBuild,
-  type storedAssetManifest,
-  type untrackedNativeFiles,
-} from '../../cache/build-cache.ts';
-import { explainBuildMiss, fingerprintErrorMissReason, skippedMissReason } from '../../cache/miss-reason.ts';
+import { prepareProviderDownloadDir, providerDownloadPath } from '../../cache/build-cache.ts';
+import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import { type buildAndroid } from '../../integrations/react-native-build.ts';
 import {
   waitForSharedBuild,
   type acquireBuildLock,
@@ -40,25 +22,20 @@ import {
 } from '../../engine/build-lock.ts';
 import type { acquireBuildSlot, releaseBuildSlot, BuildSlotHandle } from '../../engine/build-slots.ts';
 import { runArtifactLifecycle, type ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
-import { resolveKeystore, type swapApkBundle } from '../../engine/apk-swap.ts';
-import type { captureAssetManifest } from '../../engine/asset-manifest.ts';
-import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine, type resolveCcache } from '../../engine/ccache.ts';
-import type { OwnedDeviceRecord } from '../../engine/device.ts';
+import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import { formatDiagnostic } from '../../engine/errors-gradle.ts';
 
-import { recordPrebuild, staleNativeDirRefusal, type planPrebuild, type runPrebuild } from '../../engine/prebuild.ts';
 import {
   easAuthNote,
   isEasAuthFailureText,
   RESOLVE_TIMEOUT_MS,
   type checkEasAuth,
-  type loadProjectProvider,
   type resolveRemote,
   type uploadRemote,
   type LoadProjectProviderResult,
 } from '../../engine/remote-cache.ts';
-import type { RunEstimates, RunRecorder } from '../../engine/stats.ts';
+import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity, type OffloadMode } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
@@ -75,16 +52,19 @@ import {
   type BuildHandoff,
 } from '../../offload/client.ts';
 import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
-import { androidRequirements, androidToolchain } from '../../offload/toolchain.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
-import { detectAndroidPackage } from '../../workspace/app-id.ts';
-import type { SettingsObject } from '../../workspace/settings.ts';
-import type { androidDeviceAbi } from '../../devices/android.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
-import type { readWorkspaceState } from '../../workspace/workspace-state.ts';
-import type { AndroidRunPlan } from './plan.ts';
-import { androidBuildOptions, displayPath, NO_FINGERPRINT, PLATFORM } from './support.ts';
-import type { AndroidRecord, AndroidWriter, FailExtra, PrebuildResultLike, RemoteUploadLike } from './types.ts';
+import type { AndroidBuildPlan } from './plan.ts';
+import { displayPath, PLATFORM } from './support.ts';
+import type { AndroidRecord, AndroidWriter, FailExtra, RemoteUploadLike } from './types.ts';
+
+import {
+  AndroidRecipeRefusal as ArtifactRefusal,
+  type AndroidArtifactFailure,
+  type AndroidArtifactRecipe,
+  type AndroidSourcePreparation,
+} from '../../integrations/android-project.ts';
+import { runCancellationSignal } from '../../engine/native-run.ts';
 
 const FALLBACK_LINES = 5;
 
@@ -92,15 +72,10 @@ interface AndroidArtifactRequest {
   root: string;
   buildLog: string;
   writer: AndroidWriter;
-  settings: SettingsObject;
-  isExpo: boolean;
-  device: OwnedDeviceRecord;
-  physical: boolean;
-  hostedAbi?: string;
-  /** Whether the app runs on a remote device backend rather than a local emulator. */
-  remote: boolean;
-  buildPlan: AndroidRunPlan['build'];
-  cacheProviderConfig: AndroidRunPlan['cacheProviderConfig'];
+  recipe: AndroidArtifactRecipe;
+  targetOffloadRefusal: string | null;
+  buildPlan: Pick<AndroidBuildPlan['build'], 'variant' | 'cache'>;
+  cacheProviderConfig: AndroidBuildPlan['cacheProviderConfig'];
   requestedBuildCache: boolean;
   easBuild: Extract<EasBuildResult, { ok: true }> | null;
   androidPackage: string | null;
@@ -109,7 +84,6 @@ interface AndroidArtifactRequest {
   progress: {
     phase: (label: unknown, text: string) => void;
     out: (line: string) => void;
-    estimates: () => RunEstimates;
     stats: Pick<RunRecorder, 'setCacheKey' | 'setBuildMs' | 'setPlacement' | 'deviceSlotWaitMs'>;
     step: (phase: BuildPhase) => void;
     miss: (reason: BuildMissReason, provisional?: boolean) => void;
@@ -121,29 +95,15 @@ interface AndroidArtifactRequest {
 }
 
 interface AndroidArtifactDeps {
-  deviceAbi: typeof androidDeviceAbi;
-  fingerprint: typeof fingerprintProject;
-  untracked: typeof untrackedNativeFiles;
-  resolveCached: typeof resolveBuild;
-  storeCached: typeof storeBuild;
-  storedAssets: typeof storedAssetManifest;
-  captureAssets: typeof captureAssetManifest;
   acquireLock: typeof acquireBuildLock;
   releaseLock: typeof releaseBuildLock;
   waitForBuild: typeof waitForOtherBuild;
-  loadProvider: typeof loadProjectProvider;
   easAuth: typeof checkEasAuth;
   resolveRemoteBuild: typeof resolveRemote;
   uploadRemoteBuild: typeof uploadRemote;
   loadCacheProviderModule: typeof loadCacheProvider;
   acquireSlot: typeof acquireBuildSlot;
   releaseSlot: typeof releaseBuildSlot;
-  planPrebuildFor: typeof planPrebuild;
-  prebuild: typeof runPrebuild;
-  build: typeof buildAndroid;
-  ccacheFor: typeof resolveCcache;
-  swapApk: typeof swapApkBundle;
-  readState: typeof readWorkspaceState;
   now: () => number;
 }
 
@@ -152,7 +112,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  swapDir: string | null;
+  /** Removes only owned temporary copies; repeated calls are safe. */
+  release(): void;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
@@ -160,13 +121,6 @@ export interface PreparedAndroidArtifact {
   providerName: string | null;
   remote: LoadProjectProviderResult | null;
   abandonedRemote: boolean;
-}
-
-interface AndroidArtifactFailure {
-  code: string | undefined;
-  message: string | null | undefined;
-  remedy: string | null | undefined;
-  extra: FailExtra;
 }
 
 type AndroidArtifactResult =
@@ -182,26 +136,13 @@ function fail(
   return { code, message, remedy, extra };
 }
 
-class ArtifactRefusal extends Error {
-  readonly failure: AndroidArtifactFailure;
-
-  constructor(failure: AndroidArtifactFailure) {
-    super(failure.message ?? failure.code);
-    this.failure = failure;
-  }
-}
-
 export async function acquireAndroidArtifact(
   {
     root,
     buildLog,
     writer,
-    settings,
-    isExpo,
-    device,
-    physical,
-    hostedAbi,
-    remote: remoteTarget,
+    recipe,
+    targetOffloadRefusal,
     buildPlan,
     cacheProviderConfig,
     requestedBuildCache,
@@ -212,33 +153,19 @@ export async function acquireAndroidArtifact(
     progress,
   }: AndroidArtifactRequest,
   {
-    deviceAbi,
-    fingerprint,
-    untracked,
-    resolveCached,
-    storeCached,
-    storedAssets,
-    captureAssets,
     acquireLock,
     releaseLock,
     waitForBuild,
-    loadProvider,
     easAuth,
     resolveRemoteBuild,
     uploadRemoteBuild,
     loadCacheProviderModule,
     acquireSlot,
     releaseSlot,
-    planPrebuildFor,
-    prebuild,
-    build,
-    ccacheFor,
-    swapApk,
-    readState,
     now,
   }: AndroidArtifactDeps,
 ): Promise<AndroidArtifactResult> {
-  const { phase, out, estimates, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
+  const { phase, out, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   let fallbackMachine: string | null = null;
   let hereReason = 'no remote Mac is paired';
   let slotWaitMs: number | undefined;
@@ -262,8 +189,11 @@ export async function acquireAndroidArtifact(
     record.offloadFallback = reason;
     phase('build', `${line} -> building here`);
   };
-  const { variant, release, profile: buildProfile, cas, cache: cachePolicy } = buildPlan;
-  const useBuildCache = cachePolicy.read;
+  const { variant, cache: cachePolicy } = buildPlan;
+  const signal = runCancellationSignal() ?? new AbortController().signal;
+  const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
+  let useBuildCache = cachePolicy.read;
+  let cacheIneligible: string | null = null;
   let androidPackage = initialPackage;
   let ccacheActivity: CcacheActivity = CCACHE_NOT_RUN;
   let phaseFailure: AndroidArtifactFailure | null = null;
@@ -297,22 +227,6 @@ export async function acquireAndroidArtifact(
     }
   };
 
-  const {
-    abi: buildAbi,
-    runOptions: buildRunOptions,
-    remoteRunOptions,
-  } = androidBuildOptions({
-    release,
-    physical,
-    device,
-    variant,
-    deviceAbi,
-    compiler: cas?.id,
-    buildProfile,
-    targetAbiOnly: buildPlan.targetAbiOnly,
-    hostedAbi,
-  });
-
   let hash = '';
   let providerUpload: Promise<ProviderCallResult<void>> | null = null;
   let providerName: string | null = null;
@@ -322,11 +236,9 @@ export async function acquireAndroidArtifact(
     cachePolicy.remote && cacheProviderConfig
       ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
       : null;
-  let fingerprintSources: FingerprintSource[] = [];
   let cacheKey = '';
   let storeHash = '';
   let storeKey = '';
-  let storeSources: FingerprintSource[] = [];
   let apkPath: string | null = null;
   let handoff: BuildHandoff | null = null;
   let swapFellBack = false;
@@ -346,43 +258,34 @@ export async function acquireAndroidArtifact(
     }
     if (useBuildCache) step('cache-lookup');
     const fingerprintTimer = stepTimer(now);
+    let computed;
     try {
-      const computed = await fingerprint(root, { platform: PLATFORM });
-      hash = computed?.hash ?? '';
-      fingerprintSources = computed?.sources ?? [];
-    } catch (err) {
-      const message = String((err as Error)?.message || err);
+      computed = await recipe.identity();
+    } catch (error) {
       record.cacheSkipped = !useBuildCache;
-      record.missReason = fingerprintErrorMissReason(message);
-      phaseFailure = fail(
-        NO_FINGERPRINT,
-        `@expo/fingerprint could not fingerprint ${root}: ${message}`,
-        'Fix the @expo/fingerprint error above, then retry.',
-        { lastBuildStatus: true },
-      );
-      return false;
+      if (error instanceof ArtifactRefusal && error.missReason) record.missReason = error.missReason;
+      throw error;
     }
-    if (!hash) {
-      record.cacheSkipped = !useBuildCache;
-      record.missReason = fingerprintErrorMissReason('no hash');
-      phaseFailure = fail(
-        NO_FINGERPRINT,
-        `@expo/fingerprint returned no hash for ${root}, so the build cache cannot be addressed.`,
-        'Check the project native inputs and the @expo/fingerprint error above, then retry.',
-        { lastBuildStatus: true },
-      );
-      return false;
+    if ('cacheIneligible' in computed) {
+      cacheIneligible = computed.cacheIneligible;
+      useBuildCache = false;
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = false;
+      record.cacheSkipped = true;
+      phase('fingerprint', `unavailable: ${cacheIneligible}`);
+      return true;
     }
+    hash = computed.hash;
     record.fingerprint = hash;
-    cacheKey = buildCacheKey(PLATFORM, hash, buildRunOptions);
+    cacheKey = computed.key;
     stats.setCacheKey(cacheKey);
     record.cacheKey = cacheKey;
     storeHash = hash;
     storeKey = cacheKey;
-    storeSources = fingerprintSources;
 
     const found = await resolveTieredBuild({
-      local: filesystemBuildCapability({ resolve: resolveCached, store: storeCached, sources: fingerprintSources }),
+      local: recipe.cache(),
       loadProvider: loadTieredProvider,
       target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
       destinationDir: providerDownloadPath(workspaceDir(root)),
@@ -411,11 +314,10 @@ export async function acquireAndroidArtifact(
   let uploadPending: Promise<RemoteUploadLike> | null = null;
 
   async function resolveRemoteArtifact(): Promise<void> {
-    // Expo buildCacheProvider run options cannot key Android ABIs, so targeted APKs are unsafe in this tier.
-    if (buildAbi || cas || buildProfile || !cachePolicy.remote) return;
+    if (cacheIneligible || !recipe.legacyCache) return;
 
     if (!apkPath) {
-      const loaded: LoadProjectProviderResult = await loadProvider(root, { isExpo });
+      const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
       if (loaded?.unavailable) {
         phase('cache', chalk.yellow(`provider not usable: ${loaded.unavailable}`));
       } else if (loaded?.provider) {
@@ -437,12 +339,14 @@ export async function acquireAndroidArtifact(
         platform: PLATFORM,
         projectRoot: root,
         fingerprintHash: hash,
-        runOptions: remoteRunOptions,
+        runOptions: recipe.legacyCache?.runOptions ?? null,
       });
       if (hit?.appPath) {
         let stored = null;
         try {
-          stored = storeCached(PLATFORM, cacheKey, hit.appPath, { sources: fingerprintSources });
+          stored =
+            (await recipe.cache().store({ ...cacheTarget(cacheKey), sourcePath: hit.appPath, overwrite: false })) ??
+            null;
         } catch (err) {
           phase('cache', chalk.yellow(`remote hit could not be stored locally: ${(err as Error)?.message || err}`));
         }
@@ -470,6 +374,7 @@ export async function acquireAndroidArtifact(
   let waitedForBuild: WaitedForBuild | null = null;
   let releasedWait: { facts: WaitedForBuild; who: string } | null = null;
   async function awaitSharedBuild(): Promise<string | null> {
+    if (!useBuildCache) return null;
     const shared = await waitForSharedBuild({
       platform: PLATFORM,
       key: cacheKey,
@@ -504,46 +409,23 @@ export async function acquireAndroidArtifact(
   }
 
   let swapDir: string | null = null;
+  const releaseArtifact = () => {
+    if (!swapDir) return;
+    try {
+      rmSync(swapDir, { recursive: true, force: true });
+      swapDir = null;
+    } catch (error) {
+      out(phaseLine('cleanup', chalk.yellow(`could not remove the temporary APK: ${(error as Error).message}`)));
+    }
+  };
   const installableCachedApk = async (key: string, cachedPath: string): Promise<string | null> => {
-    if (!release) return cachedPath;
-    phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
-    const swap = await swapApk({
-      root,
-      isExpo,
-      cachedApkPath: cachedPath,
-      keystore: resolveKeystore(root, settings),
-      logWriter: writer,
-      storedAssets: storedAssets(PLATFORM, key),
-    });
-    if (swap?.ok && swap.apkPath) {
-      if (swap.note) phase('swap', chalk.yellow(swap.note));
-      swapDir = swap.tmpDir ?? null;
-      phase(
-        'swap',
-        `${swap.hermes ? 'hermes bytecode' : 'plain JS'} repacked (store), zipaligned and re-signed (${formatDuration(swap.durationMs)})`,
-      );
-      return swap.apkPath;
+    const prepared = await recipe.materialize(key, cachedPath);
+    if (!prepared) {
+      swapFellBack = true;
+      return null;
     }
-    if (swap?.assetMismatch) {
-      phase(
-        'swap',
-        chalk.yellow(
-          `${swap.reason} -- building fresh instead` +
-            (swap.assetDiff ? ' (an APK cannot be made to carry an asset AAPT did not package)' : ''),
-        ),
-      );
-    } else {
-      phase(
-        'swap',
-        chalk.yellow(
-          `failed at ${swap?.step || 'unknown step'}: ${swap?.reason || 'unknown reason'} -- ` +
-            `building fresh instead (a cached ${variant} APK carries its builder's JS; it is never installed after a failed swap)`,
-        ),
-      );
-    }
-    for (const line of swap?.lastLines ?? []) phase('', chalk.dim(line));
-    swapFellBack = true;
-    return null;
+    swapDir = prepared.directory;
+    return prepared.apkPath;
   };
 
   async function prepareCachedArtifact(cachedPath: string): Promise<string | null> {
@@ -562,6 +444,7 @@ export async function acquireAndroidArtifact(
         diff: null,
       };
     }
+    if (cacheIneligible) return { reason: skippedMissReason(cacheIneligible), diff: null };
     if (!useBuildCache) {
       return {
         reason: skippedMissReason(
@@ -570,25 +453,7 @@ export async function acquireAndroidArtifact(
         diff: null,
       };
     }
-    const current = { hash: storeHash, sources: storeSources };
-    const explained = explainBuildMiss({
-      root,
-      platform: PLATFORM,
-      current,
-      rekeyedBy,
-      baselineDeps: { readState },
-    });
-    return {
-      reason: explained.reason,
-      diff:
-        explained.previousHash && explained.changedNames.length
-          ? fingerprintDiffRecord({
-              changed: explained.changedNames,
-              previousHash: explained.previousHash,
-              hash: current.hash,
-            })
-          : null,
-    };
+    return recipe.explain(rekeyedBy);
   }
 
   function explainMiss(rekeyedBy: string[]): void {
@@ -598,7 +463,7 @@ export async function acquireAndroidArtifact(
     miss(record.missReason);
     phase('cache', `miss: ${record.missReason.summary}`);
     if (record.missReason.kind === 'no-baseline') {
-      const line = untrackedMissLine(untracked({ projectRoot: root }));
+      const line = recipe.untrackedLine();
       if (line) phase('fingerprint', chalk.dim(line));
     }
   }
@@ -638,20 +503,17 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
+    if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
+      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
+      hereReason = cacheIneligible;
+      return null;
+    }
     const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
-    const unsupported = physical
-      ? 'device builds build here'
-      : remoteTarget
-        ? 'remote device builds build here'
-        : release
-          ? `${variant} builds build here`
-          : cas
-            ? 'Apple Clang CAS builds build here'
-            : !cachePolicy.write
-              ? 'the build cache is off'
-              : null;
+    const unsupported =
+      targetOffloadRefusal ??
+      (recipe.offload ? recipe.offload.unsupported : 'this project integration does not support offloaded builds');
     const here = machineCapacity();
     const placement = offloadPlacement({
       mode,
@@ -681,9 +543,16 @@ export async function acquireAndroidArtifact(
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     let asked: PlacementCandidate[] = [];
+    let target: ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>;
+    try {
+      target = recipe.offload!.target();
+    } catch (error) {
+      fallBack((error as Error).message);
+      return null;
+    }
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: { platform: 'android', local: androidToolchain(), requires: androidRequirements(root) },
+      target,
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
@@ -712,7 +581,8 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    if (!storeKey || !storeHash) {
+    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
       else
@@ -727,20 +597,11 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    if (uncached) swapDir = stagingDir;
     const outcome = await offloadBuild({
       choice,
-      expectedFingerprint: storeHash,
-      request: {
-        platform: 'android',
-        isExpo,
-        android: {
-          variant,
-          abi: buildAbi,
-          gradleBuildCache: buildPlan.gradleBuildCache,
-          pch: buildPlan.pch,
-          compilerCache: buildPlan.compilerCache === 'none' ? 'none' : 'ccache',
-        },
-      },
+      expectedFingerprint: uncached ? null : storeHash,
+      request: recipe.offload!.request,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
       onEnter: (name) => {
@@ -756,27 +617,38 @@ export async function acquireAndroidArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
-      const settled = await refingerprintAfterMutation({
-        projectRoot: root,
-        platform: PLATFORM,
-        previousHash: storeHash,
-        fingerprint,
-      });
-      if (!settled || settled.moved) {
-        reason = 'the checkout here changed while it built';
+      let unchanged = false;
+      try {
+        unchanged = await recipe.offload!.unchanged();
+      } catch (error) {
+        reason = (error as Error).message;
+      }
+      if (!unchanged) {
+        reason ??= 'the checkout here changed while it built';
+      } else if (uncached) {
+        if (!outcome.androidPackage) reason = 'the worker returned no verified APK package';
+        else {
+          stored = outcome.artifactPath;
+          androidPackage = outcome.androidPackage;
+          swapDir = stagingDir;
+        }
       } else {
         try {
-          stored = storeCached(PLATFORM, storeKey, outcome.artifactPath, {
-            sources: storeSources,
-            overwrite: !useBuildCache,
-          });
+          stored =
+            (await recipe
+              .cache()
+              .store({ ...cacheTarget(storeKey!), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
+            null;
         } catch (err) {
           reason = `could not store the APK: ${(err as Error)?.message || err}`;
         }
       }
     }
     try {
-      rmSync(stagingDir, { recursive: true, force: true });
+      if (!uncached || !stored) {
+        rmSync(stagingDir, { recursive: true, force: true });
+        if (swapDir === stagingDir) swapDir = null;
+      }
     } catch {}
     step('compile');
     if (!outcome.ok || !stored) {
@@ -811,107 +683,62 @@ export async function acquireAndroidArtifact(
     return true;
   }
 
-  interface SourcePreparation {
-    prebuildRan: boolean;
-    rekeyedBy: string[];
-    editedConfig: string[];
+  async function prepareSource(): Promise<AndroidSourcePreparation> {
+    await recipe.prepare(() => miss(reasonForMiss([]).reason, true));
+    return recipe.reconcile();
   }
 
-  async function prepareSource(): Promise<SourcePreparation> {
-    const rekeyedBy: string[] = [];
-    const prebuildPlan = planPrebuildFor(root, PLATFORM, {
-      isExpo,
-      fingerprint: hash,
-      sources: fingerprintSources,
-    });
-    const prebuildRan = prebuildPlan === 'generate' || prebuildPlan === 'regenerate';
-    if (prebuildPlan === 'refuse') {
-      const refusal = staleNativeDirRefusal(PLATFORM);
-      phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
-      throw new ArtifactRefusal(phaseFailure);
-    }
-    if (prebuildRan) {
-      miss(reasonForMiss([]).reason, true);
-      step('prebuild');
-      recordPrebuild(root, PLATFORM, null);
-      const pre: PrebuildResultLike = await prebuild(root, PLATFORM, writer, {
-        isExpo,
-        clean: prebuildPlan === 'regenerate',
-      });
-      if (pre.failed) {
-        phaseFailure = fail(pre.code!, pre.reason, pre.remedy, {
-          lastBuildStatus: true,
-          lines: tail(pre.lastLines),
-          logPath: displayPath(root, buildLog),
-        });
-        throw new ArtifactRefusal(phaseFailure);
-      }
-      const outcome =
-        prebuildPlan === 'generate'
-          ? 'android/ generated'
-          : 'android/ not generated from this fingerprint -> regenerated with --clean';
-      phase('prebuild', `${outcome} (${formatDuration(pre.durationMs)})`);
-      androidPackage = detectAndroidPackage(root) || androidPackage;
+  async function revalidateSource(preparation: AndroidSourcePreparation): Promise<ReadyArtifact<string> | null> {
+    const { identity, rekeyedBy } = preparation;
+    if (preparation.androidPackage) {
+      androidPackage = preparation.androidPackage;
       record.bundleId = androidPackage;
     }
-    return { prebuildRan, rekeyedBy, editedConfig: [] };
-  }
-
-  async function revalidateSource(preparation: SourcePreparation): Promise<ReadyArtifact<string> | null> {
-    const { prebuildRan, rekeyedBy } = preparation;
-    if (prebuildRan) {
-      const after = await refingerprintAfterMutation({
-        projectRoot: root,
-        platform: PLATFORM,
-        previousHash: hash,
-        fingerprint,
-      });
-      preparation.editedConfig = after ? configInputsChanged(fingerprintSources, after.sources, { prebuildRan }) : [];
-      const { editedConfig } = preparation;
-      if (after && !editedConfig.length) recordPrebuild(root, PLATFORM, after.hash);
-      if (after?.moved && !editedConfig.length) {
-        rekeyedBy.push('prebuild');
-        storeHash = after.hash;
-        storeSources = after.sources;
-        storeKey = buildCacheKey(PLATFORM, after.hash, buildRunOptions);
-        record.fingerprint = storeHash;
-        record.cacheKey = storeKey;
-        phase('fingerprint', chalk.dim(`${shortHash(hash)} -> ${shortHash(storeHash)} (after prebuild)`));
-
-        const late = useBuildCache ? resolveCached(PLATFORM, storeKey) : null;
-        if (late) {
-          const prepared = await installableCachedApk(storeKey, late);
-          if (prepared) {
-            apkPath = prepared;
-            record.cacheHit = 'local';
-            lateHit();
-            phase('cache', `hit ${shortHash(storeHash)} (post-prebuild key)`);
-            if (releasedWait) {
-              waitedForBuild = releasedWait.facts;
-              phase(
-                'build',
-                `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
-              );
-            }
+    if (cacheIneligible || !identity) {
+      storeHash = '';
+      storeKey = '';
+      record.fingerprint = null;
+      record.cacheKey = null;
+      return null;
+    }
+    if (identity.key !== storeKey) {
+      storeHash = identity.hash;
+      storeKey = identity.key;
+      record.fingerprint = storeHash;
+      record.cacheKey = storeKey;
+      const late = useBuildCache
+        ? await recipe
+            .cache()
+            .resolve({ ...cacheTarget(storeKey), destinationDir: providerDownloadPath(workspaceDir(root)) })
+        : null;
+      if (late) {
+        const prepared = await installableCachedApk(storeKey, late);
+        if (prepared) {
+          apkPath = prepared;
+          record.cacheHit = 'local';
+          lateHit();
+          phase('cache', `hit ${shortHash(storeHash)} (post-${rekeyedBy.join('/')} key)`);
+          if (releasedWait) {
+            waitedForBuild = releasedWait.facts;
+            phase(
+              'build',
+              `waited ${formatDuration(waitedForBuild.ms)} for ${releasedWait.who}'s build -> installed from cache -- stim guide lifecycle concurrency`,
+            );
           }
         }
       }
     }
-
     return apkPath ? { ready: apkPath } : null;
   }
 
   async function acquireRemoteArtifact(
     offload: Candidate,
-    { rekeyedBy, editedConfig }: SourcePreparation,
+    { rekeyedBy, cacheRefusal }: AndroidSourcePreparation,
   ): Promise<ReadyArtifact<string> | null> {
     explainMiss(rekeyedBy);
     step('compile');
-    if (editedConfig.length) {
-      fallBack(
-        'prebuild changed config inputs, so the APK cannot be cached',
-        'offload failed: prebuild changed config inputs, so the APK cannot be cached',
-      );
+    if (cacheRefusal) {
+      fallBack(cacheRefusal, `offload failed: ${cacheRefusal}`);
     } else {
       const choice = await chooseMachine(offload);
       if (choice) await compileElsewhere(choice, offload);
@@ -919,7 +746,7 @@ export async function acquireAndroidArtifact(
     return apkPath ? { ready: apkPath } : null;
   }
 
-  async function compileHere(offload: Candidate | null, { rekeyedBy }: SourcePreparation): Promise<string> {
+  async function compileHere(offload: Candidate | null, { rekeyedBy }: AndroidSourcePreparation): Promise<string> {
     if (!offload) {
       explainMiss(rekeyedBy);
       step('compile');
@@ -943,17 +770,7 @@ export async function acquireAndroidArtifact(
     requireLocalBuild(buildMachine);
     record.builtOn = 'here';
     phase('build', `compiling ${variant || 'debug'} with Gradle`);
-    const built = await build(
-      { root, logWriter: writer, variant, abi: buildAbi },
-      {
-        estimateMs: estimates().coldBuildMs,
-        ccache: buildPlan.compilerCache === 'ccache' ? ccacheFor({ root, onNote: out }) : null,
-        cas,
-        buildCache: buildPlan.gradleBuildCache,
-        pch: buildPlan.pch,
-        compilerCacheDisabled: buildPlan.compilerCache === 'none',
-      },
-    );
+    const built = await recipe.compile();
     ccacheActivity = built.ccache ?? CCACHE_UNAVAILABLE;
     phase('cache', `compilation cache ${ccacheActivityLine(ccacheActivity)}`);
     if (!built.ok) {
@@ -974,6 +791,10 @@ export async function acquireAndroidArtifact(
       throw new ArtifactRefusal(phaseFailure);
     }
     apkPath = built.apkPath;
+    if (built.androidPackage) {
+      androidPackage = built.androidPackage;
+      record.bundleId = androidPackage;
+    }
     stats.setBuildMs(built.durationMs);
     phase('build', `ok (${formatDuration(built.durationMs)})`);
     if (built.apkNote) phase('build', chalk.yellow(built.apkNote));
@@ -981,64 +802,27 @@ export async function acquireAndroidArtifact(
     return apkPath!;
   }
 
-  async function validateCompiled({
-    prebuildRan,
-    editedConfig,
-  }: SourcePreparation): Promise<'cacheable' | 'uncacheable'> {
-    const beforeBuildHash = storeHash;
-    const afterBuild = editedConfig.length
-      ? null
-      : await refingerprintAfterMutation({
-          projectRoot: root,
-          platform: PLATFORM,
-          previousHash: beforeBuildHash,
-          fingerprint,
-        });
-    const changedDuringBuild = afterBuild
-      ? inputsChangedDuringBuild({
-          platform: PLATFORM,
-          lookup: fingerprintSources,
-          prebuildRan,
-          compiled: storeSources,
-          current: afterBuild.sources,
-        })
-      : editedConfig;
-    if (!afterBuild || changedDuringBuild.length) {
+  async function validateCompiled(): Promise<'cacheable' | 'uncacheable'> {
+    if (cacheIneligible) return 'uncacheable';
+    const identity = await recipe.validate();
+    if (!identity) {
       record.fingerprint = null;
       record.cacheKey = null;
-      phase(
-        'fingerprint',
-        chalk.yellow(
-          changedDuringBuild.length
-            ? changedDuringBuildLine(changedDuringBuild)
-            : 'unavailable after Gradle; the build will be installed but not cached',
-        ),
-      );
       return 'uncacheable';
     }
-    if (afterBuild.moved) {
-      storeHash = afterBuild.hash;
-      storeSources = afterBuild.sources;
-      storeKey = buildCacheKey(PLATFORM, afterBuild.hash, buildRunOptions);
-      record.fingerprint = storeHash;
-      record.cacheKey = storeKey;
-      phase('fingerprint', chalk.dim(`${shortHash(beforeBuildHash)} -> ${shortHash(storeHash)} (after Gradle)`));
-    }
-
+    storeHash = identity.hash;
+    storeKey = identity.key;
+    record.fingerprint = storeHash;
+    record.cacheKey = storeKey;
     return 'cacheable';
   }
 
   async function storeArtifact(artifactPath: string): Promise<void> {
     if (cachePolicy.write) {
-      const assetManifest = release ? captureAssets(root, { variant }) : null;
+      const local = recipe.cache(true);
       try {
         const stored = await storeTieredBuild({
-          local: filesystemBuildCapability({
-            resolve: resolveCached,
-            store: storeCached,
-            sources: storeSources,
-            assetManifest,
-          }),
+          local,
           loadProvider: loadTieredProvider,
           target: { projectRoot: root, platform: PLATFORM, key: storeKey },
           sourcePath: artifactPath,
@@ -1060,13 +844,13 @@ export async function acquireAndroidArtifact(
         projectRoot: root,
         fingerprintHash: storeHash,
         buildPath: artifactPath,
-        runOptions: remoteRunOptions,
+        runOptions: recipe.legacyCache?.runOptions ?? null,
       });
     }
   }
 
   try {
-    apkPath = await runArtifactLifecycle<string, SourcePreparation, Candidate>({
+    apkPath = await runArtifactLifecycle<string, AndroidSourcePreparation, Candidate>({
       resolve: async () => {
         if (!(await resolveInitialFingerprint())) throw new ArtifactRefusal(phaseFailure!);
         if (easBuild) return { kind: 'ready', artifact: apkPath! };
@@ -1100,6 +884,7 @@ export async function acquireAndroidArtifact(
       },
     });
   } catch (error) {
+    releaseArtifact();
     if (error instanceof OffloadRefusal) {
       const { code, message, remedy } = error;
       return { ok: false, failure: fail(code, message, remedy, { lastBuildStatus: true }), ccache: ccacheActivity };
@@ -1114,7 +899,7 @@ export async function acquireAndroidArtifact(
       apkPath,
       handoff,
       androidPackage,
-      swapDir,
+      release: releaseArtifact,
       waitedForBuild,
       ccache: ccacheActivity,
       uploadPending,

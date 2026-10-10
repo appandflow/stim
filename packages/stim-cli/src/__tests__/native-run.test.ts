@@ -16,6 +16,30 @@ describe('decideStopAction', () => {
   test.each([
     ['a whole-workspace stop interrupts a live build', undefined, ios(), 'same', ['default'], 'interrupt'],
     [
+      'a whole-workspace stop interrupts a build-only operation',
+      undefined,
+      { command: 'build', platform: 'android', slot: 'default' },
+      'same',
+      [],
+      'interrupt',
+    ],
+    [
+      'a device-slot stop leaves a build-only operation running',
+      'default',
+      { command: 'build', platform: 'android', slot: 'default' },
+      'same',
+      ['default'],
+      'proceed',
+    ],
+    [
+      'an unknown build-only owner refuses interruption',
+      undefined,
+      { command: 'build', platform: 'android', slot: 'default' },
+      'unknown',
+      [],
+      'refuse',
+    ],
+    [
       'a whole-workspace stop interrupts its macOS build',
       undefined,
       { command: 'macos', platform: 'macos', slot: 'default' },

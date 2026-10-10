@@ -1,4 +1,6 @@
+import type { MemoryCulprit } from '@stim-cli/core/state';
 import { getExecutor, type Executor } from './exec.ts';
+import { memoryCulpritAdvice, readMemoryCulprits } from './memory-culprits.ts';
 
 export type HostMemoryPressure = 'normal' | 'warning' | 'critical';
 
@@ -26,7 +28,18 @@ export function readHostMemoryPressure(
   }
 }
 
-export function hostMemoryPressureAdvice(pressure: HostMemoryPressure | null): string | null {
+export function memoryCulpritsUnder(
+  pressure: HostMemoryPressure | null,
+  exec: Executor = getExecutor(),
+): MemoryCulprit[] | null {
+  return pressure === 'warning' || pressure === 'critical' ? readMemoryCulprits(exec) : null;
+}
+
+export function hostMemoryPressureAdvice(
+  pressure: HostMemoryPressure | null,
+  culprits: readonly MemoryCulprit[] | null = null,
+): string | null {
   if (pressure === null || pressure === 'normal') return null;
-  return `macOS reports ${pressure} host memory pressure. Simulator processes can stall even when the device is Booted. Free memory before retrying: use \`stim stop\` only in workspaces you own, and ask before closing other apps or devices. For parallel iOS work, consider a reviewed SimSlim profile (\`stim guide lifecycle simslim\`). This observation does not establish an OOM crash.`;
+  const named = memoryCulpritAdvice(culprits);
+  return `macOS reports ${pressure} host memory pressure.${named ? ` ${named}` : ''} Simulator processes can stall even when the device is Booted. Free memory before retrying: use \`stim stop\` only in workspaces you own, and ask before closing other apps or devices. For parallel iOS work, consider a reviewed SimSlim profile (\`stim guide lifecycle simslim\`). This observation does not establish an OOM crash.`;
 }

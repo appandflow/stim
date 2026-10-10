@@ -424,6 +424,16 @@ export async function runReload({
 
   const target =
     live.find((candidate) => !candidate.record.release && candidate.record.metroPort === project.metroPort) ?? live[0]!;
+  if (target.record.runtime === 'process') {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_NO_METRO',
+        `${target.record.appId} runs as a native process without Metro.`,
+        `Run \`${nativeRunCommand(target.platform, target.slot)}\` again to rebuild and relaunch the app.`,
+      ),
+    };
+  }
   if (target.record.release) {
     return {
       ok: false,

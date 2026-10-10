@@ -95,7 +95,8 @@ struct BuildSection: View {
         }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         if let host = building?.remote(at: Date())?.host {
-          Label("on \(host)", systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+          Label(host, systemImage: "desktopcomputer").foregroundStyle(Palette.secondary).lineLimit(1)
+            .accessibilityLabel("Building on \(host)")
         }
         if let building {
           RunningBuildDetail(env: env, build: building)

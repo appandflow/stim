@@ -1,24 +1,16 @@
 import { maintenanceNdjsonFile } from '@stim-cli/core/state';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
-import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { projectRegistry } from '../integrations/projects.ts';
+import type { ProjectRegistry } from '../integrations/project-registry.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
-import { resolveSettings } from '../workspace/settings.ts';
-import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
-import { bundlerPin } from '../engine/bundler.ts';
+import { projectSettingsContext, type SettingsObject } from '../workspace/settings.ts';
+import { readMachineSettings } from '../diagnostics/doctor-config.ts';
+import { iosRuntimeMatches, listIosRuntimesAsync, pickDefaultIosCreation } from '../devices/ios.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
-import {
-  androidRequirements,
-  androidToolchain,
-  iosToolchain,
-  macosToolchain,
-  type BuildTarget,
-} from '../offload/toolchain.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
   allowanceSearchPaths,
@@ -29,21 +21,16 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import {
-  detectFingerprintParity,
-  detectLinkedLibraryGitMetadata,
-  detectXcodeMajor,
-  runDoctor,
-} from '../diagnostics/doctor.ts';
+import { detectXcodeMajor, runDoctor } from '../diagnostics/doctor.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
-import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
-import { inspectWatchmanMemory } from './gc/memory.ts';
+import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
+import { memoryCulpritFindings, readMemoryCulprits } from '../memory-culprits.ts';
 import {
   inspectNestedWorktrees,
   nestedWorktreeFinding,
@@ -66,14 +53,10 @@ export function parseDoctorPlatform(value: string): DoctorPlatform {
  * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
  * simulator's, else the one it would create a simulator on.
  */
-function iosTargetRuntime(root: string): string | null {
+async function iosTargetRuntime(root: string, settings: SettingsObject | null): Promise<string | null> {
+  if (!settings) return null;
   try {
-    const settings = resolveSettings({
-      projectPath: root,
-      gitCommonDir: gitCommonDir(root),
-      repoRoot: repoRoot(root) ?? root,
-    });
-    const runtimes = listIosRuntimes();
+    const runtimes = await listIosRuntimesAsync();
     const runtime = resolveRuntime(null, settings);
     if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
     const udid = getProject(root)?.platforms?.ios?.deviceUdid;
@@ -84,6 +67,11 @@ function iosTargetRuntime(root: string): string | null {
   } catch {
     return null;
   }
+}
+
+function withoutUnhandledRejection<T>(started: Promise<T>): Promise<T> {
+  started.catch(() => {});
+  return started;
 }
 
 function doctorTarget(platform?: DoctorPlatform): string {
@@ -114,46 +102,20 @@ export function doctorSuccessLines(
   platform: DoctorPlatform | undefined,
   stim: StimVersionReport,
   budget: BudgetReport | null = null,
+  projectLines: string[] = [],
 ): string[] {
-  const lines = [
+  return [
     `Doctor (${doctorTarget(platform)})`,
     phaseLine('result', 'PASS'),
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
     ...budgetLines(budget),
     '',
-    'Project',
-    phaseLine('project', 'source checkout, dependencies, local upstream, nested worktrees Watchman would crawl'),
+    'Shared',
     phaseLine('settings', 'every Stim setting type, machine config paths, companions and inert keys'),
+    phaseLine('storage', 'temporary staging and build-cache volume placement'),
+    ...projectLines,
   ];
-
-  if (platform !== 'android') {
-    lines.push('', 'iOS');
-    lines.push(phaseLine('setup', 'CocoaPods, warm state, effective Debug simulator architectures'));
-    lines.push(phaseLine('caches', 'Metro, Xcode compilation, ccache, build provider'));
-    lines.push(phaseLine('devices', 'remote device, SimSlim profile'));
-  }
-  if (platform !== 'ios') {
-    lines.push('', 'Android');
-    lines.push(phaseLine('setup', 'Android SDK, warm state'));
-    lines.push(phaseLine('caches', 'Metro, Gradle, ccache, build provider'));
-    lines.push(phaseLine('devices', 'remote device'));
-  }
-
-  lines.push('', 'Shared');
-  lines.push(phaseLine('services', 'EAS session'));
-  lines.push(phaseLine('storage', 'temporary staging and build-cache volume placement'));
-  lines.push(phaseLine('fingerprint', 'parity when dependencies are absent'));
-  lines.push('', 'Handled automatically');
-  const suppliedCaches =
-    platform === 'ios'
-      ? 'Metro transform store, Xcode compilation cache'
-      : platform === 'android'
-        ? 'Metro transform store, Gradle build cache, ccache'
-        : 'Metro transform store, Xcode compilation cache, Gradle build cache, ccache';
-  lines.push(phaseLine('caches', suppliedCaches));
-  lines.push(phaseLine('meaning', 'missing project cache settings are healthy'));
-  return lines;
 }
 
 export function shadowedStimFinding(report: StimVersionReport): Finding | null {
@@ -225,11 +187,12 @@ export default function doctorCommand(
   version: string,
   inspectVersions: (version: string) => StimVersionReport | Promise<StimVersionReport> = inspectStimVersions,
   host: NodeJS.Platform = process.platform,
+  registry: Pick<ProjectRegistry, 'findProjectRoot' | 'selectDoctor'> = projectRegistry,
 ): void {
   program
     .command('doctor')
     .description(
-      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a React Native or Expo app is recorded in Stim state so guide can say when doctor is due.',
+      'Inspect the source checkout and report project state that can make native worktrees slow or invalid. The checkout is left untouched unless --fix is passed; --platform filters native findings. Each run in a supported native app is recorded in Stim state so guide can say when doctor is due.',
     )
     .option('--json', 'print the findings as JSON')
     .option(
@@ -239,26 +202,33 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
-      const root = findProjectRoot(process.cwd());
+      const root = registry.findProjectRoot(process.cwd());
       if (!root) {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
+      const settingsContext = projectSettingsContext(root);
+      const machineSettings = readMachineSettings(settingsContext);
+      const settings = machineSettings.corrupt ? null : machineSettings.settings;
+
+      const selected = registry.selectDoctor(root, opts.platform);
+      const doctors = await selected.load();
 
       if (opts.fix) {
         if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
-        if (opts.platform !== 'ios') {
+        for (const doctor of doctors) {
+          if (!doctor.repair) continue;
           try {
-            const repair = repairCxxLauncherState(root);
+            const repair = doctor.repair(opts.platform, settings, settingsContext.repoRoot);
             for (const path of repair.removed)
               console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
             for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
             if (repair.refused.length > 0) process.exitCode = 1;
           } catch (error) {
-            console.error(phaseLine('cache', `CMake cleanup failed: ${(error as Error).message}`));
+            console.error(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
             process.exitCode = 1;
           }
         }
@@ -296,16 +266,32 @@ export default function doctorCommand(
 
       const stim = await inspectVersions(version);
 
-      const findings: Finding[] = runDoctor(root, {
-        xcodeMajor: opts.platform !== 'android' && host === 'darwin' ? detectXcodeMajor() : null,
-        platform: opts.platform,
-        host,
-      });
-
-      const parity = await detectFingerprintParity(root, { platform: opts.platform });
-      if (parity) findings.push(parity);
-      const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform: opts.platform });
-      if (linkedGit) findings.push(linkedGit);
+      const { findings, context } = runDoctor(
+        root,
+        {
+          xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? detectXcodeMajor() : null,
+          platform: opts.platform,
+          platforms: selected.platforms,
+          host,
+          machineSettings,
+          repoRoot: settingsContext.repoRoot,
+        },
+        doctors.map((doctor) => doctor.inspect),
+      );
+      if (selected.problem)
+        findings.unshift({
+          level: 'cost',
+          ...(selected.problem.kind === 'not-an-app' ? { code: 'not-an-app' } : {}),
+          title:
+            selected.problem.kind === 'unreadable'
+              ? 'The project could not be read'
+              : 'This directory has no supported app for this operation',
+          detail: selected.problem.message,
+          fix: selected.problem.remedy,
+        });
+      for (const doctor of doctors) {
+        if (doctor.inspectAsync) findings.push(...(await doctor.inspectAsync(context)));
+      }
 
       if (detectHarness()) {
         const sandbox = sandboxFinding(repoRoot(root) ?? root);
@@ -317,40 +303,34 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
-      const watchman = await inspectWatchmanMemory();
-      if (watchman) findings.push(watchman);
+      const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
+      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
       const nestedWorktrees = inspectNestedWorktrees(root);
-      const watched = await watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout));
-      for (const entry of nestedWorktrees) findings.push(nestedWorktreeFinding(entry, watched.has(entry.checkout)));
-      const checksIos = opts.platform !== 'android' && host === 'darwin';
-      const checksAndroid =
-        opts.platform === 'android' ||
-        (opts.platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
-      const checksMacos = host === 'darwin' && opts.platform === undefined && existsSync(join(root, 'Package.swift'));
-      const offloadTargets = (): BuildTarget[] => [
-        ...(checksIos
-          ? [
-              {
-                platform: 'ios' as const,
-                local: iosToolchain(root),
-                runtime: iosTargetRuntime(root),
-                cocoapodsPinned: bundlerPin(root) !== null,
-              },
-            ]
-          : []),
-        ...(checksAndroid
-          ? [{ platform: 'android' as const, local: androidToolchain(), requires: androidRequirements(root) }]
-          : []),
-        ...(checksMacos ? [{ platform: 'macos' as const, local: macosToolchain() }] : []),
-      ];
-      const remoteMachines = await inspectBuildMachines({
-        fix: opts.fix === true,
-        check: checksIos || checksAndroid || checksMacos ? offloadCheck(root, offloadTargets) : null,
+      const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
+      const targetInspectors = doctors.flatMap((doctor) => {
+        const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));
+        return inspect ? [inspect] : [];
       });
+      const remoteMachinesInspection = withoutUnhandledRejection(
+        inspectBuildMachines({
+          fix: opts.fix === true,
+          check: targetInspectors.length
+            ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
+            : null,
+        }),
+      );
+
+      const watchman = await watchmanMemory;
+      if (watchman) findings.push(watchman);
+      if (!memorySweepIsScoped()) findings.push(...memoryCulpritFindings(readMemoryCulprits()));
+      const watchedRoots = await watched;
+      for (const entry of nestedWorktrees)
+        findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));
+      const remoteMachines = await remoteMachinesInspection;
       findings.push(...remoteMachines.findings);
-      const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
+      const deviceHostMachines = await deviceHosts;
       const reported = new Set(remoteMachines.findings.map((each) => each.title));
-      findings.push(...deviceHosts.findings.filter((each) => !reported.has(each.title)));
+      findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
@@ -369,22 +349,30 @@ export default function doctorCommand(
             budget: budget.report,
             maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
             remoteMachines: remoteMachines.machines,
-            deviceHosts: deviceHosts.machines,
+            deviceHosts: deviceHostMachines.machines,
             findings,
           }),
         );
-        recordDoctorRun(root, opts.platform, version);
+        recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
         return;
       }
 
       if (findings.length === 0) {
-        const lines = [...doctorSuccessLines(opts.platform, stim, budget.report), ...maintenanceLines];
+        const lines = [
+          ...doctorSuccessLines(
+            opts.platform,
+            stim,
+            budget.report,
+            doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
+          ),
+          ...maintenanceLines,
+        ];
         for (const [index, line] of lines.entries()) {
           if (index === 1) console.log(chalk.green(line));
           else if (line && !line.startsWith('  ')) console.log(chalk.bold(line));
           else console.log(chalk.dim(line));
         }
-        recordDoctorRun(root, opts.platform, version);
+        recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
         return;
       }
 
@@ -404,6 +392,6 @@ export default function doctorCommand(
           `\n${findings.length} finding(s). Fix relevant "costs time" findings before copying the source checkout into a native worktree.`,
         ),
       );
-      recordDoctorRun(root, opts.platform, version);
+      recordDoctorRun(root, opts.platform, version, undefined, selected.platforms);
     });
 }

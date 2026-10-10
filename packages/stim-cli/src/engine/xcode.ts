@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -19,6 +19,7 @@ export interface XcodeProject {
   file?: string;
   name?: string | null;
   dir?: string;
+  appRoot?: string;
   path?: string;
   error?: { code: string; message: string; remedy: string | null };
 }
@@ -127,14 +128,15 @@ export function resolveScheme(
       error: {
         code: 'STIM_NO_SCHEME',
         message: `No shared Xcode scheme named ${JSON.stringify(requested)} in ${project.path}. Available schemes: ${listing.schemes.join(', ') || 'none'}.`,
-        remedy: 'Pass an exact available name with --scheme, or share the intended app scheme in Xcode.',
+        remedy:
+          'Pass an exact available name with --scheme or set it in ios.scheme, or share the intended app scheme in Xcode.',
       },
     };
   }
   let scheme = pickScheme(listing.schemes, listing.name || project.name);
   if (!scheme && project.dir) {
     try {
-      const app = JSON.parse(readFileSync(join(project.dir, '..', 'app.json'), 'utf8'));
+      const app = JSON.parse(readFileSync(join(project.appRoot ?? join(project.dir, '..'), 'app.json'), 'utf8'));
       scheme = pickScheme(listing.schemes, app?.name);
     } catch {}
   }
@@ -146,7 +148,7 @@ export function resolveScheme(
         message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
         remedy:
           listing.schemes.length > 0
-            ? 'Pass --scheme <name> to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
+            ? 'Pass --scheme <name>, or set ios.scheme, to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
             : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };
@@ -553,6 +555,7 @@ export async function buildXcode({
   project,
   scheme = null,
   configuration = 'Debug',
+  applicationTarget,
   sdk = 'iphonesimulator',
   destination = null,
   arch = null,
@@ -572,6 +575,7 @@ export async function buildXcode({
   project: XcodeProject;
   scheme?: string | null;
   configuration?: string;
+  applicationTarget?: { name: string; projectPath: string };
   sdk?: string;
   destination?: string | null;
   arch?: string | null;
@@ -809,6 +813,13 @@ export async function buildXcode({
       for (const item of Array.isArray(targets) ? targets : []) {
         const settings = item?.buildSettings;
         if (settings?.PRODUCT_TYPE !== 'com.apple.product-type.application' || settings.PLATFORM_NAME !== sdk) continue;
+        if (
+          applicationTarget &&
+          (settings.TARGET_NAME !== applicationTarget.name ||
+            typeof settings.PROJECT_FILE_PATH !== 'string' ||
+            realpathSync(settings.PROJECT_FILE_PATH) !== realpathSync(applicationTarget.projectPath))
+        )
+          continue;
         const dir = settings.TARGET_BUILD_DIR;
         const name = settings.FULL_PRODUCT_NAME;
         if (

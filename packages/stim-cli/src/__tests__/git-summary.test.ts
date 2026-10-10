@@ -168,6 +168,29 @@ describe('readWorktreeGit', () => {
     expect(statusReads).toBe(reads + 2);
   });
 
+  test('runs at most six git calls at a time across many worktrees and still reads every one', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    setExecutor({
+      runFileAsync: async () => {
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        return `# branch.oid ${oid}\n# branch.head main\n? a.txt`;
+      },
+      runFile: (file: string, args: string[], opts: object) => realExecutor.runFile(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: object) => realExecutor.runFileQuiet(file, args, opts),
+    });
+    const worktrees = Array.from({ length: 40 }, (_, i) => ({ path: join(base, `wt-${i}`) }));
+
+    const summaries = await readWorktreeGit(worktrees, { skip: () => false });
+
+    expect(peak).toBe(6);
+    expect(summaries.size).toBe(40);
+    expect([...summaries.values()].every((summary) => summary?.untracked === 1)).toBe(true);
+  });
+
   test('a merge judgement that timed out is not retried for the same HEAD for five minutes, but is for a new HEAD', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const worktree = linkedWorktree();

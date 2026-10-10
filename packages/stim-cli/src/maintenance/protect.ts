@@ -1,5 +1,5 @@
 import { basename, sep } from 'node:path';
-import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, readBuildHistory } from '@stim-cli/core/state';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
@@ -7,6 +7,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
+import { maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 const BUILD_RECORDS = ['lastBuild', ...Object.values(LAST_BUILD_KEYS)];
@@ -22,6 +23,10 @@ function protectedCacheKeys(config: Config | null = loadConfig()): Set<string> {
   for (const root of Object.keys(config?.projects ?? {})) {
     const state = readWorkspaceState(root) as Record<string, unknown> | null;
     for (const name of BUILD_RECORDS) for (const key of recordKeys(state?.[name])) keys.add(key);
+    for (const entries of Object.values(readBuildHistory(state))) {
+      const key = entries.find((entry) => entry.result === 'succeeded')?.cacheKey;
+      if (key) keys.add(key);
+    }
   }
   for (const platform of ['ios', 'android'] as const)
     for (const record of readParked(platform, { config })) if (record.cacheKey) keys.add(record.cacheKey);
@@ -49,6 +54,14 @@ export function cacheEntryProtection(config: Config | null = loadConfig()): (ent
   } catch (error) {
     const reason = `cache protection could not be read: ${error instanceof Error ? error.message : String(error)}`;
     return () => reason;
+  }
+}
+
+export function maintenancePinned(root: string): boolean {
+  try {
+    return maintenanceKeepSetting(resolveProjectSettings(root).settings);
+  } catch {
+    return true;
   }
 }
 

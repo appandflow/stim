@@ -1,5 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -21,6 +21,7 @@ import {
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../devices/android.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
+import { androidLayoutSetting } from '../workspace/settings.ts';
 
 describe('hermesEnabledFromGradleProperties', () => {
   test('default is enabled: no file, no key, an unrelated file', () => {
@@ -48,6 +49,27 @@ describe('hermesEnabledFromGradleProperties', () => {
       expect(readAndroidHermesEnabled(dir)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('readAndroidHermesEnabled reads the Gradle root when the module properties do not set the flag', () => {
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-apk-swap-')));
+    try {
+      const app = join(repo, 'packages', 'tester');
+      mkdirSync(join(app, 'android', 'app'), { recursive: true });
+      writeFileSync(join(repo, 'settings.gradle.kts'), '');
+      writeFileSync(join(repo, 'gradle.properties'), 'hermesEnabled=false\n');
+      writeFileSync(join(app, 'android', 'app', 'build.gradle.kts'), '');
+      writeFileSync(join(app, 'android', 'app', 'gradle.properties'), 'android.useAndroidX=true\n');
+      const layout = androidLayoutSetting(
+        { android: { gradleRoot: '../..', module: ':packages:tester:android:app' } },
+        app,
+        repo,
+      );
+      expect(readAndroidHermesEnabled(app, layout)).toBe(false);
+      expect(readAndroidHermesEnabled(app)).toBe(true);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
     }
   });
 });

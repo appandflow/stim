@@ -50,6 +50,8 @@ test('invalid launch entries are ignored instead of becoming reload targets', ()
   writeWorkspaceState(root, {
     launches: {
       ios: { appId: 'com.example.ios' },
+      'android:invalid-runtime': { ...launch('native', 'emulator-5556'), metroPort: null, runtime: 'unknown' },
+      'android:contradictory-runtime': { ...launch('native', 'emulator-5558'), runtime: 'process' },
       android: launch('com.example.android', 'emulator-5554'),
     },
   });
