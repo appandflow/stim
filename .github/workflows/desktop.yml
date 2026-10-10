@@ -69,8 +69,6 @@ jobs:
             }
           '
       - run: swift test -Xswiftc -warnings-as-errors
-      - name: Compile the Release configuration
-        run: swift build -c release -Xswiftc -warnings-as-errors
         env:
           STIM_BUILD_MACHINES_SHOTS: ${{ runner.temp }}/build-machines-screenshots
       - name: Upload build machine screenshots
@@ -80,6 +78,8 @@ jobs:
           name: build-machines-screenshots
           path: ${{ runner.temp }}/build-machines-screenshots
           if-no-files-found: warn
+      - name: Compile the Release configuration
+        run: swift build -c release -Xswiftc -warnings-as-errors
       - name: Compile the stim-server frames helper
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \
