@@ -150,11 +150,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'ios.simslimProfile',
@@ -232,11 +232,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: {
       kind: 'string',
       pattern: TAILNET_MACHINE_PATTERN,
-      patternHelp: 'eas, proxy, auto, or a tailnet machine name',
+      patternHelp: 'eas, proxy, auto, local, or a tailnet machine name',
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'metro.tunnel',
@@ -244,6 +244,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: PROJECT,
     default: 'auto',
     description: 'How a remote device reaches Metro; tailscale is tailnet-only and requires explicit selection',
+  },
+  {
+    key: 'metro.command',
+    type: { kind: 'strings' },
+    scopes: ['workspace', 'committed'],
+    description:
+      "Command that starts this project's dev server, as an argv array run from the app directory; {port} is replaced with the reserved Metro port",
   },
   { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
   { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },

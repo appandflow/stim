@@ -14,6 +14,12 @@ import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
+export const MODE_COMMAND = 'command-child';
+
+export function workspaceDevServerMode(root: string, isExpo: boolean): string {
+  const mode = readWorkspaceState(root)?.supervisor?.mode;
+  return typeof mode === 'string' ? mode : isExpo ? MODE_EXPO : MODE_BARE;
+}
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 

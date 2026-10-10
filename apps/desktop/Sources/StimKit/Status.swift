@@ -63,6 +63,7 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
   public var tutorial: TutorialMarker?
+  public var doctorRuns: DoctorRuns?
   public var agentDevice: AgentDevice?
   public var platforms: [String]?
   public var live: Bool
@@ -113,7 +114,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
     case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
-    case agents, endedAgents, disk, tutorial, agentDevice
+    case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
     case stageFacts = "stage"
   }
 
@@ -581,6 +582,16 @@ public struct TutorialMarker: Decodable, Hashable, Sendable {
   public var version: Int
 }
 
+public struct DoctorRuns: Decodable, Hashable, Sendable {
+  public struct Run: Decodable, Hashable, Sendable {
+    public var at: String
+  }
+
+  public var ios: Run?
+  public var android: Run?
+}
+
 public struct AgentDevice: Decodable, Hashable, Sendable {
   public var stateDir: String
+  public var installed: Bool?
 }

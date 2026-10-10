@@ -49,6 +49,7 @@ import {
 } from '../engine/remote-cache.ts';
 import {
   iosSimSlimProfileSetting,
+  projectSettingsContext,
   remoteAndroidSetting,
   remoteIosSetting,
   webSettings,
@@ -63,7 +64,7 @@ import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
-import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
+import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -895,6 +896,7 @@ export interface DoctorInspectionOptions {
   platform?: DoctorPlatform;
   host?: NodeJS.Platform;
   platforms?: readonly DoctorPlatform[];
+  machineSettings?: MachineSettings;
 }
 
 export interface DoctorContext {
@@ -920,14 +922,9 @@ export function runDoctor(
     platform,
     host = process.platform,
     platforms = ['ios', 'android'],
+    machineSettings = readMachineSettings(projectSettingsContext(projectRoot)),
   } = options;
   const localIos = platforms.includes('ios') && platform !== 'android' && host === 'darwin';
-  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
-  const machineSettings = readMachineSettings({
-    projectPath: projectRoot,
-    gitCommonDir: gitCommonDir(projectRoot),
-    repoRoot: settingsRepoRoot,
-  });
 
   const projectSettings = machineSettings.settings;
   const context: DoctorContext = {

@@ -70,6 +70,7 @@ jest.mock('@/components/connection-banner', () => ({ ConnectionBanner: () => nul
 jest.mock('@/components/header-title', () => ({ HeaderTitle: () => null }));
 jest.mock('@/components/read-only', () => ({ readOnlyReason: () => '' }));
 jest.mock('@/components/build-progress', () => ({ PhaseBar: () => null }));
+jest.mock('@/components/stim-build-animation', () => ({ StimBuildAnimation: () => null }));
 jest.mock('@/components/agent-sessions', () => ({ AgentSessionLine: () => null }));
 jest.mock('@/components/text', () => ({
   Text: jest.requireActual<typeof import('react-native')>('react-native').Text,

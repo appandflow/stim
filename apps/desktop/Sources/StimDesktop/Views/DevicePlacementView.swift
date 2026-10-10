@@ -9,6 +9,7 @@ struct DevicePlacementView: View {
       Label("on \(placement.machine)", systemImage: "desktopcomputer")
         .font(.stim(.caption))
         .foregroundStyle(Palette.tertiary)
+        .lineLimit(1)
         .help(placement.reason ?? "")
     }
   }
