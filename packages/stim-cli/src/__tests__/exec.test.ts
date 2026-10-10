@@ -107,10 +107,10 @@ test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windo
 
 test.each([
   ['avdmanager.bat', ['--device', 'pixel_6"&calc&"'], 'win32', true],
-  ['eas.CMD', ['%PATH%'], 'win32', true],
+  ['eas.CMD', ['say "hi"'], 'win32', true],
   ['avdmanager.bat', ['a\rcalc'], 'win32', true],
   ['avdmanager.bat', ['a\ncalc'], 'win32', true],
-  ['agent-device.cmd', ['open', 'scheme://x/?url=http%3A%2F%2Flocalhost'], 'win32', true],
+  ['agent-device.cmd', ['open', 'scheme://x/?url=http%3A%2F%2Flocalhost'], 'win32', false],
   ['adb.exe', ['"quoted"'], 'win32', false],
   ['avdmanager.bat', ['"quoted"'], 'darwin', false],
   ['avdmanager.bat', ['--device', 'Nexus 5X'], 'win32', false],

@@ -46,10 +46,11 @@ function nameTimeout(error: unknown, command: string, timeoutMs: number | undefi
 }
 
 const WINDOWS_BATCH_FILE = /\.(?:bat|cmd)$/i;
-const BATCH_UNSAFE_ARGUMENT = /["%\r\n]/;
+const BATCH_UNSAFE_ARGUMENT = /["\r\n]/;
 
 // cross-spawn runs a .bat/.cmd target through `cmd.exe /d /s /c` with escaping the batch file's own
-// %* expansion undoes (moxystudio/node-cross-spawn#171).
+// %* expansion undoes (moxystudio/node-cross-spawn#171). A quote or line break lets `&`/`|` escape it;
+// `%` is left through because cross-spawn already escapes it as `^%` and URL-encoded arguments need it.
 export function isUnsafeBatchSpawn(
   target: string,
   args: readonly string[],
@@ -63,7 +64,7 @@ function refuseUnsafeBatchArguments(file: string, args: readonly string[]): void
   const target = which.sync(file, { nothrow: true }) ?? file;
   if (isUnsafeBatchSpawn(target, args)) {
     throw new Error(
-      `Refusing to run ${basename(target)}: an argument contains a double quote, percent sign or line break, which cmd.exe cannot pass to a batch file safely.`,
+      `Refusing to run ${basename(target)}: an argument contains a character cmd.exe could misinterpret (a double quote or a line break).`,
     );
   }
 }

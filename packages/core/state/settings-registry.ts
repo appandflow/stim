@@ -202,7 +202,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'android.deviceProfile',
     type: {
       kind: 'string',
-      pattern: '^[A-Za-z0-9 ._()-]+$',
+      pattern: '^[A-Za-z0-9 ._()-]*$',
       patternHelp: 'an avdmanager device id such as pixel_6 or Nexus 5X (`avdmanager list device -c`)',
     },
     scopes: EVERY,
