@@ -12,9 +12,8 @@ import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
-import { waitForSharedBuild, type BuildLockHandle } from '../../engine/build-lock.ts';
-import { runArtifactLifecycle, type ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
-import type { BuildSlotHandle } from '../../engine/build-slots.ts';
+import { acquireArtifact, type ArtifactRun } from '../../engine/acquire-artifact.ts';
+import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
 import {
   RESOLVE_TIMEOUT_MS,
@@ -158,38 +157,7 @@ export async function acquireIosArtifact(
   let cacheIneligible: string | null = null;
   const cacheProviderConfig = cache.providerConfig;
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
-  const temporaryDirs = new Set<string>();
-  const releaseArtifact = () => {
-    for (const directory of temporaryDirs) {
-      try {
-        rmSync(directory, { recursive: true, force: true });
-      } catch {}
-      temporaryDirs.delete(directory);
-    }
-  };
-  let buildLock: BuildLockHandle | null = null;
-  const releaseLock = () => {
-    if (!buildLock) return;
-    const held = buildLock;
-    buildLock = null;
-    try {
-      d.releaseBuildLock(held);
-    } catch (e) {
-      note(chalk.dim(`Could not release the build lock at ${held.path}: ${(e as Error)?.message || e}`));
-    }
-  };
-
-  let buildSlot: BuildSlotHandle | null = null;
-  const releaseSlot = () => {
-    if (!buildSlot) return;
-    const held = buildSlot;
-    buildSlot = null;
-    try {
-      d.releaseBuildSlot(held);
-    } catch (e) {
-      note(chalk.dim(`Could not release the build slot: ${(e as Error)?.message || e}`));
-    }
-  };
+  let run!: ArtifactRun;
 
   let fingerprint = '';
   let cacheKey = '';
@@ -225,7 +193,6 @@ export async function acquireIosArtifact(
     buildFailure = { ...buildFailure, offloadFallback: reason };
     phase('build', `${line} -> building here`);
   };
-  const openOffload: { choice: OffloadChoice | null } = { choice: null };
   let remote: LoadProjectProviderResult | null = null;
   let abandonedRemote = false;
   let uploadPending: Promise<RemoteUploadLike> | null = null;
@@ -366,16 +333,9 @@ export async function acquireIosArtifact(
 
   async function awaitSharedBuild(): Promise<void> {
     if (!useBuildCache || appPath) return;
-    const shared = await waitForSharedBuild({
-      platform: PLATFORM,
+    const shared = await run.claimSharedBuild({
       key: cacheKey,
       fingerprint,
-      root,
-      logFile,
-      command: 'stim ios',
-      acquire: d.acquireBuildLock,
-      wait: d.waitForBuild,
-      now: d.now,
       phase: (text) => {
         step('wait');
         phase('build', text);
@@ -387,7 +347,6 @@ export async function acquireIosArtifact(
     if (shared.refusal) {
       fail({ ...shared.refusal, build: { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache } });
     }
-    buildLock = shared.lock;
     releasedWait = shared.released;
     if (shared.hit) {
       appPath = shared.hit.path;
@@ -399,7 +358,7 @@ export async function acquireIosArtifact(
   const installableCachedApp = async (path: string) => {
     const prepared = await recipe.materialize(path, {
       fresh: false,
-      ownTemporary: (directory) => temporaryDirs.add(directory),
+      ownTemporary: (directory) => run.own(directory),
     });
     if (!prepared) swapFellBack = true;
     return prepared;
@@ -458,11 +417,9 @@ export async function acquireIosArtifact(
     requireLocalBuild(buildMachine);
     if (!maxBuilds) return;
     try {
-      buildSlot = await d.acquireBuildSlot({
+      const buildSlot = await run.takeBuildSlot({
         automatic: buildMachine === 'auto',
         max: maxBuilds,
-        root,
-        logFile,
         out: note,
         waitingFor: (info) => waitingFor?.(info, 'build-slot'),
       });
@@ -548,7 +505,7 @@ export async function acquireIosArtifact(
       fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
       return null;
     }
-    openOffload.choice = choice;
+    run.openOffload(() => closeOffload(choice));
     logWriter().write(
       buildPlacementRecord({
         platform: PLATFORM,
@@ -777,7 +734,7 @@ export async function acquireIosArtifact(
     let installPath = artifactPath;
     const prepared = await recipe.materialize(installPath, {
       fresh: true,
-      ownTemporary: (directory) => temporaryDirs.add(directory),
+      ownTemporary: (directory) => run.own(directory),
     });
     if (!prepared)
       fail({
@@ -803,115 +760,109 @@ export async function acquireIosArtifact(
     return installPath;
   }
 
-  let transferred = false;
-  try {
-    appPath = await runArtifactLifecycle<string, IosSourcePreparation, Candidate>({
-      resolve: async () => {
-        await resolveInitialFingerprint();
-        if (easBuild) return { kind: 'ready', artifact: appPath! };
-        remote = await resolveRemoteArtifact();
-        if (appPath) return { kind: 'cached', artifact: appPath };
-        miss(reasonForMiss([]).reason);
-        return { kind: 'miss' };
-      },
-      claim: useBuildCache
-        ? async () => {
-            await awaitSharedBuild();
-            return appPath;
-          }
-        : undefined,
-      reuse: async (cached) => {
-        appPath = await prepareCachedArtifact(cached);
-        if (appPath) lateHit();
-        else if (swapFellBack) miss(reasonForMiss([]).reason);
-        return appPath;
-      },
-      build: {
-        placement: {
-          select: () => {
-            buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache, buildMachine };
-            return placeBuild();
+  const acquired = await acquireArtifact<string, IosSourcePreparation, Candidate, FailArgs>(
+    {
+      platform: PLATFORM,
+      command: 'stim ios',
+      lifecycle: (driver) => {
+        run = driver;
+        return {
+          resolve: async () => {
+            await resolveInitialFingerprint();
+            if (easBuild) return { kind: 'ready', artifact: appPath! };
+            remote = await resolveRemoteArtifact();
+            if (appPath) return { kind: 'cached', artifact: appPath };
+            miss(reasonForMiss([]).reason);
+            return { kind: 'miss' };
           },
-          acquire: acquireRemoteArtifact,
-        },
-        admit: takeBuildSlot,
-        prepare: prepareSource,
-        revalidate: revalidateSource,
-        compile: compileHere,
-        validate: async () => {
-          await settleStoreKeyAfterCompile();
-          return storeKey ? 'cacheable' : 'uncacheable';
-        },
-        store: storeArtifact,
-        finish: finishArtifact,
+          claim: useBuildCache
+            ? async () => {
+                await awaitSharedBuild();
+                return appPath;
+              }
+            : undefined,
+          reuse: async (cached) => {
+            appPath = await prepareCachedArtifact(cached);
+            if (appPath) lateHit();
+            else if (swapFellBack) miss(reasonForMiss([]).reason);
+            return appPath;
+          },
+          build: {
+            placement: {
+              select: () => {
+                buildFailure = { fingerprint, cacheKey, cacheHit, cacheSkipped: !useBuildCache, buildMachine };
+                return placeBuild();
+              },
+              acquire: acquireRemoteArtifact,
+            },
+            admit: takeBuildSlot,
+            prepare: prepareSource,
+            revalidate: revalidateSource,
+            compile: compileHere,
+            validate: async () => {
+              await settleStoreKeyAfterCompile();
+              return storeKey ? 'cacheable' : 'uncacheable';
+            },
+            store: storeArtifact,
+            finish: finishArtifact,
+          },
+        };
       },
-      release: () => {
-        if (openOffload.choice) closeOffload(openOffload.choice);
-        releaseLock();
-        releaseSlot();
+      refuse: (error) => {
+        if (error instanceof OffloadRefusal)
+          return {
+            code: error.code,
+            message: error.message,
+            remedy: error.remedy,
+            build: { ...buildFailure, buildMachine, ...(builtOn ? { builtOn } : {}) },
+          };
+        if (error instanceof ArtifactRefusal)
+          return { ...error.failure, build: { ...buildFailure, ...error.failure.build } };
+        return null;
       },
-    });
-    const artifact: PreparedIosArtifact = {
-      handoff,
-      path: appPath!,
-      bundleId,
-      cache: {
-        identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
-        hit: cacheHit,
-        providerName: (remote as LoadProjectProviderResult | null)?.name ?? providerName,
-        buildMachine,
-        ...(builtOn ? { builtOn } : {}),
-        offloadedTo,
-        offloadFallback: offloadedTo ? null : offloadFallback,
-        readEnabled: useBuildCache,
-        missReason: cacheHit ? null : missReason,
-        waitedForBuild,
-        compilation: compilationCache,
-      },
-      failureFields: {
-        ...buildFailure,
-        buildMachine,
-        ...(builtOn ? { builtOn } : {}),
-        fingerprint: storeHash,
-        cacheKey: storeKey,
-        cacheHit,
-        cacheSkipped: !useBuildCache,
-      },
-      completeUploads: async () => {
-        const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
-        const outcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
-        if (outcome) {
-          if (outcome.warn) note(chalk.yellow(phaseLine('cache', outcome.line)));
-          else phase('cache', outcome.line);
-        }
-        return abandonedRemote || uploadWasAbandoned;
-      },
-      release: releaseArtifact,
-    };
-    transferred = true;
-    return { ok: true, artifact };
-  } catch (error) {
-    if (error instanceof OffloadRefusal) {
-      const refusal = error;
-      return {
-        ok: false,
-        failure: {
-          code: refusal.code,
-          message: refusal.message,
-          remedy: refusal.remedy,
-          build: { ...buildFailure, buildMachine, ...(builtOn ? { builtOn } : {}) },
-        },
-        compilationCache,
-      };
-    }
-    if (error instanceof ArtifactRefusal)
-      return {
-        ok: false,
-        failure: { ...error.failure, build: { ...buildFailure, ...error.failure.build } },
-        compilationCache,
-      };
-    throw error;
-  } finally {
-    if (!transferred) releaseArtifact();
-  }
+      releaseFailed: (subject, e) => note(chalk.dim(`Could not release ${subject}: ${(e as Error)?.message || e}`)),
+      temporaryReleaseFailed: () => {},
+    },
+    { root, logFile, deps: d },
+  );
+  if (!acquired.ok) return { ok: false, failure: acquired.failure, compilationCache };
+  appPath = acquired.artifact;
+  const artifact: PreparedIosArtifact = {
+    handoff,
+    path: appPath,
+    bundleId,
+    cache: {
+      identity: storeHash && storeKey ? { fingerprint: storeHash, key: storeKey } : null,
+      hit: cacheHit,
+      providerName: (remote as LoadProjectProviderResult | null)?.name ?? providerName,
+      buildMachine,
+      ...(builtOn ? { builtOn } : {}),
+      offloadedTo,
+      offloadFallback: offloadedTo ? null : offloadFallback,
+      readEnabled: useBuildCache,
+      missReason: cacheHit ? null : missReason,
+      waitedForBuild,
+      compilation: compilationCache,
+    },
+    failureFields: {
+      ...buildFailure,
+      buildMachine,
+      ...(builtOn ? { builtOn } : {}),
+      fingerprint: storeHash,
+      cacheKey: storeKey,
+      cacheHit,
+      cacheSkipped: !useBuildCache,
+    },
+    completeUploads: async () => {
+      const uploadWasAbandoned = await finishIosUpload(uploadPending, remote, phase, note);
+      const outcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName);
+      if (outcome) {
+        if (outcome.warn) note(chalk.yellow(phaseLine('cache', outcome.line)));
+        else phase('cache', outcome.line);
+      }
+      return abandonedRemote || uploadWasAbandoned;
+    },
+    release: acquired.release,
+  };
+  return { ok: true, artifact };
 }
