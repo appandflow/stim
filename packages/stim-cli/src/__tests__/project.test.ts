@@ -103,7 +103,9 @@ test('appProjectProblem accepts a package that declares react-native only as a p
     expect(appProjectProblem(tmp)).toBe(null);
     mkdirSync(join(tmp, 'android'));
     writeFileSync(join(tmp, 'android', 'settings.gradle'), '');
-    expect(detectPlatforms(tmp, {})).toEqual(['android']);
+    expect(
+      detectPlatforms(tmp, { context: { projectPath: tmp, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['android']);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -187,43 +189,91 @@ describe('detectPlatforms without running project code', () => {
     app({ 'react-native': '0.81' });
     file('ios/App.xcodeproj/project.pbxproj');
     file('android/build.gradle');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
     rmSync(join(root, 'ios'), { recursive: true });
     rmSync(join(root, 'android/build.gradle'));
     file('android/settings.gradle.kts');
-    expect(detectPlatforms(root, {})).toEqual(['android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['android']);
     file('ios/App.xcworkspace/contents.xcworkspacedata');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
   });
 
   test('Expo defaults work before prebuild and explicit platforms constrain native and web support', () => {
     expo();
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android']);
     file('node_modules/react-native-web/package.json', '{}');
-    expect(detectPlatforms(root, {})).toEqual(['ios', 'android', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios', 'android', 'web']);
     expo(['ios']);
-    expect(detectPlatforms(root, {})).toEqual(['ios']);
-    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['ios', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['ios']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['ios', 'web']);
     file('app.json', JSON.stringify({ slug: 'app', platforms: ['web'] }));
-    expect(detectPlatforms(root, {})).toEqual(['web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual(['web']);
   });
 
   test('bare apps support web only through an explicit URL, since stim web refuses them without one', () => {
     app({ 'react-native': '0.81' });
-    expect(detectPlatforms(root, { web: { url: 'http://localhost:5173' } })).toEqual(['web']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['web']);
     app({ 'react-native': '0.81', 'react-native-web': '0.21' });
     file('node_modules/react-native-web/package.json', '{}');
-    expect(detectPlatforms(root, {})).toEqual([]);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
   });
 
   test('a Swift package needs macos.product and macos.infoPlist but no package.json', () => {
     const macos = { product: 'Sample', infoPlist: 'Info.plist' };
-    expect(detectPlatforms(root, { macos })).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos },
+      }),
+    ).toEqual([]);
     file('Package.swift');
-    expect(detectPlatforms(root, {})).toEqual([]);
-    expect(detectPlatforms(root, { macos: { product: 'Sample' } })).toEqual([]);
-    expect(detectPlatforms(root, { macos })).toEqual(['macos']);
-    expect(detectPlatforms(root, { macos, web: { url: 'http://localhost:5173' } })).toEqual(['macos', 'web']);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos: { product: 'Sample' } },
+      }),
+    ).toEqual([]);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos },
+      }),
+    ).toEqual(['macos']);
+    expect(
+      detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: { macos, web: { url: 'http://localhost:5173' } },
+      }),
+    ).toEqual(['macos', 'web']);
   });
 
   test.each(['js', 'ts', 'cjs', 'mjs'])(
@@ -234,23 +284,35 @@ describe('detectPlatforms without running project code', () => {
         `app.config.${extension}`,
         "throw new Error('must not execute'); export default { platforms: ['web', 'ios'] };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'web']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'web']);
       file(
         `app.config.${extension}`,
         "throw new Error('must not execute'); export default { platforms: choosePlatforms() };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       file(`app.config.${extension}`, "export default { platforms: ['ios', ...otherPlatforms] };");
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       file(`app.config.${extension}`, "// platforms: ['web']\nexport default { slug: 'app' };");
-      expect(detectPlatforms(root, {})).toEqual(['ios', 'android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['ios', 'android']);
       expo(['android']);
-      expect(detectPlatforms(root, {})).toEqual(['android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['android']);
       file(
         `app.config.${extension}`,
         "export default { plugins: [['some-plugin', { platforms: ['ios'] }]], slug: 'app' };",
       );
-      expect(detectPlatforms(root, {})).toEqual(['android']);
+      expect(
+        detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+      ).toEqual(['android']);
     },
   );
 
@@ -258,7 +320,9 @@ describe('detectPlatforms without running project code', () => {
     app({ typescript: '5' });
     file('ios/App.xcodeproj/project.pbxproj');
     file('android/build.gradle');
-    expect(detectPlatforms(root, {})).toEqual([]);
+    expect(
+      detectPlatforms(root, { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} }),
+    ).toEqual([]);
   });
 });
 
@@ -276,6 +340,28 @@ test('detectAndroidPackage reads android.package from app.json', () => {
 
 test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
   expect(detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
+});
+
+test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.module names', () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-root-')));
+  try {
+    getExecutor().runFile('git', ['init', '-q', repo]);
+    const app = join(repo, 'packages', 'tester');
+    mkdirSync(join(app, 'android', 'app'), { recursive: true });
+    writeFileSync(join(repo, 'settings.gradle.kts'), '');
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'tester', dependencies: { 'react-native': '*' } }));
+    writeFileSync(
+      join(app, 'android', 'app', 'build.gradle.kts'),
+      'android {\n  namespace = "com.facebook.react.uiapp"\n}\n',
+    );
+    writeFileSync(
+      join(app, '.stim.json'),
+      JSON.stringify({ android: { gradleRoot: '../..', module: ':packages:tester:android:app' } }),
+    );
+    expect(detectAndroidPackage(app)).toBe('com.facebook.react.uiapp');
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 describe.skipIf(process.platform === 'win32')(

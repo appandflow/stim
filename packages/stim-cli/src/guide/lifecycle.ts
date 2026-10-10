@@ -1,3 +1,4 @@
+import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -248,7 +249,10 @@ WAITING FOR A CHANGE
   To wait for a device, a build or a dev server instead of polling, run
   \`stim status --watch --json\`. It keeps running and prints one complete
   status payload per line: one at once, then one each time the payload
-  changes, never two identical ones in a row. It reacts to Stim state files,
+  changes, never two identical ones in a row. In a watch line, a usage
+  figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  changes as a whole, so its residentMb and processes update with it. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds
@@ -2687,6 +2691,19 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Doctor and failure diagnostics report macOS memory pressure when available;
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.
+
+  Doctor, and boot messages under warning or critical pressure, also name any
+  process whose physical footprint is abnormal, read from macOS top (it counts
+  compressed and swapped memory, which ps RSS leaves out, and reads root-owned
+  daemons). Abnormal is at least a quarter of physical memory and 8 GiB, or
+  2 GiB for fseventsd and Watchman, which are normally far smaller. A known
+  safe-to-restart process comes with its command; Stim never runs it:
+    fseventsd                      sudo killall fseventsd (launchd restarts it;
+                                   file watchers rescan once)
+    Watchman                       stim gc --delete --cache watchman
+    Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
+  Any other process is named with its size only; ask before quitting it.
+  Doctor skips this check when STIM_HOME is set: processes are machine-global.
 
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`
   only in workspaces you own and have finished using; ask before closing other

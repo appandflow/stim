@@ -90,6 +90,10 @@ directory that is not an app records nothing.
 
 The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
 
+On macOS, a `memory-culprit` finding names each process whose physical
+footprint is abnormal, with its restart command when one is known to be safe.
+See [memory pressure](./owned-devices.md#abnormally-large-processes).
+
 Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
 available one.
@@ -1039,7 +1043,8 @@ these additive fields. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 Each linked worktree shows its uncommitted changes, commits ahead of and
 behind its upstream, and whether its branch is merged, as a
-`git: 2 changed, 1 untracked, ahead 3` line. See
+`git: 2 changed, 1 untracked, ahead 3` line. One-shot `stim status` shows it
+only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 
@@ -1183,7 +1188,10 @@ lists every field.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
-one per change, never two identical payloads in a row. It reacts to changes in
+one per change, never two identical payloads in a row. In a watch line, a CPU or memory figure keeps
+its value from the previous line until it moves by 5 percentage points or 16 MB;
+resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
+It reacts to changes in
 `$STIM_HOME` state and the EAS session ledger, adb device arrivals and
 departures, and simulator state, and recomputes every 30 seconds as a
 fallback. A log append updates only the log error count and device activity,

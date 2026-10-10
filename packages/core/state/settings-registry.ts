@@ -219,6 +219,25 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'AVD config.ini fragment under the app',
   },
   { key: 'android.avdConfig', type: OBJECT, scopes: PROJECT, description: 'Validated AVD config values' },
+  {
+    key: 'android.gradleRoot',
+    type: RELATIVE_PATH,
+    scopes: ['workspace', 'committed'],
+    default: 'android',
+    description:
+      'Directory relative to the app holding gradlew and settings.gradle; may be outside the app but not the repository',
+  },
+  {
+    key: 'android.module',
+    type: {
+      kind: 'string',
+      pattern: '^(:(?!\\.\\.?(?::|$))[A-Za-z0-9._-]+)+$',
+      patternHelp: 'a Gradle project path such as :app',
+    },
+    scopes: ['workspace', 'committed'],
+    default: ':app',
+    description: "The app's Gradle project path, such as :app",
+  },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
   {
     key: 'android.offloadInputs',

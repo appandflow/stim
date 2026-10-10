@@ -55,9 +55,10 @@ runs the full suite.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
 workspace; see its README. It reads Stim state through the CLI's JSON output,
-or through the local stim-server protocol for stats when its existing read-capable
-session serves the same Stim home, and for device replay and a leased physical
-device's screen. It runs Stim commands
+or through the local stim-server protocol for stats and status when its existing
+read-capable session serves the same Stim home, and for device replay and a leased physical
+device's screen. It runs its own `stim status --watch --json` only while that
+session is not delivering status. It runs Stim commands
 through the CLI, never by reading or writing `$STIM_HOME`. It connects to
 stim-server only over loopback, with the device token it gets by spending a
 `stim-server pair --control` token. Build and test it with `swift build` and

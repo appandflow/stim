@@ -378,6 +378,117 @@ export function iosProjectDirSettingError(settings: unknown, appRoot: string): s
 
 const INVALID_IOS_PROJECT_DIR = '\0invalid ios.projectPath';
 
+export const DEFAULT_ANDROID_GRADLE_ROOT = 'android';
+export const DEFAULT_ANDROID_MODULE = ':app';
+const ANDROID_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+)+$/;
+
+export interface AndroidLayout {
+  gradleRoot: string;
+  gradleRootRelative: string;
+  module: string;
+  moduleDir: string;
+  custom: boolean;
+}
+
+function androidString(settings: unknown, key: string): unknown {
+  if (!isPlainObject(settings) || !isPlainObject(settings.android)) return undefined;
+  return settings.android[key];
+}
+
+function hasGradleScript(dir: string, name: string): boolean {
+  return existsSync(join(dir, `${name}.gradle`)) || existsSync(join(dir, `${name}.gradle.kts`));
+}
+
+export function androidLayoutSetting(settings: unknown, appRoot: string, bound: string): AndroidLayout {
+  const rootValue = androidString(settings, 'gradleRoot');
+  const moduleValue = androidString(settings, 'module');
+  const custom =
+    (rootValue !== undefined && rootValue !== DEFAULT_ANDROID_GRADLE_ROOT) ||
+    (moduleValue !== undefined && moduleValue !== DEFAULT_ANDROID_MODULE);
+  if (!custom) {
+    const gradleRoot = join(appRoot, DEFAULT_ANDROID_GRADLE_ROOT);
+    return {
+      gradleRoot,
+      gradleRootRelative: DEFAULT_ANDROID_GRADLE_ROOT,
+      module: DEFAULT_ANDROID_MODULE,
+      moduleDir: join(gradleRoot, 'app'),
+      custom: false,
+    };
+  }
+  const rawRoot = rootValue ?? DEFAULT_ANDROID_GRADLE_ROOT;
+  if (
+    typeof rawRoot !== 'string' ||
+    !rawRoot.trim() ||
+    rawRoot !== rawRoot.trim() ||
+    /[\r\n\0]/.test(rawRoot) ||
+    isAbsolute(rawRoot)
+  ) {
+    throw new Error('Invalid android.gradleRoot setting. Expected a directory path relative to the app directory.');
+  }
+  const module = moduleValue ?? DEFAULT_ANDROID_MODULE;
+  if (typeof module !== 'string' || !ANDROID_MODULE.test(module)) {
+    throw new Error(
+      `Invalid android.module setting ${JSON.stringify(module)}. Expected a Gradle project path such as :app.`,
+    );
+  }
+  try {
+    const app = realpathSync(appRoot);
+    const limit = realpathSync(bound);
+    const gradleRoot = realpathSync(resolve(app, rawRoot));
+    if (pathEscapesRoot(limit, gradleRoot)) throw new Error(`it resolves outside ${limit}`);
+    if (!statSync(gradleRoot).isDirectory()) throw new Error('it is not a directory');
+    if (!hasGradleScript(gradleRoot, 'settings')) throw new Error('it holds no settings.gradle or settings.gradle.kts');
+    const mapped = join(gradleRoot, ...module.split(':').filter(Boolean));
+    if (!hasGradleScript(mapped, 'build')) {
+      throw new Error(`module ${module} has no build.gradle or build.gradle.kts at ${mapped}`);
+    }
+    const moduleDir = realpathSync(mapped);
+    if (pathEscapesRoot(limit, moduleDir)) throw new Error(`module ${module} resolves outside ${limit}`);
+    return {
+      gradleRoot,
+      gradleRootRelative: relative(app, gradleRoot).split(sep).join('/') || '.',
+      module,
+      moduleDir,
+      custom: true,
+    };
+  } catch (error) {
+    throw new Error(`Could not use android.gradleRoot ${rawRoot}: ${String((error as Error)?.message || error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export function androidLayoutSettingError(settings: unknown, appRoot: string, bound: string): string | null {
+  try {
+    androidLayoutSetting(settings, appRoot, bound);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
+
+const INVALID_ANDROID_GRADLE_ROOT = '\0invalid android.gradleRoot';
+
+export function defaultAndroidLayout(appRoot: string): AndroidLayout {
+  return androidLayoutSetting({}, appRoot, appRoot);
+}
+
+export function resolveAndroidLayout(settings: SettingsObject | null, root: string, bound: string): AndroidLayout {
+  if (settings === null) return defaultAndroidLayout(root);
+  try {
+    return androidLayoutSetting(settings, root, bound);
+  } catch {
+    const gradleRoot = join(root, INVALID_ANDROID_GRADLE_ROOT);
+    return {
+      gradleRoot,
+      gradleRootRelative: INVALID_ANDROID_GRADLE_ROOT,
+      module: DEFAULT_ANDROID_MODULE,
+      moduleDir: join(gradleRoot, 'app'),
+      custom: true,
+    };
+  }
+}
+
 export function resolveIosProjectDir(settings: SettingsObject | null, root: string): IosProjectDir {
   if (settings === null) {
     return { dir: join(root, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };

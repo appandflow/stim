@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
-import { podEnvForRuby, readRubyVersion } from '../engine/deps.ts';
+import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
@@ -63,33 +63,74 @@ export function iosToolchain(root: string, native?: 'xcode'): IosToolchain {
   return iosToolchainForRuby(native ? null : readRubyVersion(root), native);
 }
 
+async function quietAsync(file: string, args: string[]): Promise<string | null> {
+  try {
+    return await getExecutor().runFileAsync(file, args, { timeoutMs: 20_000 });
+  } catch {
+    return null;
+  }
+}
+
+export async function iosToolchainAsync(root: string): Promise<IosToolchain> {
+  const rubyVersion = readRubyVersion(root);
+  const [xcode, simulatorSdk, cocoapods] = await Promise.all([
+    quietAsync('xcodebuild', ['-version']),
+    quietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    cocoapodsVersionAsync(rubyVersion),
+  ]);
+  return assembleIosToolchain(xcode, simulatorSdk, cocoapods);
+}
+
 function iosToolchainForRuby(rubyVersion: string | null, native?: 'xcode'): IosToolchain {
-  const xcode = quiet('xcodebuild', ['-version']);
+  return assembleIosToolchain(
+    quiet('xcodebuild', ['-version']),
+    quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    native ? null : cocoapodsVersion(rubyVersion),
+  );
+}
+
+function assembleIosToolchain(
+  xcode: string | null,
+  simulatorSdk: string | null,
+  cocoapods: string | null,
+): IosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
-    simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: native ? null : cocoapodsVersion(rubyVersion),
+    simulatorSdk: simulatorSdk?.trim() ?? null,
+    cocoapods,
   };
 }
 
+function podProbeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+function podVersionLine(output: string | null | undefined): string | null {
+  return output?.trim().split('\n').pop()?.trim() ?? null;
+}
+
 function cocoapodsVersion(rubyVersion: string | null): string | null {
-  return (
-    getExecutor()
-      .runFileQuiet('pod', ['--version'], {
-        timeoutMs: 20_000,
-        env: Object.fromEntries(
-          Object.entries(podEnvForRuby(rubyVersion)).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        ),
-      })
-      ?.trim()
-      .split('\n')
-      .pop()
-      ?.trim() ?? null
+  return podVersionLine(
+    getExecutor().runFileQuiet('pod', ['--version'], {
+      timeoutMs: 20_000,
+      env: podProbeEnv(podEnvForRuby(rubyVersion)),
+    }),
   );
+}
+
+async function cocoapodsVersionAsync(rubyVersion: string | null): Promise<string | null> {
+  try {
+    return podVersionLine(
+      await getExecutor().runFileAsync('pod', ['--version'], {
+        timeoutMs: 20_000,
+        env: podProbeEnv(await podEnvForRubyAsync(rubyVersion)),
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export interface MacosToolchain {

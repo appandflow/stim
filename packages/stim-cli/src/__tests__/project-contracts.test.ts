@@ -57,7 +57,7 @@ function registryWithoutPlan(platform: 'ios' | 'android') {
       if (!match) return null;
       return platform === 'ios'
         ? { ...match, ios: async (settings) => ({ ...(await match.ios!(settings)), plan: undefined }) }
-        : { ...match, android: async () => ({ ...(await match.android!()), plan: undefined }) };
+        : { ...match, android: async (resolved) => ({ ...(await match.android!(resolved)), plan: undefined }) };
     },
   };
   return createProjectRegistry([

@@ -27,6 +27,10 @@ import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import {
+  androidLayoutSetting,
+  androidLayoutSettingError,
+  resolveAndroidLayout,
+  type AndroidLayout,
   androidAvdConfigSettingError,
   androidDataPartitionSizeGbSettingError,
   cacheProviderSettingError,
@@ -137,13 +141,13 @@ export interface AndroidBuildPlanDependencies {
   resolveCompilerCache?: typeof androidCompilerCache;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   variantProblem: (variant: string | null) => ReturnType<typeof productFlavorRefusal>;
+  detectExpo?: () => boolean;
 }
 
 export interface AndroidPlanDependencies extends Omit<AndroidBuildPlanDependencies, 'variantProblem'> {
   validateAvdConfig?: typeof androidAvdConfigSettingError;
   readFlavors?: typeof readProductFlavors;
   variantProblem?: AndroidBuildPlanDependencies['variantProblem'];
-  detectExpo?: typeof detectIsExpo;
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: typeof listAvdDeviceProfiles;
   parkedLimit?: typeof parkedMaxSetting;
@@ -175,18 +179,31 @@ function fail(
   return { ok: false, code, message, remedy, lines };
 }
 
+function androidLayoutError(
+  settings: SettingsObject,
+  root: string,
+  bound: string,
+  isExpo: () => boolean,
+): string | null {
+  const error = androidLayoutSettingError(settings, root, bound);
+  if (error || !androidLayoutSetting(settings, root, bound).custom || !isExpo()) return error;
+  return 'android.gradleRoot and android.module apply to bare React Native apps only: expo prebuild generates and builds android/. Remove them for this Expo app.';
+}
+
 function androidCompilerCache({
   root,
   optimizations,
   settingsContext,
+  layout,
 }: {
   root: string;
   optimizations: Optimizations;
   settingsContext: SettingsContext;
+  layout: AndroidLayout;
 }): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
   const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
     optimizations,
-    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }),
+    use: (manifest) => resolveAndroidCas(root, { ...process.env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
   });
   const fallback = resolved.android.compilerCacheFallback;
   if (!fallback) return { cas, optimizations: resolved, warning: null };
@@ -212,11 +229,16 @@ export function resolveAndroidBuildPlan(
     resolveCompilerCache = androidCompilerCache,
     resolveCacheProvider = resolveCacheProviderConfig,
     variantProblem,
+    detectExpo = () => detectIsExpo(settingsContext.projectPath),
   }: AndroidBuildPlanDependencies,
 ): PlanResult<AndroidBuildPlan> {
   const root = settingsContext.projectPath;
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError) return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
+  const bound = settingsContext.repoRoot ?? root;
+  const layoutError = androidLayoutError(settings, root, bound, detectExpo);
+  if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
+  const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
     warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
   }
@@ -226,7 +248,7 @@ export function resolveAndroidBuildPlan(
   } catch (error) {
     return fail('STIM_BAD_ARG', `Could not configure Android build: ${(error as Error).message}`, SETTING_SHAPE_REMEDY);
   }
-  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext });
+  const compilerCache = resolveCompilerCache({ root, optimizations, settingsContext, layout });
   const cas = compilerCache.cas;
   optimizations = compilerCache.optimizations;
   if (compilerCache.warning) warn('cache', compilerCache.warning);
@@ -285,8 +307,18 @@ export function resolveAndroidRunPlan(
     resolveCacheProvider = resolveCacheProviderConfig,
     validateAvdConfig = androidAvdConfigSettingError,
     readFlavors = readProductFlavors,
-    variantProblem = (variant) => productFlavorRefusal({ flavors: readFlavors(settingsContext.projectPath), variant }),
-    detectExpo = detectIsExpo,
+    variantProblem = (variant) =>
+      productFlavorRefusal({
+        flavors: readFlavors(
+          resolveAndroidLayout(
+            settings,
+            settingsContext.projectPath,
+            settingsContext.repoRoot ?? settingsContext.projectPath,
+          ),
+        ),
+        variant,
+      }),
+    detectExpo = () => detectIsExpo(settingsContext.projectPath),
     listSystemImages = listInstalledSystemImages,
     listDeviceProfiles = listAvdDeviceProfiles,
     parkedLimit = parkedMaxSetting,
@@ -303,7 +335,7 @@ export function resolveAndroidRunPlan(
   }
   const plannedBuild = resolveAndroidBuildPlan(
     { settings, settingsContext, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
-    { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem },
+    { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
@@ -324,7 +356,7 @@ export function resolveAndroidRunPlan(
   }
   const systemImage = resolveSystemImage(systemImageFlag, settings);
   const deviceProfile = resolveDeviceProfile(deviceProfileFlag, settings);
-  const isExpo = detectExpo(root);
+  const isExpo = detectExpo();
   const physical = isPhysicalDeviceRequest(deviceFlag);
   if (physical && deviceFlag === '') {
     return fail(

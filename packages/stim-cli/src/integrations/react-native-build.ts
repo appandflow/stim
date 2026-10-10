@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import type { AndroidLayout } from '../workspace/settings.ts';
 import chalk from 'chalk';
 import { register } from '../cache/cache-manifest.ts';
 import { phaseLine } from '../command-output.ts';
@@ -36,48 +37,43 @@ type AndroidProjectResult =
   | { failed?: never; androidDir: string; gradlew: string }
   | { failed: true; code: string; reason: string; remedy: string };
 
-function androidDir(root: string) {
-  return join(root, 'android');
+export function gradlewPath(layout: AndroidLayout): string {
+  return join(layout.gradleRoot, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
 }
 
-export function gradlewPath(root: string): string {
-  return join(androidDir(root), process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
+export function apkOutputsDir(layout: AndroidLayout): string {
+  return join(layout.moduleDir, 'build', 'outputs', 'apk');
 }
 
-export function apkOutputsDir(root: string): string {
-  return join(androidDir(root), 'app', 'build', 'outputs', 'apk');
+export function debugApkDir(layout: AndroidLayout): string {
+  return join(apkOutputsDir(layout), 'debug');
 }
 
-export function debugApkDir(root: string): string {
-  return join(apkOutputsDir(root), 'debug');
-}
-
-export function discoverAndroidProject(root: string): AndroidProjectResult {
-  const dir = androidDir(root);
+export function discoverAndroidProject(root: string, layout: AndroidLayout): AndroidProjectResult {
+  const dir = layout.gradleRoot;
   if (!existsSync(dir)) {
     return {
       failed: true,
       code: BUILD_ERROR,
-      reason: `No android/ directory in ${root}.`,
+      reason: `No ${relative(root, dir) || '.'}/ directory in ${root}.`,
       remedy:
         'Generate it (`npx expo prebuild -p android`, which `stim android` runs itself on an Expo project) or check out the native sources.',
     };
   }
-  const gradlew = gradlewPath(root);
+  const gradlew = gradlewPath(layout);
   if (!existsSync(gradlew)) {
     return {
       failed: true,
       code: BUILD_ERROR,
       reason: `${gradlew} does not exist, so there is no gradle wrapper to build with.`,
-      remedy:
-        'Restore the wrapper (`gradle wrapper` in android/, or regenerate the project with `npx expo prebuild -p android --clean`).',
+      remedy: `Restore the wrapper (\`gradle wrapper\` in ${relative(root, dir) || '.'}/, or regenerate the project with \`npx expo prebuild -p android --clean\`).`,
     };
   }
   return { androidDir: dir, gradlew };
 }
 
-export function readProductFlavors(root: string): ProductFlavors {
-  return parseProductFlavors(readOrNull(join(androidDir(root), 'app', 'build.gradle')));
+export function readProductFlavors(layout: AndroidLayout): ProductFlavors {
+  return parseProductFlavors(readOrNull(join(layout.moduleDir, 'build.gradle')));
 }
 
 export function productFlavorRefusal({
@@ -114,13 +110,20 @@ function readOrNull(path: string): string | null {
 export async function buildAndroid(
   {
     root,
+    layout,
     logWriter,
     variant = null,
     abi = null,
-  }: { root: string; logWriter?: NdjsonWriter | null; variant?: string | null; abi?: string | null },
+  }: {
+    root: string;
+    layout: AndroidLayout;
+    logWriter?: NdjsonWriter | null;
+    variant?: string | null;
+    abi?: string | null;
+  },
   options: NonNullable<Parameters<typeof buildGradle>[1]> & { platform?: NodeJS.Platform } = {},
 ): Promise<BuildAndroidResult> {
-  const project = discoverAndroidProject(root);
+  const project = discoverAndroidProject(root, layout);
   if (project.failed)
     return {
       ok: false,
@@ -143,10 +146,10 @@ export async function buildAndroid(
       project: {
         directory: project.androidDir,
         gradlew: project.gradlew,
-        module: ':app',
-        outputsDir: apkOutputsDir(root),
+        module: layout.module,
+        outputsDir: apkOutputsDir(layout),
       },
-      task: assembleTaskFor(variant),
+      task: layout.custom ? `${layout.module}:${assembleTaskFor(variant)}` : assembleTaskFor(variant),
       projectArgs: abi ? [`-PreactNativeArchitectures=${abi}`] : [],
       preflightFailure: room
         ? { code: 'STIM_PATH_TOO_LONG', reason: androidPathRoomMessage(room), remedy: androidPathRoomRemedy(room) }
