@@ -2,7 +2,6 @@ import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import { resolveOptimizations, resolveMetroSharedCache, type Optimizations } from '../optimizations.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
@@ -555,20 +554,25 @@ export function resolveSettings(context: {
   return mergeSettingsLayers(settingsLayers(context).map((layer) => layer.settings));
 }
 
-function settingsForProject(root: string): SettingsObject {
-  return resolveSettings({
-    projectPath: root,
-    gitCommonDir: projectGitCommonDir(root),
-    repoRoot: projectRepoRoot(root) ?? root,
-  });
+export interface ProjectSettingsContext {
+  projectPath: string;
+  gitCommonDir: string | null;
+  repoRoot: string | null;
 }
 
-export function projectOptimizations(root: string): Optimizations {
-  return resolveOptimizations(settingsForProject(root));
+export function projectSettingsContext(
+  root: string,
+  git: { gitCommonDir: (cwd: string) => string | null; repoRoot: (cwd: string) => string | null } = {
+    gitCommonDir: projectGitCommonDir,
+    repoRoot: projectRepoRoot,
+  },
+): ProjectSettingsContext {
+  return { projectPath: root, gitCommonDir: git.gitCommonDir(root), repoRoot: git.repoRoot(root) };
 }
 
-export function projectMetroSharedCache(root: string): boolean {
-  return resolveMetroSharedCache(settingsForProject(root));
+export function resolveProjectSettings(root: string): { context: ProjectSettingsContext; settings: SettingsObject } {
+  const context = projectSettingsContext(root);
+  return { context, settings: resolveSettings(context) };
 }
 
 export const METRO_COMMAND_PORT = '{port}';
@@ -589,8 +593,7 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
   return null;
 }
 
-export function projectMetroCommand(root: string): string[] | null {
-  const settings = settingsForProject(root);
+export function runnableMetroCommand(settings: SettingsObject): string[] | null {
   return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
 }
 
@@ -705,17 +708,9 @@ export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): numbe
   return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
 }
 
-export function projectMaintenancePinned(root: string): boolean {
-  try {
-    const value = settingValueAt(settingsForProject(root), 'maintenance.keep');
-    return value !== undefined && value !== false;
-  } catch {
-    return true;
-  }
-}
-
-export function projectDeviceReclaimIdleMinutes(root: string): number {
-  return deviceReclaimIdleMinutesSetting(settingsForProject(root));
+export function maintenanceKeepSetting(settings: SettingsObject): boolean {
+  const value = settingValueAt(settings, 'maintenance.keep');
+  return value !== undefined && value !== false;
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
@@ -738,14 +733,12 @@ export function metroTunnelSettingError(settings: SettingsObject): string | null
 }
 
 export function metroPortSetting(
-  projectPath: string,
+  settings: SettingsObject,
   env: NodeJS.ProcessEnv = process.env,
 ): { port: number | null; error: string | null } {
   const setting = settingDefinition('metro.port')!;
   const fromEnv = env.STIM_METRO_PORT?.trim();
-  const value = fromEnv
-    ? coerceSettingText(setting, fromEnv)
-    : settingValueAt(settingsForProject(projectPath), 'metro.port');
+  const value = fromEnv ? coerceSettingText(setting, fromEnv) : settingValueAt(settings, 'metro.port');
   if (value === undefined) return { port: null, error: null };
   const problem = settingValueError(setting, value);
   if (problem === null) return { port: value as number, error: null };

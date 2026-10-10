@@ -34,6 +34,7 @@ import {
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
   metroPortSetting,
+  resolveProjectSettings,
   deviceIdleShutdownMinutesSetting,
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
@@ -114,12 +115,13 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 
 test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuses a port below 1024', () => {
   upsertProject(tmpHome, {});
-  expect(metroPortSetting(tmpHome, {})).toEqual({ port: null, error: null });
+  expect(metroPortSetting(resolveProjectSettings(tmpHome).settings, {})).toEqual({ port: null, error: null });
   setProjectSetting(tmpHome, 'metro.port', 25062);
-  expect(metroPortSetting(tmpHome, {})).toEqual({ port: 25062, error: null });
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
+  const { settings } = resolveProjectSettings(tmpHome);
+  expect(metroPortSetting(settings, {})).toEqual({ port: 25062, error: null });
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
 });
 
 test('resolveSettings orders project over repo over committed', () => {

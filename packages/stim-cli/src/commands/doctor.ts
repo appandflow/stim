@@ -6,9 +6,10 @@ import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { recordDoctorRun } from '../guide-status.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
-import { resolveSettings } from '../workspace/settings.ts';
+import { projectSettingsContext, type SettingsObject } from '../workspace/settings.ts';
+import { readMachineSettings } from '../diagnostics/doctor-config.ts';
 import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
@@ -66,13 +67,9 @@ export function parseDoctorPlatform(value: string): DoctorPlatform {
  * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
  * simulator's, else the one it would create a simulator on.
  */
-function iosTargetRuntime(root: string): string | null {
+function iosTargetRuntime(root: string, settings: SettingsObject | null): string | null {
+  if (!settings) return null;
   try {
-    const settings = resolveSettings({
-      projectPath: root,
-      gitCommonDir: gitCommonDir(root),
-      repoRoot: repoRoot(root) ?? root,
-    });
     const runtimes = listIosRuntimes();
     const runtime = resolveRuntime(null, settings);
     if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
@@ -247,12 +244,14 @@ export default function doctorCommand(
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
+      const machineSettings = readMachineSettings(projectSettingsContext(root));
+      const settings = machineSettings.corrupt ? null : machineSettings.settings;
 
       if (opts.fix) {
         if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
         if (opts.platform !== 'ios') {
           try {
-            const repair = repairCxxLauncherState(root);
+            const repair = repairCxxLauncherState(root, settings);
             for (const path of repair.removed)
               console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
             for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
@@ -300,6 +299,7 @@ export default function doctorCommand(
         xcodeMajor: opts.platform !== 'android' && host === 'darwin' ? detectXcodeMajor() : null,
         platform: opts.platform,
         host,
+        machineSettings,
       });
 
       const parity = await detectFingerprintParity(root, { platform: opts.platform });
@@ -333,7 +333,7 @@ export default function doctorCommand(
               {
                 platform: 'ios' as const,
                 local: iosToolchain(root),
-                runtime: iosTargetRuntime(root),
+                runtime: iosTargetRuntime(root, settings),
                 cocoapodsPinned: bundlerPin(root) !== null,
               },
             ]
