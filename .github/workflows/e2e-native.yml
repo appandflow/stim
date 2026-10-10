@@ -92,7 +92,7 @@ on:
         description: Native Gradle acceptance project
         type: choice
         default: fixture
-        options: [fixture, architecture-samples]
+        options: [fixture, architecture-samples, signed-flavor]
       suite:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
@@ -668,7 +668,7 @@ jobs:
 
   native-gradle:
     name: native Gradle Android
-    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
+    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle && inputs.native_gradle_project != 'signed-flavor'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -726,3 +726,87 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
             ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  native-signed-flavor:
+    name: signed native Gradle lifecycle (${{ matrix.os }})
+    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle && inputs.native_gradle_project == 'signed-flavor'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        if: runner.os == 'Linux'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ./.github/actions/windows-android-sdk
+        if: runner.os == 'Windows'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install fixed fixture SDK and UI prerequisites
+        run: |
+          node --input-type=module - <<'JS'
+          import assert from 'node:assert/strict';
+          import { appendFileSync } from 'node:fs';
+          import { join, resolve } from 'node:path';
+          import { createRequire } from 'node:module';
+          const { sync } = createRequire(resolve('packages/stim-cli/package.json'))('cross-spawn');
+          const win = process.platform === 'win32';
+          const sdk = process.env.ANDROID_HOME;
+          assert(sdk);
+          for (const [file, args] of [
+            [join(sdk, 'cmdline-tools', 'latest', 'bin', `sdkmanager${win ? '.bat' : ''}`), ['--install', 'platform-tools', 'emulator', 'platforms;android-36', 'build-tools;36.0.0', 'system-images;android-34;google_apis;x86_64']],
+            ['npm', ['install', '--global', '--prefix', join(process.env.RUNNER_TEMP, 'native-agent-device'), 'agent-device@0.21.22']],
+          ]) {
+            const result = sync(file, args, { stdio: ['pipe', 'inherit', 'inherit'], input: 'y\n'.repeat(100), timeout: 10 * 60_000 });
+            if (result.error) throw result.error;
+            assert.equal(result.status, 0);
+          }
+          appendFileSync(process.env.GITHUB_PATH, [join(sdk, 'platform-tools'), join(sdk, 'emulator'), join(process.env.RUNNER_TEMP, 'native-agent-device', win ? '' : 'bin')].join('\n') + '\n');
+          JS
+      - name: Enable KVM
+        if: runner.os == 'Linux'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Prepare signed native fixture
+        id: prepare
+        run: node test/e2e/native/run-signed-gradle-e2e.mjs prepare "$RUNNER_TEMP/native-signed-flavor"
+      - name: Real signed flavors, installed bytes and UI
+        run: node test/e2e/native/run-signed-gradle-e2e.mjs run "$RUNNER_TEMP/native-signed-flavor"
+      - name: Preserve and finish any incomplete scoped cleanup
+        if: always() && steps.prepare.outcome != 'skipped'
+        run: |
+          if [ -f "$RUNNER_TEMP/native-signed-flavor/fixture-owner.json" ]; then
+            node test/e2e/native/run-signed-gradle-e2e.mjs cleanup "$RUNNER_TEMP/native-signed-flavor"
+          fi
+      - name: Upload public test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-signed-flavor-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/native-signed-flavor/evidence
+            ${{ runner.temp }}/native-signed-flavor/public-apks
+            ${{ runner.temp }}/native-signed-flavor/project/*.gradle*
+            ${{ runner.temp }}/native-signed-flavor/project/gradle
+            ${{ runner.temp }}/native-signed-flavor/project/gradle.properties
+            ${{ runner.temp }}/native-signed-flavor/project/.stim.json
+            ${{ runner.temp }}/native-signed-flavor/project/mobile/build.gradle.kts
+            ${{ runner.temp }}/native-signed-flavor/project/mobile/src
