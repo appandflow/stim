@@ -237,7 +237,7 @@ export function verifyGradleTransfer(
     const index = parts.findIndex((_, depth) => !known.has(parts.slice(0, depth + 1).join('/')));
     if (index >= 0 && (index < parts.length - 1 || entry.kind === 'directory'))
       throw new Error(
-        `Native Gradle directory ${parts.slice(0, index + 1).join('/')} is outside the source transfer and not a declared output reported by AGP; included builds and externalNativeBuild staging directories are not supported for remote builds.`,
+        `Native Gradle directory ${parts.slice(0, index + 1).join('/')} is outside the source transfer and not a declared output reported by AGP; such directories, for example, included builds or externalNativeBuild staging, are not supported for remote builds.`,
       );
   }
   return manifestDigest(nativeTransferManifest(repository, snapshot, files)) === digest;
