@@ -105,7 +105,9 @@ const swiftPackage: ProjectIntegration = {
         return {
           inspect: () => [],
           offloadTargets: ({ options: { host = process.platform, platform } }) =>
-            host === 'darwin' && platform === undefined ? () => [{ platform: 'macos', local: macosToolchain() }] : null,
+            host === 'darwin' && platform === undefined
+              ? async () => [{ platform: 'macos', local: macosToolchain() }]
+              : null,
         };
       },
     };
