@@ -1,3 +1,13 @@
+import { nativeAndroidFixture } from './_native-android-project.ts';
+import { readWorkspaceLaunches } from '../supervisor/state.ts';
+import { runReload } from '../commands/reload.ts';
+import { resolveBuild } from '../cache/build-cache.ts';
+import { projectIntegrations } from '../integrations/projects.ts';
+import { createProjectRegistry } from '../integrations/project-registry.ts';
+import {
+  reactNativeAndroidProject,
+  type ReactNativeAndroidDependencies,
+} from '../integrations/react-native-android.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { androidProcessRuntime } from '../commands/android/launch.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
@@ -16,12 +26,14 @@ import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
+import type { acquireBuildSlot } from '../engine/build-slots.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -299,9 +311,7 @@ function makeAndroidBuildFailure(
   return { ok: false, diagnostics: [], truncated: 0, durationMs: 0, lastLines: [], ...fields };
 }
 
-function harness(
-  overrides: Record<string, unknown> & Pick<NonNullable<Parameters<typeof runAndroid>[0]>, 'build'> = {},
-) {
+function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDependencies, 'build'> = {}) {
   const calls: Calls = {
     ensureDevice: [],
     booted: [],
@@ -338,6 +348,7 @@ function harness(
   const stdout: string[] = [];
   const options = {
     root,
+    projectRegistry: undefined as NonNullable<Parameters<typeof runAndroid>[0]>['projectRegistry'],
     ensureRemoteBootOwned: (args: Parameters<typeof ensureRemoteBootOwned>[0]) =>
       ensureRemoteBootOwned({ ...args, ledgerRoot: join(home, 'machine-eas') }),
     deviceAbi: () => null,
@@ -528,6 +539,23 @@ function harness(
     run: () =>
       runAndroid({
         ...options,
+        projectRegistry:
+          options.projectRegistry ??
+          createProjectRegistry(
+            projectIntegrations.map((integration) =>
+              integration.id !== 'react-native'
+                ? integration
+                : {
+                    ...integration,
+                    inspect: (path) => {
+                      const match = integration.inspect(path);
+                      return match
+                        ? { ...match, android: async (resolved) => reactNativeAndroidProject(path, resolved, options) }
+                        : null;
+                    },
+                  },
+            ),
+          ),
         ensureDevice: async (args) => {
           const device = await ensureDevice(args);
           if (device.owned) setDevice(root, 'android', device, args.slot);
@@ -536,6 +564,18 @@ function harness(
       }),
   };
 }
+
+test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
+  mkdirSync(join(root, 'native', 'app'), { recursive: true });
+  writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
+  const h = harness({ resolveSettingsFor: () => ({ android: { gradleRoot: 'native' } }) });
+  await h.run();
+  expect(h.calls.build[0]).toMatchObject({
+    layout: { gradleRoot: realpathSync(join(root, 'native')), module: ':app', custom: true },
+  });
+  expect(String(h.calls.resolveCached[0]?.[1])).toContain('-gradle-');
+});
 
 test('an invalid Android pool bound refuses before device creation and emits one JSON error', async () => {
   process.env.STIM_POOL_ANDROID_PARKED_MAX = '-1';
@@ -4423,6 +4463,57 @@ describe('release skips Metro entirely', () => {
 describe('the release APK swap', () => {
   const cached = '/cache/android/entry/app-production-release.apk';
 
+  test.each(['success', 'cancel', 'device', 'install', 'throw'] as const)(
+    'temporary APK ownership survives until use and releases on %s',
+    async (outcome) => {
+      const cache = join(root, 'cached.apk');
+      const unrelated = join(root, 'unrelated.apk');
+      writeFileSync(cache, 'cached bytes');
+      writeFileSync(unrelated, 'unrelated bytes');
+      let directory: string | undefined;
+      const h = harness({
+        variant: 'productionRelease',
+        resolveCached: () => cache,
+        build: never('the build'),
+        swapApk: async () => {
+          directory = mkdtempSync(join(root, 'prepared-apk-'));
+          const apkPath = join(directory, 'app.apk');
+          writeFileSync(apkPath, 'prepared bytes');
+          if (outcome === 'cancel') {
+            const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+            assert(claim);
+            requestNativeRunCancel(root, claim.claimId);
+            process.emit('SIGINT');
+          }
+          return { ok: true, apkPath, tmpDir: directory, hermes: true, durationMs: 1 };
+        },
+        ensureDeviceBooted: async () =>
+          outcome === 'device'
+            ? { failed: true, reason: 'fixture boot refused' }
+            : { ok: true, serial: 'emulator-5584' },
+        install: ({ apkPath }: InstallArgs = {}) => {
+          assert(apkPath);
+          expect(readFileSync(apkPath, 'utf8')).toBe('prepared bytes');
+          if (outcome === 'throw') throw new Error('fixture installer threw');
+          return outcome === 'install' ? { failed: true, reason: 'fixture install refused' } : { ok: true, apkPath };
+        },
+      });
+      const run = () =>
+        withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), { write: () => {} });
+      const completed = await run().then(
+        (result) => ({ result, error: null }),
+        (error: unknown) => ({ result: null, error }),
+      );
+      expect(completed.error).toEqual(outcome === 'throw' ? new Error('fixture installer threw') : null);
+      expect(completed.result?.ok).toBe(outcome === 'throw' ? undefined : outcome === 'success');
+      expect(completed.result?.error?.code === 'STIM_CANCELLED').toBe(outcome === 'cancel');
+      assert(directory);
+      expect(existsSync(directory)).toBe(false);
+      expect(readFileSync(cache, 'utf8')).toBe('cached bytes');
+      expect(readFileSync(unrelated, 'utf8')).toBe('unrelated bytes');
+    },
+  );
+
   test('a release cache hit re-packs: cached APK in, temp copy out, THAT copy installed', async () => {
     const h = harness({
       variant: 'productionRelease',
@@ -4574,7 +4665,10 @@ describe('the release APK swap', () => {
   test('a release build with no fallback stores WITHOUT overwriting, and carries its captured manifest', async () => {
     const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
     await h.run();
-    expect(h.calls.captureAssets[0]).toEqual([root, { variant: 'productionRelease' }]);
+    expect(h.calls.captureAssets[0]).toEqual([
+      root,
+      { variant: 'productionRelease', layout: expect.objectContaining({ module: ':app', custom: false }) },
+    ]);
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: false,
       sources: [],
@@ -7515,4 +7609,441 @@ test('stop cancels Android device preparation waiting for a slot before any buil
   expect(h.calls.build).toEqual([]);
   expect(h.calls.install).toEqual([]);
   expect(readClaimSet(join(home, 'device-waits')).live).toEqual([]);
+});
+
+describe('registered Android project recipes', () => {
+  afterEach(() => resetExecutor());
+
+  function run(h: ReturnType<typeof harness>) {
+    return withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+  }
+
+  function nativeProject() {
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'tooling-only' }));
+    rmSync(join(root, 'android'), { recursive: true });
+    mkdirSync(join(root, 'mobile', 'src'), { recursive: true });
+    writeFileSync(join(root, 'build.gradle.kts'), 'plugins { id("com.android.application") }');
+    writeFileSync(join(root, 'gradlew'), 'fixture wrapper');
+    writeFileSync(join(root, 'local.properties'), 'sdk.dir=/fixture-sdk');
+    writeFileSync(join(root, 'mobile', 'src', 'Main.kt'), 'class MainActivity');
+    return createProjectRegistry([...projectIntegrations, nativeAndroidFixture]);
+  }
+
+  function compiler(onCompile: () => void = () => {}) {
+    const requests: { file: string; args: readonly string[]; cwd: unknown }[] = [];
+    setExecutor(
+      makeExecutor({
+        runFile(file, args = []) {
+          if (file === 'cp') cpSync(args.at(-2)!, args.at(-1)!);
+          return '';
+        },
+        spawn(file, args = [], options = {}) {
+          requests.push({ file, args, cwd: options.cwd });
+          const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+          child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+          setImmediate(() => {
+            const dir = join(root, 'products', 'apk', args[0]?.endsWith('Release') ? 'release' : 'debug');
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, 'mobile.apk'), 'native APK');
+            writeFileSync(
+              join(dir, 'output-metadata.json'),
+              JSON.stringify({ elements: [{ outputFile: 'mobile.apk' }] }),
+            );
+            onCompile();
+            child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
+            child.emit('exit', 0, null);
+          });
+          return child as unknown as ChildProcess;
+        },
+      }),
+    );
+    return requests;
+  }
+
+  test.each([
+    { variant: 'freeDebug', badSignature: false, hosted: false },
+    { variant: 'freeDebug', badSignature: false, hosted: true },
+    { variant: 'freeRelease', badSignature: false, hosted: false },
+    { variant: 'freeRelease', badSignature: false, hosted: true },
+    { variant: 'freeRelease', badSignature: true, hosted: false },
+    { variant: 'freeRelease', badSignature: true, hosted: true },
+  ])(
+    'production native provider verifies signing before install ($variant, hosted: $hosted, bad signature: $badSignature)',
+    async ({ variant, badSignature, hosted }) => {
+      nativeProject();
+      writeFileSync(join(root, 'settings.gradle.kts'), 'include(":mobile")');
+      const sdk = join(root, 'native-sdk');
+      const tools = join(sdk, 'build-tools', '36.0.0');
+      mkdirSync(tools, { recursive: true });
+      const signer = join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
+      writeFileSync(signer, 'fixture signer');
+      const requests: string[][] = [];
+      const signatures: string[][] = [];
+      setExecutor(
+        makeExecutor({
+          async runFileAsync(file, args = []) {
+            expect(file).toBe(signer);
+            signatures.push([...args]);
+            if (badSignature) throw new Error('DOES NOT VERIFY');
+            return '';
+          },
+          spawn(file, args = [], options = {}) {
+            expect(file).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
+            expect(options.cwd).toBe(root);
+            requests.push([...args]);
+            const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+            child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            setImmediate(() => {
+              const modelFile = args
+                .find((arg) => arg.startsWith('-Pstim.native.model='))!
+                .slice('-Pstim.native.model='.length);
+              mkdirSync(join(workspaceDir(root), 'gradle-build'), { recursive: true });
+              const apk = join(root, 'native.apk');
+              writeFileSync(apk, 'signed APK');
+              writeFileSync(
+                modelFile,
+                JSON.stringify({
+                  schema: 1,
+                  module: ':mobile',
+                  variant,
+                  applicationId: 'org.example.variant',
+                  sdkDirectory: sdk,
+                  elements: [{ path: apk, filters: [] }],
+                }),
+              );
+              child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
+              child.emit('exit', 0, null);
+            });
+            return child as unknown as ChildProcess;
+          },
+        }),
+      );
+      const device = {
+        avdName: 'stim-host-native',
+        serial: 'emulator-5590',
+        consolePort: 5590,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+        deviceProfile: 'pixel_6',
+        architecture: 'arm64-v8a' as const,
+      };
+      const placement = {
+        machine: 'mini',
+        selected: 'mini',
+        session: '12345678-1234-1234-1234-123456789abc',
+        appAttempt: 'native',
+        device,
+        agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+      };
+      const modes: unknown[] = [];
+      const delivered: unknown[] = [];
+      const h = harness({
+        variant,
+        json: true,
+        ...(hosted ? { remoteDevice: 'mini', slot: 'tablet', metroCheck: false } : {}),
+        prepareHostedAndroid: async (_machine: string, _selectors: unknown, _recorded: unknown, mode: unknown) => {
+          modes.push(mode);
+          return { host: { machine: 'mini', connection: { close() {} } }, choice: device, session: null };
+        },
+        placeHostedAndroid: async (
+          _target: unknown,
+          options: {
+            mode?: string;
+            release: boolean;
+            bundle: string;
+            bundleId: string;
+            devClientScheme?: string;
+            reserved: (value: typeof placement) => void;
+          },
+        ) => {
+          expect(readFileSync(options.bundle, 'utf8')).toBe('signed APK');
+          expect(options.bundleId).toBe('org.example.variant');
+          delivered.push({
+            mode: options.mode,
+            release: options.release,
+            devClientScheme: options.devClientScheme,
+          });
+          options.reserved(placement);
+          return { placement, launched: true };
+        },
+        resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'none' } } }),
+      });
+      const installed = expect.objectContaining({ packageName: 'org.example.variant' });
+      const launched = expect.objectContaining({
+        appId: 'org.example.variant',
+        runtime: 'process',
+        release: variant.endsWith('Release'),
+      });
+      for (let attempt = 1; attempt <= (badSignature ? 1 : 2); attempt++) {
+        const result = await run(h);
+        expect(requests).toHaveLength(attempt);
+        expect(requests.at(-1)![0]).toBe(':stimExportAndroidApk');
+        expect(requests.at(-1)).toContain(`-Pstim.native.variant=${variant}`);
+        expect(requests.at(-1)).toContain('--build-cache');
+        expect(requests.at(-1)!.some((arg) => /reactNative/.test(arg))).toBe(false);
+        expect(signatures.at(-1)).toEqual(['verify', join(root, 'native.apk')]);
+        expect(result).toMatchObject(
+          badSignature
+            ? { ok: false, error: { code: 'STIM_BUILD_FAILED' } }
+            : {
+                ok: true,
+                facts: {
+                  bundleId: 'org.example.variant',
+                  variant,
+                  metroPort: null,
+                  launched: true,
+                  cacheSkipped: true,
+                  cacheKey: null,
+                  fingerprint: null,
+                },
+              },
+        );
+        expect(result.error?.message?.includes('DOES NOT VERIFY')).toBe(badSignature ? true : undefined);
+        expect(h.calls.install).toHaveLength(badSignature || hosted ? 0 : attempt);
+        expect(h.calls.launchRelease).toHaveLength(badSignature || hosted ? 0 : attempt);
+        expect(h.calls.install.at(-1)).toEqual(badSignature || hosted ? undefined : installed);
+        expect(readWorkspaceLaunches(root)).toEqual(
+          badSignature ? {} : { [hosted ? 'android:tablet' : 'android']: launched },
+        );
+        expect(result.facts?.host?.machine).toBe(hosted && !badSignature ? 'mini' : undefined);
+        expect(h.calls.ensureDevice).toHaveLength(hosted ? 0 : attempt);
+        expect(h.calls.booted).toHaveLength(hosted ? 0 : attempt);
+        expect(modes).toEqual(hosted ? Array(attempt).fill('process') : []);
+        expect(delivered).toEqual(
+          hosted && !badSignature
+            ? Array.from({ length: attempt }, () => ({
+                mode: 'process',
+                release: variant.endsWith('Release'),
+                devClientScheme: undefined,
+              }))
+            : [],
+        );
+      }
+      for (const calls of [
+        h.calls.metro,
+        h.calls.fingerprint,
+        h.calls.prebuild,
+        h.calls.build,
+        h.calls.swapApk,
+        h.calls.loadProvider,
+        h.calls.launch,
+        h.calls.verify,
+      ])
+        expect(calls).toEqual([]);
+    },
+  );
+
+  test.each(['debug', 'release'])(
+    'a native %s recipe reuses its APK with release bundle swaps disabled',
+    async (variant) => {
+      const registry = nativeProject();
+      const requests = compiler();
+      const h = harness({
+        projectRegistry: registry,
+        variant,
+        json: true,
+        resolveSettingsFor: () => ({ optimizations: { releaseBundleSwap: false } }),
+      });
+      const first = await run(h);
+      expect(first.ok).toBe(true);
+      expect(first.facts).toMatchObject({
+        variant,
+        metroPort: null,
+        bundleId: 'org.example.native',
+        launched: true,
+        cacheHit: false,
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ file: join(root, 'gradlew'), cwd: root });
+      expect(requests[0]!.args[0]).toBe(variant === 'release' ? ':mobile:assembleRelease' : ':mobile:assembleDebug');
+      expect(requests[0]!.args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
+      expect(h.calls.install[0]).toMatchObject({
+        serial: 'emulator-5584',
+        packageName: 'org.example.native',
+        allowUninstall: variant === 'release',
+      });
+      expect(h.calls.launchRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+      expect(h.calls.verifyRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+      for (const calls of [
+        h.calls.metro,
+        h.calls.fingerprint,
+        h.calls.prebuild,
+        h.calls.build,
+        h.calls.swapApk,
+        h.calls.loadProvider,
+        h.calls.launch,
+      ])
+        expect(calls).toEqual([]);
+      const launch = readWorkspaceLaunches(root).android;
+      expect(launch).toMatchObject({
+        appId: 'org.example.native',
+        metroPort: null,
+        release: variant === 'release',
+        runtime: 'process',
+      });
+      const second = await run(h);
+      expect(second.facts).toMatchObject({
+        variant,
+        metroPort: null,
+        cacheHit: 'local',
+        cacheSkipped: false,
+        launched: true,
+      });
+      expect(requests).toHaveLength(1);
+      expect(readFileSync(second.facts!.appPath!, 'utf8')).toBe('native APK');
+      const reload = await runReload({
+        root,
+        platform: 'android',
+        deps: {
+          findWorkspace: () => root,
+          getProject: () => getProject(root),
+          resolveAndroid: () => ({ serial: 'emulator-5584' }),
+          androidProcess: () => 4242,
+          readBrowser: () => null,
+          resolveMetro: never('a native reload Metro probe'),
+          reloadMetro: never('a native reload Metro command'),
+          ensureReverse: never('a native reload reverse'),
+        },
+      });
+      expect(reload).toMatchObject({ ok: false, error: { code: 'STIM_NO_METRO' } });
+      assert(!reload.ok);
+      expect(reload.error.message).toContain('native process without Metro');
+      const log = readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8');
+      expect(log).toContain('native process');
+      expect(log).not.toContain('fetched a bundle');
+      expect(log).not.toContain('embedded JS');
+    },
+  );
+
+  test('a cache-ineligible native recipe compiles every run without cache access or shared-build waits', async () => {
+    nativeProject();
+    const cache = vi.fn<() => never>(never('cache access without an identity'));
+    const loadProvider = vi.fn<() => never>(never('provider access without an identity'));
+    const projectRegistry = createProjectRegistry([
+      ...projectIntegrations,
+      {
+        ...nativeAndroidFixture,
+        inspect(path) {
+          const match = nativeAndroidFixture.inspect(path);
+          return match
+            ? {
+                ...match,
+                android: async (resolved) => {
+                  const project = await match.android!(resolved);
+                  return {
+                    ...project,
+                    artifact(context) {
+                      return {
+                        ...project.artifact(context),
+                        identity: async () => ({
+                          cacheIneligible: 'native inputs include an undeclared external file',
+                        }),
+                        reconcile: async () => ({ identity: null, rekeyedBy: [], cacheRefusal: null }),
+                        cache,
+                        legacyCache: { load: loadProvider, runOptions: null },
+                      };
+                    },
+                  };
+                },
+              }
+            : null;
+        },
+      },
+    ]);
+    let slotHeld = false;
+    const requests = compiler(() => expect(slotHeld).toBe(true));
+    const acquireSlot = vi.fn<typeof acquireBuildSlot>(async () => {
+      expect(slotHeld).toBe(false);
+      slotHeld = true;
+      return { acquired: true, path: '/slot', index: 0 };
+    });
+    const releaseSlot = vi.fn<() => boolean>(() => {
+      expect(slotHeld).toBe(true);
+      slotHeld = false;
+      return true;
+    });
+    const h = harness({
+      projectRegistry,
+      json: true,
+      getLimits: () => ({ maxBuilds: 1, maxDevices: 0 }),
+      acquireSlot,
+      releaseSlot,
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+      loadCacheProviderModule: loadProvider,
+    });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const result = await run(h);
+      expect(result.ok).toBe(true);
+      expect(result.facts).toMatchObject({
+        fingerprint: null,
+        cacheKey: null,
+        cacheHit: false,
+        cacheSkipped: true,
+        waitedForBuild: null,
+        launched: true,
+      });
+      expect(requests).toHaveLength(attempt);
+      expect(acquireSlot).toHaveBeenCalledTimes(attempt);
+      expect(releaseSlot).toHaveBeenCalledTimes(attempt);
+      expect(slotHeld).toBe(false);
+      expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
+    }
+    expect(cache).not.toHaveBeenCalled();
+    expect(loadProvider).not.toHaveBeenCalled();
+    expect(h.calls.acquireLock).toEqual([]);
+    expect(h.calls.waitForBuild).toEqual([]);
+    expect(h.calls.releaseLock).toEqual([]);
+    expect(h.calls.install).toHaveLength(2);
+  });
+
+  test('a native source edit during compilation prevents publication and the next run recompiles', async () => {
+    const registry = nativeProject();
+    let edited = false;
+    const requests = compiler(() => {
+      if (!edited) writeFileSync(join(root, 'mobile', 'src', 'Main.kt'), 'class ChangedActivity');
+      edited = true;
+    });
+    const h = harness({ projectRegistry: registry, variant: 'debug' });
+    const first = await run(h);
+    expect(first.ok).toBe(true);
+    expect(first.facts).toMatchObject({ cacheKey: null, fingerprint: null, launched: true });
+    expect(resolveBuild('android', h.calls.acquireLock[0]!.key!)).toBeNull();
+    const second = await run(h);
+    expect(second.ok).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(resolveBuild('android', second.facts!.cacheKey!)).not.toBeNull();
+    const third = await run(h);
+    expect(third.facts?.cacheHit).toBe('local');
+    expect(requests).toHaveLength(2);
+  });
+
+  test.each([{ device: true }, { easProfile: 'development' }])(
+    'unsupported recipe capabilities refuse before resources: %j',
+    async (options) => {
+      const registry = nativeProject();
+      const h = harness({ ...options, projectRegistry: registry });
+      const result = await run(h);
+      expect(result.error?.code).toBe('STIM_BAD_ARG');
+      expect(result.error?.message).toContain('This project integration does not support');
+      expect(h.calls.ensureDevice).toEqual([]);
+      expect(h.calls.fingerprint).toEqual([]);
+      expect(h.calls.metro).toEqual([]);
+      expect(h.calls.build).toEqual([]);
+    },
+  );
+
+  test('two admitted Android recipes refuse before source or device work', async () => {
+    const registry = nativeProject();
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
+    const h = harness({ projectRegistry: registry });
+    const result = await run(h);
+    expect(result.error?.code).toBe('STIM_NO_PROJECT');
+    expect(result.error?.message).toContain('react-native, test-native-android');
+    expect(h.calls.ensureStorage).toEqual([]);
+    expect(h.calls.ensureDevice).toEqual([]);
+    expect(h.calls.fingerprint).toEqual([]);
+  });
 });

@@ -20,7 +20,7 @@ interface ExecOptions {
    * `runFile` and `runFileAsync`: reject nonempty stderr even when the command exits successfully.
    */
   rejectStderr?: boolean;
-  /** `runFile` only: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
+  /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
   /** `runFile` and `runFileAsync`: exact values replaced with `***` in a thrown error's message, stack, stdout and stderr. */
   redact?: readonly string[];
@@ -111,10 +111,16 @@ const defaultExecutor: Executor = {
     if (detachedSilent) return '';
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
-  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, redact } = {}) {
+  runFileAsync(
+    file,
+    args = [],
+    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent, redact } = {},
+  ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
-      const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
+      const opts: SpawnOptions = detachedSilent
+        ? { stdio: 'ignore', detached: true }
+        : { stdio: ['ignore', 'pipe', 'pipe'] };
       if (cwd) opts.cwd = cwd;
       if (env || omitEnv?.length) {
         const childEnv = { ...process.env, ...env };
@@ -161,7 +167,7 @@ const defaultExecutor: Executor = {
             redactError(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result), redact),
           );
         } else {
-          resolve(out.trim());
+          resolve(detachedSilent ? '' : out.trim());
         }
       });
     });

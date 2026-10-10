@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MODE_BARE, MODE_EXPO } from '../supervisor/state.ts';
 import type { ServerStarter } from '../supervisor/types.ts';
+import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
   declaresAppDependency,
@@ -12,7 +13,14 @@ import {
   readAppJson,
   readPackageJson,
 } from '../workspace/project-files.ts';
-import { commitsMetroCommand, settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import {
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  settingValueAt,
+  webSettings,
+  type ResolvedProjectSettings,
+} from '../workspace/settings.ts';
+import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
 
 import {
   createProjectRegistry,
@@ -22,7 +30,7 @@ import {
 } from './project-registry.ts';
 
 interface NativeProjectIntegration {
-  platforms(root: string, settings: SettingsObject): ProjectPlatform[];
+  platforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[];
   mode: typeof MODE_BARE | typeof MODE_EXPO;
   loadDevServer(): Promise<ServerStarter>;
 }
@@ -50,18 +58,21 @@ const expo: NativeProjectIntegration = {
 const reactNative: NativeProjectIntegration = {
   mode: MODE_BARE,
   loadDevServer: async () => (await import('../supervisor/server-bare.ts')).startBareServer,
-  platforms(root) {
-    if (!declaresAppDependency(readPackageJson(root)) && !commitsMetroCommand(root)) return [];
+  platforms(root, { context, settings }) {
+    if (!declaresAppDependency(readPackageJson(root))) return [];
     const platforms: ProjectPlatform[] = [];
     let ios: string[] = [];
     try {
-      ios = readdirSync(join(root, 'ios'));
+      ios = readdirSync(resolveIosProjectDir(settings, root).dir);
     } catch {}
     if (ios.some((name) => name.endsWith('.xcodeproj') || name.endsWith('.xcworkspace'))) platforms.push('ios');
+    const android = resolveAndroidLayout(settings, root, context.repoRoot ?? root);
     if (
-      ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].some((name) =>
-        existsSync(join(root, 'android', name)),
-      )
+      android.custom
+        ? existsSync(android.moduleDir)
+        : ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].some((name) =>
+            existsSync(join(android.gradleRoot, name)),
+          )
     )
       platforms.push('android');
     return platforms;
@@ -77,10 +88,13 @@ const reactNativeProject: ProjectIntegration = {
       root: existsSync(join(root, 'package.json')) ? 'explicit' : false,
       application: problem === null,
       ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
-      platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
+      platforms: (resolved) => nativeProjectIntegration(root).platforms(root, resolved),
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
-      ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
+      ios: async (settings) => (await import('./react-native-ios.ts')).reactNativeIosProject(root, settings),
+      android: async (resolved) =>
+        (await import('./react-native-android.ts')).reactNativeAndroidProject(root, resolved),
+      doctor: async () => (await import('./react-native-doctor.ts')).reactNativeProjectDoctor(root),
     };
   },
 };
@@ -92,10 +106,20 @@ const swiftPackage: ProjectIntegration = {
     return {
       root: 'explicit',
       application: true,
-      platforms: (settings) =>
+      platforms: ({ settings }) =>
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
+      doctor: async () => {
+        const { macosToolchain } = await import('../offload/toolchain.ts');
+        return {
+          inspect: () => [],
+          offloadTargets: ({ options: { host = process.platform, platform } }) =>
+            host === 'darwin' && platform === undefined
+              ? async () => [{ platform: 'macos', local: macosToolchain() }]
+              : null,
+        };
+      },
     };
   },
 };
@@ -106,14 +130,20 @@ const browserWeb: ProjectIntegration = {
     return {
       root: false,
       application: false,
-      platforms: (settings) => (webSettings(settings).url !== null ? ['web'] : []),
+      platforms: ({ settings }) => (webSettings(settings).url !== null ? ['web'] : []),
       validate: (operation) => (operation === 'web' ? null : undefined),
       web: async () => (await import('./browser-web.ts')).browserWebProject(root),
     };
   },
 };
 
-export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
+export const projectIntegrations: readonly ProjectIntegration[] = [
+  reactNativeProject,
+  nativeAndroidIntegration,
+  swiftPackage,
+  browserWeb,
+  nativeXcodeProjectIntegration,
+];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 

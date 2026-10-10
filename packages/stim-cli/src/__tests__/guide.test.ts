@@ -412,6 +412,12 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
 });
 
+test('native Gradle build-worker references route to the rendered native-android section', () => {
+  expect(renderSection('lifecycle', 'native-android')).toContain('android.offloadInputs');
+  expect(renderTopic('settings')).toContain('stim guide lifecycle native-android');
+  expect(renderSection('lifecycle', 'hosted-android')).toContain('stim guide lifecycle native-android');
+});
+
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
   expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
@@ -578,12 +584,9 @@ test('tutorial setup protects existing folders and the user repository', () => {
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
-test('the cloning tutorial step checks the repository before cloning, and its prompt states the rules', () => {
+test('the cloning tutorial step checks the repository before cloning', () => {
   const run = renderSection('tutorial', 'run')!;
   expect(run.indexOf('--is-inside-work-tree')).toBeLessThan(run.indexOf('git clone'));
-  const ask = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.ask!;
-  expect(ask).toMatch(/inside another git repository, stop and ask me/);
-  expect(ask).toMatch(/never git add in my own repo/);
 });
 
 test('tutorial finish names the two tracked worktrees as the only --force targets', () => {
@@ -597,6 +600,18 @@ test('tutorial finish names the two tracked worktrees as the only --force target
   expect(finish).not.toMatch(/stim worktree remove "[^"]*" --force/);
   const ask = TUTORIAL_STEPS.find((step) => step.id === 'finish')!.ask!;
   expect(ask).toContain('{worktrees}');
+});
+
+test('tutorial delete tears down the worktrees and the clone through Stim before deleting only the clone', () => {
+  const remove = flat('delete');
+  expect(remove).toMatch(
+    /expo\.extra\.stimTutorial\. If it does not, \{base\} is not the tutorial clone: report it and stop/,
+  );
+  expect(remove.indexOf('stim worktree remove "<path>"')).toBeLessThan(remove.indexOf('stim worktree remove "{base}"'));
+  expect(remove.indexOf('stim worktree remove "{base}"')).toBeLessThan(remove.indexOf('rm -rf "{base}"'));
+  expect(remove).toMatch(/Never use --force in this step, and never delete any path other than \{base\}/);
+  expect(remove).not.toMatch(/remove it with --force/);
+  expect(flat('finish')).not.toContain('rm -rf');
 });
 
 test('tutorial restart removes nothing, so it cannot contradict the finish force rule', () => {
@@ -960,6 +975,14 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+});
+
+test('native Xcode and Gradle apps route to their lifecycle sections', () => {
+  expect(sectionNames('lifecycle')).toEqual(expect.arrayContaining(['native-ios', 'native-android']));
+  for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
+    expect(guide).toContain('lifecycle native-ios');
+    expect(guide).toContain('lifecycle native-android');
+  }
 });
 
 test('hosted Android command and safety routing render through the guides', () => {

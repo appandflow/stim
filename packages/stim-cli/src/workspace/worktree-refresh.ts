@@ -12,6 +12,7 @@ import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
+import type { IosProjectDir } from './settings.ts';
 
 export interface RefreshFailure {
   code: string;
@@ -183,15 +184,16 @@ export interface PodsInputs {
   hasPodfile: boolean;
   podfileLockChanged: boolean;
   stale: { noPods?: boolean; stale: boolean; reason?: string };
+  dir?: string;
 }
 
-export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale }: PodsInputs): StepPlan {
-  if (!hasIos) return { run: false, reason: 'no ios/ directory' };
-  if (!hasPodfile) return { run: false, reason: 'no ios/Podfile' };
-  if (stale.noPods) return { run: false, reason: 'no ios/Pods and no ios/Podfile.lock' };
-  if (podfileLockChanged) return { run: true, reason: 'ios/Podfile.lock changed' };
-  if (stale.stale) return { run: true, reason: stale.reason ?? 'ios/Pods does not match ios/Podfile.lock' };
-  return { run: false, reason: 'ios/Podfile.lock unchanged' };
+export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale, dir = 'ios/' }: PodsInputs): StepPlan {
+  if (!hasIos) return { run: false, reason: `no ${dir || './'} directory` };
+  if (!hasPodfile) return { run: false, reason: `no ${dir}Podfile` };
+  if (stale.noPods) return { run: false, reason: `no ${dir}Pods and no ${dir}Podfile.lock` };
+  if (podfileLockChanged) return { run: true, reason: `${dir}Podfile.lock changed` };
+  if (stale.stale) return { run: true, reason: stale.reason ?? `${dir}Pods does not match ${dir}Podfile.lock` };
+  return { run: false, reason: `${dir}Podfile.lock unchanged` };
 }
 
 export type DefaultBranchNote = { kind: 'match' } | { kind: 'warn' | 'unknown'; lines: string[] };
@@ -421,6 +423,7 @@ export interface RefreshOptions {
   root: string;
   appDir: string;
   settings: SettingsObject;
+  iosProject: IosProjectDir;
   emit: (line: string) => void;
   spawnFn?: SpawnFn | null;
   now?: () => number;
@@ -441,6 +444,7 @@ export async function refreshMainCheckout({
   root,
   appDir,
   settings,
+  iosProject,
   emit,
   spawnFn = null,
   now = Date.now,
@@ -572,19 +576,27 @@ export async function refreshMainCheckout({
 
   const app = relative(root, appDir) || '.';
   const where = `source ${appDir}: `;
-  const podState = readPodState(appDir);
+  const ios = iosProject;
+  const podState = readPodState(appDir, ios.dir);
   const pods = podsPlan({
-    hasIos: existsSync(join(appDir, 'ios')),
+    hasIos: existsSync(ios.dir),
     hasPodfile: podState.hasPodfile,
-    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, 'ios', 'Podfile.lock')),
-    stale: podsAreStale(podState.lockText, podState.manifestText),
+    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, ios.relative, 'Podfile.lock')),
+    stale: podsAreStale(podState.lockText, podState.manifestText, podState.dir),
+    dir: podState.dir,
   });
   if (!pods.run) {
     emit(stepLine('pods', `${where}${pods.reason}`, 'skipped'));
     return null;
   }
   if (inspectOnly) return { mutation: pods.reason };
-  const result = await runPodInstall(appDir, null, { spawnFn: spawn, now, heartbeatMs, onHeartbeat: emit });
+  const result = await runPodInstall(appDir, null, {
+    spawnFn: spawn,
+    now,
+    heartbeatMs,
+    onHeartbeat: emit,
+    directory: ios.dir,
+  });
   const podCommand = result.command ?? 'pod install';
   emit(
     stepLine(

@@ -24,13 +24,13 @@ describe('hermescPath', () => {
   const legacy = join('/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc');
 
   test('prefers the hermes-compiler package (RN 0.8x), then Pods, then the legacy sdks path', () => {
-    expect(hermescPath(root, { exists: (p) => p === modern || p === legacy })).toBe(modern);
-    expect(hermescPath(root, { exists: (p) => p === pods })).toBe(pods);
-    expect(hermescPath(root, { exists: (p) => p === legacy })).toBe(legacy);
+    expect(hermescPath(root, join(root, 'ios'), { exists: (p) => p === modern || p === legacy })).toBe(modern);
+    expect(hermescPath(root, join(root, 'ios'), { exists: (p) => p === pods })).toBe(pods);
+    expect(hermescPath(root, join(root, 'ios'), { exists: (p) => p === legacy })).toBe(legacy);
   });
 
   test('nothing found answers the legacy path, whose absence the caller already guards', () => {
-    expect(hermescPath(root, { exists: () => false })).toBe(legacy);
+    expect(hermescPath(root, join(root, 'ios'), { exists: () => false })).toBe(legacy);
   });
 });
 
@@ -128,7 +128,9 @@ describe('bundleCommand', () => {
 
 describe('hermesc', () => {
   test("the compiler is the PROJECT's own, and the argv is -emit-binary -out", () => {
-    expect(hermescPath('/w/app')).toBe(join('/w/app/node_modules/react-native/sdks/hermesc/osx-bin/hermesc'));
+    expect(hermescPath('/w/app', '/w/app/ios')).toBe(
+      join('/w/app/node_modules/react-native/sdks/hermesc/osx-bin/hermesc'),
+    );
     expect(hermescArgs({ bundle: '/t/main.jsbundle', out: '/t/main.jsbundle.hbc' })).toEqual([
       '-emit-binary',
       '-out',
@@ -199,7 +201,7 @@ function harness({
     return makeBundleChild(bundleExit);
   };
   const exists = (p: string) => {
-    if (p === hermescPath(root)) return hermescExists;
+    if (p === hermescPath(root, join(root, 'ios'))) return hermescExists;
     if (p === bundleOutput) return bundleWritten;
     return existsSync(p);
   };
@@ -207,6 +209,7 @@ function harness({
   const run = (overrides: Record<string, unknown> = {}) =>
     swapJsBundle({
       root,
+      iosDir: join(root, 'ios'),
       isExpo: true,
       cachedAppPath: cachedApp,
       logWriter: writer,
@@ -230,7 +233,7 @@ describe('swapJsBundle', () => {
     expect(result.hermes).toBe(true);
 
     const shape = calls.map((c) => c.file);
-    expect(shape).toEqual(['cp', 'plutil', 'npx', hermescPath(root), 'mv', 'cp', 'cp', 'codesign']);
+    expect(shape).toEqual(['cp', 'plutil', 'npx', hermescPath(root, join(root, 'ios')), 'mv', 'cp', 'cp', 'codesign']);
 
     const copyAside = calls[0];
     expect(copyAside?.args).toEqual(['-c', '-R', cachedApp, appCopy]);
@@ -258,7 +261,7 @@ describe('swapJsBundle', () => {
     const result = await run({ hermesEnabled: false });
     expect(result.ok).toBe(true);
     expect(result.hermes).toBe(false);
-    expect(calls.some((c) => c.file === hermescPath(root))).toBe(false);
+    expect(calls.some((c) => c.file === hermescPath(root, join(root, 'ios')))).toBe(false);
   });
 
   test('hermesc missing is the GUARD, not a failure: plain JS bundle plus a note', async () => {
@@ -267,7 +270,7 @@ describe('swapJsBundle', () => {
     expect(result.ok).toBe(true);
     expect(result.hermes).toBe(false);
     expect(result.note).toMatch(/hermesc not found/);
-    expect(calls.some((c) => c.file === hermescPath(root))).toBe(false);
+    expect(calls.some((c) => c.file === hermescPath(root, join(root, 'ios')))).toBe(false);
     expect(calls.at(-1)?.file).toBe('codesign');
   });
 
@@ -344,7 +347,7 @@ describe('swapJsBundle', () => {
   });
 
   test('a hermesc crash fails at the hermesc step', async () => {
-    const { run } = harness({ failOn: hermescPath(root) });
+    const { run } = harness({ failOn: hermescPath(root, join(root, 'ios')) });
     const result = await run();
     expect(result.failed).toBe(true);
     expect(result.step).toBe('hermesc');

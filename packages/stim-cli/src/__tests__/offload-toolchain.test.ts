@@ -3,7 +3,9 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { podEnv } from '../engine/deps.ts';
-import { iosToolchain } from '../offload/toolchain.ts';
+import { iosToolchain, iosToolchainAsync, workerToolchain } from '../offload/toolchain.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { makeExecutor } from './_factories.ts';
 
 let root: string;
 
@@ -51,6 +53,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetExecutor();
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
@@ -85,4 +88,104 @@ test.skipIf(process.platform !== 'darwin')(
 test.skipIf(process.platform !== 'darwin')('an unreadable login shell keeps the caller environment', () => {
   vi.stubEnv('SHELL', join(root, 'missing-shell'));
   expect(iosToolchain(root).cocoapods).toBe('1.16.2');
+});
+
+test('native Xcode discovery preserves required facts without invoking unrelated platform or Ruby tools', () => {
+  const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
+  const sdk = join(root, 'android-sdk');
+  for (const folder of ['platforms/android-37', 'ndk/28', 'build-tools/37'])
+    mkdirSync(join(sdk, folder), { recursive: true });
+  const jdk = join(root, 'jdk');
+  mkdirSync(jdk);
+  writeFileSync(join(jdk, 'release'), 'JAVA_VERSION="17.0.20"\n');
+  vi.stubEnv('JAVA_HOME', jdk);
+  vi.stubEnv('ANDROID_HOME', sdk);
+  let native = true;
+  setExecutor(
+    makeExecutor({
+      runFileQuiet(file, args = []) {
+        if (file === 'xcodebuild') return 'Xcode 27.0';
+        if (file === 'xcrun' && args[0] === 'simctl')
+          return JSON.stringify({ devices: { [runtime]: [{ name: 'iPhone 17', isAvailable: true }] } });
+        if (file === 'xcrun' && args[1] === 'iphonesimulator') return '27.0';
+        if (native) throw new Error(`Native Xcode discovery invoked unrelated ${file} ${args.join(' ')}`);
+        if (file === 'xcrun' && args[1] === 'macosx') return '26.6';
+        if (file === 'pod') return '1.16.2';
+        if (file === 'bundle') return 'Bundler version 2.6.0';
+        throw new Error(`Unexpected probe ${file} ${args.join(' ')}`);
+      },
+    }),
+  );
+  expect(iosToolchain(root, 'xcode')).toMatchObject({
+    xcode: 'Xcode 27.0',
+    simulatorSdk: '27.0',
+    cocoapods: null,
+  });
+  expect(workerToolchain(null, 'xcode')).toMatchObject({
+    xcode: 'Xcode 27.0',
+    simulatorSdk: '27.0',
+    runtimes: [runtime],
+    cocoapods: null,
+    bundler: null,
+    macosSdk: null,
+    jdk: null,
+    androidSdk: null,
+  });
+  native = false;
+  expect(workerToolchain()).toMatchObject({
+    xcode: 'Xcode 27.0',
+    simulatorSdk: '27.0',
+    runtimes: [runtime],
+    cocoapods: '1.16.2',
+    bundler: 'Bundler version 2.6.0',
+    macosSdk: '26.6',
+    jdk: '17',
+    androidSdk: { ndk: ['28'], buildTools: ['37'], platforms: ['android-37'] },
+  });
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'the async probe resolves the same toolchain from the project Ruby and from the login shell gems',
+  async () => {
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({
+      cocoapods: '1.17.0',
+      xcode: 'Xcode 27.0',
+      simulatorSdk: '27.0',
+    });
+    writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.4\n');
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({ cocoapods: '1.16.2', xcode: 'Xcode 27.0' });
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'an unreadable login shell keeps the caller environment in the async probe',
+  async () => {
+    vi.stubEnv('SHELL', join(root, 'missing-shell'));
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({ cocoapods: '1.16.2' });
+  },
+);
+
+test('native Gradle discovery reads JDK and SDK facts without Apple or Ruby probes', () => {
+  const sdk = join(root, 'android-sdk');
+  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
+  const jdk = join(root, 'jdk');
+  mkdirSync(jdk);
+  writeFileSync(join(jdk, 'release'), 'JAVA_VERSION="17.0.20"\n');
+  vi.stubEnv('JAVA_HOME', jdk);
+  vi.stubEnv('ANDROID_HOME', sdk);
+  setExecutor(
+    makeExecutor({
+      runFileQuiet: () => {
+        throw new Error('Unrelated native discovery probe');
+      },
+    }),
+  );
+  expect(workerToolchain(null, 'gradle')).toMatchObject({
+    jdk: '17',
+    androidSdk: { platforms: ['android-35'] },
+    xcode: null,
+    simulatorSdk: null,
+    cocoapods: null,
+    runtimes: [],
+  });
 });

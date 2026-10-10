@@ -3,12 +3,20 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runDoctor } from '../diagnostics/doctor.ts';
+import {
+  reactNativeDoctorFindings,
+  type DoctorInspectionOptions,
+  runDoctor as inspectDoctor,
+} from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
+
+function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+}
 
 let home: string;
 let ws: string;
@@ -82,14 +90,19 @@ describe("finding the project's expo binary", () => {
   test.skipIf(process.platform === 'win32')(
     'a bin file that is not executable falls through to the .bin shim (POSIX execute bit; skipped on win32)',
     () => {
+      mkdirSync(join(ws, '.git'));
       chmodSync(join(ws, 'node_modules', 'expo', 'bin', 'cli'), 0o644);
       expect(expoBinPath(app)).toBe(join(ws, 'node_modules', '.bin', 'expo'));
     },
   );
 
-  test('the .bin walk reaches the WORKSPACE root, not just the project', () => {
+  test('the .bin walk reaches the repository root and stops there', () => {
+    expect(findBinUpward(app, 'expo')).toBe(null);
+    mkdirSync(join(ws, '.git'));
     expect(findBinUpward(app, 'expo')).toBe(join(ws, 'node_modules', '.bin', 'expo'));
     expect(findBinUpward(app, 'nothing-like-this')).toBe(null);
+    writeFileSync(join(app, '.git'), 'gitdir: elsewhere\n');
+    expect(findBinUpward(app, 'expo')).toBe(null);
   });
 
   test('a project that really has no expo resolves to null, so the caller can say so honestly', () => {

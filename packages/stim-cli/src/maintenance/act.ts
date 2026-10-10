@@ -17,9 +17,8 @@ import {
 import { removeWorktrees, type WorktreeSweep } from '../commands/gc/worktrees.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { projectMaintenancePinned } from '../workspace/settings.ts';
 import { cacheBlocked, measureDisk } from './measure.ts';
-import { cacheEntryProtection, recentUse } from './protect.ts';
+import { cacheEntryProtection, maintenancePinned, recentUse } from './protect.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 export interface ActionOutcome {
@@ -132,7 +131,7 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   const root = action.workspace;
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
-  if (projectMaintenancePinned(root)) return kept('pinned by maintenance.keep');
+  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
   const recent = recentUse(root, context.settings);
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
@@ -155,7 +154,7 @@ async function removeWorktree(action: MaintenanceAction, context: ActContext): P
   const path = canonicalPath(worktree.path);
   if (context.protectedRoot === path || context.protectedRoot.startsWith(`${path}${sep}`))
     return kept('the command that started this pass runs inside it');
-  if (worktree.keys.some(projectMaintenancePinned)) return kept('pinned by maintenance.keep');
+  if (worktree.keys.some(maintenancePinned)) return kept('pinned by maintenance.keep');
   const { results } = await quietly(() => removeWorktrees({ ...sweep, worktrees: [worktree] }));
   return outcomeOf(results, 0);
 }

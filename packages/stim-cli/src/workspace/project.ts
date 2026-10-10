@@ -45,8 +45,8 @@ export function ownedDeviceLabel(projectPath: string): string {
 
 export const NO_PROJECT_REFUSAL = {
   code: 'STIM_NO_PROJECT',
-  message: 'Not in a React Native project (no package.json found).',
-  remedy: 'Run this from the app directory -- the one holding package.json.',
+  message: 'No supported app project was found from this directory.',
+  remedy: 'Run this from the directory of a supported app.',
 };
 
 export function resolveRegisteredProject(arg?: string | null): ResolveResult {

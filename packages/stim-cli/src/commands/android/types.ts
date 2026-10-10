@@ -10,15 +10,6 @@ export interface RemoteUploadLike {
   failed?: string | null;
 }
 
-export interface PrebuildResultLike {
-  failed?: boolean;
-  code?: string;
-  reason?: string;
-  remedy?: string;
-  lastLines?: string[];
-  durationMs?: number;
-}
-
 export interface InstallResultLike {
   failed?: boolean;
   code?: string;

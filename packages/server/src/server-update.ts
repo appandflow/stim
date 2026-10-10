@@ -5,7 +5,14 @@ import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
 import { validateRelease, type ServerBuild } from './service-plist.ts';
-import { describeSource, readLastUpdate, runsAsService, serviceRoot, type UpdateSource } from './service.ts';
+import {
+  describeSource,
+  readLastUpdate,
+  runsAsService,
+  serviceRoot,
+  type UpdateOutcome,
+  type UpdateSource,
+} from './service.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 8;
@@ -92,6 +99,7 @@ export class ServerUpdates {
   private running: ServerUpdateProgress | null = null;
   private upload: Upload | null = null;
   private idle: NodeJS.Timeout | null = null;
+  private ended: UpdateOutcome | null = null;
 
   constructor(options: ServerUpdateOptions) {
     this.options = options;
@@ -149,8 +157,14 @@ export class ServerUpdates {
       service: service ? label : null,
       acceptsClientBuilds: this.options.acceptsClientBuilds(),
       running: this.progress(),
-      last: service && label ? readLastUpdate(label) : null,
+      last: service && label ? this.latest(readLastUpdate(label)) : null,
     };
+  }
+
+  private latest(recorded: UpdateOutcome | null): UpdateOutcome | null {
+    if (!this.ended) return recorded;
+    if (!recorded) return this.ended;
+    return Date.parse(recorded.at) >= Date.parse(this.ended.at) ? recorded : this.ended;
   }
 
   async start(by: ServerUpdateProgress['by'], params: unknown): Promise<Answer> {
@@ -308,13 +322,24 @@ export class ServerUpdates {
     const settle = (ok: boolean, message: string) => {
       this.options.drain(null);
       this.clear();
+      this.ended = { at: new Date().toISOString(), target, ok, message };
       this.options.audit({ by: running.by, target, phase: 'ended', ok, message });
     };
     child.once('error', (error) => settle(false, `Could not start the update: ${error.message}`));
     child.once('exit', (code) => {
       const last = readLastUpdate(this.options.label!);
       const fresh = last && Date.parse(last.at) >= Date.parse(running.startedAt);
-      settle(code === 0, fresh ? last.message : `The update exited with code ${String(code)}; see ${log}.`);
+      let reason = '';
+      try {
+        reason =
+          readFileSync(log, 'utf8')
+            .split('\n')
+            .findLast((line) => line.trim() !== '') ?? '';
+      } catch {}
+      settle(
+        code === 0,
+        fresh ? last.message : `The update exited with code ${String(code)}${reason ? `: ${reason}` : ''}; see ${log}.`,
+      );
     });
     return null;
   }

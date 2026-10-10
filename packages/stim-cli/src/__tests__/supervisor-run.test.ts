@@ -404,6 +404,7 @@ describe('runSupervisor', () => {
     writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command } }));
     const server = fakeServer({ mode: MODE_COMMAND, serverPid: 31338 });
     let received: readonly string[] | null = null;
+    let receivedSettings: unknown = null;
     const running = await runSupervisor({
       root,
       port: 8093,
@@ -414,12 +415,14 @@ describe('runSupervisor', () => {
       },
       startCommand: async (opts) => {
         received = opts.command;
+        receivedSettings = opts.settings;
         return server.handle;
       },
     });
     assert(running);
     expect(running.mode).toBe(MODE_COMMAND);
     expect(received).toEqual(command);
+    expect(receivedSettings).toMatchObject({ metro: { command } });
     expect(readWorkspaceState(root)?.supervisor?.mode).toBe(MODE_COMMAND);
   });
 

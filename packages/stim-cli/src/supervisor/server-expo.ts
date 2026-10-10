@@ -1,7 +1,8 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
-import { dirname, join, parse } from 'node:path';
-import { projectMetroSharedCache } from '../workspace/settings.ts';
+import { dirname, join } from 'node:path';
+import { resolveMetroSharedCache } from '../optimizations.ts';
+import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
@@ -63,15 +64,20 @@ export function findBinUpward(
   name: string,
   { exists = existsSync }: { exists?: (p: string) => boolean } = {},
 ): string | null {
+  const stop = repositoryRoot(startDir, exists) ?? startDir;
   let dir = startDir;
-  const stop = parse(startDir).root;
   while (true) {
     const candidate = join(dir, 'node_modules', '.bin', name);
     if (exists(candidate)) return candidate;
     if (dir === stop) return null;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
+    dir = dirname(dir);
+  }
+}
+
+function repositoryRoot(startDir: string, exists: (p: string) => boolean): string | null {
+  for (let dir = startDir; ; dir = dirname(dir)) {
+    if (exists(join(dir, '.git'))) return dir;
+    if (dirname(dir) === dir) return null;
   }
 }
 
@@ -202,9 +208,9 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
 
 function resolveMetroStoreInjection(
   root: string,
-  { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
+  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
 ): Record<string, string> | null {
-  const sharedCache = projectMetroSharedCache(root);
+  const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
     log.write({
       src: 'metro',
@@ -267,6 +273,7 @@ export async function startExpoServer({
   resetCache = false,
   onTunnelUrl = null,
   platform = process.platform,
+  settings,
 }: {
   root: string;
   port: number;
@@ -278,6 +285,7 @@ export async function startExpoServer({
   resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
+  settings?: SettingsObject;
 }): Promise<ChildServerHandle> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
@@ -290,7 +298,11 @@ export async function startExpoServer({
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
-  const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
+  const storeEnv = resolveMetroStoreInjection(root, {
+    log,
+    env: process.env,
+    settings: settings ?? resolveProjectSettings(root).settings,
+  });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
   // and Volta install shims that run the real node as a child. Metro then listens

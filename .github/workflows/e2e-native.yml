@@ -20,7 +20,7 @@
 #   all     loop, caches and pool, as separate parallel matrix jobs.
 #
 # Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
-# loop and caches; Windows Android smoke and loop.
+# loop and caches; Windows Android smoke only, until #3086 is fixed.
 #
 # WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain), so nothing native runs on an unlabeled pull request:
@@ -42,7 +42,7 @@
 # Bare and Expo exercise different stim-cli Metro paths. Linux Android runs
 # both frameworks; iOS runs Expo ONLY, because the bare template cannot launch
 # on iOS 27 (see the matrix `exclude` below); Windows runs bare only, so an
-# `all` dispatch is three iOS jobs, four Linux Android jobs and one Windows job.
+# `all` dispatch is three iOS jobs and four Linux Android jobs.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
@@ -69,6 +69,34 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      hosted_native_android:
+        description: Run only hosted native Android acceptance
+        type: boolean
+        default: false
+      native_ios_only:
+        description: 'Run only the native Xcode acceptance fixture'
+        type: boolean
+        default: false
+      native_ios_project:
+        description: 'Native Xcode acceptance project'
+        type: choice
+        default: fixture
+        options: [fixture, food-truck]
+      native_ios_runner:
+        description: 'Native Xcode fixture host and toolchain'
+        type: choice
+        default: preview
+        options: [preview, ga-large]
+
+      native_gradle:
+        description: Run only native Gradle provider validation
+        type: boolean
+        default: false
+      native_gradle_project:
+        description: Native Gradle acceptance project
+        type: choice
+        default: fixture
+        options: [fixture, architecture-samples]
       suite:
         description: 'Which suite to run on the framework x platform matrix'
         type: choice
@@ -91,8 +119,8 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  cancel-in-progress: ${{ !inputs.hosted_native_android }}
 
 permissions:
   contents: read
@@ -103,6 +131,7 @@ env:
 jobs:
   plan:
     name: plan
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.hosted_native_android)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -590,3 +619,165 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
+
+  native-xcode:
+    name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
+    timeout-minutes: 45
+    env:
+      CI: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
+      STIM_NATIVE_XCODE_PROJECT: ${{ inputs.native_ios_project || 'fixture' }}
+      NATIVE_XCODE_VERSION: ${{ inputs.native_ios_runner == 'ga-large' && '26.6' || '27.0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Select native fixture Xcode
+        shell: bash
+        run: sudo xcode-select -s "/Applications/Xcode_${NATIVE_XCODE_VERSION}.app/Contents/Developer"
+      - name: Install pinned UI driver
+        shell: bash
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Monitor native fixture host memory and load
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-xcode
+          node test/e2e/native/monitor-macos-memory.mjs > artifacts/native-xcode/host-memory.jsonl 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/stim-native-xcode-monitor.pid"
+      - name: Native Xcode lifecycle acceptance
+        shell: bash
+        run: |
+          mkdir -p artifacts/native-xcode
+          node test/e2e/native/run-native-xcode-e2e.mjs 2>&1 | tee artifacts/native-xcode/driver.log
+      - name: Stop native fixture host monitor
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/stim-native-xcode-monitor.pid" ]; then
+            read -r monitor_pid < "$RUNNER_TEMP/stim-native-xcode-monitor.pid"
+            kill "$monitor_pid" 2>/dev/null || true
+          fi
+      - name: Upload native Xcode evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-xcode-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/native-xcode
+          if-no-files-found: warn
+
+  native-gradle:
+    name: native Gradle Android
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && inputs.native_gradle
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NATIVE_GRADLE_DRIVER: ${{ inputs.native_gradle_project == 'architecture-samples' && 'test/e2e/native/run-architecture-samples-e2e.mjs' || 'test/e2e/native/run-gradle-e2e.mjs' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install pinned agent-device for native UI assertions
+        run: |
+          npm install --global --prefix "$RUNNER_TEMP/native-agent-device" agent-device@0.21.22
+          echo "$RUNNER_TEMP/native-agent-device/bin" >> "$GITHUB_PATH"
+      - name: Prepare pinned native Android project
+        run: node "$NATIVE_GRADLE_DRIVER" prepare "$RUNNER_TEMP/native-gradle"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Gradle model, configuration cache and owned emulator lifecycle
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -gpu swiftshader_indirect
+          script: |
+            adb -s emulator-5554 emu kill
+            sleep 3
+            node "$NATIVE_GRADLE_DRIVER" run "$RUNNER_TEMP/native-gradle"
+      - name: Preserve native evidence and fixture sources
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-gradle-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/native-gradle/evidence
+            ${{ runner.temp }}/native-gradle/stim-home
+            ${{ runner.temp }}/native-gradle/direct-model.json
+            ${{ runner.temp }}/native-gradle/project/*.gradle*
+            ${{ runner.temp }}/native-gradle/project/gradle
+            ${{ runner.temp }}/native-gradle/project/gradle.properties
+            ${{ runner.temp }}/native-gradle/project/.stim.json
+            ${{ runner.temp }}/native-gradle/project/mobile/build/outputs/apk/**/*.apk
+            ${{ runner.temp }}/native-gradle/project/app/build/outputs/apk/**/*.apk
+            ${{ runner.temp }}/native-gradle/project/mobile/build.gradle.kts
+            ${{ runner.temp }}/native-gradle/project/mobile/src
+            ${{ runner.temp }}/native-gradle/project/build/reports
+            ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  hosted-native-android:
+    if: github.event_name == 'workflow_dispatch' && inputs.hosted_native_android
+    runs-on: macos-15-intel
+    timeout-minutes: 65
+    env:
+      STIM_QA_ANDROID_SYSTEM_IMAGE: system-images;android-30;aosp_atd;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Verify accelerated emulator support before building
+        run: |
+          mkdir -p "$RUNNER_TEMP/hosted-native-android/evidence"
+          sdkmanager 'emulator' 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' "$STIM_QA_ANDROID_SYSTEM_IMAGE"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee "$RUNNER_TEMP/hosted-native-android/evidence/acceleration.txt"
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install pinned remote UI driver
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare native fixture and record source
+        run: |
+          git rev-parse HEAD > "$RUNNER_TEMP/hosted-native-android/evidence/source.txt"
+          node test/e2e/native/run-gradle-e2e.mjs prepare "$RUNNER_TEMP/hosted-native-android"
+      - name: Hosted native build, UI, reuse, failure recovery and scoped stop
+        run: node --experimental-transform-types test/e2e/native/run-hosted-native-android-e2e.mjs "$RUNNER_TEMP/hosted-native-android"
+      - name: Upload hosted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-native-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosted-native-android/evidence
+          if-no-files-found: error
+          retention-days: 14

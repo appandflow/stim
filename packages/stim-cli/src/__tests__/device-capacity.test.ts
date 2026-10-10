@@ -11,7 +11,6 @@ import {
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
-import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
@@ -563,14 +562,13 @@ test('cancelling while the admission lock is held exits without waiting for the 
   }
 });
 
-test('explicit zero in the waiting workspace disables reclaim', async () => {
-  upsertProject(root, {});
-  setProjectSetting(root, 'devices.reclaimIdleMinutes', 0);
+test('an explicit zero reclaimIdleMinutes disables reclaim', async () => {
   let clock = Date.now();
   await expect(
     withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
       root,
       max: 1,
+      reclaimIdleMinutes: 0,
       waitMs: 2000,
       sources: { ...empty, sims: occupied },
       now: () => clock,

@@ -69,6 +69,12 @@ needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
+Native Xcode apps build on this Mac and run on the host without Metro; the host
+reports live process readiness. That needs a host that advertises
+`hosted-ios-process`. An older host refuses before reservation or upload; update
+stim-server on it, or use `--remote auto`, which skips it. See
+[native Xcode apps](./commands.md) for the build limits.
+
 `--remote` also accepts two backend names: `eas` creates an EAS Simulator
 session; `proxy` uses an existing agent-device daemon configured with
 `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, without
@@ -81,7 +87,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Automatic builds** and **Automatic simulators**
+In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
 control this Mac and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this Mac; other requesters keep their own policy.
@@ -165,6 +171,11 @@ refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device`, a running
 local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
 
+Native Gradle apps run on a hosted emulator too, without Metro; the host reports
+live process readiness. That needs a host that advertises `hosted-android-process`.
+An older host refuses before reservation or upload; update stim-server on it, or
+use `--remote auto`, which skips it.
+
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
 here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and
@@ -203,10 +214,10 @@ workspace, repo or committed value overrides the machine default),
 or per run `stim android --remote auto` / `stim android --remote <machine>`.
 New runs pass no `--remote` flag; recorded hosted sessions keep their machine
 until `stim stop`. When a device is not on this Mac, Desktop shows
-**on &lt;machine&gt;** on its tile, workspace page, viewer toolbar and sidebar row,
+the machine's name on its tile, workspace page, viewer toolbar and sidebar row,
 with the placement reason as hover text. Local devices show no placement label.
 
-Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
+Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
 hosted Android through the client Mac's local stim-server relay. Turn on
 **Serve to phones** in Desktop and pair the phone with the client Mac. Named
 slots stream independently. Touch, text and hardware buttons reach the exact
@@ -278,8 +289,7 @@ this fallback is usually redundant on the worker.
 
 Open **Stim > Settings > Remote Macs** on your main Mac. It lists your
 remote Macs, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
-**Details** and **Remove**. Choose **Add Remote Mac...** to start the wizard,
+**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
 commands to run on that Mac: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
@@ -480,6 +490,15 @@ or Android tools.
 An exact npm release needs no extra setting. Installing this checkout's own
 build requires `server.acceptClientBuilds=true` on the worker; it defaults to
 false. A failed server health check restores the previous version.
+
+The worker restarts only once its offloaded builds and hosted sessions end, and
+the card says what it waits for, such as "Waiting for 1 hosted simulator to
+end...". When this Mac's own workspaces hold those hosted simulators, **Stop and
+Update...** stops them with `stim stop` after a confirmation that names each
+device and workspace; another Mac's sessions can only be stopped on the worker.
+The update shows as finished once the worker runs this Mac's Stim build, even
+when another update installed it, and a refused update (for example, one already
+running there) shows the worker's reason.
 
 ## Test build
 

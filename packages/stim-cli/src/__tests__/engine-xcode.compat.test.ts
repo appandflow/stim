@@ -304,6 +304,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     try {
       const result = await buildIos({
         root: tmp,
+        iosDir: join(tmp, 'ios'),
         scheme: 'Staging App',
         destination: LIVE_DESTINATION,
         logWriter: writer,
@@ -321,13 +322,13 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
   test('resolves a real workspace scheme and uses the app name after the workspace is renamed', () => {
     resetExecutor();
     writeScratchProject(tmp, { workspace: true });
-    const project = discoverXcodeProject(tmp);
+    const project = discoverXcodeProject(tmp, join(tmp, 'ios'));
     expect(project.kind).toBe('workspace');
     expect(project.path).toBe(join(tmp, 'ios', 'Scratch.xcworkspace'));
     expect(resolveScheme(project)).toEqual({ scheme: 'Scratch', schemes: ['Scratch'] });
     renameSync(join(tmp, 'ios', 'Scratch.xcworkspace'), join(tmp, 'ios', 'Renamed.xcworkspace'));
     writeFileSync(join(tmp, 'ios', 'Scratch.xcodeproj', 'xcshareddata', 'xcschemes', 'Other.xcscheme'), SCRATCH_SCHEME);
-    const renamed = discoverXcodeProject(tmp);
+    const renamed = discoverXcodeProject(tmp, join(tmp, 'ios'));
     expect(resolveScheme(renamed).error?.code).toBe('STIM_NO_SCHEME');
     writeFileSync(join(tmp, 'app.json'), '{"name":"Scratch"}');
     expect(resolveScheme(renamed)).toEqual({ scheme: 'Scratch', schemes: ['Other', 'Scratch'] });
@@ -348,6 +349,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
       const writer = createNdjsonWriter(logFile);
       const result = await buildIos({
         root: tmp,
+        iosDir: join(tmp, 'ios'),
         udid: 'unused-with-an-explicit-destination',
         destination: LIVE_DESTINATION,
         logWriter: writer,
@@ -387,6 +389,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     const writer = createNdjsonWriter(logFile);
     const result = await buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'unused-with-an-explicit-destination',
       sdk: 'iphoneos',
       destination: 'generic/platform=iOS',
@@ -413,6 +416,7 @@ describe('buildIos against a real xcodebuild', { timeout: 180_000 }, () => {
     const writer = createNdjsonWriter(logFile);
     const result = await buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'unused-with-an-explicit-destination',
       destination: LIVE_DESTINATION,
       logWriter: writer,

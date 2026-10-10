@@ -846,14 +846,16 @@ export class DeviceHost {
     if (!offer)
       return refused(
         'bad-request',
-        'App offers need a bounded normalized bundle manifest, bundleId, development or release mode and, optionally, at most 32 arguments of 1024 characters (8192 in total) without NUL or line breaks.',
+        'App offers need a bounded normalized bundle manifest, bundleId, development, release or process mode and, optionally, at most 32 arguments of 1024 characters (8192 in total) without NUL or line breaks.',
       );
     try {
       const record = this.appSession(client, offer);
+      if (offer.mode === 'process' && record.platform === 'macos')
+        throw new Error('Process-mode app offers require a hosted iOS or Android session.');
       if (record.platform !== 'macos' && offer.arguments !== undefined)
         throw new Error('App arguments are supported only for hosted macOS sessions.');
       if (record.platform === 'macos') {
-        if (offer.mode === 'development' || offer.devClientScheme !== undefined)
+        if (offer.mode !== 'release' || offer.devClientScheme !== undefined)
           throw new Error('Hosted macOS apps require release mode without a development client scheme.');
         if (offer.bundleId.startsWith('com.apple.'))
           throw new Error('Hosted macOS apps cannot use a com.apple. bundle identity.');

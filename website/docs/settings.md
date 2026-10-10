@@ -99,7 +99,9 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                                         |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
+| `ios.scheme`                  | Shared Xcode scheme to build when the workspace has several; `--scheme` overrides it                                              |
 | `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
+| `ios.projectPath`             | Directory of a bare app's Xcode project and Podfile, relative to the app; default `ios`                                           |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
@@ -109,6 +111,8 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.dataPartitionSizeGb` | AVD data partition size                                                                                                           |
 | `android.avdConfigFile`       | Additional AVD config file                                                                                                        |
 | `android.avdConfig`           | Validated AVD config values                                                                                                       |
+| `android.gradleRoot`          | Directory of `gradlew` and `settings.gradle`, relative to the app; default `android`                                              |
+| `android.module`              | The app's Gradle project path; default `:app`                                                                                     |
 | `android.variant`             | Gradle build variant                                                                                                              |
 | `android.keystore`            | Release keystore path                                                                                                             |
 | `android.keystorePassword`    | Release keystore password source                                                                                                  |

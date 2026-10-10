@@ -28,6 +28,7 @@ export interface WorkspaceLaunchRecord {
   deviceId: string;
   metroPort: number | null;
   release: boolean;
+  runtime?: 'process';
   launchedAt: string;
 }
 
@@ -99,6 +100,7 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   if (typeof record.deviceId !== 'string' || record.deviceId.length === 0) return null;
   if (record.metroPort !== null && typeof record.metroPort !== 'number') return null;
   if (typeof record.release !== 'boolean') return null;
+  if (record.runtime !== undefined && (record.runtime !== 'process' || record.metroPort !== null)) return null;
   if (typeof record.launchedAt !== 'string') return null;
   return record as WorkspaceLaunchRecord;
 }

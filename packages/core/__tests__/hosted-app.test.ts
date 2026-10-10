@@ -103,3 +103,16 @@ test('app offers preserve bounded plain arguments and omit an empty argument lis
   ])
     expect(parseHostedAppOffer({ ...offer, arguments: args })).toBeNull();
 });
+
+test('process app offers retain their mode and refuse a development-client route', () => {
+  const offer = {
+    session: '12345678-1234-1234-1234-123456789abc',
+    attempt: 'native-debug',
+    bundleId: 'dev.stim.native',
+    mode: 'process',
+    manifest: { sha256: 'a'.repeat(64), size: 1 },
+  };
+  expect(parseHostedAppOffer(offer)).toEqual(offer);
+  expect(parseHostedAppOffer({ ...offer, devClientScheme: 'exp+fixture' })).toBeNull();
+  expect(parseHostedAppOffer({ ...offer, mode: 'unknown' })).toBeNull();
+});

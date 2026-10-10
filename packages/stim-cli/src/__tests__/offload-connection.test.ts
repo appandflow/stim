@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
-import { chooseBuildMachine, offloadBuild, type BuildOffer } from '../offload/client.ts';
+import { chooseBuildMachine, closeOffload, offloadBuild, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
+import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
+import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 
@@ -77,7 +79,7 @@ async function fakeMachine(
     dropOnSync?: boolean;
     attach?: object;
     hello?: () => object;
-    artifact?: { archive: Buffer; digest: string } | null;
+    artifact?: { archive: Buffer; digest: string; fingerprint?: string; sourceDigest?: string } | null;
     pause?: string | null;
   } = {},
 ): Promise<FakeMachine> {
@@ -124,6 +126,8 @@ async function fakeMachine(
                     ok: true,
                     artifact: { name: 'Sample.app', size: artifact.archive.length, sha256: artifact.digest },
                     compilationCache: {},
+                    fingerprint: artifact.fingerprint,
+                    sourceDigest: artifact.sourceDigest,
                   }
                 : FAILED,
             }),
@@ -225,6 +229,7 @@ async function run(names: string[], note: (line: string) => void) {
       runtime: 'iOS-27-0',
       configuration: null,
       scheme: null,
+      iosProjectPath: 'ios',
       isExpo: false,
       optimizations: null,
     },
@@ -334,6 +339,7 @@ describe('offloadBuild', () => {
         runtime: 'iOS-27-0',
         configuration: null,
         scheme: null,
+        iosProjectPath: 'ios',
         isExpo: false,
         optimizations: null,
       },
@@ -375,6 +381,7 @@ describe('offloadBuild', () => {
         runtime: 'iOS-27-0',
         configuration: null,
         scheme: null,
+        iosProjectPath: 'ios',
         isExpo: false,
         optimizations: null,
       },
@@ -410,6 +417,7 @@ describe('offloadBuild', () => {
         runtime: 'iOS-27-0',
         configuration: null,
         scheme: null,
+        iosProjectPath: 'ios',
         isExpo: false,
         optimizations: null,
       },
@@ -602,6 +610,238 @@ describe('macOS artifact transfer', () => {
               reason: failureReason,
             },
       );
+    },
+  );
+});
+
+describe('native Xcode worker selection', () => {
+  test.each([
+    { native: true, scoped: true },
+    { native: true, scoped: false },
+    { native: false, scoped: true },
+  ])('requests the native report only for a native target and capable peer: %j', async ({ native, scoped }) => {
+    const machine = await fakeMachine(
+      'worker',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({
+          result: {
+            capabilities: ['build'],
+            features: ['native-xcode-build', ...(scoped ? ['native-xcode-toolchain'] : [])],
+          },
+        }),
+      },
+    );
+    machines.push(machine);
+    writeFileSync(join(repo, '.ruby-version'), 'ruby-3.3.4\n');
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: native ? { ...TARGET, native: 'xcode' } : TARGET,
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('worker')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    try {
+      const request = machine.requests.find((entry) => entry.method === 'build.offer');
+      expect(request?.params.native).toBe(native && scoped ? 'xcode' : undefined);
+      expect(request?.params.rubyVersion).toBe(native && scoped ? undefined : '3.3.4');
+      expect(machine.methods).toEqual(['hello', 'build.offer']);
+    } finally {
+      closeOffload(choice);
+    }
+  });
+
+  test('an old worker is refused before offer or source upload', async () => {
+    const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
+    machines.push(machine);
+    const result = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('old')],
+    });
+    expect(typeof result).toBe('string');
+    expect(String(result)).toContain('does not support native Xcode builds');
+    expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('ignored native bytes refuse before the supported worker receives any source', async () => {
+    const machine = await fakeMachine(
+      'native',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      },
+    );
+    machines.push(machine);
+    writeFileSync(join(repo, '.gitignore'), 'private.key\n');
+    writeFileSync(join(repo, 'private.key'), 'not authorized for transport');
+    const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+      excluded: [join(repo, '.git')],
+      parameters: null,
+    });
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: 'auto',
+      here: HERE,
+      note: () => {},
+      machines: [credential('native')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: snapshot.hash,
+      request: {
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: 'App',
+        isExpo: false,
+        optimizations: null,
+        native: { provider: 'xcode', snapshot, cacheKey: 'a'.repeat(64), arch: 'arm64' },
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('private.key is ignored or absent') });
+    expect(machine.methods).toEqual(['hello', 'build.offer']);
+  });
+});
+
+test('native results with a different transfer digest are refused before artifact fetch', async () => {
+  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+    excluded: [join(repo, '.git')],
+    parameters: null,
+  });
+  const machine = await fakeMachine(
+    'native',
+    offer(0.1),
+    { result: { job: 'j-native' } },
+    {
+      hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      artifact: {
+        archive: Buffer.from('not fetched'),
+        digest: 'b'.repeat(64),
+        fingerprint: snapshot.hash,
+        sourceDigest: 'c'.repeat(64),
+      },
+    },
+  );
+  machines.push(machine);
+  const choice = await chooseBuildMachine({
+    projectRoot: repo,
+    target: { ...TARGET, native: 'xcode' },
+    mode: 'auto',
+    here: HERE,
+    note: () => {},
+    machines: [credential('native')],
+  });
+  if (typeof choice === 'string') throw new Error(choice);
+  const result = await offloadBuild({
+    choice,
+    expectedFingerprint: snapshot.hash,
+    request: {
+      platform: 'ios',
+      runtime: 'iOS-27-0',
+      configuration: 'Debug',
+      scheme: 'App',
+      isExpo: false,
+      optimizations: null,
+      native: { provider: 'xcode', snapshot, cacheKey: 'a'.repeat(64), arch: 'arm64' },
+    },
+    stagingDir: join(repo, 'staging'),
+    onPhase: () => {},
+    onEnter: () => {},
+    onRecord: () => {},
+    note: () => {},
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    reason: 'The worker returned a different native source or artifact identity.',
+  });
+  expect(machine.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
+});
+
+describe('native Gradle worker transfer', () => {
+  const target: BuildTarget = {
+    platform: 'android',
+    native: 'gradle',
+    local: { stimBuild: 'b1', arch: 'arm64', jdk: '17' },
+    requires: { ndk: null, buildTools: null, compileSdk: null },
+  };
+  test.each([false, true])(
+    'negotiates before source upload and sends null artifact identity (capable=%s)',
+    async (capable) => {
+      const machine = await fakeMachine(
+        'gradle',
+        {
+          ...offer(0.1),
+          toolchain: { ...TOOLCHAIN, jdk: '17', androidSdk: { ndk: [], buildTools: [], platforms: ['android-35'] } },
+        },
+        { result: { job: 'j-gradle' } },
+        {
+          hello: () => ({
+            result: { capabilities: ['build'], features: capable ? ['native-gradle-build'] : ['native-xcode-build'] },
+          }),
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target,
+        mode: 'auto',
+        here: HERE,
+        note: () => {},
+        machines: [credential('gradle')],
+      });
+      expect(typeof choice).toBe(capable ? 'object' : 'string');
+      const refusal = expect.stringContaining('does not support native Gradle builds');
+      expect(typeof choice === 'string' ? choice : 'qualified').toEqual(capable ? 'qualified' : refusal);
+      expect(machine.methods).toEqual(capable ? ['hello', 'build.offer'] : ['hello']);
+      if (!capable) return;
+      if (typeof choice === 'string') throw new Error(choice);
+      writeFileSync(join(repo, '.gitignore'), 'generated.json\nsecret.txt\n');
+      writeFileSync(join(repo, 'generated.json'), 'declared');
+      writeFileSync(join(repo, 'secret.txt'), 'private');
+      const transfer = nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
+      const outcome = await offloadBuild({
+        choice,
+        expectedFingerprint: null,
+        request: {
+          platform: 'android',
+          isExpo: false,
+          native: { provider: 'gradle', transfer },
+          android: { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
+        },
+        stagingDir: join(repo, 'staging'),
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(outcome.ok).toBe(false);
+      const start = machine.requests.find((entry) => entry.method === 'build.start')!.params;
+      expect(start).toMatchObject({
+        platform: 'android',
+        fingerprint: null,
+        native: { provider: 'gradle', sourceDigest: transfer.digest, inputs: transfer.declaration },
+      });
+      expect(start.native).not.toHaveProperty('cacheKey');
+      const paths = machine.requests
+        .filter((entry) => entry.method === 'build.sync')
+        .flatMap((entry) => (entry.params.files as Array<{ path: string }>).map((file) => file.path));
+      expect(paths).toContain('generated.json');
+      expect(paths).not.toContain('secret.txt');
     },
   );
 });

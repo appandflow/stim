@@ -47,6 +47,11 @@ export function superviseChildServer({
   const emit = (stream: 'stdout' | 'stderr') => (chunk: unknown) => {
     const record = toRecord(chunk, stream);
     if (!record) return;
+    if (typeof record.requestId === 'string') {
+      log.write(record);
+      onRecord?.(record);
+      return;
+    }
     const now = Date.now();
     if (record.msg === lastMsg && now - lastAt < 1000) return;
     lastMsg = typeof record.msg === 'string' ? record.msg : null;

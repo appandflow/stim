@@ -45,6 +45,19 @@ To find out before a run whether it will hit, and how long it should take, run
 and the phone app run the same check when a workspace opens and show the
 result on its build row.
 
+A bare app whose Xcode project is not in `ios/` sets `ios.projectPath` to its
+directory, relative to the app. A subdirectory is hashed the way `ios/` is. When
+the project sits in the app directory itself (`"."`), Stim cannot tell the
+native sources from the JavaScript beside them, so it hashes every top-level
+entry except `node_modules`, `Pods`, `build`, `android`, `.stim.json` and
+anything git ignores: a JavaScript edit
+then misses the cache and rebuilds incrementally rather than reusing a build
+that might be stale.
+
+```json
+{ "ios": { "projectPath": "." } }
+```
+
 In an Expo project that gitignores `ios/` or `android/` (Continuous Native
 Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native

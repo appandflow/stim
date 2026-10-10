@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { stimBuildDigest } from '@stim-cli/core/state';
 import { androidHome } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
-import { podEnvForRuby, readRubyVersion } from '../engine/deps.ts';
+import { podEnvForRuby, podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 
 /** What must be identical on this Mac and a remote Mac for an iOS simulator build to come out the same. */
 export interface IosToolchain {
@@ -45,11 +45,12 @@ export interface WorkerToolchain extends IosToolchain {
 export type BuildTarget =
   | {
       platform: 'ios';
+      native?: 'xcode';
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
     }
-  | { platform: 'android'; local: AndroidToolchain; requires: AndroidRequirements }
+  | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain };
 
 const distDir = dirname(fileURLToPath(import.meta.url));
@@ -58,37 +59,78 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(root: string): IosToolchain {
-  return iosToolchainForRuby(readRubyVersion(root));
+export function iosToolchain(root: string, native?: 'xcode'): IosToolchain {
+  return iosToolchainForRuby(native ? null : readRubyVersion(root), native);
 }
 
-function iosToolchainForRuby(rubyVersion: string | null): IosToolchain {
-  const xcode = quiet('xcodebuild', ['-version']);
+async function quietAsync(file: string, args: string[]): Promise<string | null> {
+  try {
+    return await getExecutor().runFileAsync(file, args, { timeoutMs: 20_000 });
+  } catch {
+    return null;
+  }
+}
+
+export async function iosToolchainAsync(root: string): Promise<IosToolchain> {
+  const rubyVersion = readRubyVersion(root);
+  const [xcode, simulatorSdk, cocoapods] = await Promise.all([
+    quietAsync('xcodebuild', ['-version']),
+    quietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    cocoapodsVersionAsync(rubyVersion),
+  ]);
+  return assembleIosToolchain(xcode, simulatorSdk, cocoapods);
+}
+
+function iosToolchainForRuby(rubyVersion: string | null, native?: 'xcode'): IosToolchain {
+  return assembleIosToolchain(
+    quiet('xcodebuild', ['-version']),
+    quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
+    native ? null : cocoapodsVersion(rubyVersion),
+  );
+}
+
+function assembleIosToolchain(
+  xcode: string | null,
+  simulatorSdk: string | null,
+  cocoapods: string | null,
+): IosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
-    simulatorSdk: quiet('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version'])?.trim() ?? null,
-    cocoapods: cocoapodsVersion(rubyVersion),
+    simulatorSdk: simulatorSdk?.trim() ?? null,
+    cocoapods,
   };
 }
 
+function podProbeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+function podVersionLine(output: string | null | undefined): string | null {
+  return output?.trim().split('\n').pop()?.trim() ?? null;
+}
+
 function cocoapodsVersion(rubyVersion: string | null): string | null {
-  return (
-    getExecutor()
-      .runFileQuiet('pod', ['--version'], {
-        timeoutMs: 20_000,
-        env: Object.fromEntries(
-          Object.entries(podEnvForRuby(rubyVersion)).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        ),
-      })
-      ?.trim()
-      .split('\n')
-      .pop()
-      ?.trim() ?? null
+  return podVersionLine(
+    getExecutor().runFileQuiet('pod', ['--version'], {
+      timeoutMs: 20_000,
+      env: podProbeEnv(podEnvForRuby(rubyVersion)),
+    }),
   );
+}
+
+async function cocoapodsVersionAsync(rubyVersion: string | null): Promise<string | null> {
+  try {
+    return podVersionLine(
+      await getExecutor().runFileAsync('pod', ['--version'], {
+        timeoutMs: 20_000,
+        env: podProbeEnv(await podEnvForRubyAsync(rubyVersion)),
+      }),
+    );
+  } catch {
+    return null;
+  }
 }
 
 export interface MacosToolchain {
@@ -188,18 +230,29 @@ function sdkPackages(): WorkerToolchain['androidSdk'] {
   return { ndk: listDir(join(sdk, 'ndk')) ?? [], buildTools: listDir(join(sdk, 'build-tools')) ?? [], platforms };
 }
 
-export function workerToolchain(rubyVersion: string | null = null): WorkerToolchain {
+export function workerToolchain(rubyVersion: string | null = null, native?: 'xcode' | 'gradle'): WorkerToolchain {
+  if (native === 'gradle')
+    return {
+      ...androidToolchain(),
+      xcode: null,
+      simulatorSdk: null,
+      cocoapods: null,
+      macosSdk: null,
+      bundler: null,
+      runtimes: [],
+      androidSdk: sdkPackages(),
+    };
   let listed: unknown = null;
   try {
     listed = JSON.parse(quiet('xcrun', ['simctl', 'list', 'devices', 'available', '-j']) ?? 'null');
   } catch {}
   return {
-    ...iosToolchainForRuby(rubyVersion),
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
-    bundler: quiet('bundle', ['--version'])?.trim() || null,
+    ...iosToolchainForRuby(rubyVersion, native),
+    macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
+    bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
-    jdk: localJdk(),
-    androidSdk: sdkPackages(),
+    jdk: native ? null : localJdk(),
+    androidSdk: native ? null : sdkPackages(),
   };
 }
 
@@ -287,11 +340,11 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
-  if (target.cocoapodsPinned) {
+  if (!target.native && target.cocoapodsPinned) {
     if (!worker.bundler) {
       out.push({ code: 'bundler', reason: "no Bundler there to run the CocoaPods this project's Gemfile.lock pins" });
     }
-  } else if (worker.cocoapods !== ios.cocoapods) {
+  } else if (!target.native && worker.cocoapods !== ios.cocoapods) {
     out.push({ code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, ios.cocoapods) });
   }
   if (target.runtime && !worker.runtimes.includes(target.runtime)) {

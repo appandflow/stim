@@ -146,6 +146,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Xcode configuration to build, such as Debug or Release',
   },
   {
+    key: 'ios.scheme',
+    type: STRING,
+    scopes: ['workspace', 'committed'],
+    description: 'Shared Xcode scheme to build when the workspace has several',
+  },
+  {
     key: 'ios.remote',
     type: {
       kind: 'string',
@@ -155,6 +161,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     description:
       'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
+  },
+  {
+    key: 'ios.projectPath',
+    type: RELATIVE_PATH,
+    scopes: ['workspace', 'committed'],
+    default: 'ios',
+    description: "Directory under the app that holds a bare React Native app's Xcode project and Podfile",
   },
   {
     key: 'ios.simslimProfile',
@@ -206,7 +219,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'AVD config.ini fragment under the app',
   },
   { key: 'android.avdConfig', type: OBJECT, scopes: PROJECT, description: 'Validated AVD config values' },
+  {
+    key: 'android.gradleRoot',
+    type: RELATIVE_PATH,
+    scopes: ['workspace', 'committed'],
+    default: 'android',
+    description:
+      'Directory relative to the app holding gradlew and settings.gradle; may be outside the app but not the repository',
+  },
+  {
+    key: 'android.module',
+    type: {
+      kind: 'string',
+      pattern: '^(:(?!\\.\\.?(?::|$))[A-Za-z0-9._-]+)+$',
+      patternHelp: 'a Gradle project path such as :app',
+    },
+    scopes: ['workspace', 'committed'],
+    default: ':app',
+    description: "The app's Gradle project path, such as :app",
+  },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
+  {
+    key: 'android.offloadInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Native Gradle source sufficiency, exact ignored inputs and generated output directories for build workers',
+  },
   {
     key: 'android.keystore',
     type: PATH,
