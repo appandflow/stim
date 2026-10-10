@@ -149,7 +149,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'ios.scheme',
     type: STRING,
     scopes: ['workspace', 'committed'],
-    description: 'Shared Xcode scheme to build when the workspace has several',
+    description: 'Shared Xcode scheme to build when the workspace has several; the --scheme flag overrides it',
   },
   {
     key: 'ios.remote',
