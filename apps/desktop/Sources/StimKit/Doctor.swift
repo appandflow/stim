@@ -82,6 +82,7 @@ public func isScratchPath(_ path: String) -> Bool {
 /// Whether `path` is inside a git checkout that still exists: a `.git` folder, or a `.git` file whose gitdir is there.
 public func isGitCheckout(_ path: String) -> Bool {
   let fileManager = FileManager.default
+  guard fileManager.fileExists(atPath: path) else { return false }
   var directory = URL(fileURLWithPath: path)
   while true {
     let dotGit = directory.appendingPathComponent(".git")

@@ -118,7 +118,9 @@ struct DoctorTests {
     try "gitdir: \(root.path)/removed/.git/worktrees/x\n".write(
       to: stale.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
     #expect(isGitCheckout(real.path) && isGitCheckout(linked.path))
-    #expect(!isGitCheckout(stale.path) && !isGitCheckout(plain.path) && !isGitCheckout(root.path + "/gone"))
+    #expect(
+      !isGitCheckout(stale.path) && !isGitCheckout(plain.path) && !isGitCheckout(root.path + "/gone")
+        && !isGitCheckout(real.path + "/apps/gone"))
 
     let paths = [stale.path, plain.path, root.path + "/gone", linked.path, real.path]
     let json = paths.map { #"{"path":"\#($0)","live":false,"warnings":[]}"# }.joined(separator: ",")
