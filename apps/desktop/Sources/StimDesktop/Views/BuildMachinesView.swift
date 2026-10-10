@@ -246,8 +246,6 @@ struct BuildMachinesContent<ThisMac: View>: View {
       Section {
         Text("This Mac").font(.stim(.body, weight: .semibold))
         poolToggles("local")
-      } header: {
-        Text("Automatic machine pools")
       } footer: {
         Text(
           "Applies to new automatic work requested by this Mac. Explicit placement, running sessions and approvals stay unchanged. Keep at least one approved member enabled in each pool."
