@@ -138,7 +138,7 @@ export interface WebFacts {
 export function webFacts(record: WebRecord | null): WebFacts | null {
   if (!record) return null;
   const supervisor = inspectProcessIdentity(record);
-  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess) : 'gone';
+  const chrome = record.chromeProcess ? chromeProcessState(record.chromeProcess, record.profile) : 'gone';
   if (supervisor === 'unknown' || chrome === 'unknown') return { record, status: 'unverified' };
   if (chrome === 'gone') return { record, status: 'stopped' };
   return { record, status: supervisor === 'same' && chrome === 'running' ? 'running' : 'orphaned' };

@@ -625,18 +625,18 @@ function teardownClaimedAvd(
 const BROWSER_EXIT_WAIT_MS = 15_000;
 const CHROME_KILL_WAIT_MS = 5_000;
 
-async function stopOwnedChrome(record: OwnedProcess): Promise<boolean> {
+async function stopOwnedChrome(record: OwnedProcess, profile: string): Promise<boolean> {
   for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-    const state = chromeProcessState(record);
+    const state = chromeProcessState(record, profile);
     if (state === 'gone') return true;
     if (state === 'unknown') return false;
     try {
       signalProcessTree(record.pid, signal, { group: true });
     } catch {}
     const deadline = Date.now() + CHROME_KILL_WAIT_MS;
-    while (chromeProcessState(record) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
+    while (chromeProcessState(record, profile) !== 'gone' && Date.now() < deadline) await sleepAsync(50);
   }
-  return chromeProcessState(record) === 'gone';
+  return chromeProcessState(record, profile) === 'gone';
 }
 
 const sleepAsync = (ms: number) => new Promise<void>((done) => setTimeout(done, ms));
@@ -688,7 +688,7 @@ export async function teardownBrowserHeld(
           return { status: 'failed', reason: `browser supervisor pid ${record.pid} did not exit` };
         }
       }
-      if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess))) {
+      if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess, profile))) {
         return { status: 'failed', reason: `Chrome pid ${record.chromeProcess.pid} did not exit` };
       }
       const holder = liveProfileHolder(profile);
