@@ -34,7 +34,7 @@ const SPEC: ServiceSpec = {
   node: '/opt/homebrew/bin/node',
   script: '/Users/me/stim & co/node_modules/@stim-cli/server/dist/stim-server.mjs',
   port: 7787,
-  env: ['GEM_HOME=/gems', 'LANG=en_US.UTF-8'],
+  env: ['GEM_HOME=/gems', 'LANG=en_US.UTF-8', 'EXPO_TOKEN=s3cr&t<x>==y'],
   pathPrepend: ['/gems/bin'],
   environment: { STIM_HOME: '/tmp/scratch home', SHELL: '/bin/zsh' },
   logPath: '/Users/me/Library/Logs/Stim/dev.stim.server.log',
@@ -47,6 +47,32 @@ const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 describe('service plist', () => {
   it('escapes XML in arguments', () => {
     expect(renderPlist(SPEC)).toContain('/Users/me/stim &amp; co/node_modules');
+  });
+
+  it('keeps --env values out of the server arguments and escapes them in EnvironmentVariables', () => {
+    const plist = renderPlist(SPEC);
+    const [, afterArguments = ''] = plist.split('<key>ProgramArguments</key>');
+    const [programArguments = '', afterArray = ''] = afterArguments.split('</array>');
+    expect(programArguments).toContain('<string>EXPO_TOKEN</string>');
+    expect(programArguments).not.toContain('s3cr');
+    expect(programArguments).not.toContain('GEM_HOME=');
+    expect(afterArray).toContain('<key>EXPO_TOKEN</key>\n\t\t<string>s3cr&amp;t&lt;x&gt;==y</string>');
+    expect(afterArray).toContain('<key>GEM_HOME</key>\n\t\t<string>/gems</string>');
+  });
+
+  it('lets the installing process own STIM_HOME and SHELL over an --env entry', () => {
+    const plist = renderPlist({ ...SPEC, env: ['SHELL=/bin/evil', 'STIM_HOME=/evil'] });
+    expect(plist).toContain('<key>SHELL</key>\n\t\t<string>/bin/zsh</string>');
+    expect(plist).not.toContain('/evil');
+  });
+
+  it('reads --env KEY=VALUE from the arguments of a plist written before values moved to EnvironmentVariables', () => {
+    const legacy = parseInstalledPlist({
+      Label: SPEC.label,
+      ProgramArguments: [SPEC.node, SPEC.script, '--port', '7787', '--env', 'GEM_HOME=/gems', '--env', 'OPTS=a=b'],
+      EnvironmentVariables: { STIM_HOME: '/tmp/scratch home' },
+    });
+    expect(legacy?.env).toEqual(['GEM_HOME=/gems', 'OPTS=a=b']);
   });
 
   describe.skipIf(process.platform !== 'darwin')('with plutil', () => {
@@ -122,6 +148,25 @@ describe('serve environment', () => {
 
   it('keeps a value containing "="', () => {
     expect(parseEnvAssignment('OPTS=a=b')).toEqual({ key: 'OPTS', value: 'a=b' });
+  });
+
+  it('takes a bare --env KEY from the environment launchd gave the process', () => {
+    const base = { PATH: '/usr/bin', EXPO_TOKEN: 'from-login-shell' };
+    const source = { EXPO_TOKEN: 's3cret', OTHER: 'x' };
+    expect(applyServeEnvironment(base, ['EXPO_TOKEN', 'MISSING'], [], source)).toEqual({
+      PATH: '/usr/bin',
+      EXPO_TOKEN: 's3cret',
+    });
+  });
+
+  it('accepts a bare --env KEY only when serving, and refuses STIM_HOME and SHELL either way', () => {
+    expect(validateServeEnvironment(['EXPO_TOKEN'], [])).toContain('KEY=VALUE');
+    expect(validateServeEnvironment(['EXPO_TOKEN'], [], true)).toBeNull();
+    expect(validateServeEnvironment(['1BAD'], [], true)).toContain('KEY=VALUE');
+    for (const entry of ['SHELL=/bin/sh', 'STIM_HOME=/x']) {
+      expect(validateServeEnvironment([entry], [])).toContain('cannot set');
+    }
+    expect(validateServeEnvironment(['SHELL'], [], true)).toContain('cannot set SHELL');
   });
 
   it('rejects malformed entries and STIM_HOME', () => {
