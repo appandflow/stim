@@ -1379,13 +1379,16 @@ IOS SCHEME SELECTION
   Xcode scheme, not the app's URL scheme. Combine it with --configuration
   when choosing both an app scheme and a build configuration.
 
-  Without --scheme, automatic selection is unchanged:
+  The ios.scheme setting names the scheme once for the app (guide settings);
+  --scheme overrides it per run, and both give the same keys below.
+
+  Without --scheme or ios.scheme, automatic selection is unchanged:
   Stim keeps a scheme matching the workspace/project name, or the sole non-test
   scheme. When neither identifies one, it also checks the static top-level name
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
-  If selection fails, pass --scheme with an available name, or share the app
-  scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+  If selection fails, pass --scheme with an available name, set ios.scheme, or
+  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's
@@ -1394,7 +1397,8 @@ IOS SCHEME SELECTION
   configured Stim cache providers use the scheme-specific key. The older Expo
   buildCacheProvider tier is skipped for explicit schemes because a provider
   may key only on the fingerprint and return another scheme's app. Omitting
-  --scheme retains the existing cache keys and provider behavior.
+  both --scheme and ios.scheme retains the existing cache keys and provider
+  behavior.
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.

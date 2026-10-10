@@ -718,8 +718,8 @@ Native queries read persisted entries, overlap by five seconds and de-duplicate;
 info-level or later-persisted entries may be unavailable. JavaScript logs reach Metro.
 An older host prints an update note, uses uploads and shows previously copied logs.
 
-Stim Desktop and the phone app show the simulator with an **on &lt;machine&gt;**
-label. Turn on **Serve to phones** in Desktop and pair the phone with the client
+Stim Desktop shows the simulator with the machine's name and the phone app with an
+**on &lt;machine&gt;** label. Turn on **Serve to phones** in Desktop and pair the phone with the client
 Mac. Both view and control it through that Mac's local stim-server relay;
 neither connects directly to the hosting Mac. Named slots work independently.
 Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons

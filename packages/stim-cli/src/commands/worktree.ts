@@ -4,6 +4,9 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
 import {
+  resolveIosProjectDir,
+  resolveProjectSettings,
+  type IosProjectDir,
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
@@ -51,6 +54,7 @@ import {
 } from '../workspace/worktree.ts';
 import type { WorktreeEntry } from '../workspace/worktree.ts';
 import { endedPullRequest, pullRequestLookup } from '../workspace/pull-request.ts';
+import { discoverXcodeProject } from '../integrations/react-native-build.ts';
 
 interface WorktreeSettings {
   worktree?: { exclude?: string[] };
@@ -303,6 +307,7 @@ export function registerWarm(worktree: Command): void {
               root,
               appDir: mainCheckoutAppDir(root, target),
               settings,
+              iosProject: appIosProjectDir(mainCheckoutAppDir(root, target)),
               emit: (line) => lines.push(line),
               inspectOnly: true,
             });
@@ -330,6 +335,7 @@ export function registerWarm(worktree: Command): void {
                 root,
                 appDir: mainCheckoutAppDir(root, target),
                 settings,
+                iosProject: appIosProjectDir(mainCheckoutAppDir(root, target)),
                 emit: (line) => console.error(line),
                 installer: hold.installer,
               });
@@ -372,6 +378,44 @@ export function porcelainPath(line: string): string | null {
 const SAFE_DIFF_PATH = /^[A-Za-z0-9._/-]+$/;
 
 const POD_CHURN_PATH = /(?:^|\/)ios\/(?:Podfile\.lock|[^/]+\.xcodeproj\/project\.pbxproj)$/;
+export interface CustomIosDir {
+  dir: string;
+  project: string | null;
+}
+
+function isPodChurn(path: string, iosDirs: readonly CustomIosDir[]): boolean {
+  if (POD_CHURN_PATH.test(path)) return true;
+  return iosDirs.some(({ dir, project }) => {
+    const prefix = dir === '.' ? '' : `${dir}/`;
+    const rest = path.startsWith(prefix) ? path.slice(prefix.length) : null;
+    return rest === 'Podfile.lock' || (project !== null && rest === `${project}.xcodeproj/project.pbxproj`);
+  });
+}
+
+export function customIosDirs(worktree: string): CustomIosDir[] {
+  let root: string;
+  try {
+    root = realpathSync(worktree);
+  } catch {
+    return [];
+  }
+  return Object.keys(loadConfig()?.projects ?? {})
+    .filter((path) => isPathPrefix(worktree, path))
+    .map((path) => ({ path, ios: appIosProjectDir(path) }))
+    .filter(({ ios }) => ios.custom && existsSync(ios.dir))
+    .map(({ path, ios }) => ({
+      dir: relative(root, ios.dir) || '.',
+      project: discoverXcodeProject(path, ios.dir).name ?? null,
+    }));
+}
+
+function appIosProjectDir(appDir: string): IosProjectDir {
+  let settings: SettingsObject | null = null;
+  try {
+    settings = resolveProjectSettings(appDir).settings;
+  } catch {}
+  return resolveIosProjectDir(settings, appDir);
+}
 
 const WATCHMAN_COOKIE_PATH = /(?:^|\/)\.watchman-cookie-[A-Za-z0-9._-]+$/;
 
@@ -391,12 +435,15 @@ interface PodChurnResult {
   restore: string[];
 }
 
-export function excludePodChurn(lines: string[] | null | undefined): PodChurnResult {
+export function excludePodChurn(
+  lines: string[] | null | undefined,
+  iosDirs: readonly CustomIosDir[] = [],
+): PodChurnResult {
   const kept: string[] = [];
   const restore: string[] = [];
   for (const line of lines || []) {
     const path = porcelainPath(line);
-    if (path && String(line).startsWith(' M ') && SAFE_DIFF_PATH.test(path) && POD_CHURN_PATH.test(path)) {
+    if (path && String(line).startsWith(' M ') && SAFE_DIFF_PATH.test(path) && isPodChurn(path, iosDirs)) {
       restore.push(path);
       continue;
     }
@@ -771,7 +818,7 @@ function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
   const gitAnswered = hasUncommittedWork(path);
   const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
   const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty);
-  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies);
+  const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
   const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
   const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;

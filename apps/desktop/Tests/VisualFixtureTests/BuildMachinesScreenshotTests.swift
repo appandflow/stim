@@ -23,14 +23,18 @@
 
     @MainActor private func content(
       entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
-      poolDisabled: [String: [String]]? = nil, failure: String? = nil
+      poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = []
     ) -> some View {
       BuildMachinesContent(
-        entries: entries, statuses: statuses, hosts: [BuildMachineStatus(machine: "mini", state: .approved)], updates: updates,
+        entries: entries, statuses: statuses,
+        hosts: [
+          BuildMachineStatus(machine: "mini", state: .approved), BuildMachineStatus(machine: "janics-mac-mini", state: .approved),
+        ], updates: updates,
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false,
-        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
-        remove: { _ in }, poolDisabled: poolDisabled, thisMac: EmptyView()
+        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
+        remove: { _ in }, poolDisabled: poolDisabled, hosted: { _ in hosted }, thisMacName: "MacBook Pro",
+        thisMac: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
@@ -66,6 +70,19 @@
           """#.utf8))
     }
 
+    private func mismatch() throws -> [BuildMachineStatus] {
+      try JSONDecoder().decode(
+        [BuildMachineStatus].self,
+        from: Data(
+          #"""
+          [{"machine":"janics-mac-mini","state":"approved","offloadable":false,"dnsName":"janics-mac-mini.tail1234.ts.net",
+            "reasons":["Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"],
+            "problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"}],
+            "capacity":{"running":0,"max":1,"diskFreeBytes":412000000000,"cpus":10,"loadPerCore":0.3,"maxLoadPerCore":2,"builds":0,"maxBuilds":2,
+                        "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}]
+          """#.utf8))
+    }
+
     @MainActor func testBuildMachinesScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_BUILD_MACHINES_SHOTS"] else {
         throw XCTSkip("Set STIM_BUILD_MACHINES_SHOTS to render remote Mac fixtures.")
@@ -73,7 +90,52 @@
       _ = NSApplication.shared
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+      let pools: [String: [String]] = ["build": [], "device": []]
       let fixtures: [(String, AnyView)] = [
+        (
+          "section-waiting-own",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              updates: ["janics-mac-mini": .waiting(builds: 0, hostedSessions: 2)], poolDisabled: pools,
+              hosted: [
+                HostedOnMachine(
+                  workspace: "rn-tester", device: "iPhone 17 Pro", stop: StimCommand(["stop", "--slot", "default"], cwd: "/w"))
+              ]))
+        ),
+        (
+          "section-waiting-other",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              updates: ["janics-mac-mini": .waiting(builds: 0, hostedSessions: 1)], poolDisabled: pools))
+        ),
+        (
+          "section-ready",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"],
+              statuses: try JSONDecoder().decode(
+                [BuildMachineStatus].self,
+                from: Data(
+                  #"""
+                  [{"machine":"janics-mac-mini","state":"approved","offloadable":true,"dnsName":"janics-mac-mini.tail1234.ts.net",
+                    "capacity":{"running":0,"max":1,"diskFreeBytes":412000000000,"cpus":10,"loadPerCore":0.3,"maxLoadPerCore":2,
+                                "builds":0,"maxBuilds":2,"memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}]
+                  """#.utf8)),
+              tailscale: true, poolDisabled: pools))
+        ),
+        (
+          "section-mismatch",
+          AnyView(content(entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true, poolDisabled: pools))
+        ),
+        (
+          "section-updating",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              updates: ["janics-mac-mini": .restarting], poolDisabled: pools))
+        ),
         (
           "pools-enabled",
           AnyView(content(entries: ["mini"], statuses: try busy(), tailscale: true, poolDisabled: ["build": [], "device": []]))

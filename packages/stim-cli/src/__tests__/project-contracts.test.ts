@@ -56,7 +56,7 @@ function registryWithoutPlan(platform: 'ios' | 'android') {
       const match = fixture.inspect(path);
       if (!match) return null;
       return platform === 'ios'
-        ? { ...match, ios: async () => ({ ...(await match.ios!()), plan: undefined }) }
+        ? { ...match, ios: async (settings) => ({ ...(await match.ios!(settings)), plan: undefined }) }
         : { ...match, android: async () => ({ ...(await match.android!()), plan: undefined }) };
     },
   };

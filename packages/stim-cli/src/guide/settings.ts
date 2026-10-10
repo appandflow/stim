@@ -103,6 +103,15 @@ KEYS STIM READS
                         The \`--runtime\` flag overrides this per invocation,
                         and an uninstalled version refuses the same way,
                         naming the layer the value came from
+  ios.scheme            e.g. "RNTester" -- the shared Xcode scheme to build
+                        when the workspace lists several and none matches
+                        its name, which otherwise refuses with
+                        STIM_NO_SCHEME. The \`--scheme\` flag overrides it
+                        per invocation; an \`--eas-profile\` build reads only
+                        the flag. Part of the cache key, like the flag, so
+                        it also skips the older Expo buildCacheProvider tier,
+                        which may key only on the fingerprint. Workspace or
+                        committed scope.
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
@@ -115,6 +124,19 @@ KEYS STIM READS
                         "auto" places on an approved Mac when this Mac is full or
                         busy. Unset runs here; "local" runs here even when a
                         lower layer says otherwise. See lifecycle hosted-ios.
+  ios.projectPath       directory under the app holding a bare React Native
+                        app's Xcode project and Podfile; default "ios". "."
+                        is the app directory itself (RNTester's layout).
+                        Detection, pod install, xcodebuild, the bundle id,
+                        doctor, worktree warm and remove, and remote builds
+                        all use it. A subdirectory is fingerprinted the way
+                        ios/ is; "." hashes every top-level entry except
+                        node_modules, Pods, build, android, .stim.json and
+                        anything git ignores, so a JS edit misses the build
+                        cache instead of risking a stale build. Workspace or committed scope. ios refuses
+                        with STIM_BAD_ARG a path that escapes the app or
+                        holds no .xcworkspace or .xcodeproj, and any value
+                        on an Expo app, whose prebuild writes ios/.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -658,7 +680,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim doctor --fix
 
 Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Automatic builds and Automatic simulators for this Mac or a configured remote.
+use Builds enabled and Simulators enabled for this Mac or a configured remote.
 The equivalent machine settings list the excluded members; both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'
