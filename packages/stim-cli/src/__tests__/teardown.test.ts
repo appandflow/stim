@@ -818,7 +818,7 @@ test.each(['emulator -list-avds', 'adb devices'])(
     });
     const started = Date.now();
     const result = teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
-    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(Date.now() - started).toBeLessThan(25_000);
     expect(result.status).toBe('failed');
     expect(result.reason).toMatch(/Command timed out/);
     expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);

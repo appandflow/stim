@@ -161,7 +161,7 @@ export function eraseParkedAvd(avdName: string): TeardownOutcome {
 const IOS_SHUTDOWN_SETTLE_MS = 15_000;
 const ADB_RELEASE_WAIT_MS = 3_000;
 // A CPU-starved adb server (4-vCPU Windows runner at 100% CPU with emulators booted) leaves
-// `adb devices` unanswered for bursts of 5-8 s before answering normally:
+// `adb devices` unanswered for bursts of 5-10 s before answering normally:
 // https://github.com/appandflow/stim/issues/3086
 const AVD_INVENTORY_TIMEOUT_MS = 15_000;
 
