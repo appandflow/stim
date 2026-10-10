@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { declaresAppDependency, readPackageJson } from '../workspace/project-files.ts';
 import type { ProjectIntegration } from './project-registry.ts';
 
 export const nativeAndroidIntegration: ProjectIntegration = {
   id: 'native-android',
   inspect(root) {
     if (
+      declaresAppDependency(readPackageJson(root)) ||
       !['settings.gradle', 'settings.gradle.kts'].some((name) => existsSync(join(root, name))) ||
       !['gradlew', 'gradlew.bat'].some((name) => existsSync(join(root, name)))
     )

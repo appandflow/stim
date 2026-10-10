@@ -1,5 +1,5 @@
 import { basename, sep } from 'node:path';
-import { LAST_BUILD_KEYS } from '@stim-cli/core/state';
+import { LAST_BUILD_KEYS, readBuildHistory } from '@stim-cli/core/state';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
@@ -22,6 +22,10 @@ function protectedCacheKeys(config: Config | null = loadConfig()): Set<string> {
   for (const root of Object.keys(config?.projects ?? {})) {
     const state = readWorkspaceState(root) as Record<string, unknown> | null;
     for (const name of BUILD_RECORDS) for (const key of recordKeys(state?.[name])) keys.add(key);
+    for (const entries of Object.values(readBuildHistory(state))) {
+      const key = entries.find((entry) => entry.result === 'succeeded')?.cacheKey;
+      if (key) keys.add(key);
+    }
   }
   for (const platform of ['ios', 'android'] as const)
     for (const record of readParked(platform, { config })) if (record.cacheKey) keys.add(record.cacheKey);
