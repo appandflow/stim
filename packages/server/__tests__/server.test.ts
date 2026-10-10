@@ -1028,8 +1028,8 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
       result: { capabilities: [], actions: [], approval: { state: 'pending' }, deviceToken: expect.any(String) },
     });
     expect(await asking.closed).toBe(4401);
-    const { device, deviceToken, server } = (reply as { result: HelloResult }).result;
-    expect(server).not.toHaveProperty('home');
+    const { device, deviceToken, server: pendingServer } = (reply as { result: HelloResult }).result;
+    expect(pendingServer).not.toHaveProperty('home');
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const waiting = await connect(port, '100.64.0.2');
