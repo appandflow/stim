@@ -179,7 +179,11 @@ the server's authorization, use the Mac-side action above.
 
 The build sheet shows build and device slot waits alongside the current phase,
 with the number of slots in use and a live elapsed wait timer. A device slot
-wait can overlap compilation. Older CLIs omit this information.
+wait can overlap compilation. Older CLIs omit this information. While the run
+boots its simulator or emulator, builds the app's first JS bundle in Metro, or
+waits for the app to report ready, the phase reads **Booting simulator**,
+**Bundling JS** with Metro's percentage once Metro reports one, or **Waiting
+for app ready**.
 
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed

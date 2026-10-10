@@ -1277,6 +1277,17 @@ For SwiftPM (`stim macos`), `unit` is `steps`, and `done` and `total` are the
 names. These are counts, not a completion percentage: one target can take ten
 minutes and a cached one no time at all.
 
+During `device` and `launch`, once Stim observes what the run waits on, `build`
+carries `activity`: `{ name, startedAt, percent? }`. `name` is `booting` while
+`device` waits for the owned simulator or emulator the run is booting. During
+`launch` it is `bundling` from the app's bundle request to this workspace's
+Metro until Metro delivers it, and `waiting-ready` while the app reports its
+readiness pending; `activity` is absent in between. `startedAt` is when that evidence was recorded. `percent`
+is Metro's own progress for that bundle request, present only once Metro
+reports one. Plain `stim status` shows it after the phase, as in
+`build: ios launch (bundling JS 45%, 12s), 58s elapsed`. `activity` does not
+change the run's `launched` result.
+
 `build.placement` says where the build runs: `"local"`, or, while it is
 offloaded to a [remote Mac](./settings.md#machine-settings), an object with
 the machine and its step there. `phase` is `sync`, `deps`, `prebuild`,

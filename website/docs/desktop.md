@@ -217,7 +217,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. Checks run automatically while visible, reusing a completed build or check
+  plan. While a run boots its simulator or emulator, builds the app's first JS
+  bundle in Metro, or waits for the app to report ready, the progress and the
+  current phase say so with that step's own elapsed time: **Booting
+  simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports
+  one) or **Waiting for app ready**. A step with no percentage draws its bar
+  segment as indeterminate. Checks run automatically while visible, reusing a completed build or check
   for 60 seconds and skipping running builds; there is no manual Check button. The header's running-build progress opens the current
   run in the same sheet. **Open in Logs Panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run

@@ -204,6 +204,34 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(signing.currentPhaseLabel == ("Install", nil))
   }
 
+  @Test func namesWhatTheLaunchWaitsOnAndFillsTheBarOnlyFromMetroProgress() throws {
+    var bundling = try build(#","activity":{"name":"bundling","startedAt":"\#(iso(12))","percent":75}"#)
+    bundling.phase = "launch"
+    bundling.phaseStartedAt = iso(20)
+    bundling.expectedPhaseMs = 100_000
+    #expect(bundling.currentPhaseLabel == ("Bundling JS", "75%"))
+    #expect(!bundling.waitsWithoutProgress)
+    let current = bundling.phaseSteps(history: history, now: now).first { $0.state == .current }
+    #expect(current?.phase == "launch")
+    #expect(current?.fraction == 0.75)
+    #expect(current?.note == "Bundling JS 75% 0:12")
+
+    var waiting = bundling
+    waiting.activity = BuildActivity(name: "waiting-ready", startedAt: iso(3))
+    #expect(waiting.currentPhaseLabel == ("Waiting for app ready", nil))
+    #expect(waiting.waitsWithoutProgress)
+    #expect(waiting.phaseSteps(history: history, now: now).first { $0.state == .current }?.fraction == 0.2)
+
+    var booting = bundling
+    booting.phase = "device"
+    booting.activity = BuildActivity(name: "booting", startedAt: iso(40))
+    #expect(booting.currentPhaseLabel == ("Booting simulator", nil))
+    #expect(booting.activityElapsedMs(at: now) == 40_000)
+    booting.phase = "install"
+    #expect(booting.currentPhaseLabel == ("Install", nil))
+    #expect(!booting.waitsWithoutProgress)
+  }
+
   @Test func drawsTheCLIPlannedPhasesInsteadOfTheWorkspaceHistoryWhenTheCLISendsThem() throws {
     var planned = try build(
       #","plannedPhases":[{"phase":"prepare","expectedMs":1500},{"phase":"cache-lookup","expectedMs":2000},{"phase":"device","expectedMs":800},{"phase":"install","expectedMs":500},{"phase":"launch","expectedMs":9000}]"#

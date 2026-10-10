@@ -316,7 +316,7 @@ private struct BuildRunDetail: View {
           TimelineView(.buildSeconds(build)) { context in
             let steps = build.phaseSteps(history: env.builds?.builds(for: run.platform) ?? [], now: context.date)
             VStack(alignment: .leading, spacing: Space.md) {
-              PhaseBar(steps: barSteps(steps), key: build.key)
+              PhaseBar(steps: barSteps(steps), key: build.key, indeterminate: build.waitsWithoutProgress)
               PhaseChecklist(steps: steps, cacheOutcome: build.cacheLookupOutcome)
             }
           }

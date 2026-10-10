@@ -220,12 +220,15 @@ struct RunningBuildDetail: View {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)
           if let counts { Text(counts).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1) }
+          if let activityMs = build.activityElapsedMs(at: context.date) {
+            Text(Format.clock(ms: activityMs)).font(.stim(.footnote)).foregroundStyle(Palette.secondary).monospacedDigit()
+          }
           Spacer(minLength: Space.sm)
           (Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary))
             .font(.stim(.footnote))
             .monospacedDigit()
         }
-        PhaseBar(steps: barSteps(steps), key: build.key)
+        PhaseBar(steps: barSteps(steps), key: build.key, indeterminate: build.waitsWithoutProgress)
       }
       .accessibilityElement(children: .combine)
     }
