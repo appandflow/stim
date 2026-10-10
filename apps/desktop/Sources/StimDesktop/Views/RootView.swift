@@ -430,7 +430,6 @@ struct RootView: View {
       })
   }
 
-  /// The first change's worktree, or the second's once the first is gone.
   private var tutorialShortcut: String? {
     let listed = Set(store.payload?.environments.map(\.path) ?? [])
     return tutorial.snapshot?.record.trackedPaths.first(where: listed.contains)

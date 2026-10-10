@@ -44,6 +44,7 @@ import Foundation
     generation += 1
     delivering = false
     guard let client else { return }
+    LaunchMilestones.reach("server-feed-subscribed")
     unsubscribe = client.subscribe(
       "status.subscribe", params: { [:] }, onSubscribed: { _ in },
       onEvent: { [weak self] event in self?.receive(event) }, onVideo: { _ in })
@@ -51,16 +52,19 @@ import Foundation
 
   private func receive(_ event: ServerEvent) {
     if event.name == "error" {
+      DebugLog.warning(.server, "status feed ended with an error")
       generation += 1
       delivering = false
       return
     }
     guard event.name == "status", let payload = event.fields["payload"] else { return }
+    LaunchMilestones.reach("first-server-status")
     issued += 1
     let sequence = issued
     let generation = generation
     Task.detached(priority: .userInitiated) { [weak self] in
       let result = Result { try decodeReporting(StatusPayload.self, from: payload, source: .server) }
+      await LaunchMilestones.reach("first-server-payload-decoded")
       await self?.show(result, sequence: sequence, generation: generation)
     }
   }

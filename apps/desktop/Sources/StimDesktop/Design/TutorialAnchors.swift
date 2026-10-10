@@ -25,7 +25,6 @@ struct TutorialHint {
   var ticks: [TutorialTick] = []
   var showMe: () -> Void
 
-  /// The worktrees whose controls this step may point at, the first change's first.
   var paths: [String] { [path, secondPath].compactMap { $0 } }
 
   var onPage: Bool { selectedPath.map(paths.contains) == true }
@@ -34,8 +33,6 @@ struct TutorialHint {
     TutorialGlowPath.targets(step: step, ticks: ticks, onPage: onPage, logsShown: logsShown)
   }
 
-  /// Whether a control that no content overlay reaches, such as a toolbar item or a sidebar row, glows itself. A
-  /// sidebar row is a hop only off the tutorial pages, and only a row holding a tutorial worktree glows.
   func glowsInPlace(_ anchor: TutorialAnchorID, workspaces: [String] = []) -> Bool {
     anchor == .sidebarRow
       ? targets.contains { $0.anchor == anchor } && workspaces.contains(where: paths.contains)
@@ -69,7 +66,6 @@ extension View {
     modifier(TutorialHighlights(showFallback: showFallback))
   }
 
-  /// A glow drawn on the view itself, for a control that no content overlay reaches, such as a toolbar item.
   func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID, workspaces: [String] = []) -> some View {
     overlay {
       if let hint, hint.glowsInPlace(anchor, workspaces: workspaces) {

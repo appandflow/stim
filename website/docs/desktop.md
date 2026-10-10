@@ -96,7 +96,7 @@ a tiny Expo app, and shows:
 - **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step and **Restart Tutorial** remove it. An existing `~/stim-tutorial` that is a clean clone of the tutorial repository is reused; any other existing folder makes your agent ask for another one. **Restart Tutorial** asks before it deletes the folder and its tutorial worktrees through `stim worktree remove`, then moves the folder to the Trash; a folder without the tutorial marker is left alone. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
 - **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes.
 - **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
-- **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow points at the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
+- **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow leads there: the tutorial worktree's sidebar row when you are on another page, then the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
 - **Agent Actions and Replay (optional):** "Open Agent Actions to see what your agent did, then press Play to replay it." A glow leads there: the tutorial worktree's sidebar row when you are on another page, then its device's live view, then the Agent Actions list, then the replay's Play button. **Open Agent Actions** in the step opens the first change's live view with Agent Actions shown, or the second change's once the first is gone. The step ticks **Agent actions viewed** and **Replay played** on either tutorial simulator and stays open so you can keep watching; **Next** then records it done. When no agent actions were recorded on the first change's simulator, the step says so.
 - **App Logs (optional):** "Open Logs to see your app's output and errors." A glow leads from the tutorial worktree's sidebar row to the toolbar's Show Logs toggle; **Open Logs** in the step opens them directly. The step ticks **Logs opened** and completes when you show the Logs of either tutorial worktree while the step is current.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there".
@@ -115,11 +115,7 @@ When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.
 
-The panel shows one step at a time. Click a node on the progress track, use the arrows beside it, or press the left and right arrow keys to look at another step; this never changes your progress, and Desktop keeps detecting the current step meanwhile. A later step shows dimmed and read-only, **Go to Current Step** returns, and when the step you are looking at completes, the panel moves on with it. The completion card is the last slide.
-
-**Float (Experimental)** in the **…** menu moves the panel into a small window that stays above other apps without taking focus, so you can keep it beside your editor or terminal. Drag it anywhere; Desktop remembers where. The pin turns staying on top off and on, and **Dock in Sidebar** puts it back.
-
-The tutorial does not start the server, pair phones or
+Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
 grant access, and it runs no builds itself.
 
 A soft glow with a short label points at the control a step needs, without
@@ -128,8 +124,8 @@ again when the step or page changes. On **Make a Change**, it points at the
 **Show** button of the "launched for" notice for your first change's worktree;
 if that notice is gone, **Open the build** in the step does the same. When the
 control is not on screen, the glow points at the hop before it, such as the
-tutorial worktree's sidebar row. **Show Me** selects the tutorial workspace when
-nothing on the path is visible, for example with the sidebar hidden. A step's
+tutorial worktree's sidebar row. With the sidebar hidden, **Show Me** selects the
+tutorial workspace instead. A step's
 prompt shows only while it is the current step. The step lists only workspace
 issues that block it, as a sentence with its fix below; Finish and Delete hide
 the warnings that stopping the workspaces causes.
