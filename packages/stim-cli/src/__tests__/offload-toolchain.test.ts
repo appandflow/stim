@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
+import { podEnv } from '../engine/deps.ts';
 import { iosToolchain, workerToolchain } from '../offload/toolchain.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
@@ -23,7 +25,23 @@ beforeEach(() => {
     "if (!process.env.LANG?.endsWith('UTF-8') || !process.env.LC_ALL?.endsWith('UTF-8')) process.exit(1); console.log(" +
     JSON.stringify(version) +
     ');';
-  executable(bin, 'pod', pod('1.17.0'));
+  executable(
+    bin,
+    'pod',
+    "if (!process.env.LANG?.endsWith('UTF-8')) process.exit(1); console.log(process.env.GEM_HOME === " +
+      JSON.stringify(join(root, 'login-gems')) +
+      " ? '1.17.0' : '1.16.2');",
+  );
+  executable(
+    root,
+    'login-shell',
+    "require('node:fs').writeFileSync(process.argv[5], 'banner\\n@@ruby-env-begin@@\\nPATH=' + process.env.PATH + '\\nGEM_HOME=' + " +
+      JSON.stringify(join(root, 'login-gems')) +
+      " + '\\nGEM_PATH=' + " +
+      JSON.stringify(join(root, 'login-gems')) +
+      " + '\\n@@ruby-env-end@@');",
+  );
+  vi.stubEnv('SHELL', join(root, 'login-shell'));
   executable(join(root, '.rvm', 'rubies', 'ruby-3.3.4', 'bin'), 'pod', pod('1.16.2'));
   mkdirSync(join(root, '.rvm', 'gems', 'ruby-3.3.4'), { recursive: true });
   vi.stubEnv('HOME', root);
@@ -53,13 +71,24 @@ test.skipIf(process.platform !== 'darwin')(
 );
 
 test.skipIf(process.platform !== 'darwin')(
-  'an unpinned or unavailable Ruby keeps the default CocoaPods with UTF-8 locale defaults',
+  'without a project Ruby the probe and pod install both use the login shell gems',
   () => {
     expect(iosToolchain(root).cocoapods).toBe('1.17.0');
     writeFileSync(join(root, '.ruby-version'), '3.2.0\n');
-    expect(iosToolchain(root).cocoapods).toBe('1.17.0');
+    const probed = iosToolchain(root).cocoapods;
+    const built = execFileSync(join(root, 'bin', 'pod'), ['--version'], {
+      env: podEnv(root),
+      encoding: 'utf-8',
+    }).trim();
+    expect(probed).toBe('1.17.0');
+    expect(built).toBe(probed);
   },
 );
+
+test.skipIf(process.platform !== 'darwin')('an unreadable login shell keeps the caller environment', () => {
+  vi.stubEnv('SHELL', join(root, 'missing-shell'));
+  expect(iosToolchain(root).cocoapods).toBe('1.16.2');
+});
 
 test('native Xcode discovery preserves required facts without invoking unrelated platform or Ruby tools', () => {
   const runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';

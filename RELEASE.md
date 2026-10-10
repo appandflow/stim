@@ -384,7 +384,7 @@ repeat the affected gate rather than waiving it.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all SIX packages via OIDC trusted
+   `Release` workflow, which publishes all seven packages via OIDC trusted
    publishing (no token, `--provenance`) once the run is approved in the
    `release` environment. If the current GitHub identity is an allowed
    reviewer, approve the deployment directly with `gh` instead of waiting for
@@ -415,8 +415,9 @@ repeat the affected gate rather than waiving it.
    that already exists, computes the dist-tag (section 1) and publishes every
    package to it. Its `smoke` job then waits, up to 15 minutes per check, for
    the registry to serve each version, its tarball and the dist-tag, and runs
-   `npx stim@X.Y.Z --version` and `stim-server --version` from
-   `@stim-cli/server@X.Y.Z` in a scratch directory.
+   `npx stim@X.Y.Z --version`, `stim-ci --version` from `@stim-cli/ci@X.Y.Z`
+   and `stim-server --version` from `@stim-cli/server@X.Y.Z` in a scratch
+   directory.
    A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
@@ -436,6 +437,7 @@ repeat the affected gate rather than waiving it.
    npm view "@stim-cli/cache@$version" version
    npm view "@stim-cli/expo-build-cache@$version" version
    npm view "@stim-cli/metro@$version" version
+   cd /tmp && npx -p "@stim-cli/ci@$version" stim-ci --version
    cd /tmp && npx -p "@stim-cli/server@$version" stim-server --version
    ```
    The `npm pack` line lists the published tarball's README. Do not check

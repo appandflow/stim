@@ -111,8 +111,19 @@ If a progress callback or writing `result.json` fails, the result includes
 `reportingError`. Reporter failures cannot interrupt cleanup or replace an earlier
 test failure; after a passing test, they return 1.
 Setup failure leaves `run` and `test` null. Diagnostics include the last 1000
-structured records and their original directory; raw compiler files remain in
-the Stim workspace log directory if additional artifacts are needed.
+structured records and their original directory. After cleanup, regular `.log`
+and `.ndjson` files (including `.1` rotated copies) directly inside that directory
+are copied into `logs/` and listed in `diagnostics.files`. This retains raw
+compiler and process output even when setup fails. These persisted files can
+include earlier records from the same workspace. Collection does not follow
+symlinks, nested directories, or paths referenced by log records. It does not
+copy build binaries or caches. Collection failures appear in `diagnostics.error`
+without replacing the setup or test exit code.
+
+Providers can import `diagnosticArtifactFiles` from `@stim-cli/ci/artifacts` to
+list the regular result, run, test and diagnostic files for upload. The helper
+only selects those known files and the copied logs; custom test outputs need
+the provider's own explicit upload configuration.
 
 ## Library
 

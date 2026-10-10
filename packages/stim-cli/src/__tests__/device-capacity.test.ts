@@ -11,7 +11,6 @@ import {
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
-import { setProjectSetting, upsertProject } from '../workspace/config.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
@@ -342,6 +341,34 @@ test('cancelling a queued run promptly releases its ticket without booting', asy
   expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
 });
 
+test.each(['wait notification', 'progress output'])(
+  'cancellation during %s starts no idle reclaim',
+  async (boundary) => {
+    const controller = new AbortController();
+    const boot = vi.fn<() => Promise<void>>(async () => {});
+    const waitingFor = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>((info) => {
+      if (info && boundary === 'wait notification') controller.abort();
+    });
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+        root,
+        max: 1,
+        signal: controller.signal,
+        sources: { ...empty, sims: occupied },
+        waitingFor,
+        out: () => {
+          if (boundary === 'progress output') controller.abort();
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(reclaimIdleDevice).not.toHaveBeenCalled();
+    expect(boot).not.toHaveBeenCalled();
+    expect(waitingFor).toHaveBeenLastCalledWith(null);
+    expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+    expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
+  },
+);
+
 test('an error reporting an admitted wait still releases the boot reservation', async () => {
   let full = true;
   await expect(
@@ -535,14 +562,13 @@ test('cancelling while the admission lock is held exits without waiting for the 
   }
 });
 
-test('explicit zero in the waiting workspace disables reclaim', async () => {
-  upsertProject(root, {});
-  setProjectSetting(root, 'devices.reclaimIdleMinutes', 0);
+test('an explicit zero reclaimIdleMinutes disables reclaim', async () => {
   let clock = Date.now();
   await expect(
     withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
       root,
       max: 1,
+      reclaimIdleMinutes: 0,
       waitMs: 2000,
       sources: { ...empty, sims: occupied },
       now: () => clock,
