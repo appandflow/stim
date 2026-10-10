@@ -48,7 +48,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
   [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
-  Source-only worktrees share their repo's section and count as idle. **Idle**, **Not set up**,
+  Source-only worktrees share their repo's section and count as idle. **Not set up**,
   **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
   than one is paired. They have no app activity or controls and do not open a
