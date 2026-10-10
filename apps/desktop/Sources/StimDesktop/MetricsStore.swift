@@ -29,7 +29,6 @@ final class MetricsStore {
   private(set) var volumes: [DiskVolume] = []
   private(set) var hasVolumes = false
   private(set) var memory: MachineMemory?
-  /// The share of all of the Mac's cores in use, from 0 to 1, averaged over the last sampling interval.
   private(set) var machineCpuFraction: Double?
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   private(set) var memoryUsed: [Double] = []
