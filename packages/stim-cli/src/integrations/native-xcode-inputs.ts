@@ -72,6 +72,12 @@ function inside(root: string, path: string): boolean {
   return part === '' || (!part.startsWith(`..${sep}`) && part !== '..' && !isAbsolute(part));
 }
 
+// git ls-files names an index entry as stored, while readdir returns on-disk names that can differ in
+// case (core.ignorecase) or Unicode normalization (macOS NFD vs core.precomposeunicode NFC).
+function fold(path: string): string {
+  return path.normalize('NFC').toLowerCase();
+}
+
 function gitVisibility(sourceRoot: string) {
   if (!existsSync(join(sourceRoot, '.git'))) return null;
   const listing = getExecutor().runFileQuiet(
@@ -82,7 +88,8 @@ function gitVisibility(sourceRoot: string) {
   if (listing === null) return null;
   const listed = new Set<string>();
   const whole = new Set<string>();
-  const include = (path: string) => {
+  const include = (raw: string) => {
+    const path = fold(raw);
     whole.add(path);
     listed.add(path);
     for (let index = path.indexOf('/'); index !== -1; index = path.indexOf('/', index + 1))
@@ -90,7 +97,8 @@ function gitVisibility(sourceRoot: string) {
   };
   // git ls-files names an untracked nested repository, such as a linked worktree, as one "dir/" entry.
   for (const entry of listing.split('\0')) if (entry && !entry.endsWith('/')) include(entry);
-  const admit = (path: string) => {
+  const admit = (raw: string) => {
+    const path = fold(raw);
     if (listed.has(path)) return true;
     for (let index = path.indexOf('/'); index !== -1; index = path.indexOf('/', index + 1))
       if (whole.has(path.slice(0, index))) return true;

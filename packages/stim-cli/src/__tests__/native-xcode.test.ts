@@ -520,6 +520,41 @@ test('a git checkout ignores ignored content and nested worktrees but keeps igno
   expect(fingerprint()).not.toEqual(referenced);
 });
 
+test('a git checkout keeps files whose on-disk names differ from the index in case or Unicode normalization', () => {
+  writeNativeXcodeProject(root);
+  write(join(root, 'helper.swift'), 'struct Helper {}');
+  const decomposed = 'Cafe\u0301';
+  write(join(root, decomposed, 'Menu.swift'), 'struct Menu {}');
+  const git = (...args: string[]) =>
+    getExecutor().runFile('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Stim',
+      '-c',
+      'user.email=stim@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      ...args,
+    ]);
+  git('init', '-q');
+  git('config', 'core.ignorecase', 'true');
+  git('config', 'core.precomposeunicode', 'true');
+  git('add', '-A');
+  git('commit', '-qm', 'fixture');
+  rmSync(join(root, 'helper.swift'));
+  write(join(root, 'Helper.swift'), 'struct Helper {}');
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(root, 'Helper.swift'), 'struct HelperChanged {}');
+  const renamed = fingerprint();
+  expect(renamed).not.toEqual(before);
+  write(join(root, decomposed, 'Menu.swift'), 'struct MenuChanged {}');
+  expect(fingerprint()).not.toEqual(renamed);
+});
+
 test('a referenced source outside the application participates in native identity', () => {
   const app = join(root, 'App');
   mkdirSync(app);
