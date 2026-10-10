@@ -485,7 +485,9 @@ describe('ensureBooted: android', () => {
   test('waits for boot completion on an already-running owned AVD', async () => {
     const commands: string[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         commands.push(cmd);
         if (cmd === 'emulator -list-avds') return 'stim-app';
@@ -519,7 +521,9 @@ describe('ensureBooted: android', () => {
     const spawned: string[][] = [];
     let booted = false;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices')
@@ -553,7 +557,9 @@ describe('ensureBooted: android', () => {
 
   test('reuses the serial returned by a fresh owned AVD boot when adb listing briefly misses it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -594,7 +600,9 @@ describe('ensureBooted: android', () => {
       upsertProject(other, {});
       setDevice(other, 'android', { avdName: 'stim-other', consolePort: 5560, owned: true });
       setExecutor({
-        runFileQuiet: () => null,
+        runFileQuiet(file, args = [], opts) {
+          return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+        },
         run: (cmd) => {
           if (cmd === 'emulator -list-avds') return 'stim-app\nstim-other';
           if (cmd === 'adb devices') return 'List of devices attached\nemulator-5560\tdevice';
@@ -627,7 +635,9 @@ describe('ensureBooted: android', () => {
     const spawned: string[][] = [];
     let ourSerial: string | null = null;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') {
@@ -676,7 +686,9 @@ describe('ensureBooted: android', () => {
     }
     const spawnedPorts: number[] = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-0\nstim-1';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -716,7 +728,9 @@ describe('ensureBooted: android', () => {
 
   test('ensureBooted stops the moment the spawned emulator process is gone', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -747,7 +761,9 @@ describe('ensureBooted: android', () => {
   test('ensureBooted keeps polling while the emulator process is alive', async () => {
     let probes = 0;
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -796,7 +812,9 @@ describe('ensureBooted: android', () => {
       return { pid: live === null ? undefined : 987654, unref() {} };
     });
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'stim-app' : 'List of devices attached'),
       runQuiet: (cmd, opts) => {
         if (cmd.includes('getprop') || cmd.includes('pm path android')) {
@@ -873,7 +891,9 @@ describe('ensureBooted: android', () => {
     setDevice(tmpHome, 'android', { owned: true, avdName: 'stim-app', consolePort: 5556 });
     const spawn = vi.fn<() => void>();
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\tdevice';
@@ -908,7 +928,9 @@ describe('ensureBooted: android', () => {
     const logFile = join(tmpHome, 'ws', '.stim', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
         if (cmd === 'adb devices') return 'List of devices attached';
@@ -946,7 +968,9 @@ describe('ensureBooted: android', () => {
 
   test('refuses an AVD that this Stim home did not record', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_7_API_35' : ''),
       runQuiet: () => '',
       runFile(file, args = []) {
@@ -967,7 +991,9 @@ describe('ensureBooted: android', () => {
 
   test('refuses a legacy physical record without issuing a single command at it', async () => {
     setExecutor({
-      runFileQuiet: () => null,
+      runFileQuiet(file, args = [], opts) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      },
       run: (cmd) => {
         throw new Error(`Stim must not run "${cmd}" for a physical record`);
       },
