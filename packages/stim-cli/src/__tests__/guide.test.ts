@@ -579,7 +579,7 @@ test('the run section names the marker version the status payload reports and on
 
 test('the run section checks each change on the tutorial app with agent-device', () => {
   const run = flat('run');
-  for (const testID of ['tap-button', 'dark-accent-switch', 'name-input']) expect(run).toContain(testID);
+  for (const testID of ['tap-button', 'dark-accent-switch', 'size-m']) expect(run).toContain(testID);
   expect(run).toContain('agent-device open dev.stim.tutorial --platform ios --udid <ios.udid>');
   expect(run).toMatch(/snapshot -i before every action/);
 });
