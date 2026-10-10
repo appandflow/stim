@@ -17,7 +17,7 @@ public enum TutorialSteps {
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Get the Test App", who: "agent", optional: false,
-      ask: "Clone appandflow/stim-tutorial into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
+      ask: "Clone appandflow/stim-tutorial into {base} and follow stim guide tutorial run.", section: "run",
       commands: [
 
       ]),

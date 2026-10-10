@@ -9,7 +9,7 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
  * are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
  */
 export const TUTORIAL_ASKS = {
-  begin: `Clone ${TUTORIAL_REPO} into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
+  begin: `Clone ${TUTORIAL_REPO} into {base} and follow stim guide tutorial run.`,
   agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",

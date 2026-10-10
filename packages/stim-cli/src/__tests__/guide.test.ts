@@ -578,12 +578,9 @@ test('tutorial setup protects existing folders and the user repository', () => {
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
-test('the cloning tutorial step checks the repository before cloning, and its prompt states the rules', () => {
+test('the cloning tutorial step checks the repository before cloning', () => {
   const run = renderSection('tutorial', 'run')!;
   expect(run.indexOf('--is-inside-work-tree')).toBeLessThan(run.indexOf('git clone'));
-  const ask = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.ask!;
-  expect(ask).toMatch(/inside another git repository, stop and ask me/);
-  expect(ask).toMatch(/never git add in my own repo/);
 });
 
 test('tutorial finish names the two tracked worktrees as the only --force targets', () => {

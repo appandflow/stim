@@ -84,7 +84,7 @@ opens the panel once for that tutorial path, after any open sheet closes.
 <img src="/img/desktop/tutorial-panel.png" alt="Stim Tutorial panel showing the agent actions step" width="320" />
 
 <PromptBox title="Get the test app">
-{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and follow stim guide tutorial run.`}
 </PromptBox>
 
 The tutorial shows what worktree isolation and automated validation buy you.
