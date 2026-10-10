@@ -35,7 +35,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
     return { error: 'grep must be a valid regular expression without NUL characters.' };
   }
   if (errors !== undefined && typeof errors !== 'boolean') return { error: 'errors must be true or false.' };
-  if (tail !== undefined && (!Number.isInteger(tail) || (tail as number) < 1 || (tail as number) > MAX_LOG_TAIL)) {
+  if (tail !== undefined && (typeof tail !== 'number' || !Number.isInteger(tail) || tail < 1 || tail > MAX_LOG_TAIL)) {
     return { error: `tail must be an integer from 1 to ${MAX_LOG_TAIL}.` };
   }
   return {
@@ -46,7 +46,7 @@ export function parseLogFilter(params: unknown): { filter: LogFilter } | { error
       ...(slot ? { slot } : {}),
       ...(grep ? { grep } : {}),
       ...(errors ? { errors } : {}),
-      tail: (tail as number | undefined) ?? MAX_LOG_TAIL,
+      tail: tail ?? MAX_LOG_TAIL,
     },
   };
 }

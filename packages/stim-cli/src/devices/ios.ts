@@ -1,4 +1,5 @@
 import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isJsonObject } from '@stim-cli/core/state';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
@@ -383,11 +384,17 @@ export function listIosDeviceTypes(): IosDeviceType[] {
     timeoutMs: 30000,
     killSignal: 'SIGKILL',
   });
-  const data = JSON.parse(out) as { devicetypes?: Array<{ identifier: string; name: string }> };
-  return (data.devicetypes || []).map((dt) => ({
-    identifier: dt.identifier,
-    name: dt.name,
-  }));
+  const data: unknown = JSON.parse(out);
+  return isJsonObject(data) ? deviceTypesOf(data.devicetypes) : [];
+}
+
+function deviceTypesOf(value: unknown): IosDeviceType[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) =>
+    isJsonObject(entry) && typeof entry.identifier === 'string' && typeof entry.name === 'string'
+      ? [{ identifier: entry.identifier, name: entry.name }]
+      : [],
+  );
 }
 
 function rankIphone(name: string): { gen: number; variant: number } {
@@ -666,25 +673,23 @@ export async function listIosRuntimesAsync(): Promise<IosRuntime[]> {
 }
 
 function parseIosRuntimes(out: string): IosRuntime[] {
-  const data = JSON.parse(out) as {
-    runtimes?: Array<{
-      identifier: string;
-      name: string;
-      version: string;
-      isAvailable?: boolean;
-      platform?: string;
-      supportedDeviceTypes?: Array<{ identifier: string; name: string }>;
-    }>;
-  };
-  return (data.runtimes || [])
-    .filter((r) => r.isAvailable && r.platform === 'iOS')
-    .map((r) => ({
-      identifier: r.identifier,
-      name: r.name,
-      version: r.version,
-      supportedDeviceTypes: (r.supportedDeviceTypes || []).map((d) => ({
-        identifier: d.identifier,
-        name: d.name,
-      })),
-    }));
+  const data: unknown = JSON.parse(out);
+  if (!isJsonObject(data) || !Array.isArray(data.runtimes)) return [];
+  return data.runtimes.flatMap((r: unknown) =>
+    isJsonObject(r) &&
+    r.isAvailable === true &&
+    r.platform === 'iOS' &&
+    typeof r.identifier === 'string' &&
+    typeof r.name === 'string' &&
+    typeof r.version === 'string'
+      ? [
+          {
+            identifier: r.identifier,
+            name: r.name,
+            version: r.version,
+            supportedDeviceTypes: deviceTypesOf(r.supportedDeviceTypes),
+          },
+        ]
+      : [],
+  );
 }

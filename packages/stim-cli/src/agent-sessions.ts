@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
-import type { AgentSession, AgentTool } from '@stim-cli/core/state';
+import { isJsonObject, type AgentSession, type AgentTool } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { inspectProcessStart } from './process-identity.ts';
 
@@ -65,9 +65,9 @@ export function agentFromEnv(env: NodeJS.ProcessEnv): { tool: AgentTool; session
  * or absolute cwd. The format is Claude Code's own and undocumented, so every other field is optional.
  */
 export function parseClaudeSession(entry: unknown, apps: AgentApps): AgentSession | null {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
-  const raw = entry as Record<string, unknown>;
-  if (!Number.isSafeInteger(raw.pid) || (raw.pid as number) <= 0) return null;
+  if (!isJsonObject(entry)) return null;
+  const raw = entry;
+  if (typeof raw.pid !== 'number' || !Number.isSafeInteger(raw.pid) || raw.pid <= 0) return null;
   if (typeof raw.sessionId !== 'string' || !SESSION_ID.test(raw.sessionId)) return null;
   if (typeof raw.cwd !== 'string' || !isAbsolute(raw.cwd)) return null;
   const host = raw.hostSessionId;
@@ -78,7 +78,7 @@ export function parseClaudeSession(entry: unknown, apps: AgentApps): AgentSessio
       title: shortTitle(raw.name),
       startedAt: isoFromMs(raw.startedAt),
       lastActiveAt: isoFromMs(raw.updatedAt),
-      pid: raw.pid as number,
+      pid: raw.pid,
       openUrl:
         apps.claude && typeof host === 'string' && CLAUDE_DESKTOP_SESSION.test(host)
           ? `claude://code/continue?session=${host}`

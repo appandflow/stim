@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { withDirLock } from './dir-lock.ts';
+import { isJsonObject } from './state/json-file.ts';
 export { withDirLock, type DirLockOptions } from './dir-lock.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
@@ -92,10 +93,9 @@ function logSize(file: string): number {
 
 export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
-      caches?: Record<string, unknown>;
-    };
-    const value = parsed?.caches?.[key];
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
+    const caches = isJsonObject(parsed) ? parsed.caches : undefined;
+    const value = isJsonObject(caches) ? caches[key] : undefined;
     return typeof value === 'string' && path.isAbsolute(value) ? value : null;
   } catch {
     return null;
@@ -237,8 +237,9 @@ export function cacheManifestLockPath(file: string): string {
 
 export function readCacheManifest(file: string): CacheManifest {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { caches?: Array<Record<string, unknown>> };
-    return { version: 1, caches: Array.isArray(parsed?.caches) ? parsed.caches : [] };
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const caches = isJsonObject(parsed) && Array.isArray(parsed.caches) ? parsed.caches : [];
+    return { version: 1, caches: caches.filter(isJsonObject) };
   } catch {
     return { version: 1, caches: [] };
   }

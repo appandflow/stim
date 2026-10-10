@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Config } from '@stim-cli/core/state';
+import { isJsonObject, type Config } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
@@ -95,8 +95,8 @@ function parseSimRuntimeList(jsonOutput: string): SimRuntimeRecord[] {
   }
   const runtimes: SimRuntimeRecord[] = [];
   for (const [key, value] of Object.entries(parsed)) {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
-    const entry = value as Record<string, unknown>;
+    if (!isJsonObject(value)) continue;
+    const entry = value;
     if (entry.platformIdentifier !== IOS_SIMULATOR_PLATFORM) continue;
     runtimes.push({
       identifier: text(entry.identifier) ?? key,

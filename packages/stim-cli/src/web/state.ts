@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
-import { WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
+import { isJsonObject, WEB_VIEWPORTS, type WebPageState, type WebViewport } from '@stim-cli/core/state';
 import { inspectProcessIdentity, sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
 import { chromeProcessState } from './profile.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -74,8 +74,8 @@ function processRecord(value: unknown): OwnedProcess | undefined {
 }
 
 function parseWebRecord(value: unknown): WebRecord | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   const owner = processRecord(record);
   if (!owner || typeof record.cdpPort !== 'number' || typeof record.profile !== 'string') return null;
   if (typeof record.url !== 'string' || typeof record.chrome !== 'string') return null;
@@ -158,12 +158,13 @@ export function latestPageLoad(lines: readonly string[]): WebPageState | null {
   let loaded = false;
   let route: string | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
-    let record: { event?: unknown; msg?: unknown; url?: unknown };
+    let record: unknown;
     try {
-      record = JSON.parse(lines[i]!) as typeof record;
+      record = JSON.parse(lines[i]!);
     } catch {
       continue;
     }
+    if (!isJsonObject(record)) continue;
     if (record.event === 'web_navigation' && typeof record.url === 'string') {
       const moved = route !== null && route !== record.url ? { route } : {};
       if (failure !== null) return { url: record.url, state: 'failed', error: failure, ...moved };

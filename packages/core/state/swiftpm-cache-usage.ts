@@ -17,16 +17,17 @@ export function swiftpmCacheUsageFile(): string {
 
 export function readSwiftpmCacheUsage(): SwiftpmCacheUsage | null {
   const value = readJsonObject(swiftpmCacheUsageFile());
+  if (!value) return null;
+  const { version, measuredAt, dir, present, bytes, complete } = value;
   if (
-    !value ||
-    value.version !== 1 ||
-    typeof value.measuredAt !== 'string' ||
-    !Number.isFinite(Date.parse(value.measuredAt)) ||
-    typeof value.dir !== 'string' ||
-    typeof value.present !== 'boolean' ||
-    typeof value.complete !== 'boolean' ||
-    !(value.bytes === null || (typeof value.bytes === 'number' && Number.isFinite(value.bytes) && value.bytes >= 0))
+    version !== 1 ||
+    typeof measuredAt !== 'string' ||
+    !Number.isFinite(Date.parse(measuredAt)) ||
+    typeof dir !== 'string' ||
+    typeof present !== 'boolean' ||
+    typeof complete !== 'boolean' ||
+    !(bytes === null || (typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0))
   )
     return null;
-  return value as unknown as SwiftpmCacheUsage;
+  return { version, measuredAt, dir, present, bytes, complete };
 }

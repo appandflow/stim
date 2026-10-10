@@ -77,7 +77,8 @@ function validTimeZone(timeZone: string): boolean {
   }
 }
 
-const minuteOfDay = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
+const minuteOfDay = (value: unknown) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 1440;
 
 /** Quiet hours as `push.register` takes them, or null when `value` is not valid. */
 export function parseQuietHours(value: unknown): QuietHours | null {
@@ -89,7 +90,7 @@ export function parseQuietHours(value: unknown): QuietHours | null {
 
 /** Whether `value` is a stuck threshold `push.register` takes: whole minutes from 1 to 240. */
 export function validStuckMinutes(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 240;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 240;
 }
 
 interface PairingRecord {

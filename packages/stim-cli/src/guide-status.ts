@@ -4,7 +4,7 @@ import { getConfigDir, getProject, upsertProject } from './workspace/config.ts';
 import { projectRegistry } from './integrations/projects.ts';
 import type { DoctorPlatform } from './diagnostics/doctor.ts';
 import { compareStimVersions } from './diagnostics/stim-installations.ts';
-import type { DoctorRunRecord, ProjectRecord } from '@stim-cli/core/state';
+import { isJsonObject, type DoctorRunRecord, type ProjectRecord } from '@stim-cli/core/state';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DOCTOR_STALE_MS = 7 * DAY_MS;
@@ -78,8 +78,8 @@ function writeUpdateCache(cache: UpdateCache): void {
 async function fetchLatest(fetchImpl: typeof fetch): Promise<string | null> {
   const res = await fetchImpl(LATEST_URL, { signal: AbortSignal.timeout(UPDATE_CHECK_TIMEOUT_MS) });
   if (!res.ok) return null;
-  const body = (await res.json()) as { version?: unknown };
-  return typeof body.version === 'string' ? body.version : null;
+  const body: unknown = await res.json();
+  return isJsonObject(body) && typeof body.version === 'string' ? body.version : null;
 }
 
 export async function checkForUpdate(
