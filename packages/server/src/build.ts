@@ -63,6 +63,8 @@ export interface BuildLimits {
   maxJobs: number;
   /** Free bytes the worker root's volume must keep for a build to start there. */
   minFreeBytes: number;
+  /** Sum of the declared file sizes one manifest may hold. */
+  maxManifestBytes: number;
   timeoutMs: number;
   killGraceMs: number;
   /** How long a build whose connection dropped keeps running for a new connection to attach to it. */
@@ -80,6 +82,7 @@ export interface BuildLimits {
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
   maxJobs: 1,
   minFreeBytes: 10 * 1024 ** 3,
+  maxManifestBytes: 20 * 1024 ** 3,
   timeoutMs: 60 * 60_000,
   killGraceMs: 5000,
   detachGraceMs: 5 * 60_000,
@@ -371,6 +374,14 @@ export class BuildHost {
     this.draining = reason;
   }
 
+  /** Why the worker root's volume cannot take `bytes` more, or null when it can. */
+  lowDisk(bytes = 0): string | null {
+    const free = freeBytes(this.root());
+    return free !== null && free - bytes < this.limits.minFreeBytes
+      ? `${gb(free)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
+      : null;
+  }
+
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;
@@ -380,9 +391,7 @@ export class BuildHost {
       this.draining ??
       (running >= this.limits.maxJobs
         ? `already running ${running} offloaded build(s), its limit`
-        : diskFreeBytes !== null && diskFreeBytes < this.limits.minFreeBytes
-          ? `${gb(diskFreeBytes)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
-          : saturation({ ...machine, builds }));
+        : (this.lowDisk() ?? saturation({ ...machine, builds })));
     return {
       running,
       max: this.limits.maxJobs,
@@ -745,6 +754,7 @@ function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradl
 export class BuildSession {
   private repo: string | null = null;
   private files = new Map<string, BuildFile>();
+  private bytes = 0;
   private done = false;
   private readonly expected = new Map<string, number>();
   private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
@@ -775,9 +785,12 @@ export class BuildSession {
       return refusal('bad-request', 'build.sync needs params.repo, params.files and params.done.');
     }
     if (typeof params.done !== 'boolean') return refusal('bad-request', 'build.sync needs params.done.');
+    const low = this.host.lowDisk();
+    if (low) return refusal('build-busy', `This Mac declines the upload: ${low}.`);
     if (this.done || this.repo !== params.repo) {
       this.repo = params.repo;
       this.files = new Map();
+      this.bytes = 0;
       this.done = false;
     }
     if (this.files.size + params.files.length > MAX_MANIFEST_FILES) {
@@ -787,6 +800,10 @@ export class BuildSession {
     for (const file of params.files) {
       if (!validFile(file)) {
         return refusal('bad-request', `Invalid manifest entry ${JSON.stringify(file).slice(0, 200)}.`);
+      }
+      this.bytes += file.size;
+      if (this.bytes > this.host.limits.maxManifestBytes) {
+        return refusal('limit-exceeded', `A manifest holds at most ${gb(this.host.limits.maxManifestBytes)} GB.`);
       }
       this.files.set(file.path, file);
       if (this.expected.has(file.sha256) || existsSync(this.blobPath(file.sha256))) continue;
@@ -806,6 +823,8 @@ export class BuildSession {
     if (!this.incoming) {
       const size = this.expected.get(sha256);
       if (size === undefined) return `blob ${sha256} was not asked for`;
+      const low = this.host.lowDisk(size);
+      if (low) return `this Mac declines the upload: ${low}`;
       const tmp = join(this.blobs(), `.incoming-${randomUUID()}`);
       mkdirSync(this.blobs(), { recursive: true, mode: 0o700 });
       this.incoming = { sha256, size, received: 0, hash: createHash('sha256'), tmp };
