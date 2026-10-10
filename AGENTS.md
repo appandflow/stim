@@ -171,8 +171,8 @@ comment and that branch on `origin`. When either is present the issue is taken;
 pick another. When you choose an issue yourself, take the highest priority among
 free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
 `Claimed: <branch>`, then push the branch to `origin` before implementing
-anything. The open pull request replaces the
-claim. If you stop without one, comment `Released:` and delete the branch.
+anything. The open pull request replaces the claim. If you stop without one,
+comment `Released:` and delete the branch.
 
 Implement each valid issue in its own git worktree and branch created from the
 refreshed `origin/main`. Independent issues may run in parallel worktrees. Keep
