@@ -1871,8 +1871,7 @@ Mac" check. Completed optional steps stay expanded so their handoff remains
 visible. The tutorial never starts the server or pairs or grants access.
 
 A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
-`tutorial-data.ts`, with the tracked paths substituted. The steps' command lists there feed only
-`stim guide tutorial manual`; Desktop does not show them. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
+`tutorial-data.ts`, with the tracked paths substituted. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
 Build section's Run, and is disabled while a build or action runs in the workspace.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the

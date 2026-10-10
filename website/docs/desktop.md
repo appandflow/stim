@@ -100,7 +100,7 @@ a tiny Expo app, and shows:
 - **App Logs (optional):** read the app's output and any errors in Logs.
 - **Agent Actions and Replay (optional):** see what your agent did on the first change's simulator, then replay it. A glow points at its live view, then its Agent Actions list, then the replay's Play button. The step ticks **Agent actions viewed** and **Replay played** and stays open so you can keep watching; **Next** then records it done. When no agent actions were recorded on that simulator, the step says so.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there".
-- **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it. When Stim reports a pull request for the first change's worktree, including one from your fork, the step ticks **Pull request opened**, links it and completes; Stim checks GitHub every few minutes, so the tick can take up to five minutes.
+- **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with before and after screenshots of your change, a short note on how Stim verified it, and a link to Stim. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it. When Stim reports a pull request for the first change's worktree, including one from your fork, the step ticks **Pull request opened**, links it and completes; Stim checks GitHub every few minutes, so the tick can take up to five minutes.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 - **Delete the Test App (optional):** a prompt to remove the tutorial for good. Your agent removes any worktrees of the clone and then the clone itself with a plain `stim worktree remove`, stopping to ask if one holds changes, so their simulators, Metro ports and Stim records are torn down, and then deletes the clone's folder. The step completes when Stim no longer lists the clone and its folder is gone. Press **Next** to keep the clone.
 
@@ -138,10 +138,7 @@ A step that needs your agent shows a plain request to copy, with the paths
 filled in from the tour's repository. The default base is `~/stim-tutorial`.
 **Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
 for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way. To
-read the commands behind each step, for typing yourself:
-
-<StimTabs code={`stim guide tutorial manual`} />
+`remote.build` say. The agent keeps the tutorial's own runs local the same way.
 
 Desktop reads the archive setting through `stim settings --json`. If that
 setting cannot be read, finish waits ten seconds after a previously stopped

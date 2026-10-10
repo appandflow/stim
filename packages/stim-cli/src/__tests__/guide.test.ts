@@ -625,14 +625,16 @@ test('tutorial restart removes nothing, so it cannot contradict the finish force
   expect(flat('restart')).toMatch(/remove nothing/i);
 });
 
-test('the share step comes before finish and pushes to a fork with the simulator udid', () => {
+test("the share step comes before finish, pushes to a fork, and attaches the body's screenshots", () => {
   const ids = TUTORIAL_STEPS.map((step) => step.id);
   expect(ids.indexOf('share')).toBeLessThan(ids.indexOf('finish'));
-  const commands = TUTORIAL_STEPS.find((step) => step.id === 'share')!.commands.join('\n');
-  expect(commands).toContain('{udid}');
-  expect(commands).not.toContain('booted');
-  expect(commands).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
-  expect(flat('share')).toMatch(/never booted/);
+  const share = flat('share');
+  expect(share).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
+  expect(share).toMatch(/never booted/);
+  for (const shot of ['before', 'after']) {
+    expect(share).toContain(`--attach ".expo/screenshots/${shot}.png`);
+    expect(flat('share')).toContain(`(./.expo/screenshots/${shot}.png)`);
+  }
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {

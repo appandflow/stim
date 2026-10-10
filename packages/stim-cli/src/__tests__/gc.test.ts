@@ -2571,16 +2571,11 @@ function installDeviceExecutor({
     run(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      if (cmd.startsWith('xcrun simctl delete ')) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      const shutdownMatch = cmd.match(/^xcrun simctl shutdown (.+)$/);
-      if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
-        throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
-      }
       return '';
     },
     runFile(file, args: string[] = []) {
@@ -2592,6 +2587,9 @@ function installDeviceExecutor({
     },
     runFileQuiet(file: string, args: string[] = []) {
       execCalls.push([file, ...args].join(' '));
+      if (args[1] === 'shutdown' && throwOnShutdownFor.has(args[2] ?? '')) {
+        throw new Error(`simulated shutdown failure for ${args[2]}`);
+      }
       return '';
     },
     spawn(cmd, args: readonly string[] = []) {
