@@ -201,16 +201,18 @@ adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
 When the diff has a change in one of these that no maintainer has approved, it
 adds `review: needs-human` and removes any `review: human-approved`:
 
-- authentication, pairing, tokens, secrets, or the capabilities stim-server
-  grants (read, control, build, device-host) and what it exposes on the network;
-- the decisions about which files, processes or devices Stim owns and may
-  delete or kill: `gc`, reclaim, teardown selection, ownership claims and locks;
-- child-process argument handling in `exec.ts` or its callers' escaping, or
-  direct `node:child_process` use in `expo-build-cache`;
-- release, publishing, signing, or secret-bearing CI workflows;
-- the on-disk state format, or a published contract (JSON output, settings,
-  stim-server protocol) in a way that existing users or clients would notice;
-- this issue and pull request workflow, including the review labels.
+- what another machine can reach or do on this Mac: a new or wider network
+  listener, authentication or pairing path, or stim-server capability;
+- how secrets, tokens or signing keys are stored, passed or exposed;
+- deleting or killing something Stim does not own, or a new way to decide that
+  Stim owns it;
+- a release or publishing workflow that holds secrets;
+- a breaking change to on-disk state or a published contract that existing
+  installs or clients cannot read.
+
+Refactors, hardening, stricter validation and bug fixes inside those areas do
+not qualify unless they widen what is exposed, deleted or readable. When it is
+unclear, leave the label off and name the concern in the review.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
