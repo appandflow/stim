@@ -15,6 +15,7 @@ export async function openObserver(credential) {
   });
   const replies = new Map();
   const frames = [];
+  const frameEvents = [];
   let nextId = 1;
   let failure;
   socket.on('error', (error) => {
@@ -26,6 +27,20 @@ export async function openObserver(credential) {
   socket.on('message', (bytes, binary) => {
     if (binary) return;
     const message = JSON.parse(String(bytes));
+    if (['frame', 'frame-delayed', 'error'].includes(message.event)) {
+      frameEvents.push({
+        event: message.event,
+        subscription: message.subscription,
+        receivedAt: Date.now(),
+        capturedAt: message.capturedAt,
+        width: message.width,
+        height: message.height,
+        base64Chars: message.data?.length,
+        delayed: message.delayed,
+        reason: String(message.reason ?? message.error?.message ?? '').slice(0, 512),
+      });
+      if (frameEvents.length > 32) frameEvents.shift();
+    }
     if (message.event === 'frame') {
       frames.push(message);
       if (frames.length > 2) frames.shift();
@@ -65,11 +80,25 @@ export async function openObserver(credential) {
   }
   return {
     rpc,
-    frame: (subscription, since) =>
-      until(
-        () => frames.find((frame) => frame.subscription === subscription && Date.parse(frame.capturedAt) >= since),
-        30_000,
-      ),
+    frame: async (subscription, since, minimumEdge) => {
+      try {
+        return await until(
+          () =>
+            frames.find(
+              (frame) =>
+                frame.subscription === subscription &&
+                Date.parse(frame.capturedAt) >= since &&
+                Math.max(frame.width, frame.height) > minimumEdge,
+            ),
+          30_000,
+        );
+      } catch (cause) {
+        throw new Error(
+          `${cause.message} Frame evidence: ${JSON.stringify({ subscription, since, minimumEdge, events: frameEvents })}`,
+          { cause },
+        );
+      }
+    },
     drop: () => socket.terminate(),
     close: () => socket.close(1000),
   };

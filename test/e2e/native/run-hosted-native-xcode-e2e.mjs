@@ -202,18 +202,44 @@ async function agent(label, facts, args) {
     { timeout: 5 * 60_000 },
   );
 }
-async function frame(label, subscription, since) {
-  const image = await observer.frame(subscription, since);
-  assert.equal(image.platform, 'ios');
-  assert.equal(image.mime, 'image/jpeg');
-  assert(image.width > 0 && image.height > 0);
-  const bytes = Buffer.from(image.data, 'base64');
-  assert.equal(bytes.subarray(0, 3).toString('hex'), 'ffd8ff');
-  const file = join(evidence, `${label}.jpg`);
-  writeFileSync(file, bytes);
-  const decoded = await run(`${label}-decode`, 'sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file]);
-  assert.match(decoded, new RegExp(`pixelWidth: ${image.width}\\b`));
-  assert.match(decoded, new RegExp(`pixelHeight: ${image.height}\\b`));
+async function frame(label, session) {
+  const since = Date.now();
+  const subscription = (await observer.rpc('device-host.frames.subscribe', { session, fps: 2, maxEdge: 800 }))
+    .subscription;
+  let failure;
+  try {
+    const image = await observer.frame(subscription, since, 720);
+    assert.equal(image.platform, 'ios');
+    assert.equal(image.mime, 'image/jpeg');
+    assert.equal(image.subscription, subscription);
+    assert(Date.parse(image.capturedAt) >= since);
+    assert(image.width > 0 && image.height > 0);
+    assert(Math.max(image.width, image.height) > 720);
+    const bytes = Buffer.from(image.data, 'base64');
+    assert.equal(bytes.subarray(0, 3).toString('hex'), 'ffd8ff');
+    save(`${label}-frame`, {
+      subscription,
+      since,
+      capturedAt: image.capturedAt,
+      width: image.width,
+      height: image.height,
+      bytes: bytes.length,
+    });
+    const file = join(evidence, `${label}.jpg`);
+    writeFileSync(file, bytes);
+    const decoded = await run(`${label}-decode`, 'sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file]);
+    assert.match(decoded, new RegExp(`pixelWidth: ${image.width}\\b`));
+    assert.match(decoded, new RegExp(`pixelHeight: ${image.height}\\b`));
+  } catch (error) {
+    failure = error;
+  }
+  try {
+    await observer.rpc('device-host.unsubscribe', { subscription });
+  } catch (error) {
+    if (failure) summary.diagnostics.push(`${label} frame unsubscribe: ${error.message}`);
+    else failure = error;
+  }
+  if (failure) throw failure;
 }
 async function verify(label, facts, revision, interact) {
   const session = await observer.rpc('device-host.attach', { session: facts.host.session });
@@ -240,7 +266,7 @@ async function verify(label, facts, revision, interact) {
     await observer.rpc('device-host.frames.subscribe', { session: session.id, fps: 2, maxEdge: 720 })
   ).subscription;
   try {
-    await frame(`${label}-before-ui`, subscription, Date.now());
+    await frame(`${label}-before-ui`, session.id);
     await agent(`${label}-open`, facts, ['open', facts.bundleId, '--platform', 'ios', '--foreground']);
     assert.equal(await pid(`${label}-pid-after-open`, session.device, facts.bundleId), beforePid);
     await agent(`${label}-revision`, facts, ['wait', 'text', revision, '30000']);
@@ -257,7 +283,7 @@ async function verify(label, facts, revision, interact) {
       }
       await agent(`${label}-clicked`, facts, ['wait', 'text', 'Count: 1', '30000']);
       await agent(`${label}-snapshot`, facts, ['snapshot', '-i']);
-      await frame(`${label}-after-click`, subscription, Date.now());
+      await frame(`${label}-after-click`, session.id);
       let records = [];
       const deadline = Date.now() + 30_000;
       do {
@@ -440,7 +466,7 @@ try {
     await observer.rpc('device-host.frames.subscribe', { session: reattached.id, fps: 2, maxEdge: 720 })
   ).subscription;
   try {
-    await frame('reconnect', subscription, Date.now());
+    await frame('reconnect', reattached.id);
   } finally {
     await observer.rpc('device-host.unsubscribe', { subscription });
   }
