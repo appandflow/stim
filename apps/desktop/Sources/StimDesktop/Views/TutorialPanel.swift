@@ -167,6 +167,10 @@ struct TutorialPanel: View {
             .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
             .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
           }
+          if let pull = state.link, let url = URL(string: pull.url) {
+            Link("PR #\(pull.number): \(pull.title)", destination: url).lineLimit(1)
+              .accessibilityLabel("Open pull request \(pull.number)")
+          }
           if current {
             ForEach(issues, id: \.self) { issue in
               Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
@@ -264,7 +268,7 @@ struct TutorialPanel: View {
         "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
     case "share":
       return
-        "Optional and public, and do it before finishing so your change still exists. If you paste this, your agent forks appandflow/stim-tutorial and opens a pull request: your GitHub name and change appear on that repo. It needs GitHub access (gh) for your agent, and a bot will reply and close it. Nothing depends on this step."
+        "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
@@ -288,6 +292,7 @@ struct TutorialPanel: View {
     case "registered": return "Registered with Stim"
     case "worktrees": return "Tutorial worktrees removed"
     case "clone": return "Clone removed and deleted"
+    case "pr": return "Pull request opened"
     default: return PhaseStep.name(id)
     }
   }

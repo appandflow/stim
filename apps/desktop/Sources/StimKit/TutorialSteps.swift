@@ -37,7 +37,7 @@ public enum TutorialSteps {
       ask: nil, section: nil),
     TutorialStep(
       id: "share", title: "Share Your Finish", who: "you", optional: true,
-      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share"),
+      ask: "Open a pull request to appandflow/stim-tutorial with my change and before/after screenshots. See stim guide tutorial share.", section: "share"),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
       ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.", section: "finish"),

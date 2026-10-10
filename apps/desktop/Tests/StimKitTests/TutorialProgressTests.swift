@@ -251,6 +251,20 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("device", in: result).state == .done)
 }
 
+@Test func tutorialShareCompletesWithAPullRequestFromTheFirstChangesWorktree() throws {
+  var env = try environment()
+  var progress = TutorialProgress()
+  var result = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "share")))
+  #expect(result.currentStep == "share")
+  env.pullRequest = try JSONDecoder().decode(
+    PullRequestFacts.self,
+    from: Data(#"{"number":7,"url":"https://github.com/appandflow/stim-tutorial/pull/7","title":"Green","state":"open"}"#.utf8))
+  result = progress.update(TutorialInput(environment: env, now: afterRebuild))
+  #expect(result.currentStep == "finish")
+  #expect(state("share", in: result).state == .done)
+  #expect(state("share", in: result).link?.number == 7)
+}
+
 @Test func tutorialAgentTicksViewerEventsOnTheTourDeviceAndNextRecordsItDone() throws {
   var progress = TutorialProgress()
   let checked = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")

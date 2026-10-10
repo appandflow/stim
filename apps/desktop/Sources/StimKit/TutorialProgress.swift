@@ -13,6 +13,7 @@ public struct TutorialEnvironment: Sendable {
   public var repository: String?
   public var recording: Workspace.Recording?
   public var agentStateDir: String?
+  public var pullRequest: PullRequestFacts?
   public var iosDoctorRanAt: Date?
 
   public init?(_ workspace: Workspace) {
@@ -29,6 +30,7 @@ public struct TutorialEnvironment: Sendable {
     repository = workspace.worktree?.repository ?? workspace.path
     recording = workspace.recording
     agentStateDir = workspace.agentDevice?.stateDir
+    pullRequest = workspace.worktree?.pullRequest
     iosDoctorRanAt = workspace.doctorRuns?.ios.flatMap { parseTimestamp($0.at) }
   }
 
@@ -225,6 +227,7 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var detail: String
   public var action: TutorialAction?
   public var ticks: [TutorialTick]
+  public var link: PullRequestFacts?
 }
 
 public struct TutorialSnapshot: Sendable {
@@ -369,7 +372,7 @@ public struct TutorialProgress: Sendable {
       let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
-        ticks: checkpoint.ticks)
+        ticks: checkpoint.ticks, link: checkpoint.link)
     }
     return TutorialSnapshot(
       steps: steps, currentStep: current, record: record!,
@@ -435,6 +438,7 @@ public struct TutorialProgress: Sendable {
     var detail = ""
     var action: TutorialAction?
     var ticks: [TutorialTick] = []
+    var link: PullRequestFacts?
   }
 
   private mutating func checkpoint(
@@ -535,6 +539,10 @@ public struct TutorialProgress: Sendable {
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
           : "Pair your phone")
+    case "share":
+      let pull = environment?.pullRequest
+      return Checkpoint(
+        completed: pull == nil ? nil : now, ticks: [tick("pr", pull != nil)], link: pull)
     case "finish":
       if record?.step == "finish", environment?.live == false { record?.stopped = true }
       let absent = environment == nil && second == nil && record?.tourPath != nil
