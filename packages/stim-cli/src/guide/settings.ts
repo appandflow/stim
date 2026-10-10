@@ -756,8 +756,10 @@ The same \`remote.machines\` list names the Macs that may build for this one:
 node in $STIM_HOME/build-machines.json. A person approves the request on that
 Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
 A person can instead run \`stim-server setup\` on the worker with a node,
-ticket and expiry, under the approval rule above. Build never includes read
-or control.
+ticket and expiry, under the approval rule above. A build grant is full access
+to the account stim-server runs as: project code runs there unsandboxed, so it
+can grant itself read and control. Revoking it does not undo what that code
+already did. Grant it only to Macs you trust.
 Stim connects to a named Mac only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
 remote Mac's build pairing state and, for an approved one, asks it for one build

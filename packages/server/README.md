@@ -118,7 +118,9 @@ questions, including without a terminal. Without
 a terminal or `--yes`, setup refuses before installing anything unless every
 chosen capability already has a matching approval. A person on
 the worker still approves; an SSH-driven run is not offered. Build and
-device-host requests are separate grants. Build never includes read or control.
+device-host requests are separate grants. A build grant carries no `read` or
+`control` capability, but it is full access to this account in practice (see
+[Build access](#build-access)).
 A rerun before expiry reports matching approved requests as already approved
 and never grants a second request. After expiry it refuses with exit 2 before
 any change. Requests themselves lapse after 15 minutes.
@@ -305,17 +307,31 @@ connection sees a new grant after it reconnects. Under Stim Host, an approved
 `hello` also carries the same `host` grants as `/health`, which `stim doctor`
 reports for remote Macs.
 
-Every method other than `hello` needs `read`. A device with only `build`
-gets `forbidden` for all of them.
+Every method other than `hello` needs `read`, except the methods with their own
+approval: `build.*` needs `build`, the `device-host.*` methods that run a hosted
+session need `device-host`, and `server.update.*` needs the build or device-host
+approval of the requesting Mac (see [Remote update](#remote-update)). A device
+with only `build` gets `forbidden` for every other method.
 
 ## Build access
 
 `build` lets another Mac on the tailnet run its project's code on this Mac to
 build for it: config plugins, CocoaPods hooks, Xcode script phases and Gradle
-plugins run as the user `stim-server` runs as. It never comes with `read` or
-`control`, and `devices grant` never turns a paired device into a build
-client. Grant it only to Macs you trust with that. A connection from this Mac,
-over loopback, cannot get it: it has no tailnet node to bind the token to.
+plugins run as the user `stim-server` runs as. The offload worker runs with that
+user's real home directory and no sandbox, so a build grant is equivalent to
+full access to the account `stim-server` runs as. In practice it includes
+everything `read` and `control` allow: project code can edit the
+server's `devices.json` (under `~/.stim/server` by default, which the worker's
+real home directory still reaches) to grant itself either, read other build
+clients' checkouts and blobs, and persist through LaunchAgents or shell startup
+files. `devices grant` never turns a paired device into a build client, and the
+protocol does not list `read` or `control` among a build client's capabilities,
+but do not rely on that as a boundary. Grant it only to Macs you trust with
+that. Revoking the grant stops future builds and kills the running job's
+process group. It does not undo anything project code already did. A loopback
+connection from this Mac cannot get it: it has no tailnet node to bind the
+token to. A connection from this Mac to its own tailnet address or `*.ts.net`
+name does carry the Mac's own tailnet identity and can request `build`.
 Because the server trusts `X-Forwarded-For` on loopback (see
 [Pairing](#pairing)), a process on this Mac can still claim a tailnet peer's
 address. Run `stim-server` as a user no one else can run processes as when
@@ -1111,8 +1127,8 @@ A Mac this one approved for builds (`--build`) or device hosting
 (`--device-host`) can update this Mac's `stim-server service` over its tailnet
 connection, so the remote Mac keeps up with the client without ssh. A
 server that offers it lists `server-update` in its `hello` features. A paired
-phone, a `read` or `control` device and a connection from this Mac cannot. The
-methods need that approval, not `read`:
+phone, a `read` or `control` device and a loopback connection from this Mac
+cannot. The methods need that approval, not `read`:
 
 - `server.update.status` returns `server` (`version` and `stimBuild`),
   `service` (the label of the LaunchAgent this server runs under, or `null` when
@@ -1123,7 +1139,9 @@ methods need that approval, not `read`:
 - `server.update.start` takes `{ "release": "<version>" }`, an exact version
   that `stim-server service update --release` installs, or
   `{ "packages": [{ "name", "size", "sha256" }] }`, at most 8 `.tgz` packages
-  of the client's own build. Packages need `server.acceptClientBuilds` set to
+  of the client's own build. A `release` older than the version this server
+  runs is refused with `bad-request`; run `stim-server service update --release`
+  on this Mac to downgrade it. Packages need `server.acceptClientBuilds` set to
   `true` on this Mac (`stim settings set server.acceptClientBuilds true`); a
   release needs no setting. One update runs at a time.
 - `server.update.chunk` takes `{ id, name, offset, data }`, at most 32 KiB of

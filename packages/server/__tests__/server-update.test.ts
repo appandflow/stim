@@ -112,6 +112,18 @@ describe('server update requests', () => {
     expect((await instance.status()).running).toBeNull();
   });
 
+  it('refuses a release older than the running server and accepts the same version', async () => {
+    const { instance, drains, settled, started } = updates();
+    expect(await instance.start(by, { release: '1.13.9' })).toMatchObject({
+      error: { code: 'bad-request', message: expect.stringContaining('older release 1.13.9') },
+    });
+    expect(await instance.start(by, { release: '1.14.0-rc.1' })).toMatchObject({ error: { code: 'bad-request' } });
+    expect(drains).toEqual([]);
+    expect(started).toEqual([]);
+    expect(await instance.start(by, { release: '1.14.0' })).toMatchObject({ result: { target: 'release 1.14.0' } });
+    await settled();
+  });
+
   it('reports a failed update and takes new work again', async () => {
     const { instance, drains, settled } = updates({
       env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json'), FAKE_UPDATER_FAIL: '1' },

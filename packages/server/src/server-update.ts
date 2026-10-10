@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, mkdirSync, openSync, readdirSync, readFileSy
 import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
-import { validateRelease, type ServerBuild } from './service-plist.ts';
+import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
 import { describeSource, readLastUpdate, runsAsService, serviceRoot, type UpdateSource } from './service.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
@@ -156,6 +156,12 @@ export class ServerUpdates {
   async start(by: ServerUpdateProgress['by'], params: unknown): Promise<Answer> {
     const parsed = parseUpdateStart(params);
     if (typeof parsed === 'string') return refused('bad-request', parsed);
+    if ('release' in parsed && compareVersions(parsed.release, this.options.build.version) < 0) {
+      return refused(
+        'bad-request',
+        `This server runs ${this.options.build.version}; it does not install the older release ${parsed.release} on a client's request. To downgrade it, run \`stim-server service update --release ${parsed.release}\` on the Mac it runs on.`,
+      );
+    }
     const label = this.options.label;
     if (!label || !(await (this.options.runsAsService ?? runsAsService)(label, this.options.port))) {
       return refused(

@@ -283,6 +283,31 @@ export function planServe(
   return { record: { port: route.port, created: true }, create: true };
 }
 
+const parseVersion = (v: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/.exec(v);
+
+export function compareVersions(a: string, b: string): number {
+  const aa = parseVersion(a),
+    bb = parseVersion(b);
+  if (!aa || !bb) throw new ServiceError(`Cannot compare stim-server versions ${a} and ${b}.`);
+  for (let i = 1; i <= 3; i++) {
+    const diff = Number(aa[i]) - Number(bb[i]);
+    if (diff) return diff;
+  }
+  if (!aa[4] || !bb[4]) return aa[4] ? -1 : bb[4] ? 1 : 0;
+  const ap = aa[4].split('.'),
+    bp = bb[4].split('.');
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const x = ap[i],
+      y = bp[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    if (/^\d+$/.test(x) && /^\d+$/.test(y)) return Number(x) - Number(y);
+    if (/^\d+$/.test(x) !== /^\d+$/.test(y)) return /^\d+$/.test(x) ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
 const RELEASE_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 export function validateRelease(value: string): string | null {
