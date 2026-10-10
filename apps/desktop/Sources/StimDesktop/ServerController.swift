@@ -105,6 +105,7 @@ final class ServerController: ObservableObject {
   @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
+  private var loginEnvironment: [String: String]?
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -181,6 +182,7 @@ final class ServerController: ObservableObject {
 
   func configure(environment: Task<[String: String], Never>) {
     self.environment = environment
+    Task { loginEnvironment = await environment.value }
     start()
     devicesPoller.start()
     NotificationCenter.default.addObserver(
@@ -223,7 +225,9 @@ final class ServerController: ObservableObject {
       await waitForExiting()
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
-        let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
+        // The login shell can take seconds to report STIM_HOME. Until it does, the launch environment decides the
+        // adoption, so a shell-only STIM_HOME shows the server's home until `refresh` sees the mismatch and restarts.
+        let resolved = StimHome.path(environment: loginEnvironment ?? ProcessInfo.processInfo.environment)
         guard current == generation else { return }
         state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
         return
