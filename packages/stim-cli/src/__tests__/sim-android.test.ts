@@ -426,20 +426,20 @@ test('deleteAvd refuses to delete an AVD not owned by Stim', () => {
 test('deleteAvd deletes a Stim-owned AVD', () => {
   let ran = null;
   setExecutor({
-    run: (cmd) => {
-      ran = cmd;
-      return null;
+    runFile: (_file, args) => {
+      ran = args;
+      return '';
     },
     runQuiet: () => null,
     spawn: () => null,
   });
   deleteAvd('stim-my-project');
-  expect(ran).toMatch(/delete avd -n "stim-my-project"/);
+  expect(ran).toEqual(['delete', 'avd', '-n', 'stim-my-project']);
 });
 
 test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
   setExecutor({
-    run: () => {
+    runFile: () => {
       throw new Error('avdmanager: could not delete');
     },
     runQuiet: () => null,
@@ -495,7 +495,8 @@ test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by por
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
     },
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'stim-mine\nOK';
       return null;
     },
@@ -512,7 +513,8 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
     },
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/adb -s emulator-5554 emu avd name/.test(cmd)) return 'Android_Studio_Default\nOK';
       return null;
     },
@@ -529,7 +531,8 @@ test('resolveOwnedAvdSerial resolves an offline emulator through its console ide
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
       return '';
     },
-    runQuiet: (cmd) => (/adb -s emulator-5554 emu avd name/.test(cmd) ? 'stim-mine\nOK' : null),
+    runFileQuiet: (file: string, args: string[] = []) =>
+      /adb -s emulator-5554 emu avd name/.test([file, ...args].join(' ')) ? 'stim-mine\nOK' : null,
     spawn: () => null,
   });
 
@@ -545,7 +548,8 @@ test('resolveOwnedAvdSerial asks healthy emulators first and bounds every consol
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
       return '';
     },
-    runQuiet: (cmd, opts) => {
+    runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+      const cmd = [file, ...args].join(' ');
       const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
       if (!serial) return null;
       queried.push({ serial, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
@@ -584,7 +588,8 @@ test('resolveOwnedAvdSerial floors each console query so a slow earlier call doe
       }
       return '';
     },
-    runQuiet: (cmd: string, opts?: { timeoutMs?: number }) => {
+    runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+      const cmd = [file, ...args].join(' ');
       const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
       if (!serial) return null;
       queried.push({ cmd, at: Date.now(), timeoutMs: opts?.timeoutMs });
@@ -609,7 +614,8 @@ test('resolveOwnedAvdSerial caches a failed console query per serial so one reso
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
       return '';
     },
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
       if (!serial) return null;
       queried.push(serial);
@@ -674,12 +680,12 @@ test.each([
 ])(
   'shutdownAndroidEmulator shares a $timeoutMs ms deadline across sync and kill',
   ({ timeoutMs, flushMs, killTimeoutMs }) => {
-    const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
+    const calls: Array<{ argv: string[]; timeoutMs: number | undefined }> = [];
     const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(flushMs);
     setExecutor({
       run: () => '',
-      runQuiet: (command, options) => {
-        calls.push({ command, timeoutMs: options?.timeoutMs });
+      runFileQuiet: (file: string, args: string[], options) => {
+        calls.push({ argv: [file, ...args], timeoutMs: options?.timeoutMs });
         return '';
       },
       spawn: () => null,
@@ -692,8 +698,8 @@ test.each([
     }
 
     expect(calls).toEqual([
-      { command: 'adb -s emulator-5554 shell sync', timeoutMs: Math.min(5000, timeoutMs) },
-      { command: 'adb -s emulator-5554 emu kill', timeoutMs: killTimeoutMs },
+      { argv: ['adb', '-s', 'emulator-5554', 'shell', 'sync'], timeoutMs: Math.min(5000, timeoutMs) },
+      { argv: ['adb', '-s', 'emulator-5554', 'emu', 'kill'], timeoutMs: killTimeoutMs },
     ]);
   },
 );
@@ -1093,8 +1099,8 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
   const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
   const now = vi.spyOn(Date, 'now').mockReturnValue(0);
   setExecutor({
-    runQuiet: (command: string, options) => {
-      calls.push({ command, timeoutMs: options?.timeoutMs });
+    runFileQuiet: (file: string, args: string[], options) => {
+      calls.push({ command: [file, ...args].join(' '), timeoutMs: options?.timeoutMs });
       return '';
     },
   });
@@ -1117,7 +1123,8 @@ test('shutdownAndroidEmulator warns and still kills the emulator when sync fails
   const originalError = console.error;
   console.error = (message) => errors.push(String(message));
   setExecutor({
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       return cmd.includes('shell sync') ? null : '';
     },
@@ -1137,7 +1144,8 @@ test('waitForBoot keeps polling while adb still fails', async () => {
   let calls = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       calls++;
@@ -1156,7 +1164,8 @@ test('waitForBoot keeps waiting after the boot properties until the package mana
   let pmAnswers = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       if (/getprop sys\.boot_completed/.test(cmd)) return '1';
       if (/shell pm path android/.test(cmd))
@@ -1175,7 +1184,8 @@ test('waitForBoot pays one package-manager probe when it is already up and repor
   const calls: string[] = [];
   const executor = (pm: string | null) => ({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       calls.push(cmd);
       if (/getprop sys\.boot_completed/.test(cmd)) return '1';
       if (/shell pm path android/.test(cmd)) return pm;
@@ -1199,7 +1209,7 @@ test('waitForBoot pays one package-manager probe when it is already up and repor
 test('waitForBoot reports a timeout diagnostic when adb never answers', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: () => null,
+    runFileQuiet: () => null,
     spawn: () => null,
   });
   const result = await waitForBoot('emulator-5554', 10);
@@ -1212,7 +1222,8 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
   vi.setSystemTime(0);
   const calls: { cmd: string; at: number; timeoutMs: number }[] = [];
   setExecutor({
-    runQuiet: (cmd, opts) => {
+    runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+      const cmd = [file, ...args].join(' ');
       const at = Date.now();
       const timeoutMs = opts?.timeoutMs ?? Infinity;
       calls.push({ cmd, at, timeoutMs });
@@ -1328,8 +1339,8 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   const cwds: unknown[] = [];
   const args: string[][] = [];
   setExecutor({
-    runQuiet: (cmd: string) => (cmd.endsWith(' -version') ? 'Android emulator version 37.1.11.0 (build_id 1)' : null),
-    runFileQuiet: () => null,
+    runFileQuiet: (_file: string, args: string[]) =>
+      args[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
       cwds.push(opts.cwd);
       args.push(spawnArgs);
@@ -1513,7 +1524,8 @@ test('waitForBoot stops as soon as the emulator process is gone', async () => {
   let probes = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/getprop/.test(cmd)) probes++;
       return null;
     },
@@ -1531,7 +1543,8 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
   let probes = 0;
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (/pm path android/.test(cmd)) return 'package:/system/framework/framework-res.apk';
       if (!/getprop/.test(cmd)) return '';
       probes++;
@@ -1547,10 +1560,10 @@ test('waitForBoot keeps polling while the emulator process is alive', async () =
 test('waitForBoot returns ok when the device booted even if the process reads as gone', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) =>
-      /sys\.boot_completed/.test(cmd)
+    runFileQuiet: (_file: string, args: string[]) =>
+      /sys\.boot_completed/.test(args.join(' '))
         ? '1'
-        : /pm path android/.test(cmd)
+        : /pm path android/.test(args.join(' '))
           ? 'package:/system/framework/framework-res.apk'
           : '',
     spawn: () => null,
