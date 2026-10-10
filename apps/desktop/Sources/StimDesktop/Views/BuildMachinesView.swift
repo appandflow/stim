@@ -193,6 +193,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
   var showsThisMac = false
+  var thisMacName = Host.current().localizedName ?? "This Mac"
   var thisMac: ThisMac
 
   var body: some View {
@@ -244,8 +245,17 @@ struct BuildMachinesContent<ThisMac: View>: View {
   @ViewBuilder private var localPool: some View {
     if poolDisabled != nil {
       Section {
-        Text("This Mac").font(.stim(.body, weight: .semibold))
-        poolToggles("local")
+        HStack(alignment: .top, spacing: Space.lg) {
+          Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
+            .accessibilityHidden(true)
+          VStack(alignment: .leading, spacing: Space.md) {
+            Text(verbatim: thisMacName).font(.stim(.body, weight: .semibold)).lineLimit(1)
+            poolToggles("local")
+          }
+        }
+        .padding(.vertical, Space.xxs)
+      } header: {
+        Text("This Machine")
       }
     }
   }

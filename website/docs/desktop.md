@@ -556,7 +556,7 @@ belonging to that path at once. Settings and other details are in the
 ## Add a remote Mac
 
 **Settings > Remote Macs** also shows **Builds enabled** and **Simulators enabled**
-for **This Mac** and each remote. These switches control new automatic placement
+for this Mac, in a card under **This Machine**, and on each remote machine's card. These switches control new automatic placement
 requested by this Mac without unpairing or stopping anything. Each pool retains at
 least one local or configured, approved remote member. Explicit placement is unchanged.
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
