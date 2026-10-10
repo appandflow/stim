@@ -83,20 +83,21 @@ public func isScratchPath(_ path: String) -> Bool {
 public func isGitCheckout(_ path: String) -> Bool {
   let fileManager = FileManager.default
   guard fileManager.fileExists(atPath: path) else { return false }
-  var directory = URL(fileURLWithPath: path)
+  var directory = path
   while true {
-    let dotGit = directory.appendingPathComponent(".git")
+    let dotGit = (directory as NSString).appendingPathComponent(".git")
     var isFolder: ObjCBool = false
-    if fileManager.fileExists(atPath: dotGit.path, isDirectory: &isFolder) {
+    if fileManager.fileExists(atPath: dotGit, isDirectory: &isFolder) {
       if isFolder.boolValue { return true }
-      guard let text = try? String(contentsOf: dotGit, encoding: .utf8),
+      guard let text = try? String(contentsOfFile: dotGit, encoding: .utf8),
         let line = text.split(separator: "\n").first(where: { $0.hasPrefix("gitdir:") })
       else { return false }
       let target = line.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespaces)
-      return fileManager.fileExists(atPath: URL(fileURLWithPath: target, relativeTo: directory).path)
+      let resolved = target.hasPrefix("/") ? target : (directory as NSString).appendingPathComponent(target)
+      return fileManager.fileExists(atPath: resolved)
     }
-    let parent = directory.deletingLastPathComponent()
-    if parent.path == directory.path { return false }
+    let parent = (directory as NSString).deletingLastPathComponent
+    if parent == directory || parent.isEmpty { return false }
     directory = parent
   }
 }
