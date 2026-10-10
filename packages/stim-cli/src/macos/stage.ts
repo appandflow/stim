@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
@@ -8,9 +8,14 @@ export function validateInfoPlist(
   product: string,
   infoPlist: string,
 ): { bundleId: string; minimumSystemVersion?: string } {
-  const plist = JSON.parse(
-    getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', realpathSync(resolve(root, infoPlist))]),
-  );
+  const source = resolve(root, infoPlist);
+  const inside = relative(realpathSync(root), realpathSync(source));
+  if (!lstatSync(source).isFile() || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+    throw new Error(
+      'macos.infoPlist must be a regular file inside the project, not a symbolic link. See stim guide macos.',
+    );
+  }
+  const plist = JSON.parse(getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', source]));
   if (typeof plist.CFBundleIdentifier !== 'string' || plist.CFBundleExecutable !== product) {
     throw new Error('macos.infoPlist must name a CFBundleIdentifier and the selected product as CFBundleExecutable.');
   }
