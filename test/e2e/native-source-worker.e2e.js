@@ -95,8 +95,7 @@ test('native worker removes stale ignored inputs and verifies the actual provide
   }
 });
 
-test('native worker refuses a compiler environment the client did not key before compiling', async () => {
-  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-identity-')));
+async function runNativeIdentityJob(area, prepareClient, workerEnv) {
   const saved = { PATH: process.env.PATH, STIM_HOME: process.env.STIM_HOME };
   try {
     const tools = join(area, 'tools');
@@ -109,6 +108,7 @@ test('native worker refuses a compiler environment the client did not key before
     mkdirSync(client);
     spawnSync('git', ['init', '--quiet', client]);
     writeNativeXcodeProject(client);
+    prepareClient(client);
     const unused = () => {
       throw new Error('Identity must not prepare or compile');
     };
@@ -187,17 +187,30 @@ test('native worker refuses a compiler environment the client did not key before
       input: JSON.stringify(job),
       encoding: 'utf8',
       timeout: 30000,
-      env: {
-        ...process.env,
-        STIM_HOME: join(area, 'home'),
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: 'WORKER_ONLY',
-      },
+      env: { ...process.env, STIM_HOME: join(area, 'home'), ...workerEnv },
     });
     assert.equal(result.error, undefined);
-    const records = result.stdout
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line));
+    return {
+      result,
+      records: result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line)),
+    };
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
+
+test('native worker refuses a compiler environment the client did not key before compiling', async () => {
+  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-identity-')));
+  try {
+    const { result, records } = await runNativeIdentityJob(area, () => {}, {
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: 'WORKER_ONLY',
+    });
     assert.deepEqual(
       { code: records.at(-1).code, message: records.at(-1).message },
       {
@@ -213,10 +226,35 @@ test('native worker refuses a compiler environment the client did not key before
     );
     assert.equal(existsSync(join(area, 'out')), false);
   } finally {
-    for (const [name, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
+    rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test('native worker keys a tracked file that matches .gitignore like the client', async () => {
+  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-tracked-ignored-')));
+  try {
+    const { result, records } = await runNativeIdentityJob(
+      area,
+      (client) => {
+        writeFileSync(join(client, '.gitignore'), 'Secrets.plist\n');
+        writeFileSync(join(client, 'Secrets.plist'), 'tracked despite the ignore rule');
+        spawnSync('git', ['-C', client, 'add', '-A']);
+        spawnSync('git', ['-C', client, 'add', '-f', 'Secrets.plist']);
+      },
+      {},
+    );
+    assert.equal(
+      readFileSync(join(area, 'src', 'Secrets.plist'), 'utf8'),
+      'tracked despite the ignore rule',
+      result.stdout + result.stderr,
+    );
+    assert.notEqual(records.at(-1).code, 'identity-mismatch', result.stdout + result.stderr);
+    assert.equal(
+      records.some((record) => record.phase === 'build'),
+      true,
+      result.stdout + result.stderr,
+    );
+  } finally {
     rmSync(area, { recursive: true, force: true });
   }
 });
