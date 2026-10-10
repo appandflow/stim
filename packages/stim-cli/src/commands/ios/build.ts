@@ -23,7 +23,7 @@ import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
 import { lastBuildRecord } from './result.ts';
-import { resolveConfiguration, resolveIosBuildSetup, simulatorBuildArch } from './support.ts';
+import { resolveConfiguration, resolveIosBuildSetup, resolveSchemeSelection, simulatorBuildArch } from './support.ts';
 
 export interface IosBuildOptions {
   configuration?: string;
@@ -71,7 +71,8 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
   }
   const { buildMachine, optimizations } = setup;
   const configuration = resolveConfiguration(options.configuration, settings);
-  const problem = integration.schemeProblem(options.scheme, configuration);
+  const buildScheme = resolveSchemeSelection(options, settings);
+  const problem = integration.schemeProblem(buildScheme, configuration);
   if (problem) throw Object.assign(new Error(problem.message ?? problem.code), problem);
   if (options.arch !== undefined && !['arm64', 'x86_64', 'all'].includes(options.arch))
     throw Object.assign(new Error('iOS build arch must be arm64, x86_64 or all.'), { code: 'STIM_BAD_ARG' });
@@ -156,7 +157,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
               root,
               logFile,
               configuration,
-              buildScheme: options.scheme,
+              buildScheme,
               buildProfile: optimizationBuildProfile('ios', optimizations),
               target: {
                 udid: null,
@@ -241,7 +242,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           appPath,
           bundleId: artifact.bundleId,
           configuration: configuration ?? 'Debug',
-          scheme: options.scheme ?? null,
+          scheme: buildScheme ?? null,
           arch,
           cacheKey: artifact.cache.identity?.key ?? null,
           cacheHit: artifact.cache.hit,

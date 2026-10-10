@@ -103,6 +103,15 @@ KEYS STIM READS
                         The \`--runtime\` flag overrides this per invocation,
                         and an uninstalled version refuses the same way,
                         naming the layer the value came from
+  ios.scheme            e.g. "RNTester" -- the shared Xcode scheme to build
+                        when the workspace lists several and none matches
+                        its name, which otherwise refuses with
+                        STIM_NO_SCHEME. The \`--scheme\` flag overrides it
+                        per invocation; an \`--eas-profile\` build reads only
+                        the flag. Part of the cache key, like the flag, so
+                        it also skips the older Expo buildCacheProvider tier,
+                        which may key only on the fingerprint. Workspace or
+                        committed scope.
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every

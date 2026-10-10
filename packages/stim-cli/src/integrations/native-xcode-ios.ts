@@ -6,6 +6,7 @@ import { explainBuildMiss, skippedMissReason } from '../cache/miss-reason.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
 import {
+  resolveSchemeSelection,
   deviceModelRefusal,
   resolveConfiguration,
   resolveDeviceType,
@@ -317,7 +318,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
     });
     if (modelRefusal) return { refusal: modelRefusal };
     const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
-    const selection = selectNativeXcodeProject(root, options.scheme, configuration);
+    const selection = selectNativeXcodeProject(root, resolveSchemeSelection(options, settings), configuration);
     const optimizations = resolveOptimizations(settings);
     const architecture = simulatorBuildArch({
       physical: false,
@@ -396,7 +397,7 @@ export function nativeXcodeDoctor(root: string): ProjectDoctor {
       try {
         const selection = selectNativeXcodeProject(
           root,
-          undefined,
+          resolveSchemeSelection({}, settings),
           resolveConfiguration(undefined, settings) ?? 'Debug',
         );
         const podfile = existsSync(join(root, 'Podfile'));
