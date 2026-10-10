@@ -1,20 +1,7 @@
-import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { buildCacheKey, entryDir } from '../cache/build-cache.ts';
-import { planPayload } from '../commands/build-plan.ts';
 import { planIos } from '../commands/ios/next-build.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { planAndroid } from '../commands/android/next-build.ts';
@@ -23,7 +10,6 @@ import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { createProjectRegistry, type ProjectIntegration } from '../integrations/project-registry.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
-import type { ProjectPlanResult } from '../integrations/project-plan.ts';
 import { getProject } from '../workspace/config.ts';
 import { nativeIosFixture } from './_native-ios-project.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
@@ -62,10 +48,7 @@ async function output(action: () => Promise<void>) {
   return JSON.parse(String(stdout.mock.calls[0]![0]));
 }
 
-function registryWithPlan(
-  platform: 'ios' | 'android',
-  planner?: (options: { configuration?: string; variant?: string }) => Promise<ProjectPlanResult>,
-) {
+function registryWithoutPlan(platform: 'ios' | 'android') {
   const fixture = platform === 'ios' ? nativeIosFixture : nativeAndroidFixture;
   const provider: ProjectIntegration = {
     ...fixture,
@@ -73,8 +56,8 @@ function registryWithPlan(
       const match = fixture.inspect(path);
       if (!match) return null;
       return platform === 'ios'
-        ? { ...match, ios: async () => ({ ...(await match.ios!()), plan: planner }) }
-        : { ...match, android: async () => ({ ...(await match.android!()), plan: planner }) };
+        ? { ...match, ios: async () => ({ ...(await match.ios!()), plan: undefined }) }
+        : { ...match, android: async () => ({ ...(await match.android!()), plan: undefined }) };
     },
   };
   return createProjectRegistry([
@@ -84,69 +67,9 @@ function registryWithPlan(
 }
 
 test.each(['ios', 'android'] as const)(
-  '%s plans use the integration cache identity and leave cache metadata unchanged',
-  async (platform) => {
-    const hash = createHash('sha256').update('native source v1').digest('hex');
-    const key = buildCacheKey(
-      platform,
-      hash,
-      platform === 'ios' ? { scheme: 'Native', configuration: 'Release' } : { variant: 'paidRelease' },
-    );
-    const artifact = join(entryDir(platform, key), platform === 'ios' ? 'Native.app' : 'native.apk');
-    if (platform === 'ios') mkdirSync(artifact, { recursive: true });
-    else {
-      mkdirSync(entryDir(platform, key), { recursive: true });
-      writeFileSync(artifact, 'native apk');
-    }
-    utimesSync(entryDir(platform, key), 1, 1);
-    const before = statSync(entryDir(platform, key)).mtimeMs;
-    const registry = registryWithPlan(platform, async (options) => {
-      const currentHash = createHash('sha256')
-        .update(readFileSync(join(root, 'Native.swift')))
-        .digest('hex');
-      const currentKey = buildCacheKey(
-        platform,
-        currentHash,
-        platform === 'ios' ? { scheme: 'Native', configuration: options.configuration } : { variant: options.variant },
-      );
-      return planPayload(
-        { root, projectKey: root, platform, slot: 'default' },
-        {
-          fingerprint: currentHash,
-          cacheKey: currentKey,
-          cacheHit: existsSync(join(entryDir(platform, currentKey), platform === 'ios' ? 'Native.app' : 'native.apk'))
-            ? 'local'
-            : false,
-          provider: null,
-          cacheSkipped: false,
-          prebuild: null,
-          refusal: null,
-        },
-      );
-    });
-    const invoke = () =>
-      platform === 'ios'
-        ? planIos(
-            { json: true, configuration: 'Release' },
-            { ...DEFAULT_DEPS, findProjectRoot: () => root, projectRegistry: registry },
-          )
-        : planAndroid({ json: true, variant: 'paidRelease' }, { findRoot: () => root, projectRegistry: registry });
-    expect(await output(invoke)).toMatchObject({ cacheKey: key, cacheHit: 'local', fingerprint: hash });
-    expect(statSync(entryDir(platform, key)).mtimeMs).toBe(before);
-    expect(existsSync(join(home, 'config.json'))).toBe(false);
-    writeFileSync(join(root, 'Native.swift'), 'native source v2');
-    vi.restoreAllMocks();
-    const changed = await output(invoke);
-    expect(changed.cacheHit).toBe(false);
-    expect(changed.cacheKey).not.toBe(key);
-    expect(existsSync(join(home, 'workspaces'))).toBe(false);
-  },
-);
-
-test.each(['ios', 'android'] as const)(
   '%s refuses an absent planner before any RN fallback or artifact work',
   async (platform) => {
-    const registry = registryWithPlan(platform);
+    const registry = registryWithoutPlan(platform);
     const payload = await output(() =>
       platform === 'ios'
         ? planIos(

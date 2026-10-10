@@ -1,4 +1,3 @@
-import type { AndroidRuntimeKind } from './launch.ts';
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
@@ -42,6 +41,7 @@ import {
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
+import type { AndroidRuntimeKind } from './launch.ts';
 import {
   deviceProfileRefusal,
   foldableImageRefusal,

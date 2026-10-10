@@ -5,12 +5,9 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
-For a native Xcode app without React Native or Expo, read
-\`stim guide lifecycle native-ios\`. The Metro and JavaScript steps below
-apply to React Native and Expo.
-
-For a native Android Gradle app without React Native or Expo, read
-\`stim guide lifecycle native-android\`.
+For a native Xcode or Gradle app without React Native or Expo, read
+\`stim guide lifecycle native-ios\` or \`stim guide lifecycle native-android\`.
+The Metro and JavaScript steps below apply to React Native and Expo.
 
 Two workflows share steps 2 through 6.
 
@@ -291,10 +288,12 @@ The existing owned simulator, device lease, signing, log and teardown services
 still apply. Stim does not change signing accounts or provisioning profiles.
 
 A reusable artifact key includes the selected build configuration, source and
-known dependency inputs, toolchain and build options. Native Release cache
-reuse does not depend on releaseBundleSwap. Xcode compilation uses the shared
-compilation cache when the toolchain and settings support it. --plan predicts
-this same local artifact without preparing dependencies or choosing a device.
+known dependency inputs, toolchain and build options. In a git checkout,
+ignored files the project does not reference are not part of the key. Native
+Release cache reuse does not depend on releaseBundleSwap. Xcode compilation
+uses the shared compilation cache when the toolchain and settings support it.
+--plan predicts this same local artifact without preparing dependencies or
+choosing a device.
 
 Inputs whose complete build closure cannot be established build locally with
 artifact caching skipped. This includes shell build phases, custom build rules,
@@ -306,7 +305,11 @@ A compatible approved build Mac can compile a native Xcode app with
 --remote-build auto or --remote-build <name>. Both peers must support
 native-xcode-build. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
-external inputs refuse source transfer; their bytes are never silently omitted.
+external inputs keep the build here, and placement names the first one; their
+bytes are never silently omitted. The common case is a Finder .DS_Store that a
+global gitignore hides: delete it, or stop ignoring it, to offload. The worker
+compares its own toolchain and compiler environment identity before compiling
+and refuses, naming the differing parameter, so the build falls back here.
 Worker source mirrors remove stale inputs, while Xcode compilation caches remain
 in the worker's private Stim home. Physical builds stay local.
 
@@ -330,46 +333,6 @@ Copyable agent request:
   Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
   --json. Verify its expected screen and interaction on the reported device,
   inspect stim logs --errors, then stop only this workspace with stim stop.`,
-    },
-    ci: {
-      summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
-      body: () => `CONTINUOUS INTEGRATION
-
-Install app dependencies and platform tools first. Use a dedicated checkout:
-cleanup stops that workspace, including resources created before a build fails.
-
-  npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
-
-Or install npm install --global @stim-cli/ci and use stim-ci directly.
-Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
---artifacts selects the result directory (a fresh temporary directory by default).
-An explicit artifacts directory must be empty; use a new directory per run.
-Stdout is one JSON result; progress and test output go to stderr.
-
-Tests receive STIM_CI_PLATFORM, STIM_CI_DEVICE_ID, STIM_CI_APP_ID,
-STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last is
-run.json with the exact public API result. Use that target and check app
-readiness; launched can still be bundling or unverified.
-
-result.json preserves the test exit code even if diagnostics or cleanup fail.
-Passing tests with failed cleanup return 1; timeout returns 124; cancellation
-returns 130. Leave 70 seconds before the job's hard timeout for diagnostics and
-stop. SIGKILL and runner loss cannot run cleanup. Stop shuts down owned devices;
-it never deletes them.
-
-GitHub-hosted jobs default to $RUNNER_TEMP/stim-ci/home and
-$RUNNER_TEMP/stim-ci/build-cache, reused between steps in the job. Detection
-requires GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and RUNNER_TEMP.
-An explicit --home or STIM_HOME keeps the selected home and its normal cache
-configuration; --build-cache or STIM_BUILD_CACHE overrides the cache path.
-Self-hosted runners and local runs keep normal Stim configuration. Other
-exclusive disposable providers can set their job-local paths explicitly.
-CI=true alone does not change defaults, ownership or coordination. Persist only
-cache artifacts, not state, claims or device ledgers. Independent homes must
-not share a writable filesystem cache because its claims live in the home.
-
-The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
-README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'native-android': {
       summary: 'native Gradle app selection, hosted emulators, build-worker inputs and current limits',
@@ -410,6 +373,46 @@ declared, so a remote build that creates them fails and Stim builds locally.
 Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
 prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
+    },
+    ci: {
+      summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
+      body: () => `CONTINUOUS INTEGRATION
+
+Install app dependencies and platform tools first. Use a dedicated checkout:
+cleanup stops that workspace, including resources created before a build fails.
+
+  npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
+
+Or install npm install --global @stim-cli/ci and use stim-ci directly.
+Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
+--artifacts selects the result directory (a fresh temporary directory by default).
+An explicit artifacts directory must be empty; use a new directory per run.
+Stdout is one JSON result; progress and test output go to stderr.
+
+Tests receive STIM_CI_PLATFORM, STIM_CI_DEVICE_ID, STIM_CI_APP_ID,
+STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last is
+run.json with the exact public API result. Use that target and check app
+readiness; launched can still be bundling or unverified.
+
+result.json preserves the test exit code even if diagnostics or cleanup fail.
+Passing tests with failed cleanup return 1; timeout returns 124; cancellation
+returns 130. Leave 70 seconds before the job's hard timeout for diagnostics and
+stop. SIGKILL and runner loss cannot run cleanup. Stop shuts down owned devices;
+it never deletes them.
+
+GitHub-hosted jobs default to $RUNNER_TEMP/stim-ci/home and
+$RUNNER_TEMP/stim-ci/build-cache, reused between steps in the job. Detection
+requires GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and RUNNER_TEMP.
+An explicit --home or STIM_HOME keeps the selected home and its normal cache
+configuration; --build-cache or STIM_BUILD_CACHE overrides the cache path.
+Self-hosted runners and local runs keep normal Stim configuration. Other
+exclusive disposable providers can set their job-local paths explicitly.
+CI=true alone does not change defaults, ownership or coordination. Persist only
+cache artifacts, not state, claims or device ledgers. Independent homes must
+not share a writable filesystem cache because its claims live in the home.
+
+The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
+README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {
       summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',

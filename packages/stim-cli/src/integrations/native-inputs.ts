@@ -7,6 +7,7 @@ interface NativeInput {
   name: string;
   path: string;
   optional?: boolean;
+  admit?: (relative: string) => boolean;
 }
 
 interface NativeInputEntry {
@@ -18,6 +19,7 @@ interface NativeInputEntry {
 export interface NativeInputSnapshot {
   hash: string;
   entries: NativeInputEntry[];
+  parameters: unknown;
 }
 
 export class NativeInputError extends Error {}
@@ -36,10 +38,17 @@ export function fingerprintNativeInputs(
   const names = new Set<string>();
   const isExcluded = (path: string) =>
     exclusions.some((output) => path === output || path.startsWith(`${output}${sep}`));
+  let admit: NativeInput['admit'];
   const record = (path: string, kind: string, content: string | Buffer = '') => {
     entries.push({ path, kind, sha256: createHash('sha256').update(content).digest('hex') });
   };
-  const walk = (absolute: string, logical: string, ancestors: ReadonlySet<string>, optional = false) => {
+  const walk = (
+    absolute: string,
+    logical: string,
+    ancestors: ReadonlySet<string>,
+    optional = false,
+    relative: string | null = null,
+  ) => {
     let stat;
     try {
       stat = lstatSync(absolute);
@@ -64,7 +73,9 @@ export function fingerprintNativeInputs(
       const next = new Set([...ancestors, canonical]);
       for (const name of readdirSync(absolute).toSorted()) {
         const child = join(absolute, name);
-        if (!isExcluded(child)) walk(child, `${logical}/${name}`, next);
+        const childRelative = relative === null ? null : relative ? `${relative}/${name}` : name;
+        if (isExcluded(child) || (childRelative !== null && admit && !admit(childRelative))) continue;
+        walk(child, `${logical}/${name}`, next, false, childRelative);
       }
     } else if (stat.isFile()) {
       record(logical, `file:${stat.mode & 0o111}`, readFileSync(absolute));
@@ -78,7 +89,8 @@ export function fingerprintNativeInputs(
       names.add(input.name);
       const path = resolve(input.path);
       if (isExcluded(path)) throw new NativeInputError(`Native input ${input.name} is also an excluded output.`);
-      walk(path, input.name, new Set(), input.optional);
+      admit = input.admit;
+      walk(path, input.name, new Set(), input.optional, '');
     }
   } catch (error) {
     if (error instanceof NativeInputError) throw error;
@@ -91,5 +103,5 @@ export function fingerprintNativeInputs(
     .update('\0')
     .update(manifestDigest(sorted))
     .digest('hex');
-  return { hash, entries: sorted };
+  return { hash, entries: sorted, parameters };
 }

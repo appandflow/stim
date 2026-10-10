@@ -2003,6 +2003,7 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
   expect(output).toContain('caches      Metro, Xcode compilation, ccache, build provider');
   expect(output).toContain('Handled automatically');
   expect(output).toContain('missing project cache settings are healthy');
+  expect(output.match(/^Shared$/gm)).toHaveLength(1);
   expect(output).not.toContain('Android');
   expect(output).not.toContain('Nothing to flag means');
 });

@@ -73,7 +73,7 @@ export function reactNativeDoctorSuccessLines(platform: DoctorPlatform | undefin
     lines.push(phaseLine('devices', 'remote device'));
   }
 
-  lines.push('', 'Shared');
+  lines.push('', 'Expo and React Native');
   lines.push(phaseLine('services', 'EAS session'));
   lines.push(phaseLine('fingerprint', 'parity when dependencies are absent'));
   lines.push('', 'Handled automatically');

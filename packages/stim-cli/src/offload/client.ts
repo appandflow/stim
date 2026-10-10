@@ -37,7 +37,13 @@ import { runCancellationSignal } from '../engine/native-run.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
-import { nativeTransferManifest, sourceManifest, type NativeTransferFile } from './native-source.ts';
+import {
+  checkNativeTransferMembership,
+  gitVisiblePaths,
+  nativeTransferManifest,
+  sourceManifest,
+  type NativeTransferFile,
+} from './native-source.ts';
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
@@ -573,6 +579,16 @@ type ManifestFile = NativeTransferFile;
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
+/** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
+export function nativeTransferRefusal(repoRoot: string, snapshot: NativeInputSnapshot): string | null {
+  try {
+    checkNativeTransferMembership(snapshot, gitVisiblePaths(repoRoot));
+    return null;
+  } catch (error) {
+    return (error as Error).message.split('\n')[0]!;
+  }
+}
+
 function blobContent(repoRoot: string, file: ManifestFile): Buffer {
   const absolute = join(repoRoot, file.path);
   return file.kind === 'directory'
@@ -1072,7 +1088,7 @@ export async function offloadBuild({
                 provider: native.provider,
                 sourceDigest: synced.digest,
                 ...(native.provider === 'xcode'
-                  ? { cacheKey: native.cacheKey, arch: native.arch }
+                  ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
                   : { inputs: native.transfer.declaration }),
               },
             }

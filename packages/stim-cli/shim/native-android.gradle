@@ -46,6 +46,9 @@ abstract class StimExportApk extends DefaultTask {
     }
 }
 
+// https://docs.gradle.org/current/userguide/init_scripts.html: init scripts also apply to buildSrc and included builds.
+if (gradle.parent != null) return
+
 gradle.rootProject { root ->
     def configureOnDemand = gradle.startParameter.configureOnDemand
     def requested = root.providers.gradleProperty("stim.native.variant").get()

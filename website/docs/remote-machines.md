@@ -69,6 +69,12 @@ needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
+Native Xcode apps build on this Mac and run on the host without Metro; the host
+reports live process readiness. That needs a host that advertises
+`hosted-ios-process`. An older host refuses before reservation or upload; update
+stim-server on it, or use `--remote auto`, which skips it. See
+[native Xcode apps](./commands.md) for the build limits.
+
 `--remote` also accepts two backend names: `eas` creates an EAS Simulator
 session; `proxy` uses an existing agent-device daemon configured with
 `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, without
@@ -164,6 +170,11 @@ its offered ABI. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device`, a running
 local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
+
+Native Gradle apps run on a hosted emulator too, without Metro; the host reports
+live process readiness. That needs a host that advertises `hosted-android-process`.
+An older host refuses before reservation or upload; update stim-server on it, or
+use `--remote auto`, which skips it.
 
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
