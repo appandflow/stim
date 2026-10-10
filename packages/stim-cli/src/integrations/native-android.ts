@@ -201,7 +201,7 @@ export function nativeAndroidDoctor(root: string): ProjectDoctor {
         {
           level: 'note',
           title: 'Native Android Gradle project',
-          detail: `${MODEL_LIMIT} ${CACHE_LIMIT} Metro and EAS are unsupported; local and hosted emulators use native process readiness.`,
+          detail: `${MODEL_LIMIT} ${CACHE_LIMIT} Metro and EAS are unsupported; local, physical and hosted targets use native process readiness.`,
           fix: null,
         },
         ...(sdk

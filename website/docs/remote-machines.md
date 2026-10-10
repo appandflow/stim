@@ -165,6 +165,11 @@ refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device`, a running
 local emulator in that slot, and `--no-metro-check` for hosted Debug refuse.
 
+Native Gradle apps run on a hosted emulator too, without Metro; the host reports
+live process readiness. That needs a host that advertises `hosted-android-process`.
+An older host refuses before reservation or upload; update stim-server on it, or
+use `--remote auto`, which skips it.
+
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
 here through a private tailnet bridge; `metro.publicUrl`, `metro.tunnel` and

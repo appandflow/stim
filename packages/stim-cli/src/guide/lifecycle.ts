@@ -17,7 +17,8 @@ one signed universal or matching-ABI APK on an owned emulator or leased phone.
 Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
 must support native Android process mode. Multiple application modules,
 density/split APK sets and EAS/proxy targets are unsupported. Set
-org.gradle.configureondemand=false; configuration cache remains supported. Stim verifies the existing APK signature; it does not sign it.
+org.gradle.configureondemand=false; configuration cache remains supported. Stim
+verifies the existing APK signature; it does not sign it.
 Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
 and build offload are unavailable until arbitrary Gradle inputs can be tracked.
 Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
