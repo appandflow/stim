@@ -8,6 +8,7 @@ import {
   applyServeEnvironment,
   unusedInstalls,
   parseEnvAssignment,
+  normalizeEnv,
   parseInstalledPlist,
   parseLaunchctlPrint,
   planServe,
@@ -64,6 +65,25 @@ describe('service plist', () => {
     const plist = renderPlist({ ...SPEC, env: ['SHELL=/bin/evil', 'STIM_HOME=/evil'] });
     expect(plist).toContain('<key>SHELL</key>\n\t\t<string>/bin/zsh</string>');
     expect(plist).not.toContain('/evil');
+    expect(plist).not.toContain('<string>SHELL</string>');
+    expect(plist).not.toContain('<string>STIM_HOME</string>');
+  });
+
+  it('drops STIM_HOME and SHELL from a legacy plist when it is rendered again, and keeps the other entries', () => {
+    const legacy = parseInstalledPlist({
+      Label: SPEC.label,
+      ProgramArguments: [SPEC.node, SPEC.script, '--port', '7787', '--env', 'SHELL=/bin/fish', '--env', 'A=1'],
+      EnvironmentVariables: { STIM_HOME: '/tmp/scratch home' },
+    })!;
+    expect(legacy.env).toEqual(['SHELL=/bin/fish', 'A=1']);
+    const plist = renderPlist({ ...SPEC, env: legacy.env });
+    expect(plist).not.toContain('/bin/fish');
+    expect(plist).toContain('<key>A</key>\n\t\t<string>1</string>');
+    expect(normalizeEnv(legacy.env)).toEqual(['A=1']);
+  });
+
+  it('compares --env by key, the last value winning', () => {
+    expect(normalizeEnv(['A=1', 'B=2', 'A=3'])).toEqual(['A=3', 'B=2']);
   });
 
   it('reads --env KEY=VALUE from the arguments of a plist written before values moved to EnvironmentVariables', () => {
@@ -159,14 +179,42 @@ describe('serve environment', () => {
     });
   });
 
-  it('accepts a bare --env KEY only when serving, and refuses STIM_HOME and SHELL either way', () => {
+  it('accepts a bare --env KEY only when serving', () => {
     expect(validateServeEnvironment(['EXPO_TOKEN'], [])).toContain('KEY=VALUE');
     expect(validateServeEnvironment(['EXPO_TOKEN'], [], true)).toBeNull();
     expect(validateServeEnvironment(['1BAD'], [], true)).toContain('KEY=VALUE');
+  });
+
+  it('refuses STIM_HOME and SHELL on install input but serves a legacy plist that carries them', () => {
     for (const entry of ['SHELL=/bin/sh', 'STIM_HOME=/x']) {
       expect(validateServeEnvironment([entry], [])).toContain('cannot set');
+      expect(validateServeEnvironment([entry], [], true)).toBeNull();
     }
-    expect(validateServeEnvironment(['SHELL'], [], true)).toContain('cannot set SHELL');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const result = applyServeEnvironment(
+        { SHELL: '/bin/fish', STIM_HOME: '/h', A: '0' },
+        ['SHELL=/bin/evil', 'STIM_HOME=/x', 'A=1'],
+        [],
+      );
+      expect(result).toEqual({ SHELL: '/bin/fish', STIM_HOME: '/h', A: '1' });
+      expect(error.mock.calls.map(([line]) => line)).toEqual([
+        expect.stringContaining('ignoring --env SHELL'),
+        expect.stringContaining('ignoring --env STIM_HOME'),
+      ]);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('names a bare --env KEY that has no value in the service environment', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(applyServeEnvironment({ PATH: '/usr/bin' }, ['EXPO_TOKEN'], [], {})).toEqual({ PATH: '/usr/bin' });
+      expect(error.mock.calls).toEqual([[expect.stringContaining('--env EXPO_TOKEN has no value')]]);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it('rejects malformed entries and STIM_HOME', () => {
