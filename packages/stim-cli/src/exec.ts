@@ -22,6 +22,8 @@ interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` only: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
+  /** `runFile` and `runFileAsync`: exact values replaced with `***` in a thrown error's message, stack, stdout and stderr. */
+  redact?: readonly string[];
 }
 
 export interface Executor {
@@ -41,6 +43,17 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 function nameTimeout(error: unknown, command: string, timeoutMs: number | undefined): unknown {
   if ((error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' && error instanceof Error) {
     error.message = `Command timed out after ${timeoutMs}ms: ${command}`;
+  }
+  return error;
+}
+
+function redactError<T>(error: T, values: readonly string[] | undefined): T {
+  const secrets = values?.filter(Boolean) ?? [];
+  if (secrets.length === 0 || !error || typeof error !== 'object') return error;
+  const fields = error as Record<string, unknown>;
+  for (const key of ['message', 'stack', 'stdout', 'stderr']) {
+    const text = fields[key];
+    if (typeof text === 'string') fields[key] = secrets.reduce((acc, secret) => acc.split(secret).join('***'), text);
   }
   return error;
 }
@@ -69,7 +82,7 @@ const defaultExecutor: Executor = {
   runFile(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent } = {},
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent, redact } = {},
   ) {
     const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & { detached?: boolean } = {
       encoding: 'utf-8',
@@ -87,16 +100,18 @@ const defaultExecutor: Executor = {
       opts.env = childEnv;
     }
     const result = spawn.sync(file, args, opts);
-    if (result.error) throw nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs);
+    if (result.error) {
+      throw redactError(nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs), redact);
+    }
     if (result.status !== 0 || (rejectStderr && String(result.stderr ?? '').trim())) {
       const stderr = String(result.stderr ?? '');
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
-      throw Object.assign(new Error(message), result);
+      throw redactError(Object.assign(new Error(message), result), redact);
     }
     if (detachedSilent) return '';
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
   },
-  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn } = {}) {
+  runFileAsync(file, args = [], { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, redact } = {}) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       const opts: SpawnOptions = { stdio: ['ignore', 'pipe', 'pipe'] };
@@ -127,7 +142,7 @@ const defaultExecutor: Executor = {
       child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
       child.on('error', (error) => {
         clearTimeout(timer);
-        reject(error);
+        reject(redactError(error, redact));
       });
       child.on('close', (status, signal) => {
         clearTimeout(timer);
@@ -135,9 +150,16 @@ const defaultExecutor: Executor = {
         const err = Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (timedOut) {
-          reject(nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs));
+          reject(
+            redactError(
+              nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
+              redact,
+            ),
+          );
         } else if (status !== 0 || (rejectStderr && err.trim())) {
-          reject(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result));
+          reject(
+            redactError(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result), redact),
+          );
         } else {
           resolve(out.trim());
         }

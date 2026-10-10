@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'path';
-import { workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
+import { ensurePrivateDir, workspaceName, workspaceStateDir as workspaceDir } from '@stim-cli/core';
 import { readJsonObject, workspaceMetadataFile } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 
@@ -31,7 +31,7 @@ export function ensureWorkspaceStorage(projectRoot: string): string {
   const canonicalRoot = resolve(projectRoot);
   const dir = workspaceDir(canonicalRoot);
   const file = workspaceMetadataFile(canonicalRoot);
-  mkdirSync(dir, { recursive: true });
+  ensurePrivateDir(dir);
   return withDirLock(join(dir, 'metadata.lock'), () => {
     if (!existsSync(file)) {
       const metadata: WorkspaceMetadata = {

@@ -73,6 +73,29 @@ test('a non-zero exit throws with status, stdout and stderr, the fields callers 
   expect(failure.message).toMatch(/^Command failed: .*\nerr/);
 });
 
+test('a failure redacts the given values from the message, stack, stdout and stderr', async () => {
+  resetExecutor();
+  const secret = 'hunter2-secret';
+  const args = ['-e', 'console.log(process.argv[1]); console.error(process.argv[1]); process.exit(1)', secret];
+  let failure: Error & { stdout?: string; stderr?: string } = new Error('did not fail');
+  try {
+    getExecutor().runFile(process.execPath, args, { redact: [secret] });
+  } catch (error) {
+    failure = error as typeof failure;
+  }
+  const asyncFailure = await getExecutor()
+    .runFileAsync(process.execPath, args, { redact: [secret] })
+    .then(
+      () => new Error('did not fail'),
+      (error: unknown) => error as typeof failure,
+    );
+  for (const { message, stack, stdout, stderr } of [failure, asyncFailure]) {
+    expect(message).toMatch(/^Command failed: /);
+    expect(JSON.stringify({ message, stack, stdout, stderr })).not.toContain(secret);
+    expect(stderr).toBe('***\n');
+  }
+});
+
 test('a missing executable throws ENOENT', () => {
   resetExecutor();
   let failure: NodeJS.ErrnoException = new Error('did not fail');
