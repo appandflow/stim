@@ -40,8 +40,8 @@ readiness. Plain output streams progress and reports the complete result. Use
 
 Native Gradle apps can use an approved build worker after declaring that
 Git-visible source and exact additional ignored files are sufficient. See
-`stim guide lifecycle` for `android.offloadInputs`, generated output ownership,
-and supported input boundaries. Stim does not invent an artifact-cache key for
+`stim guide lifecycle native-android` for `android.offloadInputs`, generated
+output ownership, and supported input boundaries. Stim does not invent an artifact-cache key for
 arbitrary Gradle inputs; Gradle keeps its own incremental and task caches.
 
 ## Programmatic API
@@ -72,6 +72,7 @@ already running server. `run` builds, installs and launches.
 `build({ platform: 'ios' })` returns a retained simulator app without starting
 a device or runtime; Android returns an APK and macOS returns an app bundle.
 Build-only preserves existing sessions and uses the same cache and build locks.
+Each result is a separate copy kept in the workspace until `stim worktree remove`.
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 

@@ -894,7 +894,6 @@ export interface DoctorInspectionOptions {
   now?: () => number;
   platform?: DoctorPlatform;
   host?: NodeJS.Platform;
-
   platforms?: readonly DoctorPlatform[];
 }
 

@@ -452,9 +452,13 @@ A compatible approved build Mac can compile a native Xcode app with
 `--remote-build auto` or `--remote-build <name>`. Both peers must support
 `native-xcode-build`. The worker path requires a verified artifact identity and
 all inputs contained in the repository and visible to git. Ignored or external
-inputs refuse transfer instead of being silently omitted. Worker source mirrors
-remove stale inputs; Xcode compilation caches remain in the worker's private
-Stim home. Physical builds stay local.
+inputs keep the build on this Mac, and placement names the first one, instead of
+being silently omitted. The common case is a Finder `.DS_Store` that a global
+gitignore hides: delete it, or stop ignoring it, to offload. Before compiling,
+the worker compares its own toolchain and compiler environment identity with
+this Mac's and refuses, naming the differing parameter, so the build falls back
+to this Mac. Worker source mirrors remove stale inputs; Xcode compilation caches
+remain in the worker's private Stim home. Physical builds stay local.
 
 An already approved hosting Mac can run the built app:
 
@@ -529,6 +533,14 @@ Gradle build. Never declare secrets or a user Gradle home. External inputs,
 directory links, submodules and custom `local.properties` refuse. SDK-only
 `local.properties` stays local. Custom project-state locations must be removed
 or made explicit source; only default `.gradle`/`.kotlin` state is retained.
+
+List every build directory of the build's projects that the build creates in
+`outputs`: the root `build` and each module's, library modules included. A
+remote build that creates an undeclared one fails with the directory's name and
+Stim builds locally; add it to `outputs`. A `buildSrc` directory refuses before
+upload. Included builds (`includeBuild`, such as a `build-logic` plugin build)
+and `externalNativeBuild` staging (`.cxx`) are not reported by AGP and cannot be
+declared, so remote builds of those projects fail and Stim builds locally.
 
 Only declared output directories reported by AGP and recorded after a successful
 worker build survive the next sync. Gradle incremental, task-cache and

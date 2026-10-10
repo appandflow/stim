@@ -884,7 +884,14 @@ export interface BuildStartParams {
   runtime?: string | null;
   fingerprint: string | null;
   native?:
-    | { provider: 'xcode'; sourceDigest: string; cacheKey: string; arch: 'arm64' | 'x86_64' | null }
+    | {
+        provider: 'xcode';
+        sourceDigest: string;
+        cacheKey: string;
+        arch: 'arm64' | 'x86_64' | null;
+        /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
+        parameters: Record<string, unknown>;
+      }
     | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
   packageName?: string | null;
   isExpo?: boolean;

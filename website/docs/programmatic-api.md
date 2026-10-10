@@ -48,8 +48,9 @@ operations as the CLI. It does not parse Commander arguments. The importing
 process keeps its working directory, environment, output and signal handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
-`StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`, `StimStopOptions`, `StimStopResult`,
-`StimDiagnosticsOptions`, `StimDiagnostics`, `StimProgress`, and `StimPlatform`.
+`StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
+`StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
+`StimDiagnostics`, `StimProgress`, and `StimPlatform`.
 
 ## Build only
 
@@ -68,10 +69,13 @@ or stop a session. Results are inferred from `platform`, just like `run`.
 | `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild` | `facts.apkPath`                          |
 | `macos`   | `remoteBuild`                                                                                      | `facts.bundle`, the configured Debug app |
 
-The default Debug target architecture matches the host; Release uses all
-architectures. Each result points to a separate owned copy retained until this
-workspace is removed. A later build does not overwrite that copy. Build-only
-does not export distribution archives or infer a web compilation pipeline.
+A Debug build targets the host architecture by default; on Android only while
+`optimizations.android.targetAbiOnly` is on, which is the default. Release uses
+all architectures. Each result points to a separate owned copy retained until
+`stim worktree remove` removes this workspace; a later build does not overwrite
+it. A build does not replace a running app's last build record or build log; it
+writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
+distribution archives or infer a web compilation pipeline.
 Use `buildCI` from `@stim-cli/ci` to export the app and diagnostics for CI artifacts.
 
 ## Run

@@ -10,6 +10,8 @@ import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.t
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { AndroidProject } from '../integrations/android-project.ts';
+import { readBuildHistory } from '@stim-cli/core/state';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let scratch: string;
@@ -117,7 +119,10 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(readWorkspaceState(root)).not.toHaveProperty('android');
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
   const existing = { serial: 'already-running', devicePlacement: { machine: 'paired-mini' } };
-  writeWorkspaceState(root, { android: existing });
+  const running = { platform: 'android', status: 'ok', appPath: '/runtime/app.apk', cacheKey: 'runtime-key' };
+  writeWorkspaceState(root, { android: existing, lastBuild: running, lastAndroidBuild: running });
+  const runningLog = join(workspaceLogsDir(root), 'build-android.ndjson');
+  writeFileSync(runningLog, '{"msg":"running app build"}\n');
   const bytes = readFileSync(cold.apkPath, 'utf8');
   const warm = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });
@@ -137,7 +142,8 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(edited.cacheHit).toBe(false);
   expect(compilations).toBe(4);
   expect(readFileSync(cold.apkPath, 'utf8')).toBe(bytes);
-  expect(readWorkspaceState(root)?.android).toEqual(existing);
+  expect(readWorkspaceState(root)).toMatchObject({ android: existing, lastBuild: running, lastAndroidBuild: running });
+  expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
 });
 
 test('a failed compiler releases the build claim so recovery works without stopping the existing runtime', async () => {
@@ -179,7 +185,10 @@ test.each(['compile', 'upload', 'materialize'])(
     await expect(buildAndroidOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
       code: 'STIM_CANCELLED',
     });
-    expect(readWorkspaceState(root)?.lastBuild).toMatchObject({ status: 'failed', errorCode: 'STIM_CANCELLED' });
+    expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
+      result: 'cancelled',
+      errorCode: 'STIM_CANCELLED',
+    });
     expect(readWorkspaceState(root)?.android).toEqual(existing);
     expect(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]).toBeUndefined();
     expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);

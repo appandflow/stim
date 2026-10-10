@@ -199,7 +199,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in this checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote Mac in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());

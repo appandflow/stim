@@ -412,6 +412,12 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
 });
 
+test('native Gradle build-worker references route to the rendered native-android section', () => {
+  expect(renderSection('lifecycle', 'native-android')).toContain('android.offloadInputs');
+  expect(renderTopic('settings')).toContain('stim guide lifecycle native-android');
+  expect(renderSection('lifecycle', 'hosted-android')).toContain('stim guide lifecycle native-android');
+});
+
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
   expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
@@ -940,6 +946,14 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+});
+
+test('native Xcode and Gradle apps route to their lifecycle sections', () => {
+  expect(sectionNames('lifecycle')).toEqual(expect.arrayContaining(['native-ios', 'native-android']));
+  for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
+    expect(guide).toContain('lifecycle native-ios');
+    expect(guide).toContain('lifecycle native-android');
+  }
 });
 
 test('hosted Android command and safety routing render through the guides', () => {

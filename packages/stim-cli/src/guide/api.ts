@@ -41,12 +41,15 @@ Build options:
   ios:     scheme, configuration, arch (arm64, x86_64, all), buildCache, remoteBuild
   android: variant, abi (arm64-v8a, armeabi-v7a, x86, x86_64, all), buildCache, remoteBuild
   macos:   remoteBuild
-An iOS build targets the simulator. Default Debug architecture/ABI matches the
-host; Release defaults to all. macOS builds the configured Debug SwiftPM app.
+An iOS build targets the simulator. A Debug build defaults to the host
+architecture (Android only while optimizations.android.targetAbiOnly is on, the
+default); Release defaults to all. macOS builds the configured Debug SwiftPM app.
 Build results retain an owned appPath (iOS), apkPath (Android) or bundle (macOS)
 inside this workspace until worktree removal. Later builds keep earlier copies.
-No distribution archive or web build pipeline is inferred. Use @stim-cli/ci's
-buildCI to export a portable artifact and diagnostics for your CI provider.
+A build leaves a running app's last build record and build log untouched; it
+writes its own build-artifact-<platform>.ndjson. No distribution archive or web build
+pipeline is inferred. Use @stim-cli/ci's buildCI to export a portable artifact and
+diagnostics for your CI provider.
 
 run returns { platform, facts }. iOS facts include udid; Android includes
 serial; both include bundleId, appPath, metroPort, cacheHit and launched.
