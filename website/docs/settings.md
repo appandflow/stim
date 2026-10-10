@@ -676,6 +676,10 @@ These variables override a setting and win over every layer:
 
 <EnvSettings />
 
+A boolean override such as `STIM_RECORDING` takes `true`, `false`, `1` or `0`.
+`STIM_ANDROID_CAS_TOOLCHAIN` is described under
+[experimental Android CAS](./build-optimizations.md#experimental-android-cas).
+
 Stim also reads these variables, which have no setting:
 
 | Variable                | Purpose                                                                                                                                                                          |
