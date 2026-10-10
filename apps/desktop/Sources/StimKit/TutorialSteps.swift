@@ -43,6 +43,6 @@ public enum TutorialSteps {
       ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.", section: "finish"),
     TutorialStep(
       id: "delete", title: "Delete the Test App", who: "agent", optional: true,
-      ask: "Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.", section: "delete"),
+      ask: "Remove the test app: run stim worktree remove on {base}, then delete the folder. Follow stim guide tutorial delete.", section: "delete"),
   ]
 }

@@ -144,6 +144,8 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stopped: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
+  /// Whether a tutorial worktree was still listed when Delete became the current step.
+  public var worktreesAtDelete: Bool?
   public var stats: TutorialStats?
 
   public init(
@@ -372,8 +374,8 @@ public struct TutorialProgress: Sendable {
       switch event {
       case .opened(let udid) where devices.contains(udid): viewerOpened = true
       case .input(let udid) where devices.contains(udid) && viewerOpened: viewerInput = true
-      case .actionsViewed(let udid) where udid == tracked?.ios?.udid: actionsViewed = true
-      case .replayPlayed(let udid) where udid == tracked?.ios?.udid: replayPlayed = true
+      case .actionsViewed(let udid) where devices.contains(udid): actionsViewed = true
+      case .replayPlayed(let udid) where devices.contains(udid): replayPlayed = true
       case .logsOpened(let path) where record?.trackedPaths.contains(path) == true: logsOpened = true
       default: break
       }
@@ -663,10 +665,11 @@ public struct TutorialProgress: Sendable {
       let worktreesGone = environment == nil && second == nil
       let registered = input.siblings.contains { $0.path == record?.clonePath }
       let cloneGone = record?.clonePath != nil && !registered && input.cloneFolderExists == false
+      if record?.step == "delete", record?.worktreesAtDelete == nil { record?.worktreesAtDelete = !worktreesGone }
       return Checkpoint(
         completed: worktreesGone && cloneGone ? now : nil,
         detail: "Waiting for your agent to remove the tutorial",
-        ticks: [tick("worktrees", worktreesGone), tick("clone", cloneGone)])
+        ticks: (record?.worktreesAtDelete == true ? [tick("worktrees", worktreesGone)] : []) + [tick("clone", cloneGone)])
     default: return Checkpoint()
     }
   }

@@ -46,7 +46,7 @@ import {
   sortByTs,
 } from '@stim-cli/core/state';
 import { machineNumber } from './budget.ts';
-import { getExecutor } from './exec.ts';
+import { gitQuiet } from './workspace/git.ts';
 import { mergeState } from './workspace/merge-state.ts';
 import { gitCommonDirOnDisk } from './workspace/worktree.ts';
 import { readCommittedSettings } from './workspace/settings.ts';
@@ -220,8 +220,7 @@ function gitFacts(root: string): ArchivedWorkspace['worktree'] {
     pullRequest: null,
   };
   if (!existsSync(root)) return cachedFacts(root) ?? empty;
-  const exec = getExecutor();
-  const run = (args: string[]) => exec.runFileQuiet('git', ['-C', root, ...args], { timeoutMs: 1000 });
+  const run = (args: string[]) => gitQuiet(root, args, { timeoutMs: 1000 });
   const common = gitCommonDirOnDisk(root);
   const summary = run(['show', '-s', '--format=%H%n%s', 'HEAD'])?.split('\n');
   const location = run(['rev-parse', '--show-toplevel', '--abbrev-ref', 'HEAD'])?.split('\n');

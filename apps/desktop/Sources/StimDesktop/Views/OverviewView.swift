@@ -42,7 +42,7 @@ struct OverviewView: View {
     let running = running
     let idle = Overview.idleProjects(
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
-    let archived = ArchivedWorkspace.newestFirst(store.payload?.archived ?? [])
+    let archived = store.newestArchives
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
         title: "Nothing Here Yet",

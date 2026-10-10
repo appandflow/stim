@@ -24,7 +24,7 @@ beforeEach(() => {
   previousPath = process.env.PATH;
   writeFileSync(join(home, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   process.env.PATH = `${home}${delimiter}${previousPath}`;
-  getExecutor().runFile('git', ['init', '-q', root]);
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
   writeFileSync(join(root, '.gitignore'), '.cxx/\nnode_modules/\n');
 });
 
@@ -72,7 +72,7 @@ test.skipIf(process.platform === 'win32')(
   'repair refuses tracked or non-ignored output and leaves neighboring source intact (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const tracked = cache('android/app', null);
-    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root });
+    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root, timeoutMs: 60_000 });
     writeFileSync(join(root, '.gitignore'), '');
     const source = join(root, 'android/app/CMakeLists.txt');
     writeFileSync(source, 'project(Example)\n');
@@ -81,7 +81,10 @@ test.skipIf(process.platform === 'win32')(
     expect(result.refused[0]?.reason).toMatch(/tracked/);
     expect(existsSync(tracked)).toBe(true);
     expect(existsSync(source)).toBe(true);
-    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root });
+    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], {
+      cwd: root,
+      timeoutMs: 60_000,
+    });
     expect(repairCxxLauncherState(root, projectSettings()).refused).toHaveLength(1);
     expect(existsSync(tracked)).toBe(true);
   },
@@ -151,7 +154,12 @@ const cli = join(import.meta.dirname, '../../dist/cli.mjs');
 
 function doctorJson(args: string[], env: Record<string, string>, omitEnv: string[] = []): { findings: Finding[] } {
   return JSON.parse(
-    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], { cwd: root, env, omitEnv }),
+    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], {
+      cwd: root,
+      env,
+      omitEnv,
+      timeoutMs: 60_000,
+    }),
   );
 }
 

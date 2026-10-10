@@ -85,6 +85,7 @@ struct RootView: View {
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
     storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
   ) {
+    SidebarWidthGuard.prime()
     self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
@@ -111,7 +112,8 @@ struct RootView: View {
       .toolbar {
         if columnVisibility != .detailOnly { sidebarToggleToolbar }
       }
-      .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
+      .navigationSplitViewColumnWidth(min: SidebarWidthGuard.minimum, ideal: SidebarWidthGuard.ideal, max: 360)
+      .background(SidebarWidthGuard())
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
       } action: {
@@ -215,7 +217,7 @@ struct RootView: View {
     .onChange(of: [summaryWidth, narrowestSummaryWidth], initial: true) {
       summaryHidden = !summaryFits
     }
-    .tutorialHighlights()
+    .tutorialHighlights(showFallback: columnVisibility == .detailOnly)
     .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
@@ -394,7 +396,7 @@ struct RootView: View {
     let selected: String? = if case .environment(let path) = selection { path } else { nil }
     return TutorialHint(
       step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath,
-      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected,
+      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected, logsShown: showsLogs,
       ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
       showMe: {
         if tutorial.snapshot?.isFinished == true {
@@ -422,6 +424,22 @@ struct RootView: View {
               && (command.cwd == tutorial.tourPath || command.arguments.contains(tutorial.tourPath ?? ""))
           }
       })
+  }
+
+  private var tutorialShortcut: String? {
+    let listed = Set(store.payload?.environments.map(\.path) ?? [])
+    return tutorial.snapshot?.record.trackedPaths.first(where: listed.contains)
+  }
+
+  private func openTutorialAgentActions(_ path: String) {
+    navigate(.environment(path), .click("tutorial Open Agent Actions"))
+    guard
+      let device = store.payload?.environments.first(where: { $0.path == path })?.orderedDevices
+        .first(where: { $0.platform == "ios" })
+    else { return }
+    focusedDeviceID = device.id
+    UserDefaults.standard.set(true, forKey: AppPreferences.Key.viewerShowsActions)
+    openRequests.viewer = ViewedDevice(id: device.id, workspace: path)
   }
 
   private func openTutorialArchive() {
@@ -469,6 +487,14 @@ struct RootView: View {
           {
             navigate(.environment(path), .click("tutorial Open the build"))
             focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+          }
+        },
+        openAgentActions: tutorialShortcut.map { path in { openTutorialAgentActions(path) } },
+        openLogs: tutorialShortcut.map { path in
+          {
+            showLogs(path)
+            logQuery.errorsOnly = false
+            TutorialViewerEvents.shared.logsOpened(path)
           }
         },
         pairPhone: { openRequests.pairsPhone = true },
@@ -571,6 +597,7 @@ struct RootView: View {
       }
       showsLogs.toggle()
     }
+    .tutorialGlowInPlace(tutorialHint, .logsToggle)
   }
 
   @ViewBuilder private var inspectorSideControls: some View {

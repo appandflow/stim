@@ -744,7 +744,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     repos: {},
   });
   const sized: string[] = [];
-  const sizeTimeouts: Array<number | undefined> = [];
+  const sizeTimeouts: Array<number | 'unbounded'> = [];
   setExecutor({
     run(cmd) {
       if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
@@ -772,7 +772,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       avdDirectory: (name) => `/avds/${name}.avd`,
       directorySize: (dir, options) => {
         sized.push(dir);
-        sizeTimeouts.push(options?.timeoutMs);
+        sizeTimeouts.push(options.timeoutMs);
         if (dir.includes('unreadable')) throw new Error('timed out');
         return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
       },

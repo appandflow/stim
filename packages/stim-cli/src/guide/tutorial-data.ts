@@ -15,7 +15,7 @@ export const TUTORIAL_ASKS = {
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   delete:
-    'Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.',
+    'Remove the test app: run stim worktree remove on {base}, then delete the folder. Follow stim guide tutorial delete.',
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, with before and after screenshots from the simulator. See stim guide tutorial share.`,
   retry: 'The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again.',
 };

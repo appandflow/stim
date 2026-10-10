@@ -46,9 +46,11 @@ export function parseNetstatPids(out: unknown, port: number): number[] {
 }
 
 export function listeningPids(port: number, platform: NodeJS.Platform = process.platform): number[] {
-  const pids = parseLsofPids(getExecutor().runFileQuiet('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']));
+  const pids = parseLsofPids(
+    getExecutor().runFileQuiet('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t'], { timeoutMs: 10_000 }),
+  );
   if (pids.length > 0 || platform !== 'win32') return pids;
-  return parseNetstatPids(getExecutor().runQuiet('netstat -ano'), port);
+  return parseNetstatPids(getExecutor().runQuiet('netstat -ano', { timeoutMs: 10_000 }), port);
 }
 
 export function parseLsofCwd(out: unknown): string | null {
@@ -62,7 +64,7 @@ export function parseLsofCwd(out: unknown): string | null {
 
 function lsofOutput(args: string[]): Promise<string | null> {
   return getExecutor()
-    .runFileAsync('lsof', args)
+    .runFileAsync('lsof', args, { timeoutMs: 10_000 })
     .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
 }
 
@@ -125,7 +127,9 @@ export function processCwd(pid: number): string | null {
       return readlinkSync(`/proc/${pid}/cwd`);
     } catch {}
   }
-  return parseLsofCwd(getExecutor().runFileQuiet('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']));
+  return parseLsofCwd(
+    getExecutor().runFileQuiet('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { timeoutMs: 10_000 }),
+  );
 }
 
 function canonicalPath(path: string): string {
@@ -234,7 +238,7 @@ export function signalProcessTree(
 ): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if (platform !== 'win32') return process.kill(group ? -pid : pid, signal);
-  return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F']) !== null;
+  return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F'], { timeoutMs: 30_000 }) !== null;
 }
 
 export function killMetroTree(leader: number | null | undefined, processToken?: string): boolean {

@@ -702,7 +702,17 @@ describe('untracked native files on a first miss', () => {
     });
     expect(untrackedNativeFiles({ projectRoot: root })).toEqual(['ios/Podfile.lock', 'android/local.properties']);
     expect(calls[0]?.file).toBe('git');
-    expect(calls[0]?.args).toEqual(['-C', root, 'ls-files', '--others', '--exclude-standard', '--', 'ios', 'android']);
+    expect(calls[0]?.args).toEqual([
+      '--no-optional-locks',
+      '-C',
+      root,
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '--',
+      'ios',
+      'android',
+    ]);
   });
 
   test('no git, or not a repo, is silence rather than a failure', () => {

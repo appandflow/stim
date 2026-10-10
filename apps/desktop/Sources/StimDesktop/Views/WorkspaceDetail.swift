@@ -189,6 +189,11 @@ struct WorkspaceDetail: View {
       viewing = nil
       buildSheet = nil
     }
+    .onReceive(OpenRequests.shared.$viewer) { request in
+      guard let request, page.apps.contains(where: { $0.path == request.workspace }) else { return }
+      OpenRequests.shared.viewer = nil
+      viewing = request
+    }
     .onAppear {
       if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
     }
@@ -241,14 +246,6 @@ struct WorkspaceDetail: View {
             openBuild: { buildSheet = $0 }
           )
         }
-        if !showsLogs, tutorialHint?.path == workspace.path,
-          ["logs", "refresh"].contains(tutorialHint?.step ?? "")
-        {
-          LogsToggleButton(isShown: false, errors: workspace.logs?.errorsSinceMarker ?? 0) {
-            showsLogs = true
-          }
-          .tutorialAnchor(.logsTab, workspace: workspace.path)
-        }
       }
       .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
@@ -289,7 +286,6 @@ struct WorkspaceDetail: View {
                 moment: $logMoment,
                 page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
               )
-              .tutorialAnchor(.logsTab, workspace: workspace.path)
               .task(id: archive == nil ? (page.isUnified ? logsApp : workspace).path : nil) {
                 if archive == nil, tutorialHint?.step == "logs" {
                   TutorialViewerEvents.shared.logsOpened((page.isUnified ? logsApp : workspace).path)

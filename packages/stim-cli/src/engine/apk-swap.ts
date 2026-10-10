@@ -373,7 +373,7 @@ export async function swapApkBundle({
     } else {
       const hbc = `${bundleOutput}.hbc`;
       try {
-        e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }));
+        e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }), { timeoutMs: 'unbounded' });
         renameSync(hbc, bundleOutput);
         hermes = true;
       } catch (err) {
@@ -405,7 +405,10 @@ export async function swapApkBundle({
   const jar = jarPath();
   const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
   try {
-    e.runFile(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], { cwd: stage });
+    e.runFile(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {
+      cwd: stage,
+      timeoutMs: 'unbounded',
+    });
     if (exists(updatesManifest)) refreshUpdatesManifestFile(updatesManifest, now());
   } catch (err) {
     return fail('updates', `could not refresh the expo-updates manifest from ${work}: ${describe(err)}`);
@@ -416,7 +419,7 @@ export async function swapApkBundle({
     // runtime can mmap it straight out of the APK, and a deflated entry fails to
     // load. jar --update keeps every other entry's method and replaces the
     // staged assets/ entries in place.
-    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
+    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets'], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
@@ -429,7 +432,9 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(tools.path, zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }));
+    e.runFile(tools.path, zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }), {
+      timeoutMs: 'unbounded',
+    });
   } catch (err) {
     return fail('zipalign', `zipalign failed on ${work}: ${describe(err)}`);
   }
@@ -448,8 +453,12 @@ export async function swapApkBundle({
       signer.path,
       apksignerArgs({ keystore, apkPath: final }),
       keystore.password === null
-        ? undefined
-        : { env: { [KEYSTORE_PASSWORD_ENV]: keystore.password }, redact: [keystore.password] },
+        ? { timeoutMs: 'unbounded' }
+        : {
+            timeoutMs: 'unbounded',
+            env: { [KEYSTORE_PASSWORD_ENV]: keystore.password },
+            redact: [keystore.password],
+          },
     );
   } catch (err) {
     return fail('apksigner', `apksigner sign failed on ${final} with ${keystore.path}: ${describe(err)}`);
@@ -471,7 +480,7 @@ export async function swapApkBundle({
 function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): void {
   if (platform === 'darwin') {
     try {
-      e.runFile('cp', ['-c', from, to]);
+      e.runFile('cp', ['-c', from, to], { timeoutMs: 'unbounded' });
       return;
     } catch {}
   }
