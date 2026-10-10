@@ -111,4 +111,13 @@ describe('slots between payloads, as status --watch prints no line while usage s
     recorder.record(payload([metro(4)]), T0);
     expect(recorder.history(T0 + 20 * 60_000)!.environments[0]!.cpuPercent.every((value) => value === 4)).toBe(true);
   });
+
+  test('leave the time nobody listened empty after pause, instead of repeating a stale reading', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(7)]), T0);
+    recorder.pause();
+    recorder.record(payload([]), T0 + 5 * 60_000);
+    const cpu = recorder.history(T0 + 5 * 60_000)!.environments[0]!.cpuPercent;
+    expect(cpu.slice(-21)).toEqual([7, ...Array(20).fill(null)]);
+  });
 });

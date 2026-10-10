@@ -92,6 +92,12 @@ export class UsageRecorder {
     return { intervalMs: INTERVAL_MS, endAt: end * INTERVAL_MS, environments, devices };
   }
 
+  /** Ends the live series where the last payload left them: nothing is recorded, or held, while nobody listens. */
+  pause(): void {
+    this.liveEnvironments = new Set();
+    this.liveDevices = new Set();
+  }
+
   private holdThrough(slot: number): void {
     const hold = (slots: Slots | undefined) => {
       const reading = slots?.get(this.lastSlot);
