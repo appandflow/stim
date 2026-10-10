@@ -8,7 +8,7 @@ import { existsSync, lstatSync, realpathSync, renameSync, rmSync } from 'node:fs
 import { basename, dirname, join } from 'node:path';
 import { getProject, loadConfig, withConfigLock } from '../workspace/config.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
-import { signalProcessTree } from '../metro.ts';
+import { pidExists, signalProcessTree } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
 import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
 import { chromeProcessState, liveProfileHolder, removeSingletonFiles } from '../web/profile.ts';
@@ -691,7 +691,10 @@ export async function teardownBrowserHeld(
       if (record.chromeProcess && !(await stopOwnedChrome(record.chromeProcess, profile))) {
         return { status: 'failed', reason: `Chrome pid ${record.chromeProcess.pid} did not exit` };
       }
-      const holder = liveProfileHolder(profile);
+      const exited = record.chromeProcess;
+      const holder = liveProfileHolder(profile, {
+        alive: (pid) => pidExists(pid) && !(pid === exited?.pid && inspectProcessIdentity(exited) === 'gone'),
+      });
       if (holder !== null) {
         return {
           status: 'skipped',
