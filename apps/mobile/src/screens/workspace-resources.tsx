@@ -126,7 +126,7 @@ function LiveWorkspaceResources({ path }: { path: string }) {
   const lead = multi ? apps.find((app) => app.path === leadPath)! : env;
   const usage = multi ? worktreeUsage(apps, status?.machine) : workspaceUsage(env, status?.machine);
   const devices = orderDevices(devicesOf(env));
-  const stage = workspaceStage(lead, multi ? orderDevices(devicesOf(lead)) : devices, now);
+  const stage = workspaceStage(lead, now);
   const rows = multi
     ? apps.flatMap((app) =>
         processRows(app, orderDevices(devicesOf(app)), status?.machine).map((row) => ({

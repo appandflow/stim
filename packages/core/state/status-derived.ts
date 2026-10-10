@@ -54,18 +54,21 @@ function workspaceStage(env: EnvironmentState): WorkspaceStage {
   if (env.macos?.build.state === 'failed')
     return stage('build-failed', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
   if (env.build?.state === 'running') return stage('building', env.build.startedAt, env.build.platform);
-  if (!env.live && env.phase === 'warming') return stage('warming', env.phaseSince);
-  if (!env.live && env.phase === 'ready') return stage('ready', env.phaseSince);
+  const macosApp = env.macos?.state === 'running' || env.macos?.state === 'orphaned' ? env.macos : null;
+  const live = env.live || macosApp !== null;
+  if (!live && env.phase === 'warming') return stage('warming', env.phaseSince);
+  if (!live && env.phase === 'ready') return stage('ready', env.phaseSince);
   const latest = latestBuild(env);
   if (latest?.status === 'failed') return stage('build-failed', latest.finishedAt ?? latest.startedAt, latest.platform);
-  if (env.live || (env.remoteDevices?.length ?? 0) > 0) {
+  if (live || (env.remoteDevices?.length ?? 0) > 0) {
     const closedApps = deviceSlots(env).flatMap(({ slot, ...devices }) =>
       PLATFORMS.flatMap((platform) => {
         const device = devices[platform];
         return device && appPresence(env, platform, device) === 'closed' ? [{ platform, slot }] : [];
       }),
     );
-    return { ...stage('running', env.supervisor?.startedAt), closedApps };
+    const since = env.supervisor?.startedAt ?? macosApp?.build.finishedAt ?? macosApp?.build.startedAt;
+    return { ...stage('running', since), closedApps };
   }
   const lastStop = env.metro?.lastStop;
   return stage('stopped', lastStop && 'at' in lastStop ? lastStop.at : null);

@@ -1051,7 +1051,9 @@ notifications. The server rereads the JSON file for each status push (every 5
 seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
 maps a workspace path to fields that replace the fixture's, such as a
 `phase` of `warming`, an `ios` device whose `activity` is `driven`, or a
-`builds` history with three failed runs.
+`builds` history with three failed runs. The server then derives each
+workspace's `stage`, `appPresence` and `gitChip` again with core's
+`withDerivedFacts`, so an overlay's changes reach the stage line.
 
 ## Design system
 

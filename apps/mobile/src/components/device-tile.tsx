@@ -62,7 +62,7 @@ export function DeviceTile({
   };
   const zoomedAway = useZoomedAway(zoomKey(target));
   const build = device.platform === 'web' ? null : runningBuild(env, device);
-  const app = appPresence(env, device);
+  const app = appPresence(device);
   const appClosed = app === 'closed';
   const noApp = app === 'none';
   const title = deviceTitle(device);

@@ -225,7 +225,7 @@ export function rowProblems(env: EnvironmentState, now: number): RowProblem[] {
     problems.push({ kind: 'build-failed', text: t`${name} build failed`, tone: 'error' });
   }
   for (const device of orderDevices(devicesOf(env))) {
-    if (appPresence(env, device) !== 'closed') continue;
+    if (appPresence(device) !== 'closed') continue;
     const name = platformName(device.platform);
     problems.push({ kind: 'app-closed', text: t`${name} app closed`, tone: 'error' });
   }

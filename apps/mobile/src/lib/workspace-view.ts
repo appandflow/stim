@@ -18,10 +18,8 @@ import type {
   MachineUsageState,
   Platform,
   PullRequestFacts,
-  StageFacts,
   StatusUsage,
   WorktreeFacts,
-  WorktreeGit,
 } from '@/protocol/types';
 
 export type StageTone = Extract<Tone, 'success' | 'brand' | 'error' | 'warning' | 'tertiary'>;
@@ -38,17 +36,8 @@ const ago = (now: number, iso: string | null | undefined): string | null => {
   return Number.isFinite(at) ? formatDuration(Math.max(0, now - at)) : null;
 };
 
-function latestBuild(env: EnvironmentState): LastBuild | null {
-  const builds = [env.lastBuilds?.ios, env.lastBuilds?.android].filter((b): b is LastBuild => Boolean(b));
-  return builds.reduce<LastBuild | null>(
-    (latest, b) => (latest === null || Date.parse(b.startedAt) > Date.parse(latest.startedAt) ? b : latest),
-    null,
-  );
-}
-
-/** The app presence `stim` reports on the device, or for an older `stim` the same rule run here. */
-export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
-  if (!env.stage) return localAppPresence(env, device);
+/** The app presence `stim` reports on the device. */
+export function appPresence(device: DeviceRef): 'none' | 'closed' | null {
   return device.physical || device.platform === 'web' || device.platform === 'macos'
     ? null
     : device.presence === 'none' || device.presence === 'closed'
@@ -57,63 +46,12 @@ export function appPresence(env: EnvironmentState, device: DeviceRef): 'none' | 
 }
 
 /**
- * Status reports `app` whenever it knows the bundle id, and a process that is not running cannot tell a closed app
- * from one never installed. A device counts as having no app only when its platform never built successfully here
- * and the latest build failed.
- */
-function localAppPresence(env: EnvironmentState, device: DeviceRef): 'none' | 'closed' | null {
-  if (
-    !device.running ||
-    device.platform === 'web' ||
-    device.platform === 'macos' ||
-    device.physical ||
-    device.app?.state === 'running'
-  )
-    return null;
-  const last = env.lastBuilds?.[device.platform];
-  const everBuilt = env.builds?.[device.platform]?.some((entry) => entry.result === 'succeeded') ?? true;
-  if (last?.status === 'failed' && !everBuilt) return 'none';
-  return device.app?.state === 'stopped' ? 'closed' : null;
-}
-
-function stageFacts(
-  kind: StageFacts['kind'],
-  since: string | null | undefined,
-  platform: StageFacts['platform'] = null,
-) {
-  return { kind, since: since ?? null, platform, closedApps: [] } satisfies StageFacts;
-}
-
-/** The stage `stim` decided, for an older `stim` the same rule run here. */
-export function localStageFacts(env: EnvironmentState, devices: DeviceRef[]): StageFacts {
-  if (env.macos?.build.state === 'running') return stageFacts('building', env.macos.build.startedAt, 'macos');
-  if (env.macos?.build.state === 'failed')
-    return stageFacts('build-failed', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
-  if (env.macos?.state === 'running' || env.macos?.state === 'orphaned')
-    return stageFacts('running', env.macos.build.finishedAt ?? env.macos.build.startedAt, 'macos');
-  const build = runningBuild(env);
-  if (build) return stageFacts('building', build.startedAt, build.platform);
-  if (!env.live && env.phase === 'warming') return stageFacts('warming', env.phaseSince);
-  if (!env.live && env.phase === 'ready') return stageFacts('ready', env.phaseSince);
-  const latest = latestBuild(env);
-  if (latest?.status === 'failed') {
-    return stageFacts('build-failed', latest.finishedAt ?? latest.startedAt, latest.platform);
-  }
-  if (env.live || (env.remoteDevices?.length ?? 0) > 0) {
-    const closedApps = devices
-      .filter((d): d is DeviceRef & { platform: Platform } => localAppPresence(env, d) === 'closed')
-      .map((d) => ({ platform: d.platform, slot: d.slot }));
-    return { ...stageFacts('running', env.supervisor?.startedAt), closedApps };
-  }
-  return stageFacts('stopped', env.metro?.lastStop?.at);
-}
-
-/**
  * The stage line, git chip, phase steps and bundle and agent lines here have Stim Desktop twins in
  * `WorkspaceView.swift`; both replay apps/desktop/Tests/StimKitTests/Fixtures/workspace-view-vectors.json.
  */
-export function workspaceStage(env: EnvironmentState, devices: DeviceRef[], now: number): WorkspaceStage {
-  const facts = env.stage ?? localStageFacts(env, devices);
+export function workspaceStage(env: EnvironmentState, now: number): WorkspaceStage {
+  const facts = env.stage;
+  if (!facts) return { kind: 'unknown', label: t`Unknown`, tone: 'tertiary', subtitle: null };
   const since = ago(now, facts.since);
   const platform = facts.platform === 'macos' ? 'macOS' : facts.platform ? platformName(facts.platform) : '';
   switch (facts.kind) {
@@ -921,13 +859,6 @@ export function checksTone(checks: PullRequestFacts['checks']): ChipTone | null 
   return checks.passing > 0 ? 'success' : null;
 }
 
-function ciState(checks: PullRequestFacts['checks']): CiState | null {
-  if (!checks) return null;
-  if (checks.failing > 0) return 'failing';
-  if (checks.pending > 0) return 'pending';
-  return checks.passing > 0 ? 'passing' : null;
-}
-
 function prText(number: number): string {
   return t`PR #${number}`;
 }
@@ -958,22 +889,6 @@ function checksLabel(ci: CiState): string {
   }
 }
 
-/** The chip `stim` reports, for an older `stim` the same rule run here. */
-export function localGitChipFacts(git: WorktreeGit, pull: PullRequestFacts | null | undefined): GitChipFacts {
-  const parts: GitChipFacts['parts'] = [];
-  const ahead = git.ahead ?? 0;
-  const behind = git.behind ?? 0;
-  if (ahead || behind) parts.push({ kind: 'arrows', ahead, behind });
-  const uncommitted = git.changed + git.untracked;
-  if (uncommitted) parts.push({ kind: 'changed', count: uncommitted });
-  if (git.mergedInto !== null) {
-    if (pull?.state !== 'merged') parts.push({ kind: 'merged', into: git.mergedInto });
-  } else if (git.upstream === null) {
-    parts.push({ kind: 'no-upstream' });
-  }
-  return { parts, ci: pull ? ciState(pull.checks) : null };
-}
-
 function chipPart(part: GitChipFacts['parts'][number]): GitChip['parts'][number] | null {
   switch (part.kind) {
     case 'arrows': {
@@ -1001,10 +916,10 @@ function chipPart(part: GitChipFacts['parts'][number]): GitChip['parts'][number]
 
 export function gitChip(worktree: WorktreeFacts | null | undefined): GitChip | null {
   const git = worktree?.git;
-  if (!git) return null;
+  const facts = worktree?.gitChip;
+  if (!git || !facts) return null;
   const badges = gitBadges(git);
   const pull = worktree.pullRequest;
-  const facts = worktree.gitChip ?? localGitChipFacts(git, pull);
   const parts = facts.parts.map(chipPart).filter((part) => part !== null);
   const ci = pull && (facts.ci === 'passing' || facts.ci === 'failing' || facts.ci === 'pending') ? facts.ci : null;
   const label = [

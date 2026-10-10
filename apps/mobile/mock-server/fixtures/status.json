@@ -20,7 +20,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/react-native/private/helloworld",
@@ -37,7 +43,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/web-login",
@@ -54,7 +66,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps",
@@ -71,7 +89,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/apps/tlon-mobile",
@@ -88,7 +112,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/react-native-reserved-regions/example",
@@ -101,14 +131,16 @@
           "name": "stim-react-native-reserved-regions-example (iPhone Duo 27.1)",
           "udid": "5D1CA82B-C157-4C68-90D1-E9F821B3B2EA",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": {
           "name": "stim-react-native-reserved-regions-example-f44c281f",
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8090,
@@ -261,6 +293,11 @@
                 "prebuild": 3651,
                 "pods": 77545,
                 "compile": 91113
+              },
+              "cause": {
+                "key": "/Users/dev/Developer/react-native-reserved-regions/example/modules/stim-video/ios/AnnexB.swift:36",
+                "file": "/Users/dev/Developer/react-native-reserved-regions/example/modules/stim-video/ios/AnnexB.swift",
+                "line": 36
               }
             },
             {
@@ -383,6 +420,11 @@
                 "prepare": 2605,
                 "cache-lookup": 5391,
                 "install": 2574
+              },
+              "cause": {
+                "key": "STIM_INSTALL_FAILED",
+                "file": null,
+                "line": null
               }
             },
             {
@@ -515,6 +557,11 @@
                 "cache-lookup": 2311,
                 "prebuild": 6669,
                 "compile": 16844
+              },
+              "cause": {
+                "key": "/Users/dev/Developer/react-native-reserved-regions/example/node_modules/.pnpm/expo@58.0.0-preview.7_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@58.0.1_adb79376978058b5a5c960732bda7d5f/node_modules/expo/android/src/main/java/inline/modules/AnnexB.kt:35",
+                "file": "/Users/dev/Developer/react-native-reserved-regions/example/node_modules/.pnpm/expo@58.0.0-preview.7_@babel+core@7.29.7_supports-color@8.1.1__@expo+dom-webview@58.0.1_adb79376978058b5a5c960732bda7d5f/node_modules/expo/android/src/main/java/inline/modules/AnnexB.kt",
+                "line": 35
               }
             },
             {
@@ -577,6 +624,12 @@
               }
             }
           ]
+        },
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
         }
       },
       {
@@ -593,7 +646,8 @@
               "owned": true,
               "physical": false,
               "serial": null,
-              "state": "not-detected"
+              "state": "not-detected",
+              "appPresence": null
             }
           }
         ],
@@ -605,14 +659,16 @@
           "name": "stim-react-native-hinges-example (iPhone Duo 27.1)",
           "udid": "EC33DE7B-AFC0-43F4-AEC1-A16960820B4C",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": {
           "name": "stim-react-native-hinges-example",
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8089,
@@ -633,7 +689,13 @@
             "slot": "fold3-camera",
             "workspace": "/Users/dev/Developer/react-native-hinges/example"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/react-native-hinges",
@@ -649,7 +711,8 @@
               "owned": true,
               "physical": false,
               "serial": null,
-              "state": "not-detected"
+              "state": "not-detected",
+              "appPresence": null
             }
           }
         ],
@@ -663,7 +726,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile",
@@ -678,14 +747,16 @@
           "name": "stim-ios27-uiscene-tlon-mobile (iPhone 18 Pro 27.0)",
           "udid": "BFB4109D-5BA5-446E-8333-B97F47BA444C",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": {
           "name": "stim-ios27-uiscene-tlon-mobile",
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8092,
@@ -710,6 +781,15 @@
             "ahead": null,
             "behind": null,
             "mergedInto": "origin/develop"
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "merged",
+                "into": "origin/develop"
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -722,7 +802,13 @@
             "remedy": "stim guide errors teardown",
             "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/ios27-uiscene/apps/tlon-mobile"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/chat-perf/apps/tlon-mobile",
@@ -742,7 +828,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile",
@@ -761,7 +853,8 @@
                 "state": "idle",
                 "lastActivityAt": "2026-09-25T03:58:55.127Z",
                 "basis": ["device-log", "workspace-use"]
-              }
+              },
+              "appPresence": null
             },
             "android": null
           },
@@ -771,7 +864,8 @@
               "name": "stim-wide-insets-tlon-mobile-iphone (iPhone 18 Pro 27.0)",
               "udid": "A370BA4E-3511-4A47-97C9-B916F6190C90",
               "owned": true,
-              "state": "Shutdown"
+              "state": "Shutdown",
+              "appPresence": null
             },
             "android": null
           }
@@ -784,7 +878,8 @@
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8091,
@@ -812,6 +907,20 @@
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 4
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -844,7 +953,12 @@
             "fingerprint": "d2c4e6f8a0b1c3d5e7f9a1b3c5d7e9f1a3b5c7d9",
             "startedAt": "2026-09-25T03:30:00.000Z",
             "finishedAt": "2026-09-25T03:31:35.000Z",
-            "errorCode": "STIM_BUILD_FAILED"
+            "errorCode": "STIM_BUILD_FAILED",
+            "cause": {
+              "key": "STIM_BUILD_FAILED",
+              "file": null,
+              "line": null
+            }
           }
         },
         "issues": [
@@ -855,7 +969,13 @@
             "remedy": "stim android",
             "workspace": "/Users/dev/Developer/tlon-apps/.worktrees/wide-insets/apps/tlon-mobile"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "building",
+          "since": "2026-09-25T03:58:55.133Z",
+          "platform": "ios",
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/ipad-support/apps/tlon-mobile",
@@ -869,7 +989,8 @@
               "name": "stim-ipad-support-tlon-mobile-i (iPad Pro 11-inch (M5) 27.0)",
               "udid": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
               "owned": true,
-              "state": "Shutdown"
+              "state": "Shutdown",
+              "appPresence": null
             },
             "android": null
           }
@@ -880,14 +1001,16 @@
           "name": "stim-ipad-support-tlon-mobile (iPhone 18 Pro 27.0)",
           "udid": "75D112AC-A6A1-486E-B22F-16EC31E35990",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": {
           "name": "stim-ipad-support-tlon-mobile",
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8093,
@@ -902,7 +1025,13 @@
         "worktree": null,
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "stopped",
+          "since": null,
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/wide-split-layout/apps/tlon-mobile",
@@ -916,7 +1045,8 @@
               "name": "stim-wide-split-layout-tlon-mob (iPad Pro 11-inch (M5) 27.0)",
               "udid": "C8C0C196-2F11-4D47-A1B2-EFE67BE9817F",
               "owned": true,
-              "state": "Shutdown"
+              "state": "Shutdown",
+              "appPresence": null
             },
             "android": null
           },
@@ -936,7 +1066,8 @@
                 },
                 "lastActivityAt": "2026-09-25T04:22:52.637Z",
                 "basis": ["agent-device-claim"]
-              }
+              },
+              "appPresence": null
             },
             "android": null
           },
@@ -946,7 +1077,8 @@
               "name": "stim-wide-split-layout-tlon-mobil (iPad mini (A17 Pro) 27.0)",
               "udid": "8B0D2C13-29B8-410C-869D-5BEFE0C58D35",
               "owned": true,
-              "state": "Shutdown"
+              "state": "Shutdown",
+              "appPresence": null
             },
             "android": null
           }
@@ -957,14 +1089,16 @@
           "name": "stim-wide-split-layout-tlon-mobile (iPhone 18 Pro 27.0)",
           "udid": "AC99FE46-446F-4D14-B1F9-FF271CE1A2A8",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": {
           "name": "stim-wide-split-layout-tlon-mobile",
           "owned": true,
           "physical": false,
           "serial": null,
-          "state": "not-detected"
+          "state": "not-detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8094,
@@ -992,6 +1126,16 @@
             "ahead": 0,
             "behind": 4,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 0,
+                "behind": 4
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -1026,6 +1170,12 @@
             "lastActivityAt": "2026-09-26T11:40:00.000Z",
             "basis": ["page-log"]
           }
+        },
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:44:19.383Z",
+          "platform": null,
+          "closedApps": []
         }
       },
       {
@@ -1045,7 +1195,8 @@
                 "state": "idle",
                 "lastActivityAt": "2026-09-25T03:32:36.952Z",
                 "basis": ["workspace-use"]
-              }
+              },
+              "appPresence": null
             },
             "android": null
           }
@@ -1061,14 +1212,16 @@
             "state": "active",
             "lastActivityAt": "2026-09-25T04:14:50.629Z",
             "basis": ["device-log", "workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-chat-perf-demo-tlon-mobile",
           "owned": true,
           "physical": false,
           "serial": "emulator-5554",
-          "state": "detected"
+          "state": "detected",
+          "appPresence": null
         },
         "metro": {
           "port": 8095,
@@ -1096,6 +1249,15 @@
             "ahead": 0,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "changed",
+                "count": 10
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -1134,7 +1296,13 @@
               "expiresAt": "2026-09-25T04:43:00.000Z"
             }
           }
-        ]
+        ],
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T02:36:55.511Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.claude/worktrees/1123-mobile-app/apps/mobile",
@@ -1153,7 +1321,8 @@
                 "state": "active",
                 "lastActivityAt": "2026-09-25T04:22:48.543Z",
                 "basis": ["workspace-use"]
-              }
+              },
+              "appPresence": null
             },
             "android": null
           }
@@ -1164,7 +1333,8 @@
           "name": "stim-1123-mobile-app-mobile (iPhone Duo 27.1)",
           "udid": "10D04457-8533-422E-9062-EA62FA64396F",
           "owned": true,
-          "state": "Shutdown"
+          "state": "Shutdown",
+          "appPresence": null
         },
         "android": null,
         "metro": {
@@ -1193,6 +1363,19 @@
             "ahead": null,
             "behind": null,
             "mergedInto": "origin/main"
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "changed",
+                "count": 1
+              },
+              {
+                "kind": "merged",
+                "into": "origin/main"
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [
@@ -1243,7 +1426,13 @@
             "lastActiveAt": "2026-09-25T03:40:00.000Z",
             "pid": 81942
           }
-        ]
+        ],
+        "stage": {
+          "kind": "building",
+          "since": "2026-09-25T04:22:48.545Z",
+          "platform": "ios",
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/new-composer/apps/tlon-mobile",
@@ -1269,11 +1458,25 @@
             "ahead": null,
             "behind": null,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "no-upstream"
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "warming",
+          "since": "2026-09-25T04:22:41.000Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/tlon-apps/.worktrees/fix-search/apps/tlon-mobile",
@@ -1298,11 +1501,25 @@
             "ahead": null,
             "behind": null,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "no-upstream"
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
         "build": null,
-        "issues": []
+        "issues": [],
+        "stage": {
+          "kind": "ready",
+          "since": "2026-09-25T04:15:02.000Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/desktop",
@@ -1336,6 +1553,20 @@
             },
             "reviewDecision": "review-required",
             "checkedAt": "2026-09-25T04:21:09.012Z"
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": "pending"
           }
         },
         "logs": {
@@ -1387,7 +1618,13 @@
             "webUrl": "https://claude.ai/code/session_01Hq8ZbR3vKx2mYtN6pLwD4c",
             "endedAt": "2026-09-25T02:41:10.000Z"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T04:20:04.000Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-running/apps/mobile",
@@ -1415,7 +1652,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:17:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-running",
@@ -1441,7 +1679,8 @@
             },
             "lastActivityAt": "2026-09-25T04:22:57.012Z",
             "basis": ["agent-session"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8084,
@@ -1491,6 +1730,20 @@
             },
             "reviewDecision": "review-required",
             "checkedAt": "2026-09-25T04:21:09.012Z"
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": "pending"
           }
         },
         "remoteDevices": [],
@@ -1602,7 +1855,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -1678,7 +1936,13 @@
             "webUrl": "https://claude.ai/code/session_01Hq8ZbR3vKx2mYtN6pLwD4c",
             "endedAt": "2026-09-25T02:41:10.000Z"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:41:09.012Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-building/apps/mobile",
@@ -1702,7 +1966,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:19:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-building",
@@ -1723,7 +1988,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:14:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8085,
@@ -1766,6 +2032,10 @@
             "checks": null,
             "reviewDecision": null,
             "checkedAt": "2026-09-25T04:20:09.012Z"
+          },
+          "gitChip": {
+            "parts": [],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -1920,7 +2190,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -1971,6 +2246,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "building",
+          "since": "2026-09-25T04:21:57.012Z",
+          "platform": "ios",
+          "closedApps": []
         }
       },
       {
@@ -1995,7 +2276,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:19:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-offloading",
@@ -2016,7 +2298,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:14:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8085,
@@ -2050,6 +2333,10 @@
             "ahead": 0,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -2203,7 +2490,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -2254,6 +2546,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "building",
+          "since": "2026-09-25T04:21:40.012Z",
+          "platform": "ios",
+          "closedApps": []
         }
       },
       {
@@ -2282,7 +2580,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:17:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-offloaded",
@@ -2308,7 +2607,8 @@
             },
             "lastActivityAt": "2026-09-25T04:22:57.012Z",
             "basis": ["agent-session"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8084,
@@ -2345,6 +2645,20 @@
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -2513,7 +2827,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -2564,6 +2883,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:41:09.012Z",
+          "platform": null,
+          "closedApps": []
         }
       },
       {
@@ -2592,7 +2917,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:17:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-offload-fallback",
@@ -2618,7 +2944,8 @@
             },
             "lastActivityAt": "2026-09-25T04:22:57.012Z",
             "basis": ["agent-session"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8084,
@@ -2655,6 +2982,20 @@
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -2863,7 +3204,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -2914,6 +3260,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:41:09.012Z",
+          "platform": null,
+          "closedApps": []
         }
       },
       {
@@ -2942,7 +3294,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:21:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": "closed"
         },
         "android": {
           "name": "stim-a4-crashed",
@@ -2963,7 +3316,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:09:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8086,
@@ -3013,6 +3367,20 @@
             },
             "reviewDecision": "changes-requested",
             "checkedAt": "2026-09-25T04:22:09.012Z"
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 0,
+                "behind": 3
+              },
+              {
+                "kind": "changed",
+                "count": 2
+              }
+            ],
+            "ci": "failing"
           }
         },
         "remoteDevices": [],
@@ -3124,7 +3492,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -3175,6 +3548,17 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:41:09.012Z",
+          "platform": null,
+          "closedApps": [
+            {
+              "platform": "ios",
+              "slot": "default"
+            }
+          ]
         }
       },
       {
@@ -3203,7 +3587,8 @@
           "app": {
             "id": "com.appandflow.stim",
             "state": "stopped"
-          }
+          },
+          "appPresence": "none"
         },
         "android": {
           "name": "stim-a4-build-failed",
@@ -3224,7 +3609,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:03:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8087,
@@ -3261,6 +3647,14 @@
             "ahead": null,
             "behind": null,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "no-upstream"
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -3283,7 +3677,12 @@
                 "column": null,
                 "message": "No profiles for 'dev.stim.mobile' were found: Xcode couldn't find any iOS App Development provisioning profiles."
               }
-            ]
+            ],
+            "cause": {
+              "key": "STIM_BUILD_FAILED",
+              "file": null,
+              "line": null
+            }
           },
           "android": {
             "platform": "android",
@@ -3326,6 +3725,11 @@
                 "prebuild": 3800,
                 "pods": 20000,
                 "compile": 24800
+              },
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
               }
             }
           ],
@@ -3377,6 +3781,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "build-failed",
+          "since": "2026-09-25T04:20:09.012Z",
+          "platform": "ios",
+          "closedApps": []
         }
       },
       {
@@ -3404,6 +3814,10 @@
             "ahead": 0,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -3414,7 +3828,13 @@
           "buildBytes": null,
           "measuredAt": "2026-09-25T04:22:49.012Z"
         },
-        "warmStep": "refresh"
+        "warmStep": "refresh",
+        "stage": {
+          "kind": "warming",
+          "since": "2026-09-25T04:22:31.012Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-ready/apps/mobile",
@@ -3454,6 +3874,10 @@
             },
             "reviewDecision": "review-required",
             "checkedAt": "2026-09-25T04:21:09.012Z"
+          },
+          "gitChip": {
+            "parts": [],
+            "ci": "passing"
           }
         },
         "remoteDevices": [],
@@ -3485,7 +3909,13 @@
             "lastActiveAt": "2026-09-24T18:45:00.000Z",
             "endedAt": "2026-09-24T19:15:30.000Z"
           }
-        ]
+        ],
+        "stage": {
+          "kind": "ready",
+          "since": "2026-09-25T03:53:09.012Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-stopped/apps/mobile",
@@ -3504,7 +3934,8 @@
           "disk": {
             "bytes": 3400000000,
             "measuredAt": "2026-09-25T04:20:09.012Z"
-          }
+          },
+          "appPresence": null
         },
         "android": null,
         "metro": {
@@ -3547,6 +3978,10 @@
             },
             "reviewDecision": "approved",
             "checkedAt": "2026-09-25T04:13:09.012Z"
+          },
+          "gitChip": {
+            "parts": [],
+            "ci": "passing"
           }
         },
         "remoteDevices": [],
@@ -3658,7 +4093,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -3709,6 +4149,12 @@
           "nodeModulesBytes": 900000000,
           "buildBytes": 1200000000,
           "measuredAt": "2026-09-25T04:20:09.012Z"
+        },
+        "stage": {
+          "kind": "stopped",
+          "since": "2026-09-25T02:23:09.012Z",
+          "platform": null,
+          "closedApps": []
         }
       },
       {
@@ -3730,6 +4176,20 @@
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": null
           }
         },
         "logs": {
@@ -3758,7 +4218,13 @@
           "measuredAt": "2026-09-25T04:20:09.012Z"
         },
         "agents": [],
-        "endedAgents": []
+        "endedAgents": [],
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T04:20:04.000Z",
+          "platform": null,
+          "closedApps": []
+        }
       },
       {
         "path": "/Users/dev/Developer/stim/.worktrees/a4-multi-device/apps/mobile",
@@ -3813,7 +4279,8 @@
             "state": "idle",
             "lastActivityAt": "2026-09-25T04:15:09.012Z",
             "basis": ["workspace-use"]
-          }
+          },
+          "appPresence": null
         },
         "android": {
           "name": "stim-a4-multi-device",
@@ -3839,7 +4306,8 @@
             },
             "lastActivityAt": "2026-09-25T04:22:57.012Z",
             "basis": ["agent-session"]
-          }
+          },
+          "appPresence": null
         },
         "metro": {
           "port": 8090,
@@ -3876,6 +4344,20 @@
             "ahead": 2,
             "behind": 0,
             "mergedInto": null
+          },
+          "gitChip": {
+            "parts": [
+              {
+                "kind": "arrows",
+                "ahead": 2,
+                "behind": 0
+              },
+              {
+                "kind": "changed",
+                "count": 3
+              }
+            ],
+            "ci": null
           }
         },
         "remoteDevices": [],
@@ -3987,7 +4469,12 @@
                 "pods": 20000,
                 "compile": 24800
               },
-              "errorCode": "STIM_BUILD_FAILED"
+              "errorCode": "STIM_BUILD_FAILED",
+              "cause": {
+                "key": "STIM_BUILD_FAILED",
+                "file": null,
+                "line": null
+              }
             }
           ],
           "android": [
@@ -4066,6 +4553,12 @@
             "lastActivityAt": "2026-09-25T04:22:57.012Z",
             "basis": ["agent-session"]
           }
+        },
+        "stage": {
+          "kind": "running",
+          "since": "2026-09-25T03:41:09.012Z",
+          "platform": null,
+          "closedApps": []
         }
       }
     ],
@@ -4591,6 +5084,7 @@
     "environments[path*=a4-running].endedAgents and environments[path*=a4-ready].endedAgents: added by hand in the EndedAgentSession shape; the capture predates the field. a4-running has a running and an ended session; a4-ready has only ended ones, a Claude Code session with a webUrl and a Codex thread without one",
     "environments[path*=a4-running|a4-multi-device]/apps/desktop: added by hand with a running MacosAppState and the same worktree as apps/mobile, to exercise the unified worktree page",
     "unprovisionedWorktrees[path*=issue-1097].repository, git, pullRequest and gitChip: added by hand in the WorktreeFacts shape with an open pull request, passing checks and commits ahead and behind",
-    "unprovisionedWorktrees[path*=profile-decode].repository, git and gitChip: added by hand in the WorktreeFacts shape with three changed files, two untracked files and no upstream"
+    "unprovisionedWorktrees[path*=profile-decode].repository, git and gitChip: added by hand in the WorktreeFacts shape with three changed files, two untracked files and no upstream",
+    "environments[*].stage, devices' appPresence, worktree.gitChip and failed runs' cause: added with core's withDerivedFacts, as stim 1.15.0 and later report them; the mock server derives them again after --overlay"
   ]
 }

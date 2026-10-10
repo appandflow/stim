@@ -91,7 +91,7 @@ import Testing
 
   @Test func summarizesEveryAppWhileUsingTheUrgentAppsStatusAndDeduplicatingSharedFacts() throws {
     let worktree =
-      #"{"path":"/w","branch":"topic","git":{"changed":0,"untracked":0,"upstream":"origin/topic","ahead":0,"behind":0},"pullRequest":{"number":7,"url":"https://example.test/7","title":"Topic","state":"open","checks":{"passing":0,"failing":1,"pending":0}}}"#
+      #"{"path":"/w","branch":"topic","git":{"changed":0,"untracked":0,"upstream":"origin/topic","ahead":0,"behind":0},"gitChip":{"parts":[],"ci":"failing"},"pullRequest":{"number":7,"url":"https://example.test/7","title":"Topic","state":"open","checks":{"passing":0,"failing":1,"pending":0}}}"#
     let agent = #"{"tool":"codex","sessionId":"shared","cwd":"/w","title":"Fix","startedAt":"2026-09-30T10:00:00.000Z"}"#
     var envs = try JSONDecoder().decode(
       [Workspace].self,
@@ -99,12 +99,14 @@ import Testing
         #"""
         [
           {"path":"/w/b","live":true,"warnings":[],"worktree":\#(worktree),"ios":\#(Self.driven),
+            "stage":{"kind":"building","since":"2026-09-30T11:59:00.000Z","platform":"ios","closedApps":[]},
             "build":{"platform":"ios","slot":"default","state":"running","phase":"compile","startedAt":"2026-09-30T11:59:00.000Z","phaseStartedAt":"2026-09-30T11:59:00.000Z","outcome":"cold","basis":0},
             "logs":{"dir":"/b","errorsSinceMarker":2},"agents":[\#(agent)],
             "endedAgents":[{"tool":"claude-code","sessionId":"other","cwd":"/w","startedAt":"2026-09-30T11:00:00.000Z"}],
             "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"B","state":"running"},
               {"platform":"ios","backend":"eas","sessionId":"C","state":"running"}]},
           {"path":"/w/a","live":true,"warnings":[],"worktree":\#(worktree),"ios":\#(Self.driven),
+            "stage":{"kind":"running","since":null,"platform":null,"closedApps":[]},
             "logs":{"dir":"/a","errorsSinceMarker":2},"agents":[\#(agent)],
             "remoteDevices":[{"platform":"ios","backend":"eas","sessionId":"A","state":"running"}]}
         ]

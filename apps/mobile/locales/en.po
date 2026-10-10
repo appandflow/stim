@@ -4193,6 +4193,7 @@ msgstr "unknown"
 #: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
+#: src/lib/workspace-view.ts
 #: src/lib/workspaces.ts
 #: src/screens/workspace-diff.tsx
 #: src/screens/workspace-diff.tsx
