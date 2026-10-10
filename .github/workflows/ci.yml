@@ -163,8 +163,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: ./.github/actions/setup-stim
+        if: runner.os == 'macOS'
+        with:
+          build: 'false'
+      - name: Build the Darwin process observer
+        if: runner.os == 'macOS'
+        run: pnpm --filter @stim-cli/core run build
       - name: Verify recorded process inspection and exit
         run: node --test test/e2e/native-processes.e2e.js
+      - name: Verify Darwin unknown, reuse and cleanup gates
+        if: runner.os == 'macOS'
+        run: node --test test/e2e/native-cleanup.e2e.js
 
   windows-full:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
