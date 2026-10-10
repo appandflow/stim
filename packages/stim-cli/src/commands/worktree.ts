@@ -826,7 +826,7 @@ function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
 }
 
 function timedOutInspection(error: unknown): RemovalInspection {
-  const blocker = `a git safety check timed out: ${(error as Error).message}`;
+  const blocker = `a git safety check timed out: ${error instanceof Error ? error.message : String(error)}`;
   return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
 }
 

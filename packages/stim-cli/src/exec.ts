@@ -50,7 +50,7 @@ function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
 
 /** Whether an exec error is a child killed for exceeding its `timeoutMs`. */
 export function isTimeoutError(error: unknown): boolean {
-  return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT';
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ETIMEDOUT';
 }
 
 function nameTimeout(error: unknown, command: string, timeoutMs: ExecOptions['timeoutMs']): unknown {
