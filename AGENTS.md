@@ -197,9 +197,9 @@ checks pass; if CI fails, fix the branch, repeat the review, and wait for the
 new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
-adds `review: ai-approved`. When the diff has a change in one of these that no
-maintainer has approved, it adds `review: needs-human` and removes any
-`review: human-approved`:
+adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
+When the diff has a change in one of these that no maintainer has approved, it
+adds `review: needs-human` and removes any `review: human-approved`:
 
 - authentication, pairing, tokens, secrets, or the capabilities stim-server
   grants (read, control, build, device-host) and what it exposes on the network;
