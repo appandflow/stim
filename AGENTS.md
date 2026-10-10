@@ -140,33 +140,38 @@ evidence instead of creating duplicate work.
 
 Label every issue when you create it: exactly one `type:`, exactly one
 `priority:`, and every `area:` it touches. When you work on an unlabeled issue,
-label it first. Pull requests carry `area:` and `review:` labels only; the
-title's prefix gives the type and the linked issue holds the priority.
-Cross-cutting labels such as `security` and the CI `e2e-*` labels apply as
-before.
+label it first. Pull requests carry `area:` and `review:` labels, plus
+`security` and the `e2e-*` labels that select CI lanes; the linked issue holds
+the type and priority.
 
-- `type: bug` breaks documented or expected behavior. `type: feature` adds
-  behavior. `type: chore` changes no user-visible behavior: refactors, tests, CI,
-  tooling, dependency updates. `type: investigation` produces findings rather
-  than a change: diagnose, measure, benchmark, prototype, evaluate.
+- `type: bug` breaks documented or expected behavior. `type: feature` adds or
+  changes behavior, including performance and polish. `type: chore` changes no
+  runtime behavior: documentation, refactors, tests, workflows, tooling,
+  dependency updates. `type: investigation` produces findings rather than a
+  change: diagnose, measure, benchmark, prototype, evaluate.
 - `priority: P0` is broken for users with no workaround, data loss, a security
   exposure, or a release blocker. `priority: P1` is next up: a user-facing
   defect or a feature that unblocks other work. `priority: P2` is normal and the
   default when unsure. `priority: P3` is nice to have.
-- `area: cli` is `packages/stim-cli`. `area: core`, `area: cache` (with
-  `packages/expo-build-cache`), `area: metro`, `area: server` and `area: ci` are
-  the matching `packages/` directories. `area: desktop` and `area: mobile` are
-  the apps. `area: website` and `area: docs` are `website/` and `docs/`.
-  `area: repo` is this repository's own workflows, test harness and release
-  tooling.
+- `area: cli` is `packages/stim-cli`, including its README and guide.
+  `area: core`, `area: cache` (with `packages/expo-build-cache`),
+  `area: metro`, `area: server` and `area: ci` are the matching `packages/`
+  directories; `area: ci` is the `@stim-cli/ci` package, not GitHub workflows.
+  `area: desktop` is `apps/desktop`. `area: mobile` is `apps/mobile` and its
+  mock server, `apps/demo-server`. `area: website` is `website/`, and
+  `area: docs` is `docs/` and the root documents. `area: repo` is everything
+  else: `.github/`, `scripts/`, `test/`, `packaging/`, `patches/` and root
+  configuration.
 
 Claim an issue before you implement it. Every agent works as the same GitHub
 user, so assignees mean nothing; the claim is a comment plus a branch. Before
 starting, check the issue for an open pull request or a `Claimed: <branch>`
 comment newer than one day (by its `createdAt`) with no later `Released:`
 comment and that branch on `origin`. When either is present the issue is taken;
-pick another. Among free issues, take the highest priority first. To claim, comment `Claimed: <branch>`, then push the branch to
-`origin` before implementing anything. The open pull request replaces the
+pick another. When you choose an issue yourself, take the highest priority among
+free issues, and treat an unlabeled issue as `priority: P2`. To claim, comment
+`Claimed: <branch>`, then push the branch to `origin` before implementing
+anything. The open pull request replaces the
 claim. If you stop without one, comment `Released:` and delete the branch.
 
 Implement each valid issue in its own git worktree and branch created from the
@@ -191,24 +196,31 @@ checks pass; if CI fails, fix the branch, repeat the review when behavior
 changes, and wait for the new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
-adds `review: ai-approved`. A push after that removes the label until the next
-clear review. Most changes need no human review. The reviewer also adds
-`review: needs-human` when the diff changes one of these:
+adds `review: ai-approved`. The reviewer also adds `review: needs-human` when
+the diff changes one of these:
 
-- authentication, pairing, tokens, secrets, or what stim-server exposes on the
-  network;
-- paths that delete files, stop or kill processes, or reclaim resources: `gc`,
-  reclaim, ownership claims and locks;
-- child-process argument handling in `exec.ts` or its callers' escaping;
+- authentication, pairing, tokens, secrets, or the capabilities stim-server
+  grants (read, control, build, device-host) and what it exposes on the network;
+- the decisions about which files, processes or devices Stim owns and may
+  delete or kill: `gc`, reclaim, teardown selection, ownership claims and locks;
+- child-process argument handling in `exec.ts` or its callers' escaping, or
+  direct `node:child_process` use in `expo-build-cache`;
 - release, publishing, signing, or secret-bearing CI workflows;
 - the on-disk state format, or a published contract (JSON output, settings,
-  stim-server protocol) in a way that existing users or clients would notice.
+  stim-server protocol) in a way that existing users or clients would notice;
+- this issue and pull request workflow, including the review labels.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
-and lists each `path:lines` to check with one line saying why. A pull request
-labeled `review: needs-human` does not merge. A maintainer reviews it and
-replaces the label with `review: human-approved`. GitHub approvals cannot record
-this because every agent uses the same account.
+and lists each `path:lines` to check with one line saying why. A maintainer
+reviews those lines and replaces `review: needs-human` with
+`review: human-approved`; `review: ai-approved` stays. GitHub approvals cannot
+record this because every agent uses the same account.
+
+The agent that pushes after a review removes `review: ai-approved` until the
+next clear review. When that push changes lines a maintainer approved, it also
+replaces `review: human-approved` with `review: needs-human`. Merge, including
+with `gh stack merge`, only when every pull request involved has
+`review: ai-approved` and none has `review: needs-human`.
 
 Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
