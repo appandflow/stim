@@ -38,7 +38,7 @@ export function reapChildren(): void {
   const tracked = [...live.values()];
   live.clear();
   if (process.platform === 'win32') {
-    for (const { pid } of tracked) kill(pid, false);
+    for (const { pid, exited } of tracked) if (!exited) kill(pid, false);
     return;
   }
   const below = descendants(tracked.filter(({ exited }) => !exited).map(({ pid }) => pid));
