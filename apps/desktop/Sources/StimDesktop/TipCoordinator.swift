@@ -98,6 +98,8 @@ final class TipCoordinator: ObservableObject {
     inputs.sidebar = SidebarPreferences().options
     inputs.rows = status.sidebarList(inputs.sidebar).count
     inputs.workspaces = status.payload?.environments ?? []
+    inputs.archived = status.payload?.archived ?? []
+    inputs.serverRunning = ServerController.shared.isRunning
     return inputs
   }
 
@@ -150,7 +152,9 @@ final class TipCoordinator: ObservableObject {
     case .phone: OpenRequests.shared.pairsPhone = true
     case .tutorial: OpenRequests.shared.showTutorial()
     case .replay:
-      OpenRequests.shared.workspacePath = inputs.workspaces.first { $0.recording?.enabled == true }?.path
+      if let archive = Tips.replayArchive(inputs) {
+        OpenRequests.shared.workspaceLink = .workspace(WorkspaceOpenRequest(path: archive.projectRoot, archive: archive.id))
+      }
     case .hideWorkspaces, .statusFilter: break
     }
   }
