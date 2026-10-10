@@ -1,6 +1,6 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -645,8 +645,8 @@ export function checkEasAuth({
   if (status.code === 'project-cli') {
     return finding(
       'note',
-      'Did not check the EAS session: the only eas-cli is in the project tree',
-      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
+      'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository',
+      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}, which is in the repository, in a node_modules/.bin above it, or in a checkout whose repository root git did not report. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
       status.remedy ?? null,
     );
   }
@@ -701,10 +701,20 @@ export function checkConcurrency({
 
 function easCliOutsideRepository(projectRoot: string): string | null {
   const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
-  if (!found) return null;
+  const root = found ? repoRoot(projectRoot) : null;
+  if (!found || !root) return null;
   try {
-    const path = relative(realpathSync(repoRoot(projectRoot) ?? projectRoot), realpathSync(found));
-    return path.startsWith('..') || isAbsolute(path) ? found : null;
+    const repository = realpathSync(root);
+    const directory = realpathSync(dirname(resolve(found)));
+    const within = (path: string) => {
+      const rel = relative(repository, path);
+      return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
+    };
+    if (within(join(directory, basename(found))) || within(realpathSync(found))) return null;
+    for (let dir = realpathSync(projectRoot); ; dir = dirname(dir)) {
+      if (directory === join(dir, 'node_modules', '.bin')) return null;
+      if (dirname(dir) === dir) return found;
+    }
   } catch {
     return null;
   }
@@ -722,17 +732,16 @@ function readProjectEasCliVersion(projectRoot: string): string | null {
 
 function doctorEasAuth({ projectRoot, owner }: { projectRoot: string; owner?: string | null }): EasAuthResult {
   const file = easCliOutsideRepository(projectRoot);
-  const projectBin = file ? null : resolveEasCliBin(projectRoot);
-  if (projectBin) {
-    return {
-      failed: true,
-      code: 'project-cli',
-      reason: projectBin.file,
-      remedy:
-        'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
-    };
-  }
-  return probeEasAuth({ projectRoot, owner, resolveBin: () => (file ? { file, source: 'path' } : null) });
+  if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
+  const unchecked = resolveEasCliBin(projectRoot);
+  if (!unchecked) return probeEasAuth({ projectRoot, owner, resolveBin: () => null });
+  return {
+    failed: true,
+    code: 'project-cli',
+    reason: unchecked.file,
+    remedy:
+      'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
+  };
 }
 
 export function checkRemoteDevice({
@@ -1476,9 +1485,11 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
-    timeoutMs: 60000,
-  });
+  const added = exec.runFileQuiet(
+    'git',
+    ['-C', projectRoot, '-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+    { timeoutMs: 60000 },
+  );
   if (added == null) {
     rmSync(base, { recursive: true, force: true });
     return null;
