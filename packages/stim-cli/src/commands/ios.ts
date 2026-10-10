@@ -11,12 +11,7 @@ import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '..
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { NO_BUILD_PROGRESS, startBuildProgress, tapBuildLog, type BuildProgress } from '../engine/build-progress.ts';
 import { basename, join } from 'node:path';
-import {
-  resolveOptimizations,
-  artifactCachePolicy,
-  optimizationBuildProfile,
-  type Optimizations,
-} from '../optimizations.ts';
+import { artifactCachePolicy, optimizationBuildProfile } from '../optimizations.ts';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { formatDuration, phaseLine, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
@@ -34,7 +29,6 @@ import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
-  cacheProviderSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -45,9 +39,7 @@ import {
   publicUrlSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
-  settingShapeErrors,
   tunnelModeSetting,
-  unknownSettingKeys,
 } from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
 import { type IosDeps, DEFAULT_DEPS } from './ios/dependencies.ts';
@@ -68,7 +60,7 @@ import { ownedSessionName } from '../engine/eas-simulator.ts';
 import { createRunRecorder, statsProjectKey, type RunEstimates } from '../engine/stats.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
-import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
+import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
@@ -88,6 +80,7 @@ import {
   deviceModelRefusal,
   isReleaseConfiguration,
   ownedSimFailure,
+  resolveIosBuildSetup,
   simulatorBuildArch,
 } from './ios/support.ts';
 import { lastBuildRecord, writeLastBuild } from './ios/result.ts';
@@ -259,22 +252,6 @@ function unlessCancelled(
     failure: { code: 'STIM_CANCELLED', message: 'before install' },
     compilationCache: result.artifact.cache.compilation,
   };
-}
-
-function resolveIosBuildSetup(
-  flag: string | undefined,
-  settings: ReturnType<IosDeps['resolveSettings']>,
-): { ok: true; buildMachine: string; optimizations: Optimizations } | { ok: false; failure: FailArgs } {
-  const placement = resolveBuildPlacement(flag);
-  if (placement.failure) return { ok: false, failure: { ...placement.failure, setup: true } };
-  try {
-    return { ok: true, buildMachine: placement.selected, optimizations: resolveOptimizations(settings) };
-  } catch (error) {
-    return {
-      ok: false,
-      failure: { code: 'STIM_BAD_ARG', message: (error as Error).message, remedy: SETTING_SHAPE_REMEDY },
-    };
-  }
 }
 
 function iosProjectTargetRefusal(
@@ -540,26 +517,14 @@ async function runIos(
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= d.readEstimates({ projectKey, platform: PLATFORM }));
   const settings = d.resolveSettings(settingsContext);
-  const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
-  if (shapeError) {
-    return fail({
-      code: 'STIM_BAD_ARG',
-      message: shapeError,
-      lines: moreShapeErrors,
-      remedy: SETTING_SHAPE_REMEDY,
-    });
-  }
-  const setup = resolveIosBuildSetup(opts.remoteBuild, settings);
+  const setup = resolveIosBuildSetup(opts.remoteBuild, settings, (label, message) =>
+    note(phaseLine(label, chalk.yellow(message))),
+  );
   if (!setup.ok) return fail(setup.failure);
   buildMachine = setup.buildMachine;
   const { optimizations } = setup;
   const buildProfile = optimizationBuildProfile('ios', optimizations);
   const cacheProviderConfig = d.resolveCacheProviderConfig(settingsContext);
-  for (const key of unknownSettingKeys(settings)) {
-    note(phaseLine('setting', chalk.yellow(`Warning: setting "${key}" is not read by Stim and will be ignored.`)));
-  }
-  const cacheProviderError = cacheProviderSettingError(settings);
-  if (cacheProviderError) note(chalk.yellow(phaseLine('cache', `${cacheProviderError} Using the local cache.`)));
 
   const poolError = parkedMaxSetting('ios').error;
   if (poolError) return fail({ code: 'STIM_BAD_ARG', message: poolError, remedy: POOL_SETTING_REMEDY });

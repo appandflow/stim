@@ -25,6 +25,7 @@ import { pruneCache } from '../cache/caches.ts';
 import * as buildLocks from '../engine/build-lock.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
+import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
@@ -358,6 +359,35 @@ describe('pruneCache protection and LRU order', () => {
     expect(result.removed).toBe(1);
     expect(result.protectedEntries).toBe(1);
     expect(names.filter((name) => existsSync(join(root, name)))).toEqual(['a', 'c', 'd']);
+  });
+
+  test('the newest succeeded build-only artifact of each platform is protected', () => {
+    const root = buildCacheRoot();
+    const entries = ['k-build-only', 'k-older', 'k-failed'].map((key) => cacheEntry(root, 'ios', key, 9));
+    const project = join(projects, 'build-only');
+    mkdirSync(project, { recursive: true });
+    upsertProject(project, { metroPort: 8100 });
+    const run = (cacheKey: string, status: 'ok' | 'failed', startedAt: string) => ({
+      platform: 'ios',
+      status,
+      cacheKey,
+      startedAt,
+      result: status === 'ok' ? 'succeeded' : 'failed',
+    });
+    writeWorkspaceState(project, {
+      buildHistory: {
+        ios: [
+          run('k-failed', 'failed', '2026-10-03T00:00:00Z'),
+          run('k-build-only', 'ok', '2026-10-02T00:00:00Z'),
+          run('k-older', 'ok', '2026-10-01T00:00:00Z'),
+        ],
+      },
+    });
+    pruneCache(
+      { name: 'builds', dir: join(root, 'ios'), prune: 'entries', note: '' },
+      { olderThanDays: 1, byMtime: true, protect: cacheEntryProtection() },
+    );
+    expect(entries.map((entry) => existsSync(entry))).toEqual([true, false, false]);
   });
 
   test('without a size target the age cutoff behaves as before', () => {

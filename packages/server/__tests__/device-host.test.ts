@@ -1073,9 +1073,7 @@ test.each(['ios', 'android', 'macos'])(
     expect(installing).toHaveProperty('result.state', 'installing');
     expect(installing).not.toHaveProperty('result.agent');
     expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
-    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'), {
-      timeout: 5000,
-    });
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
     const installed = host.appAttach('client', params);
     for (const answer of [installed, host.appLaunch('client', params)]) {
       if ('error' in answer) throw new Error(answer.error.message);
@@ -1120,9 +1118,7 @@ async function installApp(platform: string, access?: AgentAccess) {
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
-    timeout: 5000,
-  });
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
   return { id: first.id, params: app.params };
 }
 

@@ -422,6 +422,29 @@ describe('build history', () => {
 
     expect(readBuildHistory(readWorkspaceState(root)).ios!.map((entry) => entry.result)).toEqual(['succeeded']);
   });
+  test("a build-only result joins history without replacing the running app's build or device record", () => {
+    const running = finished('2026-09-24T09:00:00.000Z', { appPath: '/runtime/App.app', cacheKey: 'runtime-key' });
+    recordFinishedBuild(root, running);
+    const device = { deviceUdid: 'booted', devicePlacement: { machine: 'mini' } };
+    writeWorkspaceState(root, { ...readWorkspaceState(root), ios: device });
+
+    const claim = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => T0 });
+    recordFinishedBuild(root, finished('2026-09-24T10:00:00.000Z', { appPath: '/artifacts/App.app' }), {
+      artifactOnly: true,
+    });
+    releaseClaim(claim);
+    const next = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: next, now: () => T0 + 60_000 }).clear();
+    releaseClaim(next);
+
+    const state = readWorkspaceState(root);
+    expect(state).toMatchObject({ lastBuild: running, lastIosBuild: running, ios: device });
+    expect(readBuildHistory(state).ios!.map(({ result, startedAt }) => [result, startedAt])).toEqual([
+      ['succeeded', '2026-09-24T10:00:00.000Z'],
+      ['succeeded', '2026-09-24T09:00:00.000Z'],
+    ]);
+  });
 });
 
 describe('macOS builds', () => {

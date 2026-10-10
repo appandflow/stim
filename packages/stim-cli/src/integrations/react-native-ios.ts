@@ -77,7 +77,6 @@ const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
 export function reactNativeIosProject(root: string, dependencies: Partial<IosDeps> = {}): IosProject {
   const d: ReactNativeIosDependencies = { ...DEFAULT_DEPS, ...dependencies };
   const isExpo = d.detectIsExpo(root);
-
   return {
     plan: (options) =>
       planReactNativeIos(root, options, { ...DEFAULT_DEPS, ...dependencies }, (scheme) =>
