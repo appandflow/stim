@@ -38,12 +38,22 @@ stim-ci build --platform android --project ./app --artifacts ./build-results
 ```
 
 `build` needs no test command or device. It preserves existing workspace
-sessions and shares normal cache validation with a later `run` step. GitHub-hosted
-steps automatically share the job's temporary home and cache. Use a separate
-results directory for each step.
+sessions. iOS and Android builds use the same native artifact cache as `run`; a
+later `run` validates it normally, and `cacheKey` and `cacheHit` in its
+`run.json` show whether it reused the build. macOS builds are not cached.
+GitHub-hosted steps automatically share the job's temporary home and cache. Use
+a separate results directory for each step.
+
+Both `build` and `run` accept `--scheme` and `--configuration` for iOS and
+`--variant` for Android, so a run can match a build. `build` also accepts
+`--arch` (`arm64`, `x86_64`, `all`) for iOS and `--abi` (`arm64-v8a`,
+`armeabi-v7a`, `x86`, `x86_64`, `all`) for Android. Without them, each project's
+normal build settings apply.
 
 Upload the results directory through your CI provider. It includes `result.json`,
-`build.json`, diagnostics, and an APK or a `tar.gz` app bundle. Apple bundles are
+`build.json`, `diagnostics.json`, and an APK or a `tar.gz` app bundle. iOS and
+macOS also keep the archive command's output in `artifact.stdout.log` and
+`artifact.stderr.log`. Apple bundles are
 archived to preserve executable modes and symlinks across artifact transport.
 iOS outputs target the simulator; distribution archives and web compilation
 are outside this command. Downloaded-artifact import into a Stim run is not

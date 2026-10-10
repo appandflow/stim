@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -68,25 +69,34 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   expect(lifecycle.stop).not.toHaveBeenCalled();
 });
 
-test('failed partial export cleanup retains the export error and diagnostic report', async () => {
-  const partial = join(options.artifactsDir!, 'app.apk');
-  lifecycle.build.mockImplementation(async () => {
-    mkdirSync(partial);
-    writeFileSync(join(partial, 'unrelated'), 'preserved');
-    return { platform: 'android', facts: { apkPath: join(root, 'built.apk') } } as StimBuildResult;
-  });
+test('export failure reports an artifact failure, removes the partial export and keeps the reports', async () => {
+  lifecycle.build.mockResolvedValue({
+    platform: 'android',
+    facts: { apkPath: join(root, 'missing.apk') },
+  } as StimBuildResult);
   const result = await buildCI(options);
   expect(result.exitCode).toBe(1);
+  expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
+  expect(result.failure?.message).toContain('ENOENT');
   expect(result.artifactPath).toBeNull();
-  expect(result.failure?.message).toContain('copyfile');
-  expect(result.reportingError).toBeDefined();
+  expect(readdirSync(options.artifactsDir!).filter((name) => name.startsWith('app.'))).toEqual([]);
+  expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).failure).toEqual(result.failure);
   expect(existsSync(result.diagnostics.path!)).toBe(true);
-  const saved = JSON.parse(readFileSync(result.resultPath, 'utf8'));
-  expect(saved.failure).toEqual(result.failure);
-  expect(saved.reportingError).toEqual(result.reportingError);
-  expect(readFileSync(join(partial, 'unrelated'), 'utf8')).toBe('preserved');
   expect(existsSync(active)).toBe(true);
   expect(lifecycle.stop).not.toHaveBeenCalled();
+});
+
+test('cancellation during diagnostics keeps a completed export', async () => {
+  const controller = new AbortController();
+  lifecycle.diagnostics.mockImplementation(async () => {
+    controller.abort();
+    return { directory: root, records: [] };
+  });
+  const result = await buildCI({ ...options, signal: controller.signal });
+  expect(result.exitCode).toBe(0);
+  expect(result.failure).toBeUndefined();
+  expect(readFileSync(result.artifactPath!, 'utf8')).toBe('compiled apk');
+  expect(existsSync(result.diagnostics.path!)).toBe(true);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -134,7 +144,11 @@ test('CLI build needs no command and refuses platform-incompatible selectors bef
     output.push(String(chunk));
     return true;
   });
-  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  const errors: string[] = [];
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    errors.push(String(chunk));
+    return true;
+  });
   const prior = process.exitCode;
   try {
     await main(['build', '--platform', 'android', '--project', root, '--artifacts', options.artifactsDir!]);
@@ -144,6 +158,9 @@ test('CLI build needs no command and refuses platform-incompatible selectors bef
     await main(['build', '--platform', 'android', '--scheme', 'App', '--project', root]);
     expect(process.exitCode).toBe(1);
     expect(lifecycle.build).toHaveBeenCalledTimes(calls);
+    await main(['run', '--platform', 'ios', '--abi', 'x86', '--project', root, '--', 'true']);
+    expect(process.exitCode).toBe(1);
+    expect(errors.join('')).toContain('--arch and --abi only apply to build-only.');
   } finally {
     process.exitCode = prior;
   }

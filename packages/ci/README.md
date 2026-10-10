@@ -19,11 +19,16 @@ npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app --
 This compiles or restores an artifact without starting a simulator, emulator,
 Metro server, or app. It does not stop an existing workspace session. iOS builds
 target the simulator; archives, device distribution and web compilation are
-not supported. A later `run` step uses normal cache validation in the same job.
+not supported. iOS and Android builds use the same native artifact cache as
+`run`. A later `run` in the same job validates that cache normally; its
+`run.json` reports `cacheKey` and `cacheHit`, which show whether it reused the
+build. macOS builds are not cached, so a later macOS `run` builds again.
 
 The result has `stage: "build"`, `build`, `buildPath`, and `artifactPath`.
-The results directory contains `build.json`, `result.json`, diagnostics, and
-`app.apk` for Android or `app.tar.gz` for iOS/macOS. The archive preserves app
+The results directory contains `build.json`, `result.json`, `diagnostics.json`,
+and `app.apk` for Android or `app.tar.gz` for iOS/macOS. iOS and macOS also
+keep the archive command's output in `artifact.stdout.log` and
+`artifact.stderr.log`. The archive preserves app
 executable permissions and symlinks when uploaded through an artifact service.
 Extract it with `tar -xzf app.tar.gz`. Importing a downloaded artifact into a
 Stim run is not part of this command.
@@ -50,8 +55,22 @@ stim-ci run --platform android --project ./app --artifacts ./test-results --time
 `--platform` accepts `ios`, `android`, `macos`, or `web`. `--project` defaults
 to the current directory. `--home` and `--build-cache` explicitly select the
 Stim home and native artifact cache; leaving them unset preserves normal Stim
-configuration. The CLI uses each project's normal build settings. The library
-also accepts the public API's platform-specific run options.
+configuration.
+
+Without selectors, the CLI uses each project's normal build settings. `build`
+and `run` accept the same selectors as the public API, so a run can match a
+build:
+
+| Option                   | Platform | Stage      | Selects                                                 |
+| ------------------------ | -------- | ---------- | ------------------------------------------------------- |
+| `--scheme <name>`        | iOS      | build, run | Xcode scheme                                            |
+| `--configuration <name>` | iOS      | build, run | Xcode configuration                                     |
+| `--variant <name>`       | Android  | build, run | Gradle variant                                          |
+| `--arch <name>`          | iOS      | build      | Architecture: `arm64`, `x86_64`, `all`                  |
+| `--abi <name>`           | Android  | build      | ABI: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all` |
+
+The library also accepts the public API's other platform-specific build and run
+options.
 
 Everything after `--` is an argument vector. No shell is inferred. To use shell
 syntax, pass a shell explicitly: `-- bash -e -o pipefail -c 'pnpm test:e2e'`.

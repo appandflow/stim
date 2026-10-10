@@ -108,7 +108,9 @@ export async function runCommand({
             groupError ??= String(caught);
           }
           if (Date.now() >= deadline) {
-            error ??= groupError ?? `Test process group ${child.pid} did not exit after termination`;
+            error ??=
+              groupError ??
+              `${logName === 'artifact' ? 'Artifact export' : 'Test'} process group ${child.pid} did not exit after termination`;
             break;
           }
           await delay(20);

@@ -83,7 +83,8 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
       const packed = await runCommand({
         command: ['tar', '-czf', exporting, '-C', dirname(bundle), '--', basename(bundle)],
         cwd: projectRoot,
-        env: process.env,
+        // macOS bsdtar stores extended attributes as AppleDouble ._* entries unless COPYFILE_DISABLE is set.
+        env: { ...process.env, COPYFILE_DISABLE: '1' },
         artifactsDir,
         logName: 'artifact',
         signal,
@@ -99,8 +100,17 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
     result.exitCode = 0;
   } catch (error) {
     result.failure = failure(error, result.build ? 'STIM_CI_ARTIFACT_FAILED' : 'STIM_CI_BUILD_FAILED');
+    if (result.build && !result.failure.code.startsWith('STIM_')) result.failure.code = 'STIM_CI_ARTIFACT_FAILED';
   } finally {
     reporting = true;
+    if (signal?.aborted) {
+      const timedOut = timeout?.aborted && !options.signal?.aborted;
+      result.exitCode = timedOut ? 124 : 130;
+      result.failure = {
+        code: timedOut ? 'STIM_CI_TIMEOUT' : 'STIM_CI_CANCELLED',
+        message: timedOut ? `CI build exceeded ${options.timeoutMs}ms.` : 'CI build was cancelled.',
+      };
+    }
     if (exporting && !result.artifactPath) {
       try {
         rmSync(exporting, { force: true });
@@ -116,14 +126,6 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
       } catch (error) {
         result.diagnostics.error = failure(error, 'STIM_CI_DIAGNOSTICS_FAILED');
       }
-    }
-    if (signal?.aborted) {
-      const timedOut = timeout?.aborted && !options.signal?.aborted;
-      result.exitCode = timedOut ? 124 : 130;
-      result.failure = {
-        code: timedOut ? 'STIM_CI_TIMEOUT' : 'STIM_CI_CANCELLED',
-        message: timedOut ? `CI build exceeded ${options.timeoutMs}ms.` : 'CI build was cancelled.',
-      };
     }
     if (result.reportingError && result.exitCode === 0) {
       result.exitCode = 1;

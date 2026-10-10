@@ -15,14 +15,18 @@ Options:
   --artifacts <path>     Results directory (default: a fresh temporary directory)
   --home <path>          Explicit Stim home (default: job-local on GitHub-hosted runners)
   --build-cache <path>   Native artifact cache directory
-  --timeout <seconds>   Setup and test timeout (cleanup has its own deadline)
-  --scheme <name>       iOS build scheme
-  --configuration <name> iOS build configuration
-  --variant <name>      Android build variant
-  --arch <name>         Build-only iOS architecture: arm64, x86_64, all
-  --abi <name>          Build-only Android ABI: arm64-v8a, armeabi-v7a, x86, x86_64, all
-  --help                Show this help
-  --version             Show the package version
+  --timeout <seconds>    Setup and test timeout (cleanup has its own deadline)
+  --help                 Show this help
+  --version              Show the package version
+
+Build selectors (build and run):
+  --scheme <name>        iOS scheme
+  --configuration <name> iOS configuration
+  --variant <name>       Android variant
+
+Build-only selectors:
+  --arch <name>          iOS architecture: arm64, x86_64, all
+  --abi <name>           Android ABI: arm64-v8a, armeabi-v7a, x86, x86_64, all
 `;
 
 type Invocation = { stage: 'run'; options: CIOptions } | { stage: 'build'; options: CIBuildOptions };
@@ -62,6 +66,8 @@ function parse(argv: string[]): Invocation {
     buildCache: values['build-cache'],
     timeoutMs,
   };
+  if (stage === 'run' && (values.arch !== undefined || values.abi !== undefined))
+    throw new Error('--arch and --abi only apply to build-only.');
   if (
     platform !== 'ios' &&
     (values.scheme !== undefined || values.configuration !== undefined || values.arch !== undefined)
@@ -94,8 +100,6 @@ function parse(argv: string[]): Invocation {
           : { platform };
     return { stage, options: { ...common, build } };
   }
-  if (values.arch !== undefined || values.abi !== undefined)
-    throw new Error('--arch and --abi only apply to build-only.');
   if (separator < 0) throw new Error('Separate the test command with --.');
   if (!command[0]) throw new Error('A test command is required after --.');
   const run: CIOptions['run'] =
