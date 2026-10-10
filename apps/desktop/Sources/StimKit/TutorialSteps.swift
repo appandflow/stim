@@ -8,7 +8,6 @@ public struct TutorialStep: Sendable {
   public let optional: Bool
   public let ask: String?
   public let section: String?
-  public let commands: [String]
 }
 
 public enum TutorialSteps {
@@ -17,91 +16,33 @@ public enum TutorialSteps {
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Get the Test App", who: "agent", optional: false,
-      ask: "Clone appandflow/stim-tutorial into {base} and follow stim guide tutorial run.", section: "run",
-      commands: [
-
-      ]),
+      ask: "Clone appandflow/stim-tutorial into {base} and follow stim guide tutorial run.", section: "run"),
     TutorialStep(
       id: "build", title: "Make a Change", who: "you", optional: false,
-      ask: "Make the title purple in the Stim tutorial app and check it on the simulator.", section: nil,
-      commands: [
-
-      ]),
+      ask: "Make the title purple in the Stim tutorial app and check it on the simulator.", section: nil),
     TutorialStep(
       id: "parallel", title: "Change It Again in Parallel", who: "you", optional: false,
-      ask: nil, section: nil,
-      commands: [
-
-      ]),
+      ask: "While that builds, make the Tap me button green in a new worktree and check it on the simulator.", section: nil),
     TutorialStep(
       id: "device", title: "Live View and Control", who: "you", optional: true,
-      ask: nil, section: nil,
-      commands: [
-        "stim status"
-      ]),
+      ask: nil, section: nil),
     TutorialStep(
-      id: "agent", title: "Agent Actions and Replay", who: "agent", optional: true,
-      ask: "Open the app on the iOS simulator, take a screenshot and confirm the title color.", section: nil,
-      commands: [
-        "cd \"{tour}\"",
-        "export AGENT_DEVICE_STATE_DIR=\"{stateDir}\"",
-        "agent-device open dev.stim.tutorial --platform ios --udid {udid}",
-        "agent-device screenshot tutorial.png",
-        "agent-device close",
-        "stim logs --source agent --tail 10",
-      ]),
+      id: "agent", title: "Agent Actions and Replay", who: "you", optional: true,
+      ask: nil, section: nil),
     TutorialStep(
       id: "logs", title: "App Logs", who: "you", optional: true,
-      ask: nil, section: nil,
-      commands: [
-        "stim logs --errors",
-        "stim logs --grep stim:tutorial",
-      ]),
+      ask: nil, section: nil),
     TutorialStep(
       id: "phone", title: "Watch on Your Phone", who: "you", optional: true,
-      ask: nil, section: nil,
-      commands: [
-
-      ]),
+      ask: nil, section: nil),
     TutorialStep(
       id: "share", title: "Share Your Finish", who: "you", optional: true,
-      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, with before and after screenshots from the simulator. See stim guide tutorial share.", section: "share",
-      commands: [
-        "cd \"{tour}\"",
-        "git commit -am \"<one-line summary>\"",
-        "mkdir -p .expo/screenshots",
-        "git checkout origin/main -- theme.js",
-        "xcrun simctl io {udid} screenshot .expo/screenshots/before.png",
-        "git checkout HEAD -- theme.js",
-        "xcrun simctl io {udid} screenshot .expo/screenshots/after.png",
-        "cp .github/pull_request_template.md .expo/screenshots/body.md",
-        "gh repo fork appandflow/stim-tutorial --remote --remote-name fork",
-        "git push -u fork HEAD",
-        "gh pr create --repo appandflow/stim-tutorial --title \"<one-line summary>\" --body-file .expo/screenshots/body.md --attach \".expo/screenshots/before.png#Before\" --attach \".expo/screenshots/after.png#After\"",
-      ]),
+      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, with before and after screenshots from the simulator. See stim guide tutorial share.", section: "share"),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
-      ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.", section: "finish",
-      commands: [
-        "cd \"{tour}\"",
-        "stim stop",
-        "cd \"{second}\"",
-        "stim stop",
-        "cd \"{base}\"",
-        "stim worktree remove \"{tour}\"",
-        "stim worktree remove \"{second}\"",
-      ]),
+      ask: "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.", section: "finish"),
     TutorialStep(
       id: "delete", title: "Delete the Test App", who: "agent", optional: true,
-      ask: "Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.", section: "delete",
-      commands: [
-        "cd \"{base}\"",
-        "grep stimTutorial app.json",
-        "git worktree list",
-        "stim stop",
-        "stim worktree remove \"{base}\"",
-        "cd ..",
-        "rm -rf \"{base}\"",
-      ]),
+      ask: "Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.", section: "delete"),
   ]
 }

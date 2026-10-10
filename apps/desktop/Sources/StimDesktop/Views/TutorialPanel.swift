@@ -12,18 +12,16 @@ struct TutorialPanel: View {
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
-  var commands: (TutorialStep) -> String
   var copied: () -> Void = {}
-  var skip: () -> Void = {}
-  var markDone: () -> Void = {}
+  var next: () -> Void = {}
   var restart: () -> Void = {}
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
+  var openBuild: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
   @State private var collapsedOptional: Set<String> = []
-  @AppStorage("tutorial.commandsExpanded") private var commandsExpanded = false
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -129,7 +127,14 @@ struct TutorialPanel: View {
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          copyBlock(step)
+          if let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
+          if step.id == "build", current, let openBuild {
+            HStack(spacing: Space.sm) {
+              Text("Click Show to watch the build.")
+              Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
+                .accessibilityLabel("Open the tutorial build")
+            }
+          }
           if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
@@ -154,11 +159,15 @@ struct TutorialPanel: View {
           }
           ForEach(state.ticks, id: \.id) { tick in
             Label(
-              tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
+              Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
               systemImage: tick.done ? "checkmark.circle.fill" : "circle"
             )
             .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
-            .accessibilityLabel("\(tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
+            .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
+          }
+          if let pull = state.link, let url = URL(string: pull.url) {
+            Link("PR #\(pull.number): \(pull.title)", destination: url).lineLimit(1)
+              .accessibilityLabel("Open pull request \(pull.number)")
           }
           if current {
             ForEach(issues, id: \.self) { issue in
@@ -168,15 +177,8 @@ struct TutorialPanel: View {
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
             }
-            if step.optional {
-              Button("Skip", action: skip)
-                .buttonStyle(.stim(.secondary))
-                .accessibilityLabel("Skip \(step.title)")
-            }
-            if state.canMarkDone {
-              Button("Mark Done", action: markDone).buttonStyle(.stim())
-                .accessibilityLabel("Mark \(step.title) done")
-            }
+            Button("Next", action: next).buttonStyle(.stim(.secondary))
+              .accessibilityLabel("Next: leave \(step.title)")
           }
         }
         .padding(.leading, Space.xl)
@@ -186,45 +188,8 @@ struct TutorialPanel: View {
     }
   }
 
-  @ViewBuilder private func copyBlock(_ step: TutorialStep) -> some View {
-    let ask = asks(step)
-    let hasCommands = !step.commands.isEmpty
-    let showsAsk = ask != nil
-    if let ask, showsAsk {
-      TutorialPromptBox(prompt: ask, onCopy: copied)
-    }
-    if hasCommands {
-      DisclosureGroup(isExpanded: $commandsExpanded) {
-        VStack(alignment: .leading, spacing: Space.sm) {
-          Text(showsAsk ? "Your agent runs these. You can also run them yourself." : "Run these yourself.")
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          commandBlock(step)
-        }
-        .padding(.top, Space.sm)
-      } label: {
-        Text(showsAsk ? "Commands your agent will run" : "Commands to run yourself")
-          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      }
-      .accessibilityLabel("Commands for \(step.title)")
-    }
-  }
-
-  @ViewBuilder private func commandBlock(_ step: TutorialStep) -> some View {
-    if rendersStatic {
-      CommandBlock(commandText: commands(step))
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(height: 280, alignment: .top).clipped()
-    } else {
-      ScrollView { CommandBlock(commandText: commands(step)) }
-        .frame(maxHeight: 280)
-    }
-  }
-
   private var footer: some View {
     HStack {
-      if !snapshot.isComplete {
-        Button("Skip Step", action: skip).buttonStyle(.stim(.plain)).accessibilityLabel("Skip current tutorial step")
-      }
       Spacer()
       if rendersStatic {
         Image(systemName: "ellipsis").accessibilityLabel("Tutorial options")
@@ -279,33 +244,32 @@ struct TutorialPanel: View {
         "Ask your agent for a visual change. It builds in its own worktree and simulator, and checks the result on the device. The first build can take a few minutes."
     case "parallel":
       return
-        "While that runs, ask for another change, for example: \"Try a dark background and check it on the simulator.\" Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
-    case "device": return "Optional. Open the live view of either simulator and tap around while your agents work."
-    case "agent":
-      return
-        "Optional. Your agent verifies UI changes itself with screenshots, taps and logs. Desktop shows what it did and lets you replay it. Apps can declare readiness with two log lines (stim guide lifecycle readiness), so agents can check their own apps the same way. Try a prompt like this, then watch Agent actions."
+        "While that builds, ask for a second change in a new worktree. Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
+    case "device": return "Open a tutorial simulator's live view and tap the app yourself."
+    case "agent": return "See what your agent did on the device, then replay it."
     case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
     case "phone":
       return
         "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
     case "share":
       return
-        "Optional and public, and do it before finishing so your change still exists. If you paste this, your agent forks appandflow/stim-tutorial and opens a pull request: your GitHub name and change appear on that repo. It needs GitHub access (gh) for your agent, and a bot will reply and close it. Nothing depends on this step."
+        "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
     case "delete":
       return
-        "Optional. Your agent removes any tutorial worktrees left and then the clone, through Stim so their simulators and dev servers go too, and deletes the folder. Skip this step to keep the clone."
+        "Optional. Your agent removes any tutorial worktrees left and then the clone, through Stim so their simulators and dev servers go too, and deletes the folder. Press Next to keep the clone."
     default: return ""
     }
   }
 
-  private func tickTitle(_ id: String) -> String {
+  static func tickTitle(_ id: String) -> String {
     switch id {
     case "opened": return "Live view opened"
     case "input": return "Device controlled"
-    case "action": return "Agent action received"
+    case "viewed": return "Agent actions viewed"
+    case "replayed": return "Replay played"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
     case "cloned": return "Test app cloned"
@@ -313,6 +277,7 @@ struct TutorialPanel: View {
     case "registered": return "Registered with Stim"
     case "worktrees": return "Tutorial worktrees removed"
     case "clone": return "Clone removed and deleted"
+    case "pr": return "Pull request opened"
     default: return PhaseStep.name(id)
     }
   }

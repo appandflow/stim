@@ -11,7 +11,7 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and follow stim guide tutorial run.`,
   build: 'Make the title purple in the Stim tutorial app and check it on the simulator.',
-  agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
+  parallel: 'While that builds, make the Tap me button green in a new worktree and check it on the simulator.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   delete:
@@ -27,7 +27,6 @@ export const TUTORIAL_STEPS: {
   optional: boolean;
   ask: string | null;
   section: string | null;
-  commands: string[];
 }[] = [
   {
     id: 'begin',
@@ -36,7 +35,6 @@ export const TUTORIAL_STEPS: {
     optional: false,
     ask: TUTORIAL_ASKS.begin,
     section: 'run',
-    commands: [],
   },
   {
     id: 'build',
@@ -45,16 +43,14 @@ export const TUTORIAL_STEPS: {
     optional: false,
     ask: TUTORIAL_ASKS.build,
     section: null,
-    commands: [],
   },
   {
     id: 'parallel',
     title: 'Change It Again in Parallel',
     who: 'you',
     optional: false,
-    ask: null,
+    ask: TUTORIAL_ASKS.parallel,
     section: null,
-    commands: [],
   },
   {
     id: 'device',
@@ -63,23 +59,14 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: null,
     section: null,
-    commands: ['stim status'],
   },
   {
     id: 'agent',
     title: 'Agent Actions and Replay',
-    who: 'agent',
+    who: 'you',
     optional: true,
-    ask: TUTORIAL_ASKS.agent,
+    ask: null,
     section: null,
-    commands: [
-      'cd "{tour}"',
-      'export AGENT_DEVICE_STATE_DIR="{stateDir}"',
-      `agent-device open ${TUTORIAL_BUNDLE_ID} --platform ios --udid {udid}`,
-      'agent-device screenshot tutorial.png',
-      'agent-device close',
-      'stim logs --source agent --tail 10',
-    ],
   },
   {
     id: 'logs',
@@ -88,7 +75,6 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: null,
     section: null,
-    commands: ['stim logs --errors', 'stim logs --grep stim:tutorial'],
   },
   {
     id: 'phone',
@@ -97,7 +83,6 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: null,
     section: null,
-    commands: [],
   },
   {
     id: 'share',
@@ -106,19 +91,6 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: TUTORIAL_ASKS.share,
     section: 'share',
-    commands: [
-      'cd "{tour}"',
-      'git commit -am "<one-line summary>"',
-      'mkdir -p .expo/screenshots',
-      'git checkout origin/main -- theme.js',
-      'xcrun simctl io {udid} screenshot .expo/screenshots/before.png',
-      'git checkout HEAD -- theme.js',
-      'xcrun simctl io {udid} screenshot .expo/screenshots/after.png',
-      'cp .github/pull_request_template.md .expo/screenshots/body.md',
-      `gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork`,
-      'git push -u fork HEAD',
-      `gh pr create --repo ${TUTORIAL_REPO} --title "<one-line summary>" --body-file .expo/screenshots/body.md --attach ".expo/screenshots/before.png#Before" --attach ".expo/screenshots/after.png#After"`,
-    ],
   },
   {
     id: 'finish',
@@ -127,15 +99,6 @@ export const TUTORIAL_STEPS: {
     optional: false,
     ask: TUTORIAL_ASKS.finish,
     section: 'finish',
-    commands: [
-      'cd "{tour}"',
-      'stim stop',
-      'cd "{second}"',
-      'stim stop',
-      'cd "{base}"',
-      'stim worktree remove "{tour}"',
-      'stim worktree remove "{second}"',
-    ],
   },
   {
     id: 'delete',
@@ -144,14 +107,5 @@ export const TUTORIAL_STEPS: {
     optional: true,
     ask: TUTORIAL_ASKS.delete,
     section: 'delete',
-    commands: [
-      'cd "{base}"',
-      'grep stimTutorial app.json',
-      'git worktree list',
-      'stim stop',
-      'stim worktree remove "{base}"',
-      'cd ..',
-      'rm -rf "{base}"',
-    ],
   },
 ];

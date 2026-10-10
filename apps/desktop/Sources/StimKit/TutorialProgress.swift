@@ -13,6 +13,7 @@ public struct TutorialEnvironment: Sendable {
   public var repository: String?
   public var recording: Workspace.Recording?
   public var agentStateDir: String?
+  public var pullRequest: PullRequestFacts?
   public var iosDoctorRanAt: Date?
 
   public init?(_ workspace: Workspace) {
@@ -29,6 +30,7 @@ public struct TutorialEnvironment: Sendable {
     repository = workspace.worktree?.repository ?? workspace.path
     recording = workspace.recording
     agentStateDir = workspace.agentDevice?.stateDir
+    pullRequest = workspace.worktree?.pullRequest
     iosDoctorRanAt = workspace.doctorRuns?.ios.flatMap { parseTimestamp($0.at) }
   }
 
@@ -76,6 +78,8 @@ public struct TutorialEnvironment: Sendable {
 public enum TutorialViewerEvent: Equatable, Sendable {
   case opened(String)
   case input(String)
+  case actionsViewed(String)
+  case replayPlayed(String)
 }
 
 public struct TutorialRecord: Codable, Equatable, Sendable {
@@ -223,7 +227,7 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var detail: String
   public var action: TutorialAction?
   public var ticks: [TutorialTick]
-  public var canMarkDone: Bool
+  public var link: PullRequestFacts?
 }
 
 public struct TutorialSnapshot: Sendable {
@@ -239,25 +243,24 @@ public struct TutorialProgress: Sendable {
   public private(set) var record: TutorialRecord?
   private var viewerOpened = false
   private var viewerInput = false
+  private var actionsViewed = false
+  private var replayPlayed = false
   private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
+  private var finished: Set<String> = []
 
   public init() {}
 
-  public mutating func skip(now: Date) {
+  /// Leaves the current step: recorded as done when its ticks are all done or it was detected, else as skipped.
+  public mutating func next(now: Date) {
     guard var record, record.step != "done" else { return }
-    record.skipped.append(record.step)
-    self.record = record
-    advance(now)
-  }
-
-  @discardableResult
-  public mutating func markDone(now: Date) -> Bool {
-    guard let record, record.step != "done", now.timeIntervalSince(record.stepSince ?? record.startedAt) >= 120 else {
-      return false
+    if finished.contains(record.step) {
+      complete(at: now)
+    } else {
+      record.skipped.append(record.step)
+      self.record = record
+      advance(now)
     }
-    complete(at: now)
-    return true
   }
 
   public mutating func copiedRunPrompt(now: Date) {
@@ -313,10 +316,14 @@ public struct TutorialProgress: Sendable {
     if record?.stepTimes == nil { record?.stepTimes = [:] }
     record?.stepTimes?[currentID] = currentSince
     let logs = input.logRecords.filter { $0.date >= record!.startedAt }.sorted { $0.ts < $1.ts }
-    if let udid = tracked?.ios?.udid {
-      for event in input.viewerEvents {
-        if event == .opened(udid) { viewerOpened = true }
-        if event == .input(udid), viewerOpened { viewerInput = true }
+    let devices = [tracked?.ios?.udid, second?.ios?.udid].compactMap { $0 }
+    for event in input.viewerEvents {
+      switch event {
+      case .opened(let udid) where devices.contains(udid): viewerOpened = true
+      case .input(let udid) where devices.contains(udid) && viewerOpened: viewerInput = true
+      case .actionsViewed(let udid) where udid == tracked?.ios?.udid: actionsViewed = true
+      case .replayPlayed(let udid) where udid == tracked?.ios?.udid: replayPlayed = true
+      default: break
       }
     }
     var failure: TutorialNotice?
@@ -339,6 +346,12 @@ public struct TutorialProgress: Sendable {
           failure = TutorialNotice(reason)
           break
         }
+        let ticks = checkpoint.ticks.filter { !$0.optional }
+        if checkpoint.completed != nil || (!ticks.isEmpty && ticks.allSatisfy(\.done)) {
+          finished.insert(id)
+        } else {
+          finished.remove(id)
+        }
         guard let completed = checkpoint.completed else { break }
         complete(at: completed)
       }
@@ -359,8 +372,7 @@ public struct TutorialProgress: Sendable {
       let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
-        ticks: checkpoint.ticks,
-        canMarkDone: current == step.id && input.now.timeIntervalSince(record!.stepSince ?? record!.startedAt) >= 120)
+        ticks: checkpoint.ticks, link: checkpoint.link)
     }
     return TutorialSnapshot(
       steps: steps, currentStep: current, record: record!,
@@ -426,6 +438,7 @@ public struct TutorialProgress: Sendable {
     var detail = ""
     var action: TutorialAction?
     var ticks: [TutorialTick] = []
+    var link: PullRequestFacts?
   }
 
   private mutating func checkpoint(
@@ -436,9 +449,6 @@ public struct TutorialProgress: Sendable {
     let last = environment?.lastBuild
     let history = environment?.builds ?? []
     let udid = environment?.ios?.udid
-    let actions = logs.filter {
-      udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid && $0.date >= since
-    }
     func signal(_ substring: String) -> LogRecord? { logs.first { $0.msg.contains(substring) } }
     func tick(_ id: String, _ done: Bool, optional: Bool = false) -> TutorialTick {
       TutorialTick(id: id, done: done, optional: optional)
@@ -505,19 +515,23 @@ public struct TutorialProgress: Sendable {
         completed: last.cacheHit == .none ? nil : last.endedAt,
         detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
     case "device":
-      guard environment?.ios?.app?.state == "running" else {
+      guard [environment, second].contains(where: { $0?.ios?.app?.state == "running" }) else {
         return Checkpoint(detail: "Run the app first, then open its live view")
       }
       return Checkpoint(
-        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view and tap around.",
+        completed: viewerOpened && viewerInput ? now : nil,
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
     case "logs": return Checkpoint(detail: "Find the app output in Logs")
     case "agent":
-      let first = actions.first
+      let recorded = logs.contains {
+        udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid
+      }
       let off = input.replayOff || environment?.recording?.enabled == false
       return Checkpoint(
-        completed: first?.date, detail: off ? "Replay is off: Settings > Advanced" : "Watch the agent actions",
-        ticks: [tick("action", first != nil)])
+        detail: !recorded
+          ? "No agent actions were recorded on the first change's simulator."
+          : off ? "Replay is off: Settings > Advanced" : "",
+        ticks: [tick("viewed", actionsViewed), tick("replayed", replayPlayed)])
     case "phone":
       let paired = (input.pairedPhoneCount ?? 0) > 0
       return Checkpoint(
@@ -525,6 +539,10 @@ public struct TutorialProgress: Sendable {
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
           : "Pair your phone")
+    case "share":
+      let pull = environment?.pullRequest
+      return Checkpoint(
+        completed: pull == nil ? nil : now, ticks: [tick("pr", pull != nil)], link: pull)
     case "finish":
       if record?.step == "finish", environment?.live == false { record?.stopped = true }
       let absent = environment == nil && second == nil && record?.tourPath != nil

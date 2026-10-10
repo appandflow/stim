@@ -87,7 +87,6 @@ struct BuildSheet: View {
               cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
               dismiss: { dismiss() }
             )
-            .tutorialAnchor(.buildSection, workspace: app.path)
             .id(page == nil ? run.id : "\(app.path)|\(run.id)")
             .padding(Space.xxl)
             if archive == nil, run.running == nil, run.id == runs.first?.id { nextBuild }
@@ -103,7 +102,6 @@ struct BuildSheet: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
-    .tutorialHighlights(showFallback: false)
     .font(.stim(.callout))
     .background(Palette.background)
     .frame(minWidth: 980, idealWidth: 980, minHeight: 720, idealHeight: 720)
@@ -342,7 +340,6 @@ private struct BuildRunDetail: View {
               tone: run.running?.cacheLookupOutcome == "hit" || run.last?.cacheHit == .local || run.last?.cacheHit == .remote
                 ? .success : .warning
             )
-            .tutorialAnchor(.cacheBadge, workspace: env.path)
           }
           if let reason = run.missReason { MissReasonView(reason: reason) }
           if let note = run.running?.recheckNote { Text(note).foregroundStyle(Palette.tertiary) }

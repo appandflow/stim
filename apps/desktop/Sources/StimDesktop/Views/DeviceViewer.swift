@@ -49,7 +49,10 @@ struct DeviceViewer: View {
         AgentFeed(cli: cli, workspace: env.path, slot: device.slot, deviceID: device.activityKey) { agentActions in
           if let target = replayTarget(device) {
             ReplayHost(target: target) { replay in
-              ReplayingContent(replay: replay) { replaying in
+              ReplayingContent(
+                replay: replay,
+                onPlay: { if let udid = device.localSimulatorUDID { TutorialViewerEvents.shared.replayPlayed(udid) } }
+              ) { replaying in
                 content(device, size: size, agentActions: agentActions, replay: replay, replaying: replaying)
               }
             }
@@ -137,6 +140,7 @@ struct DeviceViewer: View {
       HStack(spacing: 0) {
         VStack(spacing: 0) {
           canvas(device, replay: replay, replaying: replaying)
+            .overlay(alignment: .topLeading) { TutorialViewerCard().padding(Space.lg) }
           if let replay, replaying || env.replayOff || replay.timeline != nil {
             Rectangle().fill(Palette.border).frame(height: 1)
             ReplayBar(
@@ -170,6 +174,11 @@ struct DeviceViewer: View {
             }
           )
           .tutorialAnchor(.agentActions, workspace: env.path)
+          .task(id: agentActions.isEmpty) {
+            guard !agentActions.isEmpty, let udid = device.localSimulatorUDID else { return }
+            try? await Task.sleep(for: .seconds(TutorialHint.glowSeconds))
+            if !Task.isCancelled { TutorialViewerEvents.shared.actionsViewed(udid) }
+          }
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
         }
@@ -205,6 +214,7 @@ struct DeviceViewer: View {
           },
           windowChoice: windowChoice
         )
+        .tutorialAnchor(.viewerScreen, workspace: env.path)
         .frame(minWidth: geo.size.width, minHeight: geo.size.height)
       }
       .onChange(of: replaying) { _, replaying in
@@ -291,6 +301,31 @@ struct DeviceViewer: View {
   }
 }
 
+private struct TutorialViewerCard: View {
+  @Environment(\.tutorialHint) private var hint
+
+  var body: some View {
+    if let hint, hint.step == "device" {
+      Card(fill: Palette.raised, border: Palette.separator) {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text("Live View and Control").font(.stim(.callout, weight: .semibold))
+          Text("Tap the Tap me button and watch the counter.").foregroundStyle(Palette.secondary)
+          ForEach(hint.ticks, id: \.id) { tick in
+            Label(TutorialPanel.tickTitle(tick.id), systemImage: tick.done ? "checkmark.circle.fill" : "circle")
+              .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          }
+        }
+        .padding(Space.lg)
+      }
+      .frame(width: 260, alignment: .leading)
+      .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+      .allowsHitTesting(false)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Stim tutorial: Live View and Control")
+    }
+  }
+}
+
 /// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
 /// moves, so playing and scrubbing redraw only the replay bar, the screen and the action highlighted.
 private struct ReplayingContent<Content: View>: View {
@@ -301,6 +336,7 @@ private struct ReplayingContent<Content: View>: View {
   }
 
   var replay: ReplayController
+  var onPlay: () -> Void
   @ViewBuilder var content: (Bool) -> Content
   @State private var shown = Shown(replaying: false, hasFootage: false)
 
@@ -311,6 +347,7 @@ private struct ReplayingContent<Content: View>: View {
           .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true), replayable: $2) }
           .removeDuplicates()
       ) { shown = $0 }
+      .onReceive(replay.$replay.map { ($0?.rate ?? 0) > 0 }.removeDuplicates()) { if $0 { onPlay() } }
   }
 }
 

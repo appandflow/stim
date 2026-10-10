@@ -222,24 +222,13 @@ final class TutorialModel: ObservableObject {
     syncFollowers()
   }
 
-  func skip() {
-    progress.skip(now: Date())
-    refresh()
-  }
-  func markDone() {
-    progress.markDone(now: Date())
+  func next() {
+    progress.next(now: Date())
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
-  }
-
-  func commands(for step: TutorialStep) -> String {
-    tutorialCommands(
-      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
-      stateDir: workspace?.agentDevice?.stateDir,
-      udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
   private func refresh(now: Date = Date()) {

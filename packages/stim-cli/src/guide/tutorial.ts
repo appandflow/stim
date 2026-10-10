@@ -1,5 +1,5 @@
 import { TUTORIAL_VERSION } from '@stim-cli/core/state';
-import { TUTORIAL_BUNDLE_ID, TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT, TUTORIAL_STEPS } from './tutorial-data.ts';
+import { TUTORIAL_BUNDLE_ID, TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT } from './tutorial-data.ts';
 import type { GuideTopic } from './types.ts';
 
 const paths = `Use {base} = ~/stim-tutorial unless the user named another folder. Expand ~
@@ -30,21 +30,15 @@ never booted. Take both with the same tool so they match in size. .expo/ is
 ignored and outside the native fingerprint, so the files are never committed,
 never change the build, and never block stim worktree remove. Keep each PNG under 1 MB.`;
 
-function commands(id: string): string {
-  return TUTORIAL_STEPS.find((step) => step.id === id)!.commands.join('\n');
-}
-
 const tutorial: GuideTopic = {
   summary: 'A cloned test app: a first build, a second change in parallel with a cache hit, and cleanup',
   sectionHint: 'run',
   preamble: () => `STIM TUTORIAL
 
 The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, into {base}; the clone is
-never run, and only the optional delete step removes it. The user then asks for a visual change, and for another
-change while the first builds. Each change runs in its own linked worktree of
-{base}, so each has its own simulator and Metro port, and the second worktree's
-first iOS build reuses the first one's native build. Only the clone, the
-optional share and the cleanup need this guide: the changes are ordinary
+never run, and only the optional delete step removes it. The user then asks for a visual change, which runs in a
+linked worktree of {base} with its own simulator and Metro port. Only the clone,
+the optional share and the cleanup need this guide: the changes are ordinary
 requests, so follow stim guide agent for them, and check each change on the
 device.
 
@@ -57,8 +51,7 @@ ${local}
 
 ${paths}
 
-Never pair phones, approve machines, or grant access on the user's behalf.
-For commands to type yourself, read stim guide tutorial manual.`,
+Never pair phones, approve machines, or grant access on the user's behalf.`,
   sections: {
     run: {
       summary: 'Clone the test app into a fresh folder and install its dependencies',
@@ -97,10 +90,20 @@ ${local}
 
 ${screenshots}
 
+Check each change on the device with agent-device in that same session, after
+the after screenshot, so Stim Desktop records your actions and the user can
+replay them: tap tap-button, toggle dark-accent-switch, type a name in
+name-input, then take a screenshot (agent-device screenshot
+.expo/screenshots/checked.png) and confirm the change. Refs expire after each
+action: run agent-device snapshot -i before every action and use the ref it
+reports for that testID. When agentDevice.installed is false in stim status
+--json, do not install agent-device unasked: check the change with the build
+result and stim logs --errors, and tell the user that agent-device would let
+you tap through the app.
+
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
-making the title purple, in their own words. Each change runs in a new linked
-worktree of {base} (stim guide agent), and its first iOS build takes a few
-minutes.`,
+making the title purple, in their own words. It runs in a new linked worktree
+of {base} (stim guide agent), and its first iOS build takes a few minutes.`,
     },
     finish: {
       summary: 'Stop and remove the two tutorial worktrees, keeping the clone',
@@ -114,7 +117,13 @@ as {tour} and {second}. Never touch any other worktree, an earlier tutorial
 clone, or the clone itself. For each, stop from its path, then remove it from
 the clone:
 
-${commands('finish')}
+  cd "{tour}"
+  stim stop
+  cd "{second}"
+  stim stop
+  cd "{base}"
+  stim worktree remove "{tour}"
+  stim worktree remove "{second}"
 
 Use a plain remove first. The user's finish request says they do not need the
 changes, which is the consent stim guide agent asks for before worktree remove
@@ -227,25 +236,6 @@ path; never use --force for them. Reuse the clone at {base} only if its
 stimTutorial marker equals ${TUTORIAL_VERSION}; otherwise follow stim guide
 tutorial run into a fresh folder. Pause as run instructs. Stim Desktop starts
 over: only worktrees and builds after the restart count.`,
-    },
-    manual: {
-      summary: 'The commands behind each step, for typing yourself',
-      body: () => `MANUAL TUTORIAL
-
-${paths}
-
-Replace {base}, {tour} and {second} with absolute paths: {base} is the clone,
-{tour} the first worktree and {second} the second. For Agent Actions, replace
-{stateDir} with agentDevice.stateDir from stim ios or stim status --json and
-{udid} with the workspace's ios.udid. Clone with git
-clone https://github.com/${TUTORIAL_REPO}.git into a fresh folder outside any
-repository. Each change runs in its own worktree of that clone (stim guide
-agent); the clone itself is never run. Run each worktree on iOS with
-stim ios --remote local --remote-build local so it stays on this Mac.
-
-${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.commands.length ? `\`\`\`sh\n${step.commands.join('\n')}\n\`\`\`` : 'Ask your agent in your own words, or observe this step in Stim Desktop.'}`).join('\n\n')}
-
-Finish removes only the two tutorial worktrees, never the clone; stim guide tutorial finish says when --force is allowed for them.`,
     },
   },
 };

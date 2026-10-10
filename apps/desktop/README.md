@@ -1834,12 +1834,12 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 an inspector-width trailing column. It replaces the inspector until closed;
 Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
+sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying commands does not start it. Only archives
+and survives relaunch. Only archives
 removed after this run started can complete the tutorial.
 
 The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
@@ -1854,28 +1854,24 @@ tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Both optional steps
-keep Skip available.
+that start count, and the oldest one becomes the tour. Every step has one Next
+button: it records the step as done when its non-optional ticks are all done or
+its checkpoint completed, and as skipped otherwise. Detected steps advance on
+their own.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Machine opens the existing wizard using the tour workspace as its
-checkout. With no machine configured, Skip is the primary action. Once a machine
+checkout. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
-name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
+name it when none is recorded. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server or pairs or grants access. Mark done
-appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access.
 
-Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
-section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
-short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
-`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
-simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
-Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
-Build section's Run, and is disabled while a build or action runs in the workspace.
+A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
+`tutorial-data.ts`, with the tracked paths substituted.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.

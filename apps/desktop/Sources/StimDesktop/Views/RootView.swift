@@ -126,11 +126,17 @@ struct RootView: View {
             snapshot: snapshot, message: tutorial.notice,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
-            asks: tutorial.ask, commands: tutorial.commands,
-            copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
+            asks: tutorial.ask,
+            copied: { tutorial.copiedPrompt() }, next: tutorial.next,
             restart: tutorial.restart,
             close: tutorial.close,
             openArchived: openTutorialArchive,
+            openBuild: tutorial.tourPath.map { path in
+              {
+                navigate(.environment(path), .click("tutorial Open the build"))
+                focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+              }
+            },
             pairPhone: { openRequests.pairsPhone = true },
             updateCLI: {
               onboarding.openGuide()
@@ -411,7 +417,9 @@ struct RootView: View {
     guard tutorial.isOpen else { return nil }
     let selected: String? = if case .environment(let path) = selection { path } else { nil }
     return TutorialHint(
-      step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath, selectedPath: selected,
+      step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath,
+      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected,
+      ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
       showMe: {
         if tutorial.snapshot?.isFinished == true {
           openTutorialArchive()

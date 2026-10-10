@@ -205,7 +205,7 @@
         }
         let model = TutorialModel(defaults: isolatedDefaults(), cloneBase: "/nonexistent/stim-tutorial")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
-        for _ in 0..<2 { model.skip() }
+        for _ in 0..<2 { model.next() }
         XCTAssertEqual(model.snapshot?.currentStep, "device")
         events.opened("reused-simulator")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
