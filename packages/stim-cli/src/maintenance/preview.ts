@@ -65,6 +65,12 @@ export async function plannedMaintenance(
       blocked: current?.willClear ? undefined : (current?.keptReason ?? 'workspace outputs cannot be resolved'),
     });
   });
+  const pins = new Map<string, boolean>();
+  const pinned = (workspace: string): boolean => {
+    let value = pins.get(workspace);
+    if (value === undefined) pins.set(workspace, (value = maintenancePinned(workspace)));
+    return value;
+  };
   const result = plan({
     pressure,
     sizes: currentSizes,
@@ -75,7 +81,7 @@ export async function plannedMaintenance(
     protectedRoot: root,
     scoped: Boolean(process.env.STIM_HOME),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
-    pinned: maintenancePinned,
+    pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
   }) as PlannedMaintenance;
   const merge = (extra: MaintenancePlan) => {
@@ -85,9 +91,9 @@ export async function plannedMaintenance(
     result.blocked.push(...extra.blocked);
     result.skips.push(...extra.skips);
   };
-  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned: maintenancePinned, now: Date.now() }));
+  if (sweep) merge(planSweep({ settings, sizes, protectedRoot: root, pinned, now: Date.now() }));
   if (worktrees) {
-    const planned = await planWorktrees({ protectedRoot: root, pinned: maintenancePinned, now: Date.now() });
+    const planned = await planWorktrees({ protectedRoot: root, pinned, now: Date.now() });
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { Command } from 'commander';
 import { getExecutor } from '../exec.ts';
+import doctorCommand from '../commands/doctor.ts';
+import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readCxxLauncherStates, repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { checkCxxCompilerLauncher, type Finding } from '../diagnostics/doctor.ts';
@@ -259,11 +262,36 @@ test.skipIf(process.platform === 'win32').each(['relative.json', '/missing/toolc
   },
 );
 
-test('settings that could not be read repair nothing', () => {
-  const path = cache('android/app', null);
-  expect(repairCxxLauncherState(root, null)).toEqual({ removed: [], refused: [] });
-  expect(existsSync(path)).toBe(true);
-});
+test.skipIf(process.platform === 'win32')(
+  'doctor --fix repairs nothing when the config cannot be read (ccache PATH lookup is POSIX-only; skipped on win32)',
+  async () => {
+    writeFileSync(
+      join(root, 'package.json'),
+      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
+    );
+    const path = cache('android/app', null);
+    writeFileSync(join(home, 'config.json'), '{ "projects": ');
+    const program = new Command();
+    doctorCommand(program, '1.2.3', () => analyzeStimVersions('1.2.3', '/tools/stim-cli', []));
+    const cwd = process.cwd();
+    const log = console.log;
+    const error = console.error;
+    console.log = () => {};
+    console.error = () => {};
+    process.chdir(root);
+    try {
+      await expect(
+        program.parseAsync(['node', 'stim', 'doctor', '--json', '--fix', '--platform', 'android']),
+      ).rejects.toMatchObject({ code: 'STIM_CONFIG_CORRUPT' });
+    } finally {
+      process.chdir(cwd);
+      console.log = log;
+      console.error = error;
+      process.exitCode = undefined;
+    }
+    expect(existsSync(path)).toBe(true);
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'a CAS toolchain selected in the environment is judged by whether Stim can use it (ccache PATH lookup is POSIX-only; skipped on win32)',
