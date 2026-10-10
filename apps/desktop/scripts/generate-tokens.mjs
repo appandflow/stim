@@ -139,7 +139,6 @@ public struct TutorialStep: Sendable {
   public let optional: Bool
   public let ask: String?
   public let section: String?
-  public let commands: [String]
 }
 
 public enum TutorialSteps {
@@ -149,10 +148,7 @@ public enum TutorialSteps {
 ${TUTORIAL_STEPS.map(
   (step) => `    TutorialStep(
       id: ${swiftString(step.id)}, title: ${swiftString(step.title)}, who: ${swiftString(step.who)}, optional: ${step.optional},
-      ask: ${step.ask === null ? 'nil' : swiftString(step.ask)}, section: ${step.section === null ? 'nil' : swiftString(step.section)},
-      commands: [
-${step.commands.map((line) => `        ${swiftString(line)}${step.commands.length === 1 ? '' : ','}`).join('\n')}
-      ]),`,
+      ask: ${step.ask === null ? 'nil' : swiftString(step.ask)}, section: ${step.section === null ? 'nil' : swiftString(step.section)}),`,
 ).join('\n')}
   ]
 }

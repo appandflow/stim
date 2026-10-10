@@ -123,17 +123,12 @@ first start; worktrees from before the restart stay and no longer count. When
 the tutorial workspace comes from an older tutorial version, the panel says so
 and offers only **Restart Tutorial**.
 
-Each step shows a plain request to copy for your coding agent, with the paths
-filled in from the tour's repository. Below it, a collapsed **Commands your agent
-will run** section lists the same work as a short set of commands you can type
-yourself, with the agent-device state directory and simulator filled in when
-known. Create the Tutorial has only the prompt. Desktop remembers whether the
-section is open. Copying a command does not start the three-minute workspace
-warning. The default base is `~/stim-tutorial`.
+A step that needs your agent shows a plain request to copy, with the paths
+filled in from the tour's repository. The default base is `~/stim-tutorial`.
 **Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
 for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
 `remote.build` say. The agent keeps the tutorial's own runs local the same way. To
-read the complete manual:
+read the commands behind each step, for typing yourself:
 
 <StimTabs code={`stim guide tutorial manual`} />
 

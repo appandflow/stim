@@ -13,7 +13,6 @@ struct TutorialPanel: View {
   var canRunIOS = false
   var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
-  var commands: (TutorialStep) -> String
   var copied: () -> Void = {}
   var skip: () -> Void = {}
   var markDone: () -> Void = {}
@@ -25,7 +24,6 @@ struct TutorialPanel: View {
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
   @State private var collapsedOptional: Set<String> = []
-  @AppStorage("tutorial.commandsExpanded") private var commandsExpanded = false
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -131,7 +129,7 @@ struct TutorialPanel: View {
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          copyBlock(step)
+          if let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
           if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
@@ -198,40 +196,6 @@ struct TutorialPanel: View {
       } else if state.state == .done, ["build", "parallel"].contains(step.id), !state.detail.isEmpty {
         Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
       }
-    }
-  }
-
-  @ViewBuilder private func copyBlock(_ step: TutorialStep) -> some View {
-    let ask = asks(step)
-    let hasCommands = !step.commands.isEmpty
-    let showsAsk = ask != nil
-    if let ask, showsAsk {
-      TutorialPromptBox(prompt: ask, onCopy: copied)
-    }
-    if hasCommands {
-      DisclosureGroup(isExpanded: $commandsExpanded) {
-        VStack(alignment: .leading, spacing: Space.sm) {
-          Text(showsAsk ? "Your agent runs these. You can also run them yourself." : "Run these yourself.")
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-          commandBlock(step)
-        }
-        .padding(.top, Space.sm)
-      } label: {
-        Text(showsAsk ? "Commands your agent will run" : "Commands to run yourself")
-          .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      }
-      .accessibilityLabel("Commands for \(step.title)")
-    }
-  }
-
-  @ViewBuilder private func commandBlock(_ step: TutorialStep) -> some View {
-    if rendersStatic {
-      CommandBlock(commandText: commands(step))
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(height: 280, alignment: .top).clipped()
-    } else {
-      ScrollView { CommandBlock(commandText: commands(step)) }
-        .frame(maxHeight: 280)
     }
   }
 

@@ -1834,12 +1834,12 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 an inspector-width trailing column. It replaces the inspector until closed;
 Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
+sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying commands does not start it. Only archives
+and survives relaunch. Only archives
 removed after this run started can complete the tutorial.
 
 The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
@@ -1869,12 +1869,9 @@ Mac" check. Completed optional steps stay expanded so their handoff remains
 visible. The tutorial never starts the server or pairs or grants access. Mark done
 appears after two minutes.
 
-Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
-section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
-short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
-`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
-simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
-Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
+A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
+`tutorial-data.ts`, with the tracked paths substituted. The steps' command lists there feed only
+`stim guide tutorial manual`; Desktop does not show them. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
 Build section's Run, and is disabled while a build or action runs in the workspace.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
