@@ -211,8 +211,10 @@ adds `review: needs-human` and removes any `review: human-approved`:
   installs or clients cannot read.
 
 Refactors, hardening, stricter validation and bug fixes inside those areas do
-not qualify unless they widen what is exposed, deleted or readable. When it is
-unclear, leave the label off and name the concern in the review.
+not qualify unless they widen what is exposed or deleted, expose a secret, or
+break what existing installs or clients can read. When it is unclear, leave the
+label off and name the concern in the review; that alone does not block
+`review: ai-approved`.
 
 With that label, the reviewer posts a comment that starts with `Human review:`
 and lists each unapproved `path:lines`, linked at the reviewed commit, with one
