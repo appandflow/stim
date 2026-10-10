@@ -22,8 +22,16 @@ struct TutorialPanel: View {
   var openLogs: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
-  @State private var expanded: String?
-  @State private var collapsedOptional: Set<String> = []
+  var floating: Floating? = nil
+
+  struct Floating {
+    var isOn: Bool
+    var pinned: Bool
+    var toggle: () -> Void
+    var togglePin: () -> Void
+  }
+  @State private var viewed: String?
+  @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject private var updater = AppUpdater.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   private var steps: [TutorialStep] { TutorialSteps.steps(phoneApp: flags.phoneApp) }
@@ -37,9 +45,14 @@ struct TutorialPanel: View {
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
       }
       .padding([.horizontal, .top], Space.xl)
-      TutorialTrack(steps: steps, progress: snapshot.steps)
-        .padding(.horizontal, Space.xl)
-        .padding(.vertical, Space.md)
+      HStack(spacing: Space.sm) {
+        arrow("chevron.left", to: slides.previous(shown), label: "Previous step")
+        TutorialTrack(
+          steps: steps, progress: snapshot.steps, finished: snapshot.isFinished, viewed: shown, select: view)
+        arrow("chevron.right", to: slides.next(shown), label: "Next step")
+      }
+      .padding(.horizontal, Space.lg)
+      .padding(.vertical, Space.md)
       illustration
         .padding(.horizontal, Space.lg)
         .padding(.bottom, Space.md)
@@ -53,11 +66,58 @@ struct TutorialPanel: View {
     .background(Palette.sidebar)
     .tint(Palette.primary)
     .accessibilityLabel("Stim tutorial")
+    .focusable()
+    .focusEffectDisabled()
+    .onKeyPress(.leftArrow) {
+      guard let id = slides.previous(shown) else { return .ignored }
+      view(id)
+      return .handled
+    }
+    .onKeyPress(.rightArrow) {
+      guard let id = slides.next(shown) else { return .ignored }
+      view(id)
+      return .handled
+    }
+    .onChange(of: slides.current) { old, _ in
+      withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+        viewed = slides.viewed(viewed, afterProgressFrom: old)
+      }
+    }
+  }
+
+  private var slides: TutorialSlides {
+    TutorialSlides(steps: steps.map(\.id), currentStep: snapshot.currentStep, finished: snapshot.isFinished)
+  }
+
+  private var shown: String { slides.shown(viewed) }
+
+  private func view(_ id: String) {
+    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+      viewed = id == slides.current ? nil : id
+    }
+  }
+
+  private func arrow(_ symbol: String, to target: String?, label: String) -> some View {
+    Button {
+      if let target { view(target) }
+    } label: {
+      Image(systemName: symbol).frame(width: 16, height: 22).contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .foregroundStyle(target == nil ? Palette.tertiary : Palette.secondary)
+    .disabled(target == nil)
+    .help(label)
+    .accessibilityLabel(target.map { "\(label): \(title(of: $0))" } ?? label)
+  }
+
+  private func title(of id: String) -> String {
+    id == TutorialSlides.completion ? "Tutorial complete" : steps.first { $0.id == id }?.title ?? id
   }
 
   @ViewBuilder private var illustration: some View {
-    let step = snapshot.currentStep ?? (snapshot.record.done.contains("delete") ? "delete" : "finish")
-    let state = snapshot.steps.first { $0.id == step }?.state
+    let step =
+      shown == TutorialSlides.completion ? (snapshot.record.done.contains("delete") ? "delete" : "finish") : shown
+    let state = shown == slides.current ? snapshot.steps.first { $0.id == step }?.state : nil
     let failed: Bool = {
       if case .failed = state { return true }
       return false
@@ -79,31 +139,36 @@ struct TutorialPanel: View {
 
   @ViewBuilder private var panelContent: some View {
     if rendersStatic {
-      stepList.frame(maxHeight: .infinity, alignment: .top)
+      slide.frame(maxHeight: .infinity, alignment: .top)
     } else {
-      ScrollViewReader { reader in
-        ScrollView { stepList }
-          .onChange(of: snapshot.currentStep, initial: true) { _, id in
-            if let id { reader.scrollTo(id, anchor: .center) }
-          }
-      }
+      ScrollView { slide }
     }
   }
 
-  private var stepList: some View {
+  private var slide: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if snapshot.isFinished {
+      if shown != slides.current {
+        Button("Go to Current Step") { view(slides.current) }
+          .buttonStyle(.stim(.secondary))
+          .accessibilityLabel("Go to the current step: \(title(of: slides.current))")
+      }
+      if shown == TutorialSlides.completion {
         TutorialCompletionCard(
           snapshot: snapshot, steps: steps,
           archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
           openArchived: openArchived, restart: restart)
-      }
-      ForEach(steps, id: \.id) { step in
-        if let state = snapshot.steps.first(where: { $0.id == step.id }) {
-          stepRow(step, state: state).id(step.id)
-        }
+      } else if let step = steps.first(where: { $0.id == shown }),
+        let state = snapshot.steps.first(where: { $0.id == shown })
+      {
+        let ahead = slides.isAhead(step.id)
+        stepRow(step, state: state)
+          .opacity(ahead ? 0.55 : 1)
+          .disabled(ahead)
+          .accessibilityHint(ahead ? "A later step, read-only until you reach it" : "")
       }
     }
+    .id(shown)
+    .transition(reduceMotion ? .opacity : .asymmetric(insertion: .move(edge: .trailing), removal: .opacity))
     .padding(Space.xl)
   }
 
@@ -114,33 +179,16 @@ struct TutorialPanel: View {
 
   private func stepRow(_ step: TutorialStep, state: TutorialStepProgress) -> some View {
     let current = snapshot.currentStep == step.id
-    let open =
-      (current || expanded == step.id || (step.optional && state.state == .done && !collapsedOptional.contains(step.id)))
     return VStack(alignment: .leading, spacing: Space.md) {
-      Button {
-        if step.optional, state.state == .done {
-          if expanded == step.id { expanded = nil }
-          if collapsedOptional.contains(step.id) {
-            collapsedOptional.remove(step.id)
-          } else {
-            collapsedOptional.insert(step.id)
-          }
-        } else {
-          expanded = expanded == step.id ? nil : step.id
-        }
-      } label: {
-        HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
-          Image(systemName: icon(state.state)).foregroundStyle(color(state.state)).frame(width: 16)
-          Text(step.title).font(.stim(.callout, weight: current ? .semibold : .regular))
-          Spacer(minLength: 0)
-          if step.optional { Text("Optional").font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
-        }
-        .contentShape(Rectangle())
+      HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
+        Image(systemName: icon(state.state)).foregroundStyle(color(state.state)).frame(width: 16)
+        Text(step.title).font(.stim(.headline))
+        Spacer(minLength: 0)
+        if step.optional { Text("Optional").font(.stim(.caption)).foregroundStyle(Palette.tertiary) }
       }
-      .buttonStyle(.plain)
+      .accessibilityElement(children: .combine)
       .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
-      .accessibilityValue(open ? "Expanded" : "Collapsed")
-      if open {
+      .accessibilityAddTraits(.isHeader)
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
@@ -205,20 +253,29 @@ struct TutorialPanel: View {
           }
         }
         .padding(.leading, Space.xl)
-      } else if state.state == .done, ["build", "parallel"].contains(step.id), !state.detail.isEmpty {
-        Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
-      }
     }
   }
 
   private var footer: some View {
     HStack {
+      if let floating, floating.isOn {
+        Button(action: floating.togglePin) {
+          Image(systemName: floating.pinned ? "pin.fill" : "pin")
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(floating.pinned ? Palette.primary : Palette.secondary)
+        .help(floating.pinned ? "Unpin: let other windows cover the tutorial" : "Pin above all apps")
+        .accessibilityLabel(floating.pinned ? "Unpin the tutorial window" : "Pin the tutorial window above all apps")
+      }
       Spacer()
       if rendersStatic {
         Image(systemName: "ellipsis").accessibilityLabel("Tutorial options: Restart, Close")
       } else {
         Menu {
           Button("Restart Tutorial", action: restart)
+          if let floating {
+            Button(floating.isOn ? "Dock in Sidebar" : "Float (Experimental)", action: floating.toggle)
+          }
           Button("Close Tutorial", action: close)
         } label: {
           Image(systemName: "ellipsis")
