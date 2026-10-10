@@ -5,6 +5,7 @@ import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
 let base: string;
@@ -322,6 +323,23 @@ test('a recording.enabled write that turns nothing off deletes nothing, whatever
   expect(JSON.parse(on.out[0]!).recordingsDeleted).toEqual([]);
   await settings(['unset', 'recording.enabled', '--scope', 'workspace']);
   expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
+});
+
+test('workspace.hidden is written to the workspace layer without --scope and cleared by the next use', async () => {
+  const other = join(base, 'other');
+  saveConfig({
+    version: 2,
+    projects: { [app]: {}, [other]: { settings: { workspace: { hidden: true } } } },
+    repos: {},
+  });
+
+  expect((await settings(['set', 'workspace.hidden', 'true'])).exitCode).toBe(0);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({ workspace: { hidden: true } });
+  expect((await settings(['set', 'workspace.hidden', 'true', '--scope', 'repo'])).exitCode).not.toBe(0);
+
+  recordWorkspaceUse(app);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({});
+  expect(loadConfig()?.projects[other]?.settings).toEqual({ workspace: { hidden: true } });
 });
 
 test('archive settings persist in their declared layers and scoped homes resolve disabled', async () => {

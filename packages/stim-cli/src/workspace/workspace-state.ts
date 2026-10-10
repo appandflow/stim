@@ -3,6 +3,8 @@ import { dirname } from 'node:path';
 import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { agentFromEnv } from '../agent-sessions.ts';
 import { withDirLock } from '../dir-lock.ts';
+import { getProjectSettings, writeConfigSetting } from './config.ts';
+import { workspaceHiddenSetting } from './settings.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
 export { lastUseFrom, readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
@@ -78,7 +80,10 @@ export function clearWorkspaceStateKey(root: string, key: string, shouldClear: (
   });
 }
 
-/** Records a command's use of the workspace, and the agent session whose shell ran it when there is one. */
+/**
+ * Records a command's use of the workspace, and the agent session whose shell ran it when there is one, and
+ * clears `workspace.hidden`.
+ */
 export function recordWorkspaceUse(root: string, now: Date = new Date(), env: NodeJS.ProcessEnv = process.env): void {
   const agent = agentFromEnv(env);
   let cwd = process.cwd();
@@ -90,5 +95,10 @@ export function recordWorkspaceUse(root: string, now: Date = new Date(), env: No
       lastUsedAt: now.toISOString(),
       ...(agent ? { [WORKSPACE_AGENT_KEY]: { ...agent, cwd, lastActiveAt: now.toISOString() } } : {}),
     });
+  } catch {}
+  try {
+    if (workspaceHiddenSetting(getProjectSettings(root))) {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'workspace.hidden', undefined);
+    }
   } catch {}
 }

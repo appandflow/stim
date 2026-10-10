@@ -1022,6 +1022,8 @@ RULES
               absent until it has run.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
+  hidden      true when workspace.hidden is set; absent otherwise. The next
+              command that uses the workspace clears it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.

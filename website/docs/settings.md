@@ -670,6 +670,22 @@ recording them within seconds. See
 [Inspect and clean caches](./build-caches.md#device-recordings) for how
 recordings are otherwise cleaned up.
 
+## Hidden workspaces
+
+Mark a workspace hidden so the Stim apps can list it under Hidden. Run this from
+the workspace:
+
+```bash
+stim settings set workspace.hidden true
+```
+
+`workspace.hidden` is false by default and lives only in the workspace layer, so
+it takes no `--scope`. `stim status --json` reports `hidden: true` on that
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload` or
+`worktree warm` in the workspace clears it, so a workspace in use is never
+hidden. `stim settings unset workspace.hidden` shows it again, and
+`worktree remove` drops it with the workspace.
+
 ## Environment variables
 
 These variables override a setting and win over every layer:
