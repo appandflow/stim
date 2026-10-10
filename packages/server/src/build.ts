@@ -225,6 +225,8 @@ export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
   private readonly owned = new Map<string, Job>();
+  private readonly sessions = new Map<BuildSession, string>();
+  private readonly served = new Set<string>();
   private readonly retained = new Map<
     string,
     { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
@@ -407,7 +409,57 @@ export class BuildHost {
   }
 
   session(client: string, socket: WebSocket, send: (event: BuildProgressEvent) => void): BuildSession {
-    return new BuildSession(this, client, socket, send);
+    const session = new BuildSession(this, client, socket, send);
+    this.sessions.set(session, client);
+    this.served.add(client);
+    return session;
+  }
+
+  ended(session: BuildSession): void {
+    this.sessions.delete(session);
+  }
+
+  /**
+   * Deletes the blobs of `client` that no `mirror.json` of its repositories and no open connection's manifest
+   * references, unless a build of that client runs.
+   */
+  pruneBlobs(client: string): void {
+    if ([...this.jobs].some((job) => job.client === client)) return;
+    const keep = new Set<string>();
+    for (const [session, owner] of this.sessions) {
+      if (owner === client) for (const sha256 of session.digests()) keep.add(sha256);
+    }
+    const repos = join(this.clientDir(client), 'repos');
+    const blobs = join(this.clientDir(client), 'blobs');
+    try {
+      for (const repo of readdirSync(repos)) {
+        const mirror = join(repos, repo, 'mirror.json');
+        if (!existsSync(mirror)) continue;
+        const record = JSON.parse(readFileSync(mirror, 'utf8')) as Record<string, { sha256: string }>;
+        for (const entry of Object.values(record)) keep.add(entry.sha256);
+      }
+      for (const prefix of readdirSync(blobs, { withFileTypes: true })) {
+        if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
+        for (const blob of readdirSync(join(blobs, prefix.name), { withFileTypes: true })) {
+          if (blob.isFile() && /^[0-9a-f]{64}$/.test(blob.name) && !keep.has(blob.name))
+            rmSync(join(blobs, prefix.name, blob.name), { force: true });
+        }
+      }
+    } catch {}
+  }
+
+  /** Cancels the builds of `client`, a client that lost `build`, and deletes its area once they end. */
+  async remove(client: string): Promise<void> {
+    if (!client || client === '.' || client === '..' || basename(client) !== client) return;
+    for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
+    const jobs = [...this.jobs].filter((job) => job.client === client);
+    for (const job of jobs) job.cancel();
+    await Promise.all(jobs.map((job) => job.done));
+    try {
+      rmSync(this.clientDir(client), { recursive: true, force: true });
+    } catch (error) {
+      console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+    }
   }
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
@@ -588,6 +640,7 @@ export class BuildHost {
           releaseClaims();
           entry.settled = true;
           this.jobs.delete(entry);
+          this.pruneBlobs(client);
           if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
@@ -696,13 +749,18 @@ export class BuildHost {
 
   /**
    * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
-   * such as a revoked one.
+   * such as a revoked one. The area of each such client this server process served is deleted once its builds end.
    */
   abandonDetached(allowed: (client: string) => boolean): void {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
     for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
+    for (const client of this.served) {
+      if (allowed(client)) continue;
+      this.served.delete(client);
+      void this.remove(client);
+    }
   }
 
   async close(): Promise<void> {
@@ -812,6 +870,10 @@ export class BuildSession {
     }
     this.done = params.done;
     return { result: { missing } };
+  }
+
+  digests(): string[] {
+    return [...this.files.values()].map((file) => file.sha256);
   }
 
   /** One binary frame: a 32-byte sha256, then the next bytes of that blob. Returns why the frame is refused. */
@@ -1060,6 +1122,7 @@ export class BuildSession {
 
   close(dropped: boolean): void {
     this.closed = true;
+    this.host.ended(this);
     for (const job of this.jobs.values()) {
       if (dropped) this.host.detach(job);
       else this.host.abandon(job);
