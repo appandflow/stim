@@ -1384,6 +1384,8 @@ struct LogsToggleButton: View {
           .font(.system(size: 9, weight: .bold))
           .monospacedDigit()
           .foregroundStyle(.white)
+          .lineLimit(1)
+          .fixedSize()
           .padding(.horizontal, 4)
           .frame(minWidth: 15, minHeight: 15)
           .background(Capsule().fill(Palette.error))
