@@ -181,7 +181,7 @@ export interface HomeFilters {
 export const DEFAULT_FILTERS: HomeFilters = {
   macs: [],
   projects: [],
-  statuses: ['live'],
+  statuses: ['live', 'idle'],
   errorsOnly: false,
   remoteOnly: false,
   platforms: [],
@@ -204,6 +204,8 @@ function parseStatuses(saved: Record<string, unknown>): HomeStatus[] {
     return statuses.length ? statuses : DEFAULT_FILTERS.statuses;
   }
   switch (saved.activity) {
+    case 'live':
+      return ['live'];
     case 'idle':
       return ['idle', 'notSetUp'];
     case 'all':

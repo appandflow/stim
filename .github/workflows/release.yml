@@ -20,11 +20,27 @@ permissions:
   contents: read
 
 jobs:
+  tag-on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
+            exit 1
+          fi
+
   windows-full:
+    needs: tag-on-main
     uses: ./.github/workflows/windows-full.yml
 
   publish:
-    needs: windows-full
+    needs: [tag-on-main, windows-full]
     runs-on: ubuntu-latest
     environment: release
     permissions:
