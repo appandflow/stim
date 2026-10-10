@@ -1132,6 +1132,10 @@ test('status lists worktrees with no environment for every registered repository
         ci: null,
       },
     });
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('git: 2 changed, 2 untracked');
+    expect(plain).toContain(`${other} [other]`);
+    expect(plain).not.toContain(`${other} [other] --`);
     const idle = payload.environments.find((e: { path: string }) => e.path === join(idleWorktree, 'apps', 'mobile'));
     expect(idle).toMatchObject({ live: false, worktree: { path: idleWorktree, branch: 'idle', git: null } });
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
