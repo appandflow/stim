@@ -98,7 +98,7 @@ a tiny Expo app, and shows:
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
-- **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
+- **Build on Another Mac (optional):** **Add Remote Machine** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 
@@ -566,7 +566,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 a line with its running builds and free disk, any problem that keeps builds on
 this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
 and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Remote Mac…**, which guides you through five steps:
+offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac on your tailnet.
 2. Choose Builds and/or Hosted simulators.
@@ -634,9 +634,9 @@ matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
-**File > Add Remote Mac…** (**Cmd+Shift+B**) always opens the existing build
+**File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Mac…**; otherwise it explains how to connect both Macs
+offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link Machine** button is also available. Build
 machines are not a step in the first-run setup guide.

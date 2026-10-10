@@ -1120,7 +1120,7 @@ before showing its QR code.
 
 ## Remote Macs
 
-**Add Remote Mac...** in **Settings > Remote Macs** opens the five-step
+**Add Remote Machine...** in **Settings > Remote Macs** opens the five-step
 setup wizard. Each step has an illustration in the first-run guide's style. The
 wizard refreshes in the background and has no Check again button: tailnet peers
 every 5 seconds on step 1, existing approvals every 10 seconds on step 2, the
@@ -1246,7 +1246,7 @@ reasons. While a check runs, the row keeps the last state and shows a small
 spinner next to the pill; **Checking...** appears only for a row with no state
 yet.
 
-**Add Remote Mac...** opens the wizard, which owns tailnet discovery and the
+**Add Remote Machine...** opens the wizard, which owns tailnet discovery and the
 setup; the tab has no separate list of tailnet Macs. With no machines, the tab
 shows an illustration, one sentence on what a remote Mac does, and the same
 button. A short notice appears when Tailscale is not running. The tab checks
@@ -1285,7 +1285,7 @@ follows `machines.update.status` every 2 seconds:
 A failure shows its full text, selectable, with a **Copy** button.
 
 If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
-Then the row checks the machine again. **Keep remote Macs on this Mac's Stim
+Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop
 checks a machine that reports another Stim build. It runs once per machine and
@@ -1596,10 +1596,10 @@ matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
-**File > Add Remote Mac…** (**Cmd+Shift+B**) always opens the existing build
+**File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Mac…**; otherwise it explains how to connect both Macs
+offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link Machine** button is also available. Build
 machines are not a step in the first-run setup guide.
 
@@ -1839,7 +1839,7 @@ Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".
 
-Add Remote Mac opens the existing wizard using the tour workspace as its
+Add Remote Machine opens the existing wizard using the tour workspace as its
 checkout. With no machine configured, Skip is the primary action. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
 name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;

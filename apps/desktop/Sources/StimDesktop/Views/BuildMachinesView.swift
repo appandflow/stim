@@ -146,7 +146,7 @@ struct BuildMachinesView: View {
     guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
       return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
     }
-    return "Builds stop going to it, and this Mac forgets the old node and asks again any listed Mac that has not approved it."
+    return "Builds stop going to it, and this Mac forgets the old node and asks again any listed machine that has not approved it."
   }
 
   private var statuses: [BuildMachineStatus]? {
@@ -158,7 +158,7 @@ struct BuildMachinesView: View {
     if let failure = model.writeFailure ?? model.settingsFailure { return failure }
     guard checkout != nil, let problem = model.check(in: checkout)?.problem else { return nil }
     switch problem {
-    case .unsupported: return "This stim does not report remote Macs; update it."
+    case .unsupported: return "This stim does not report remote machines; update it."
     case .failed(let message): return "stim doctor failed: \(message)"
     }
   }
@@ -299,9 +299,9 @@ struct BuildMachinesContent<ThisMac: View>: View {
         }
       } header: {
         HStack {
-          Text("Remote Macs")
+          Text("Remote Machines")
           Spacer()
-          Button("Add Remote Mac\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
+          Button("Add Remote Machine\u{2026}", action: add).buttonStyle(.stim(.primary)).disabled(addDisabled)
         }
       } footer: {
         if !canAsk {
@@ -310,8 +310,8 @@ struct BuildMachinesContent<ThisMac: View>: View {
       }
       Section {
         VStack(alignment: .leading, spacing: Space.xxs) {
-          Toggle("Keep remote Macs on this Mac's Stim version", isOn: $updatesAutomatically)
-          Text("When this Mac's Stim changes, update stim-server on approved remote Macs so builds can keep offloading.")
+          Toggle("Keep remote machines on this Mac's Stim version", isOn: $updatesAutomatically)
+          Text("When this Mac's Stim changes, update stim-server on approved remote machines so builds can keep offloading.")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         }
       }

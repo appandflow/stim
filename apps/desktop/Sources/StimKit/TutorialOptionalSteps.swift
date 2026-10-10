@@ -25,7 +25,7 @@ public enum TutorialMachineState: Equatable, Sendable {
   }
 
   public var buttonTitle: String {
-    self == .awaitingApproval ? "Open Add Remote Mac" : "Add Remote Mac"
+    self == .awaitingApproval ? "Open Add Remote Machine" : "Add Remote Machine"
   }
 
   public var skipIsPrimary: Bool { self == .none }
