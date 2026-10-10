@@ -223,7 +223,6 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var detail: String
   public var action: TutorialAction?
   public var ticks: [TutorialTick]
-  public var canMarkDone: Bool
 }
 
 public struct TutorialSnapshot: Sendable {
@@ -241,23 +240,20 @@ public struct TutorialProgress: Sendable {
   private var viewerInput = false
   private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
+  private var finished: Set<String> = []
 
   public init() {}
 
-  public mutating func skip(now: Date) {
+  /// Leaves the current step: recorded as done when its ticks are all done or it was detected, else as skipped.
+  public mutating func next(now: Date) {
     guard var record, record.step != "done" else { return }
-    record.skipped.append(record.step)
-    self.record = record
-    advance(now)
-  }
-
-  @discardableResult
-  public mutating func markDone(now: Date) -> Bool {
-    guard let record, record.step != "done", now.timeIntervalSince(record.stepSince ?? record.startedAt) >= 120 else {
-      return false
+    if finished.contains(record.step) {
+      complete(at: now)
+    } else {
+      record.skipped.append(record.step)
+      self.record = record
+      advance(now)
     }
-    complete(at: now)
-    return true
   }
 
   public mutating func copiedRunPrompt(now: Date) {
@@ -339,6 +335,12 @@ public struct TutorialProgress: Sendable {
           failure = TutorialNotice(reason)
           break
         }
+        let ticks = checkpoint.ticks.filter { !$0.optional }
+        if checkpoint.completed != nil || (!ticks.isEmpty && ticks.allSatisfy(\.done)) {
+          finished.insert(id)
+        } else {
+          finished.remove(id)
+        }
         guard let completed = checkpoint.completed else { break }
         complete(at: completed)
       }
@@ -359,8 +361,7 @@ public struct TutorialProgress: Sendable {
       let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
-        ticks: checkpoint.ticks,
-        canMarkDone: current == step.id && input.now.timeIntervalSince(record!.stepSince ?? record!.startedAt) >= 120)
+        ticks: checkpoint.ticks)
     }
     return TutorialSnapshot(
       steps: steps, currentStep: current, record: record!,

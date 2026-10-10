@@ -184,12 +184,8 @@ final class TutorialModel: ObservableObject {
     syncFollowers()
   }
 
-  func skip() {
-    progress.skip(now: Date())
-    refresh()
-  }
-  func markDone() {
-    progress.markDone(now: Date())
+  func next() {
+    progress.next(now: Date())
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {

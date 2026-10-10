@@ -14,8 +14,7 @@ struct TutorialPanel: View {
   var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
   var copied: () -> Void = {}
-  var skip: () -> Void = {}
-  var markDone: () -> Void = {}
+  var next: () -> Void = {}
   var restart: () -> Void = {}
   var runIOS: () -> Void = {}
   var close: () -> Void = {}
@@ -181,15 +180,8 @@ struct TutorialPanel: View {
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
             }
-            if step.optional {
-              Button("Skip", action: skip)
-                .buttonStyle(.stim(.secondary))
-                .accessibilityLabel("Skip \(step.title)")
-            }
-            if state.canMarkDone {
-              Button("Mark Done", action: markDone).buttonStyle(.stim())
-                .accessibilityLabel("Mark \(step.title) done")
-            }
+            Button("Next", action: next).buttonStyle(.stim(.secondary))
+              .accessibilityLabel("Next: leave \(step.title)")
           }
         }
         .padding(.leading, Space.xl)
@@ -201,9 +193,6 @@ struct TutorialPanel: View {
 
   private var footer: some View {
     HStack {
-      if !snapshot.isComplete {
-        Button("Skip Step", action: skip).buttonStyle(.stim(.plain)).accessibilityLabel("Skip current tutorial step")
-      }
       Spacer()
       if rendersStatic {
         Image(systemName: "ellipsis").accessibilityLabel("Tutorial options")

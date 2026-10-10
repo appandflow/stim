@@ -91,7 +91,6 @@ private func log(
   #expect(state("build", in: result).state == .done)
   #expect(state("build", in: result).detail.contains("no earlier build"))
   #expect(state("build", in: result).ticks.contains { $0.id == "pods" && $0.done })
-  #expect(!state("parallel", in: result).canMarkDone)
 }
 
 @Test func tutorialFirstBuildMayBeACacheHit() throws {
@@ -349,22 +348,17 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(result.isComplete)
 }
 
-@Test func tutorialSkipAndTimedMarkDonePersistAndResumeAtFirstUnfinishedStep() throws {
+@Test func tutorialNextOnAnUndetectedStepRecordsSkippedAndResumesAtTheFirstUnfinishedStep() throws {
   var progress = TutorialProgress()
   _ = progress.update(
     TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
-  let tooEarly = progress.markDone(now: afterRebuild.addingTimeInterval(119))
-  #expect(!tooEarly)
-  let waiting = progress.update(TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(120)))
-  #expect(state("phone", in: waiting).canMarkDone)
-  let marked = progress.markDone(now: afterRebuild.addingTimeInterval(120))
-  #expect(marked)
-  progress.skip(now: afterRebuild.addingTimeInterval(121))
+  progress.next(now: afterRebuild.addingTimeInterval(1))
+  progress.next(now: afterRebuild.addingTimeInterval(2))
   var relaunched = TutorialProgress()
   let result = relaunched.update(
-    TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(122), record: progress.record))
+    TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(3), record: progress.record))
   #expect(result.currentStep == "finish")
-  #expect(state("phone", in: result).state == .done)
+  #expect(state("phone", in: result).state == .skipped)
   #expect(state("share", in: result).state == .skipped)
 }
 

@@ -128,7 +128,7 @@ struct RootView: View {
             canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask,
-            copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
+            copied: { tutorial.copiedPrompt() }, next: tutorial.next,
             restart: { tutorial.open(beginning: true) },
             runIOS: {
               if let workspace = tutorial.workspace {

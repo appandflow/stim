@@ -1854,20 +1854,21 @@ tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Both optional steps
-keep Skip available.
+that start count, and the oldest one becomes the tour. Every step has one Next
+button: it records the step as done when its non-optional ticks are all done or
+its checkpoint completed, and as skipped otherwise. Detected steps advance on
+their own.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Machine opens the existing wizard using the tour workspace as its
-checkout. With no machine configured, Skip is the primary action. Once a machine
+checkout. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
 name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server or pairs or grants access. Mark done
-appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access.
 
 A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
 `tutorial-data.ts`, with the tracked paths substituted. The steps' command lists there feed only
