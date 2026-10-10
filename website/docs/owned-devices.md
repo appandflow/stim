@@ -317,6 +317,33 @@ Stop an unneeded device with `stim stop` only in a workspace you own, then rerun
 `stim android` with the same build options. Read
 `stim guide errors STIM_NO_DEVICE` for recovery details.
 
+### Abnormally large processes
+
+Memory pressure often comes from one process that leaked, not from the
+simulators and emulators. `stim doctor`, and the iOS and Android boot messages
+under warning or critical pressure, name any process whose physical footprint is
+abnormal. Stim reads it from macOS `top`, which counts compressed and swapped
+memory (`ps` RSS leaves them out) and can read root-owned daemons. Abnormal means
+at least a quarter of physical memory and at least 8 GiB, or 2 GiB for
+`fseventsd` and Watchman, which are normally far smaller.
+
+For a process that is safe to restart, Stim prints the command. It never runs
+the command itself.
+
+| Process                 | Command                                   | Effect                                         |
+| ----------------------- | ----------------------------------------- | ---------------------------------------------- |
+| `fseventsd`             | `sudo killall fseventsd`                  | launchd restarts it; file watchers rescan once |
+| Watchman                | `stim gc --delete --cache watchman`       | stops it once no workspace uses it             |
+| Gradle or Kotlin daemon | `stim gc --delete --cache gradle-daemons` | stops idle daemons; the next build starts one  |
+
+Any other abnormal process is named with its size only; ask before quitting it.
+Doctor skips this check when `STIM_HOME` is set, because processes are
+machine-global.
+While pressure stays elevated, the automatic maintenance check also records the
+processes in `stim status --json` under `maintenance.pressure.memory.culprits`,
+and Stim Desktop shows them in the memory popover with a copy button for each
+command.
+
 ## Idle shutdown
 
 A stalled agent can leave its simulator or emulator booted for hours. Set

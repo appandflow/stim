@@ -11,7 +11,7 @@ import {
 } from '@stim-cli/core/state';
 import { readVolumeSpace } from '../budget.ts';
 import { measuredDirectorySize } from '../fs-util.ts';
-import { readHostMemoryPressure } from '../host-memory.ts';
+import { memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
@@ -43,9 +43,10 @@ export function measurePressure(
           (settings.minAvailableMemoryGb === undefined
             ? totalmem() * 0.1
             : settings.minAvailableMemoryGb * 1024 ** 3)));
+  const culprits = settings.memoryPressureLevel === 'off' ? null : memoryCulpritsUnder(level);
   return {
     disk: measureDisk(),
-    memory: { level, availableBytes, pressured },
+    memory: { level, availableBytes, pressured, ...(culprits ? { culprits } : {}) },
     warningSince,
   };
 }

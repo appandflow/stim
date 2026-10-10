@@ -1,5 +1,6 @@
 import { maintenanceRunClaims, readMaintenanceState, type MaintenanceStatus } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
+import { formatBytes } from '../fs-util.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 
 export function maintenanceStatus(): MaintenanceStatus {
@@ -57,7 +58,13 @@ export function maintenanceLine(status: MaintenanceStatus, includeLabel = true):
   const disk = status.pressure?.disk
     .map((volume) => `disk ${(volume.freeMb / 1024).toFixed(1)} GB free on ${volume.volume}`)
     .join(', ');
-  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
+  const culprits = status.pressure?.memory.culprits
+    ?.map(
+      (culprit) =>
+        `${culprit.name} uses ${formatBytes(culprit.bytes)}${culprit.command ? ` (\`${culprit.command}\`)` : ''}`,
+    )
+    .join(', ');
+  return `${includeLabel ? `Auto maintenance (${status.mode === 'report' ? 'report only' : status.mode}): ` : ''}${at ? `${at}: ` : ''}${status.lastPass ? summary : 'no pass has run yet'}${disk ? `; ${disk}` : ''}${culprits ? `; memory: ${culprits}` : ''}${status.running ? '; running' : ''}${status.lastPass?.blocked.length ? `; ${status.lastPass.blocked.join('; ')}` : ''}${status.invalid ? `; invalid: ${status.invalid}` : ''}${status.claim ? `; unresolved claim: ${status.claim.unresolved}; ${status.claim.removeCommand}` : ''}`;
 }
 
 export function maintenanceLines(status: MaintenanceStatus): string[] {

@@ -1208,6 +1208,31 @@ struct MachineSummary: View {
           )
           .foregroundStyle(Palette.secondary)
         }
+        if memory.pressure == .warning || memory.pressure == .critical {
+          ForEach(store.payload?.maintenance?.memoryCulprits ?? []) { culprit in
+            memoryCulpritRow(culprit)
+          }
+        }
+      }
+    }
+  }
+
+  private func memoryCulpritRow(_ culprit: MaintenanceStatus.MemoryCulprit) -> some View {
+    VStack(alignment: .leading, spacing: Space.xs) {
+      Label(
+        "\(culprit.name) uses \(Format.fileSize(culprit.bytes))", systemImage: "exclamationmark.triangle.fill"
+      )
+      .foregroundStyle(Color(Tone.warning))
+      if let command = culprit.command {
+        HStack(spacing: Space.sm) {
+          Text(command).font(.stim(.caption, mono: true)).textSelection(.enabled)
+          Spacer(minLength: 0)
+          CopyButton(command, help: "Copy the command that frees this memory")
+        }
+        if let note = culprit.note { Text(note).foregroundStyle(Palette.secondary) }
+      } else {
+        Text("Stim knows no safe restart for it. Quit it only if you know what it is.")
+          .foregroundStyle(Palette.secondary)
       }
     }
   }

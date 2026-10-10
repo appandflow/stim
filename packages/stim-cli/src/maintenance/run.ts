@@ -16,6 +16,7 @@ import {
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { relaunchWithLogFile } from '../detached-entry.ts';
 import { formatBytes } from '../fs-util.ts';
+import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { resolveBudget } from '../budget.ts';
 import { resolveMaintenanceSettings } from './settings.ts';
 import { due } from './due.ts';
@@ -184,6 +185,8 @@ export async function runMaintenance(trigger: string): Promise<void> {
               unit: state.pressure.memory.availableBytes === null ? 'level' : 'GiB',
             },
           });
+          for (const culprit of state.pressure.memory.culprits ?? [])
+            record('maintenance_check', 'info', memoryCulpritAdvice([culprit])!, { culprit });
         } else {
           measuredSizes = true;
           state.sizes = measureSizes(state.lastAt[check]!, (target, workspace) => {
