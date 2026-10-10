@@ -55,7 +55,7 @@ tear down the same app the same way):
 | suite      | driver                       | proves                                                  | platforms           | when                                        |
 | ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ------------------------------------------- |
 | **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | every push to `main`, `e2e-smoke`, dispatch |
-| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux          | nightly, `e2e-loop`, dispatch               |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch               |
 | **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                      |
 | **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                        |
 
