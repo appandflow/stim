@@ -3,6 +3,7 @@ import SwiftUI
 
 struct TipCard: View {
   var topic: TipTopic
+  var prompt: String?
   var hasNext: Bool
   var perform: () -> Void
   var next: () -> Void
@@ -11,9 +12,16 @@ struct TipCard: View {
   var body: some View {
     Banner(tone: .accent, icon: "lightbulb", onDismiss: close) {
       Text("Tip").textStyle(.caption, weight: .semibold).foregroundStyle(Palette.secondary)
-      Text(topic.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+      Text(topic.title).font(.stim(.headline))
+      Text(topic.body).font(.stim(.callout)).foregroundStyle(Palette.secondary)
       VStack(alignment: .leading, spacing: Space.xs) {
-        Button(topic.actionTitle, action: perform).buttonStyle(.stim(.primary, .small))
+        if let prompt {
+          CopyButton(
+            prompt, variant: .primary, title: topic.actionTitle, help: prompt,
+            accessibilityLabel: "Copy prompt: \(topic.title)")
+        } else {
+          Button(topic.actionTitle, action: perform).buttonStyle(.stim(.primary, .small))
+        }
         if hasNext { Button("Next Tip", action: next).buttonStyle(.stim(.plain, .small)) }
       }
       .padding(.top, Space.xxs)

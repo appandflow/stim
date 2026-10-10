@@ -79,7 +79,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } 
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
-import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
+import { deviceModelRefusal, resolveIosWait, resolveSchemeSelection } from '../commands/ios/support.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
@@ -245,7 +245,7 @@ interface RecordedArgs {
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
   loadProjectProvider: { isExpo?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
-  untrackedNativeFiles: { projectRoot?: unknown };
+  untrackedNativeFiles: { projectRoot?: unknown; iosProjectPath?: unknown };
   ensureWorkspaceStorage: unknown;
 }
 
@@ -472,8 +472,12 @@ function harness(overrides: LooseDeps = {}) {
               return match
                 ? {
                     ...match,
-                    ios: async () =>
-                      reactNativeIosProject(path, deps as Partial<import('../commands/ios/dependencies.ts').IosDeps>),
+                    ios: async (settings) =>
+                      reactNativeIosProject(
+                        path,
+                        settings,
+                        deps as Partial<import('../commands/ios/dependencies.ts').IosDeps>,
+                      ),
                   }
                 : null;
             },
@@ -4088,6 +4092,25 @@ describe('explicit Xcode schemes', () => {
     resolveScheme: (_project, options) => ({ scheme: options?.scheme, schemes: ['App', 'App Staging'] }),
   };
 
+  test('ios.scheme selects the scheme without the flag, and the flag still overrides it', async () => {
+    reserve();
+    const settings = { ios: { scheme: 'App Staging' } };
+    const flagged = await run({ scheme: 'App Staging', json: true }, schemeDeps);
+    const fromSetting = await run({ json: true }, { ...schemeDeps, resolveSettings: () => settings });
+    expect(fromSetting.calls.args.buildIos.scheme).toBe('App Staging');
+    expect(fromSetting.calls.args.resolveBuild.key).toBe(flagged.calls.args.resolveBuild.key);
+    const overridden = await run({ scheme: 'App', json: true }, { ...schemeDeps, resolveSettings: () => settings });
+    expect(overridden.calls.args.buildIos.scheme).toBe('App');
+  });
+
+  test('stim ios --plan reports the cache key the run uses when only ios.scheme names the scheme', async () => {
+    reserve();
+    const deps = { ...schemeDeps, resolveSettings: () => ({ ios: { scheme: 'App Staging' } }) };
+    const built = await run({ json: true }, deps);
+    const planned = await run({ plan: true, json: true }, deps);
+    expect(parseFirst(planned.logs).cacheKey).toBe(built.calls.args.resolveBuild.key);
+  });
+
   test('explicit selection separates lookup, lock and storage keys and is not a dev-client URL scheme', async () => {
     reserve();
     const normal = await run({ json: true });
@@ -4213,6 +4236,15 @@ describe('explicit Xcode schemes', () => {
     expect(regenerated).toBe(true);
     expect(result.calls.order).not.toContain('runPodInstall');
     expect(result.calls.order).not.toContain('buildIos');
+  });
+});
+
+describe('scheme resolution', () => {
+  test('a blank flag still reaches validation, and an EAS profile build takes only the flag', () => {
+    expect(resolveSchemeSelection({}, { ios: { scheme: ' RNTester ' } })).toBe('RNTester');
+    expect(resolveSchemeSelection({ scheme: '  ' }, { ios: { scheme: 'RNTester' } })).toBe('  ');
+    expect(resolveSchemeSelection({ easProfile: 'development' }, { ios: { scheme: 'RNTester' } })).toBeUndefined();
+    expect(resolveSchemeSelection({}, {})).toBeUndefined();
   });
 });
 
@@ -4994,11 +5026,51 @@ test('a first miss lists untracked files under the native dirs and points at .fi
       },
     },
   );
-  expect(asked).toEqual([{ projectRoot: root }]);
+  expect(asked).toEqual([{ projectRoot: root, iosProjectPath: 'ios' }]);
   const line = errs.find((e) => e.includes('untracked'));
   assert(line, 'expected the untracked-files note on stderr');
   expect(line).toMatch(/ios\/scratch\.txt, android\/local\.properties/);
   expect(line).toMatch(/\.fingerprintignore/);
+});
+
+test('ios.projectPath on an Expo app refuses the run and the plan', async () => {
+  mkdirSync(join(root, 'Fixture.xcworkspace'));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ ios: { projectPath: '.' } }));
+  const deps = { detectIsExpo: () => true };
+  const ran = await run({ metroCheck: false, json: true }, deps);
+  expect([...ran.logs, ...ran.errs].join('\n')).toContain('bare React Native apps only');
+  const planned = await run({ plan: true, json: true }, deps);
+  expect([...planned.logs, ...planned.errs].join('\n')).toContain('bare React Native apps only');
+});
+
+test('ios.projectPath set to the app directory reaches pods, the Xcode build, fingerprinting and untracked files', async () => {
+  mkdirSync(join(root, 'Fixture.xcworkspace'));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ ios: { projectPath: '.' } }));
+  const podDirs: unknown[] = [];
+  const fingerprintOptions: unknown[] = [];
+  const untracked: unknown[] = [];
+  const { calls, exitCode } = await run(
+    { metroCheck: false },
+    {
+      readPodState: (_root: string, directory?: string) => {
+        podDirs.push(directory);
+        return { hasPodfile: false, lockText: null, manifestText: null };
+      },
+      fingerprintProject: async (_path: string, options: unknown) => {
+        fingerprintOptions.push(options);
+        return { hash: FINGERPRINT, sources: [] };
+      },
+      untrackedNativeFiles: (args: unknown) => {
+        untracked.push(args);
+        return [];
+      },
+    },
+  );
+  expect(exitCode).toBe(null);
+  expect(podDirs).toContain(root);
+  expect(fingerprintOptions).toContainEqual(expect.objectContaining({ iosProjectPath: '.' }));
+  expect(untracked).toEqual([{ projectRoot: root, iosProjectPath: '.' }]);
+  expect(calls.args.buildIos).toMatchObject({ iosDir: root });
 });
 
 test('a miss that CAN be diffed says what changed instead of guessing at untracked files', async () => {
@@ -8937,8 +9009,8 @@ describe('registered iOS project recipes', () => {
           return match
             ? {
                 ...match,
-                ios: async () => {
-                  const project = await match.ios!();
+                ios: async (settings) => {
+                  const project = await match.ios!(settings);
                   return {
                     ...project,
                     artifact(context) {
@@ -9184,8 +9256,8 @@ describe('registered iOS project recipes', () => {
           return match
             ? {
                 ...match,
-                ios: async () => {
-                  const project = await match.ios!();
+                ios: async (settings) => {
+                  const project = await match.ios!(settings);
                   return {
                     ...project,
                     artifact(context) {

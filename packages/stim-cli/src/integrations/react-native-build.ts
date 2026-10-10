@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import chalk from 'chalk';
 import { register } from '../cache/cache-manifest.ts';
 import { phaseLine } from '../command-output.ts';
@@ -156,7 +156,6 @@ export async function buildAndroid(
   );
 }
 
-const IOS_DIR = 'ios';
 const PREBUILD_REMEDY =
   'Generate it with `npx expo prebuild -p ios` (stim ios does this automatically for an Expo project with no ios/ directory), or commit the native project.';
 
@@ -164,19 +163,18 @@ function buildFailure(message: string, remedy: string | null): XcodeProject {
   return { error: { code: 'STIM_BUILD_FAILED', message, remedy } };
 }
 
-export function discoverXcodeProject(root: string): XcodeProject {
-  const dir = join(root, IOS_DIR);
+export function discoverXcodeProject(root: string, dir: string): XcodeProject {
   let entries;
   try {
     entries = readdirSync(dir);
   } catch {
-    return buildFailure(`No ${IOS_DIR}/ directory in ${root}.`, PREBUILD_REMEDY);
+    return buildFailure(`No ${relative(root, dir) || '.'}/ directory in ${root}.`, PREBUILD_REMEDY);
   }
   const picked = pickXcodeProject(entries);
   if (!picked) {
     return buildFailure(`${dir} contains no .xcworkspace and no .xcodeproj.`, PREBUILD_REMEDY);
   }
-  return { ...picked, dir, path: join(dir, picked.file) };
+  return { ...picked, dir, appRoot: root, path: join(dir, picked.file) };
 }
 
 export function ccacheEnabled(podfileProperties: unknown): boolean {
@@ -184,9 +182,9 @@ export function ccacheEnabled(podfileProperties: unknown): boolean {
   return (podfileProperties as Record<string, unknown>)['apple.ccacheEnabled'] === 'true';
 }
 
-export function readPodfileProperties(root: string): Record<string, unknown> | null {
+export function readPodfileProperties(iosDir: string): Record<string, unknown> | null {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(join(root, IOS_DIR, 'Podfile.properties.json'), 'utf-8'));
+    const parsed: unknown = JSON.parse(readFileSync(join(iosDir, 'Podfile.properties.json'), 'utf-8'));
     return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
   } catch {
     return null;
@@ -241,6 +239,7 @@ export function reactNativeCompilationCacheSettings({
 
 function resolveCompilationCacheSettings({
   root,
+  iosDir,
   derivedDataPath,
   exec = null,
   casPath = sharedCompilationCache(),
@@ -248,6 +247,7 @@ function resolveCompilationCacheSettings({
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
+  iosDir: string;
   derivedDataPath: string;
   exec?: Executor | null;
   casPath?: string;
@@ -255,7 +255,7 @@ function resolveCompilationCacheSettings({
   onNote?: (line: string) => void;
 }): string[] {
   const xcodeMajor = detectXcodeMajor(exec);
-  const ccache = ccacheEnabled(readPodfileProperties(root));
+  const ccache = ccacheEnabled(readPodfileProperties(iosDir));
   const probe =
     xcodeMajor !== null &&
     xcodeMajor >= COMPILATION_CACHE_MIN_XCODE &&
@@ -296,6 +296,7 @@ function resolveCompilationCacheSettings({
 }
 
 type IosBuildInputs = Omit<Parameters<typeof buildXcode>[0], 'project' | 'compilationCache' | 'startedAt'> & {
+  iosDir: string;
   project?: XcodeProject | null;
   compilationCache?: string[] | null;
   optimizations?: Optimizations['ios'];
@@ -303,7 +304,7 @@ type IosBuildInputs = Omit<Parameters<typeof buildXcode>[0], 'project' | 'compil
 };
 
 export async function buildIos(inputs: IosBuildInputs): Promise<BuildIosResult> {
-  const { root, logWriter, udid, destination, now = () => Date.now() } = inputs;
+  const { root, iosDir, logWriter, udid, destination, now = () => Date.now() } = inputs;
   if (!root || typeof root !== 'string') throw new TypeError('buildIos requires {root}');
   if (!logWriter || typeof logWriter.write !== 'function')
     throw new TypeError('buildIos requires {logWriter} with a write() method');
@@ -312,12 +313,13 @@ export async function buildIos(inputs: IosBuildInputs): Promise<BuildIosResult> 
   return buildXcode({
     ...inputs,
     startedAt,
-    project: inputs.project ?? discoverXcodeProject(root),
+    project: inputs.project ?? discoverXcodeProject(root, iosDir),
     compilationCache:
       inputs.compilationCache === undefined
         ? ({ derivedDataPath, exec }) =>
             resolveCompilationCacheSettings({
               root,
+              iosDir,
               derivedDataPath,
               exec,
               optimizations: inputs.optimizations,

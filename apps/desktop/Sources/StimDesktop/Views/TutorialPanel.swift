@@ -7,11 +7,9 @@ struct TutorialPanel: View {
   #if DEBUG
     var fixtureRendering = false
   #endif
-  var restarting = false
-  var message: String? = nil
+  var message: TutorialNotice? = nil
   var issues: [StatusIssue] = []
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
-  var machineState = TutorialMachineState.none
   var canRunIOS = false
   var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
@@ -24,7 +22,6 @@ struct TutorialPanel: View {
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
   var pairPhone: () -> Void = {}
-  var addMachine: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
   @State private var collapsedOptional: Set<String> = []
@@ -77,10 +74,7 @@ struct TutorialPanel: View {
 
   private var stepList: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if restarting {
-        TutorialPromptBox(prompt: TutorialSteps.restartPrompt, onCopy: copied)
-      }
-      if snapshot.isComplete {
+      if snapshot.isFinished {
         Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
           .font(.stim(.headline)).foregroundStyle(Palette.success)
         Text(
@@ -132,37 +126,33 @@ struct TutorialPanel: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("\(step.title), \(current ? message ?? stateLabel(state.state) : stateLabel(state.state))")
+      .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
       .accessibilityValue(open ? "Expanded" : "Collapsed")
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           copyBlock(step)
           if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
-          if step.id == "machine", machineState.showsPrompt {
-            if snapshot.record.approvedMachine == nil {
-              Text("Name the approved machine to your agent when you paste this prompt.")
-                .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            }
-          }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
           }
-          let detail = current ? message ?? state.detail : state.detail
+          let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
+          let detail = notice.text
           if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
             Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
           }
-          if detail.contains("Update Stim Desktop") {
+          switch notice.action {
+          case .updateDesktop:
             Button("Check for Updates", action: updater.checkForUpdates)
               .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
               .accessibilityLabel("Check for Stim Desktop updates")
-          } else if detail.contains("Stim CLI") {
+          case .updateCLI:
             Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
               .accessibilityLabel("Open the setup guide to update Stim CLI")
-          }
-          if detail.contains("Restart") || detail.hasPrefix("No tutorial workspace") {
+          case .restart:
             Button("Restart Tutorial", action: restart).buttonStyle(.stim())
               .accessibilityLabel("Restart the Stim tutorial")
+          case nil: EmptyView()
           }
           ForEach(state.ticks, id: \.id) { tick in
             Label(
@@ -193,13 +183,9 @@ struct TutorialPanel: View {
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
             }
-            if step.id == "machine", !machineState.showsPrompt {
-              Button(machineState.buttonTitle, action: addMachine)
-                .buttonStyle(.stim(machineState.skipIsPrimary ? .secondary : .primary))
-            }
             if step.optional {
               Button("Skip", action: skip)
-                .buttonStyle(.stim(step.id == "machine" && machineState.skipIsPrimary ? .primary : .secondary))
+                .buttonStyle(.stim(.secondary))
                 .accessibilityLabel("Skip \(step.title)")
             }
             if state.canMarkDone {
@@ -216,8 +202,8 @@ struct TutorialPanel: View {
   }
 
   @ViewBuilder private func copyBlock(_ step: TutorialStep) -> some View {
-    let ask = step.id == "machine" && !machineState.showsPrompt ? nil : asks(step)
-    let hasCommands = !step.commands.isEmpty && (step.id != "machine" || machineState.showsPrompt)
+    let ask = asks(step)
+    let hasCommands = !step.commands.isEmpty
     let showsAsk = ask != nil
     if let ask, showsAsk {
       TutorialPromptBox(prompt: ask, onCopy: copied)
@@ -302,7 +288,7 @@ struct TutorialPanel: View {
     switch id {
     case "begin":
       return
-        "You will see two agents work on two changes at once, each in its own worktree with its own simulator and dev server, each checking its own work on the device. First, clone the test app; the clone stays as the base and is never run or removed."
+        "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
     case "build":
       return
         "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Stim waited until the app said it was ready, not just launched, so the agent knows the app works before it checks the change: look for the readiness phase in the build details. On a fresh Mac this build is usually a cache miss and takes a few minutes. Watch it in Desktop."
@@ -317,14 +303,15 @@ struct TutorialPanel: View {
     case "phone":
       return
         "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
-    case "machine":
-      return "Optional. An approved Mac can build the same app. Choose one in Settings > Remote Macs, or skip this step."
     case "share":
       return
         "Optional and public, and do it before finishing so your change still exists. If you paste this, your agent forks appandflow/stim-tutorial and opens a pull request: your GitHub name and change appear on that repo. It needs GitHub access (gh) for your agent, and a bot will reply and close it. Nothing depends on this step."
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
+    case "delete":
+      return
+        "Optional. Your agent removes any tutorial worktrees left and then the clone, through Stim so their simulators and dev servers go too, and deletes the folder. Skip this step to keep the clone."
     default: return ""
     }
   }
@@ -336,8 +323,11 @@ struct TutorialPanel: View {
     case "action": return "Agent action received"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
-    case "approved": return "Remote Mac approved"
-    case "offloaded": return "Build ran on another Mac"
+    case "cloned": return "Test app cloned"
+    case "installed": return "Dependencies installed"
+    case "registered": return "Registered with Stim"
+    case "worktrees": return "Tutorial worktrees removed"
+    case "clone": return "Clone removed and deleted"
     default: return PhaseStep.name(id)
     }
   }

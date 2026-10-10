@@ -1,7 +1,7 @@
 import Foundation
 
 public enum TipTopic: String, CaseIterable, Codable, Sendable {
-  case buildMachine, phone, tutorial, hideWorkspaces, statusFilter, replay, hostedSimulators
+  case buildMachine, phone, tutorial, hideWorkspaces, statusFilter, replay, hostedSimulators, easProfile, macos, logs
 
   public var title: String {
     switch self {
@@ -12,6 +12,24 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     case .statusFilter: "Filter by Status"
     case .replay: "Replay What an Agent Did"
     case .hostedSimulators: "Run Simulators on Another Mac"
+    case .easProfile: "Run on an EAS Development Build"
+    case .macos: "Run Your Mac App with Stim"
+    case .logs: "Ask for Just the Errors"
+    }
+  }
+
+  public var body: String {
+    switch self {
+    case .buildMachine: "Send native builds to another Mac on your tailnet and run the app here."
+    case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
+    case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
+    case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."
+    case .statusFilter: "Choose which workspaces the sidebar lists: active, idle, not set up or archived."
+    case .replay: "Stim records each simulator's screen with the agent's actions marked on a timeline you can scrub."
+    case .hostedSimulators: "Another Mac on your tailnet can run simulators for your workspaces when this Mac is full."
+    case .easProfile: "Install a completed EAS development build instead of compiling it here."
+    case .macos: "Stim builds the Swift package as an isolated development app and captures its logs."
+    case .logs: "One command shows only the errors from Metro, the app, the build and the device."
     }
   }
 
@@ -21,8 +39,9 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     case .phone: "Pair a Phone"
     case .tutorial: "Open Tutorial"
     case .hideWorkspaces, .statusFilter: "View Options"
-    case .replay: "Open Workspace"
+    case .replay: "Open Replay"
     case .hostedSimulators: "Add a Hosting Mac"
+    case .easProfile, .macos, .logs: "Copy Prompt"
     }
   }
 
@@ -97,6 +116,13 @@ public struct TipInputs {
   public var sidebar = SidebarOptions()
   public var rows = 0
   public var workspaces: [Workspace] = []
+  /// Whether a listed project has an `eas.json`, and whether one has a macOS app, from `ProjectCapabilities`.
+  public var hasEASProject = false
+  public var hasMacosTarget = false
+  public var archived: [ArchivedWorkspace] = []
+  /// Whether Stim Desktop's stim-server runs, which reads archived recordings.
+  public var serverRunning = false
+  public var now = Date()
 
   public init() {}
 }
@@ -157,8 +183,22 @@ public enum Tips {
     case .tutorial: !inputs.tutorialCompleted
     case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
-    case .replay: inputs.workspaces.contains { $0.recording?.enabled == true }
+    case .replay: replayArchive(inputs) != nil
     case .hostedSimulators: noMacPaired(inputs) && inputs.macs?.isEmpty == false
+    case .easProfile: inputs.hasEASProject
+    case .macos: inputs.hasMacosTarget && !inputs.workspaces.contains { $0.macos != nil }
+    case .logs: inputs.workspaces.contains { ($0.logs?.errorsSinceMarker ?? 0) > 0 }
+    }
+  }
+
+  /// The newest archived workspace with unexpired recordings, which the replay tip opens. An archive whose path is a
+  /// listed workspace again is skipped, since a link to that path opens the workspace instead.
+  public static func replayArchive(_ inputs: TipInputs) -> ArchivedWorkspace? {
+    guard inputs.serverRunning else { return nil }
+    let listed = Set(inputs.workspaces.map(\.path))
+    return ArchivedWorkspace.newestFirst(inputs.archived).first { archive in
+      archive.bytes.recordings > 0 && !listed.contains(archive.projectRoot)
+        && archive.expires.recordings.flatMap(parseTimestamp).map { $0 < inputs.now } != true
     }
   }
 

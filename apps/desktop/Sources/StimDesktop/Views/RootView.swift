@@ -123,13 +123,13 @@ struct RootView: View {
         if tutorial.isOpen, let snapshot = tutorial.snapshot {
           Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           TutorialPanel(
-            snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message,
-            issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
+            snapshot: snapshot, message: tutorial.notice,
+            issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
             canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
-            restart: { tutorial.restart() },
+            restart: { tutorial.open(beginning: true) },
             runIOS: {
               if let workspace = tutorial.workspace {
                 actions.run(
@@ -142,10 +142,6 @@ struct RootView: View {
             close: tutorial.close,
             openArchived: openTutorialArchive,
             pairPhone: { openRequests.pairsPhone = true },
-            addMachine: {
-              openRequests.addMachine = AddMachineRequest(
-                machineID: nil, hostedSimulators: false, checkout: tutorial.tourPath)
-            },
             updateCLI: {
               onboarding.openGuide()
               onboarding.guideStep = .cli
@@ -352,19 +348,6 @@ struct RootView: View {
       openRequests.tutorialRequest = nil
       tutorial.open(beginning: entry == .begin)
     }
-    .task(id: tutorialMachineCheckout) {
-      guard let checkout = tutorialMachineCheckout else { return }
-      while !Task.isCancelled, tutorialMachineCheckout == checkout {
-        if !buildMachines.isBusy {
-          await buildMachines.settings.refresh()
-          guard !Task.isCancelled, tutorialMachineCheckout == checkout else { return }
-          if !buildMachines.isBusy { await buildMachines.refreshStatuses(checkout: checkout, ask: false) }
-          if !Task.isCancelled { updateTutorial(store.payload) }
-        }
-        guard tutorialMachineCheckout == checkout else { return }
-        try? await Task.sleep(for: .seconds(15))
-      }
-    }
     .onReceive(tutorialClock) { _ in
       updateTutorial(store.payload)
     }
@@ -439,7 +422,7 @@ struct RootView: View {
     return TutorialHint(
       step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath, selectedPath: selected,
       showMe: {
-        if tutorial.snapshot?.isComplete == true {
+        if tutorial.snapshot?.isFinished == true {
           openTutorialArchive()
         } else if let path = tutorial.tourPath {
           navigate(.environment(path), .click("tutorial Show me"))
@@ -448,24 +431,14 @@ struct RootView: View {
       })
   }
 
-  private var tutorialMachineCheckout: String? {
-    tutorial.isOpen && !tutorial.restarting && tutorial.workspace != nil && tutorial.snapshot?.currentStep == "machine"
-      ? tutorial.tourPath : nil
-  }
-
   private func updateTutorial(_ payload: StatusPayload?, events: [TutorialViewerEvents.Entry]? = nil) {
     guard let payload else { return }
-    let check = buildMachines.check(in: tutorial.tourPath)
-    let approvedMachine = check?.problem == nil ? check?.statuses.first { $0.state == .approved }?.machine : nil
-    let machineState = TutorialMachineState(
-      configured: !(buildMachines.entries ?? []).isEmpty,
-      approved: approvedMachine != nil)
     tutorial.update(
       workspaces: payload.environments, archived: payload.archived ?? [],
       sheetOpen: onboarding.showsGuide || nativePermissions.showsSetup || actions.presented != nil
         || NSApp.windows.contains { $0.attachedSheet != nil },
       viewerEvents: events ?? TutorialViewerEvents.shared.events,
-      pairedPhoneCount: ServerController.shared.pairedPhoneCount, machineState: machineState, approvedMachine: approvedMachine,
+      pairedPhoneCount: ServerController.shared.pairedPhoneCount,
       removalRefused: operations.runs.contains { run in
         run.needsAttention && run.startedAt >= (tutorial.snapshot?.record.stepSince ?? .distantFuture)
           && run.steps.contains { command in
@@ -564,7 +537,7 @@ struct RootView: View {
   @ToolbarContentBuilder private var sidebarToggleToolbar: some ToolbarContent {
     if #available(macOS 26.0, *) {
       ToolbarItem(placement: .navigation) {
-        sidebarToggleButton.glassEffect(.regular.interactive(), in: Capsule())
+        sidebarToggleButton.glassEffect(.regular, in: Capsule())
       }
       .sharedBackgroundVisibility(.hidden)
     } else {
@@ -578,13 +551,12 @@ struct RootView: View {
     Button {
       withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly }
     } label: {
-      Image(systemName: "sidebar.left")
-        .font(.system(size: 17))
-        .frame(width: ToolbarMetrics.glassHeight, height: ToolbarMetrics.glassHeight)
+      Label(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
     }
-    .buttonStyle(.plain)
-    .foregroundStyle(Palette.secondary)
-    .accessibilityLabel(columnVisibility == .detailOnly ? "Show Sidebar" : "Hide Sidebar")
+    .buttonStyle(.icon())
+    .labelStyle(.iconOnly)
+    .padding(.horizontal, Space.md + Space.xxs)
+    .frame(height: ToolbarMetrics.glassHeight)
     .help(columnVisibility == .detailOnly ? "Show the sidebar" : "Hide the sidebar")
   }
 
@@ -920,7 +892,7 @@ struct RootView: View {
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .overview:
       OverviewView(
-        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic,
+        store: store, metrics: metrics,
         selection: attributed(.click("overview page")),
         openLogs: openErrors,
         openDevice: { path, deviceID in
@@ -1384,6 +1356,8 @@ struct LogsToggleButton: View {
           .font(.system(size: 9, weight: .bold))
           .monospacedDigit()
           .foregroundStyle(.white)
+          .lineLimit(1)
+          .fixedSize()
           .padding(.horizontal, 4)
           .frame(minWidth: 15, minHeight: 15)
           .background(Capsule().fill(Palette.error))

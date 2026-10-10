@@ -658,6 +658,17 @@ export function closeOffload(choice: OffloadChoice): void {
 
 const NATIVE_BUILD_FEATURE = { xcode: 'native-xcode-build', gradle: 'native-gradle-build' } as const;
 
+const unsupportedNative = (provider: 'xcode' | 'gradle'): string =>
+  `This worker does not support native ${provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
+
+const ANDROID_PACKAGE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/;
+
+function nativeTransferInput(
+  native: Extract<BuildRequest, { platform: 'ios' | 'android' }>['native'],
+): NativeInputSnapshot | GradleTransfer | undefined {
+  return native?.provider === 'xcode' ? native.snapshot : native?.transfer;
+}
+
 type MachineProbe =
   | { credential: BuildMachineCredential; failure: string }
   | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
@@ -674,10 +685,7 @@ async function probeMachine(
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
-    return {
-      credential,
-      failure: `This worker does not support native ${identity.native === 'xcode' ? 'Xcode' : 'Gradle'} builds.`,
-    };
+    return { credential, failure: unsupportedNative(identity.native) };
   }
   const native =
     identity.native === 'gradle' || (identity.native && connection.supports('native-xcode-toolchain'))
@@ -796,6 +804,7 @@ export type BuildRequest =
       runtime: string;
       configuration: string | null;
       scheme: string | null;
+      iosProjectPath?: string;
       isExpo: boolean;
       optimizations: unknown;
     }
@@ -854,7 +863,7 @@ async function resumeJob(
       }
       if (native && !connection.supports(NATIVE_BUILD_FEATURE[native])) {
         connection.close();
-        return `This worker does not support native ${native === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
+        return unsupportedNative(native);
       }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
@@ -1051,16 +1060,11 @@ export async function offloadBuild({
         return fail(reason);
       }
       if (native && !choice.connection.supports(NATIVE_BUILD_FEATURE[native.provider])) {
-        const reason = `This worker does not support native ${native.provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
+        const reason = unsupportedNative(native.provider);
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      const synced = await syncSource(
-        choice.connection,
-        identity,
-        onEnter,
-        native?.provider === 'xcode' ? native.snapshot : native?.transfer,
-      );
+      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
       throwIfCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
@@ -1106,6 +1110,7 @@ export async function offloadBuild({
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
+              iosProjectPath: request.platform === 'ios' ? (request.iosProjectPath ?? null) : null,
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,
@@ -1139,11 +1144,7 @@ export async function offloadBuild({
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
     if (native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
-    if (
-      native?.provider === 'gradle' &&
-      (typeof result.androidPackage !== 'string' ||
-        !/^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/.test(result.androidPackage))
-    )
+    if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
       return fail('The worker returned no verified native APK package.');
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
     const name = typeof artifact?.name === 'string' ? artifact.name : '';

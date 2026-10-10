@@ -87,7 +87,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Automatic builds** and **Automatic simulators**
+In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
 control this Mac and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this Mac; other requesters keep their own policy.
@@ -214,10 +214,10 @@ workspace, repo or committed value overrides the machine default),
 or per run `stim android --remote auto` / `stim android --remote <machine>`.
 New runs pass no `--remote` flag; recorded hosted sessions keep their machine
 until `stim stop`. When a device is not on this Mac, Desktop shows
-**on &lt;machine&gt;** on its tile, workspace page, viewer toolbar and sidebar row,
+the machine's name on its tile, workspace page, viewer toolbar and sidebar row,
 with the placement reason as hover text. Local devices show no placement label.
 
-Stim Desktop and the phone app show an **on &lt;machine&gt;** label and view/control
+Stim Desktop shows the machine's name and the phone app an **on &lt;machine&gt;** label; both view and control
 hosted Android through the client Mac's local stim-server relay. Turn on
 **Serve to phones** in Desktop and pair the phone with the client Mac. Named
 slots stream independently. Touch, text and hardware buttons reach the exact
@@ -289,8 +289,7 @@ this fallback is usually redundant on the worker.
 
 Open **Stim > Settings > Remote Macs** on your main Mac. It lists your
 remote Macs, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
-**Details** and **Remove**. Choose **Add Remote Mac...** to start the wizard,
+**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
 commands to run on that Mac: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.
@@ -491,6 +490,15 @@ or Android tools.
 An exact npm release needs no extra setting. Installing this checkout's own
 build requires `server.acceptClientBuilds=true` on the worker; it defaults to
 false. A failed server health check restores the previous version.
+
+The worker restarts only once its offloaded builds and hosted sessions end, and
+the card says what it waits for, such as "Waiting for 1 hosted simulator to
+end...". When this Mac's own workspaces hold those hosted simulators, **Stop and
+Update...** stops them with `stim stop` after a confirmation that names each
+device and workspace; another Mac's sessions can only be stopped on the worker.
+The update shows as finished once the worker runs this Mac's Stim build, even
+when another update installed it, and a refused update (for example, one already
+running there) shows the worker's reason.
 
 ## Test build
 

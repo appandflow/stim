@@ -39,7 +39,7 @@ brew install --cask appandflow/tap/stim
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
-tiles with an **on &lt;machine&gt;** label. You view and control them through this
+tiles labeled with the machine's name. You view and control them through this
 Mac's stim-server relay. Touch and text reach the
 hosting Mac; controls that need a local simulator, and replay, are hidden.
 The tile reports connecting, unavailable or stopped sessions. Android hardware
@@ -54,7 +54,7 @@ or per run `stim ios --remote auto` / `stim ios --remote <machine>`.
 Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
-sidebar row show **on &lt;machine&gt;**, with the placement reason as hover text.
+sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
@@ -84,7 +84,7 @@ opens the panel once for that tutorial path, after any open sheet closes.
 <img src="/img/desktop/tutorial-panel.png" alt="Stim Tutorial panel showing the agent actions step" width="320" />
 
 <PromptBox title="Get the test app">
-{`Clone appandflow/stim-tutorial into ~/stim-tutorial and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if ~/stim-tutorial already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`}
+{`Clone appandflow/stim-tutorial into ~/stim-tutorial and follow stim guide tutorial run.`}
 </PromptBox>
 
 The tutorial shows what worktree isolation and automated validation buy you.
@@ -93,21 +93,20 @@ clone with its own simulator and dev server, and each checks its own work on the
 device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
 a tiny Expo app, and shows:
 
-- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run or removed.
+- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
 - **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
-- **Build on Another Mac (optional):** **Add Remote Mac** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
+- **Delete the Test App (optional):** a prompt to remove the tutorial for good. Your agent removes any worktrees of the clone and then the clone itself with a plain `stim worktree remove`, stopping to ask if one holds changes, so their simulators, Metro ports and Stim records are torn down, and then deletes the clone's folder. The step completes when Stim no longer lists the clone and its folder is gone. Skip it to keep the clone.
 
 When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.
 
-Completed optional steps stay expanded so you can follow the phone handoff or
-copy the machine prompt. The tutorial does not start the server, pair phones or
+Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
 grant access. Its only build is the **Run iOS** button.
 
 Accent rings and short callouts point to existing controls without covering the
@@ -117,11 +116,12 @@ highlights when opened.
 
 Progress stays in this app's preferences. Closing the panel preserves it;
 Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
-its path, and an archived tour opens as complete. **Skip Step** advances without
+its path, and an archived tour opens at Delete the Test App. **Skip Step** advances without
 waiting for a signal. **Mark Done** appears after two minutes. The **…** menu
-also offers **Restart Tutorial**, which shows a restart prompt and resets
-checkpoints when the tracked tour disappears and returns, or its oldest build
-starts after Restart. A newer phase timestamp alone does not reset progress.
+also offers **Restart Tutorial**, which starts over at Get the Test App as on a
+first start; worktrees from before the restart stay and no longer count. When
+the tutorial workspace comes from an older tutorial version, the panel says so
+and offers only **Restart Tutorial**.
 
 Each step shows a plain request to copy for your coding agent, with the paths
 filled in from the tour's repository. Below it, a collapsed **Commands your agent
@@ -129,12 +129,10 @@ will run** section lists the same work as a short set of commands you can type
 yourself, with the agent-device state directory and simulator filled in when
 known. Create the Tutorial has only the prompt. Desktop remembers whether the
 section is open. Copying a command does not start the three-minute workspace
-warning. The default base is `~/stim-tutorial`, and the machine step needs the
-name of an approved Mac.
+warning. The default base is `~/stim-tutorial`.
 **Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
 for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way, and only the
-optional machine step builds on another Mac. To
+`remote.build` say. The agent keeps the tutorial's own runs local the same way. To
 read the complete manual:
 
 <StimTabs code={`stim guide tutorial manual`} />
@@ -423,15 +421,8 @@ cards in an adaptive grid, with their last activity, an open pull request, a fai
 build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
 place. Click a card to open the project with all of its worktrees listed, under a
 **Showing all workspaces** chip you can clear to return to the active ones. A project page
-whose worktrees are all inactive says so and has a **Show All** button. A **Recently archived** row and a **Try this** section
-follow. **Try this** suggests one feature a day, preferring ones you have not used yet, such as EAS
-development builds and simulators, another Mac for builds or simulators, `stim macos`,
-running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a
-copyable prompt for your coding agent. A tip appears only when it applies, so EAS tips
-need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
-with the **x** and the next one appears; it stays dismissed on this Mac. **Next Tip** shows another
-for today. The tip stays the same all day, and the next day shows the least recently shown one. It never repeats the
-sidebar's tip card, and the section is hidden when no tip applies.
+whose worktrees are all inactive says so and has a **Show All** button. A **Recently archived** row
+follows.
 
 **Active Workspaces** shows every worktree with something running, building or warming
 as a card in a grid: two columns at typical widths, one when the window is narrow and
@@ -554,18 +545,17 @@ belonging to that path at once. Settings and other details are in the
 
 ## Add a remote Mac
 
-**Settings > Remote Macs** also shows **Automatic builds** and **Automatic simulators**
-for **This Mac** and each remote. These switches control new automatic placement
+**Settings > Remote Macs** also shows **Builds enabled** and **Simulators enabled**
+for this Mac, in a card under **This Machine**, and on each remote machine's card. These switches control new automatic placement
 requested by this Mac without unpairing or stopping anything. Each pool retains at
 least one local or configured, approved remote member. Explicit placement is unchanged.
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
 
 **Settings > Remote Macs** lists your remote Macs with a status
-(**Approved**, **Waiting for approval**, **Unreachable** or **Not offloading**),
+(**Approved**, **Waiting for approval**, **Unreachable**, **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, any problem that keeps builds on
-this Mac with its fix, what each does (**Builds**, **Simulators**) and a **...** menu with **Details**
-and **Remove**. It updates itself; there is no Refresh button. With none, it
-offers **Add Remote Mac…**, which guides you through five steps:
+this Mac with its fix, what each does (**Builds**, **Simulators**) and **Remove...**. It updates itself; there is no Refresh button. With none, it
+offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac on your tailnet.
 2. Choose Builds and/or Hosted simulators.
@@ -621,7 +611,11 @@ until the thresholds are met, the workspace paths and build IDs counted.
 
 Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
 there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. Only applicable tips appear. One tip stays for the calendar day;
+simulators. The replay tip appears when an archived workspace still has recordings and opens it.
+Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
+development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
+package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
+errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
@@ -633,9 +627,9 @@ matching suggestions (new Mac, build slot waits, away
 builds, device limit) no longer appear. Disk-pressure suggestions are
 unaffected. Suggestions keep their own once-per-day limit.
 
-**File > Add Remote Mac…** (**Cmd+Shift+B**) always opens the existing build
+**File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
 card when no remote Mac is configured. With another Mac on the tailnet it
-offers **Add Remote Mac…**; otherwise it explains how to connect both Macs
+offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
 with Tailscale. The existing **Link Machine** button is also available. Build
 machines are not a step in the first-run setup guide.

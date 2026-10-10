@@ -49,6 +49,7 @@ import {
   cacheProviderSettingError,
   remoteIosSetting,
   resolveCacheProviderConfig,
+  resolveIosProjectDir,
   resolveProjectSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
@@ -528,7 +529,7 @@ export async function startDevServer(
 
     const managedRemote = remote && !tunnel && !publicUrl && tunnelMode !== 'off';
     const runStart = async (): Promise<StartFacts> => {
-      const appIds = detectAppIds(root);
+      const appIds = detectAppIds(root, resolveIosProjectDir(settings, root).dir);
       upsertProject(root, {
         bundleId: appIds.bundleId ?? undefined,
         androidPackage: appIds.androidPackage ?? undefined,

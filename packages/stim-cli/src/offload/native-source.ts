@@ -31,8 +31,15 @@ const absentInput = (path: string): Error =>
 
 /** Throws the same membership refusal as nativeTransferManifest, from the git-visible paths alone. */
 export function checkNativeTransferMembership(snapshot: NativeInputSnapshot, visible: ReadonlySet<string>): void {
-  for (const { entry, path } of repositoryInputs(snapshot))
-    if (entry.kind !== 'directory' && !visible.has(path)) throw absentInput(path);
+  for (const { entry, path } of repositoryInputs(snapshot)) {
+    if (entry.kind === 'directory' || visible.has(path)) continue;
+    for (let index = path.indexOf('/'); index !== -1; index = path.indexOf('/', index + 1))
+      if (visible.has(path.slice(0, index)))
+        throw new Error(
+          `Native input ${path} is inside the git submodule ${path.slice(0, index)}; submodules are not transferred.`,
+        );
+    throw absentInput(path);
+  }
 }
 
 export function nativeTransferManifest(

@@ -13,7 +13,7 @@ import {
   readAppJson,
   readPackageJson,
 } from '../workspace/project-files.ts';
-import { settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import { resolveIosProjectDir, settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
 import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
 
 import {
@@ -52,12 +52,12 @@ const expo: NativeProjectIntegration = {
 const reactNative: NativeProjectIntegration = {
   mode: MODE_BARE,
   loadDevServer: async () => (await import('../supervisor/server-bare.ts')).startBareServer,
-  platforms(root) {
+  platforms(root, settings) {
     if (!declaresAppDependency(readPackageJson(root))) return [];
     const platforms: ProjectPlatform[] = [];
     let ios: string[] = [];
     try {
-      ios = readdirSync(join(root, 'ios'));
+      ios = readdirSync(resolveIosProjectDir(settings, root).dir);
     } catch {}
     if (ios.some((name) => name.endsWith('.xcodeproj') || name.endsWith('.xcworkspace'))) platforms.push('ios');
     if (
@@ -82,7 +82,7 @@ const reactNativeProject: ProjectIntegration = {
       platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
-      ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
+      ios: async (settings) => (await import('./react-native-ios.ts')).reactNativeIosProject(root, settings),
       android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
       doctor: async () => (await import('./react-native-doctor.ts')).reactNativeProjectDoctor(root),
     };

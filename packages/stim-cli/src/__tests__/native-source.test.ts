@@ -13,7 +13,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
-import { nativeTransferManifest, verifyNativeTransfer, type NativeTransferFile } from '../offload/native-source.ts';
+import {
+  checkNativeTransferMembership,
+  nativeTransferManifest,
+  verifyNativeTransfer,
+  type NativeTransferFile,
+} from '../offload/native-source.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeXcodeInputSnapshot, nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
@@ -70,6 +75,16 @@ test('ignored files and external named inputs refuse transfer before bytes are s
     { parameters: null },
   );
   expect(() => nativeTransferManifest(root, inputs, [file('Main.swift')])).toThrow(/inside the repository/);
+});
+
+test('an input inside a git submodule names the submodule instead of an ignore rule', () => {
+  mkdirSync(join(root, 'Vendor', 'Lib'), { recursive: true });
+  writeFileSync(join(root, 'Vendor', 'Lib', 'Lib.swift'), 'submodule source');
+  writeFileSync(join(root, 'Main.swift'), 'source');
+  expect(() => checkNativeTransferMembership(snapshot(), new Set(['Main.swift', 'Vendor/Lib']))).toThrow(
+    /Vendor\/Lib\/Lib\.swift is inside the git submodule Vendor\/Lib/,
+  );
+  expect(() => checkNativeTransferMembership(snapshot(), new Set(['Main.swift']))).toThrow(/ignored or absent/);
 });
 
 test.skipIf(process.platform === 'win32')(
