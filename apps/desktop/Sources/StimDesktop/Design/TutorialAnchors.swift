@@ -34,8 +34,13 @@ struct TutorialHint {
     TutorialGlowPath.targets(step: step, ticks: ticks, onPage: onPage, logsShown: logsShown)
   }
 
-  /// Whether the first hop is a control outside the window's content, which glows itself.
-  func glowsInPlace(_ anchor: TutorialAnchorID) -> Bool { targets.first?.anchor == anchor }
+  /// Whether a control that no content overlay reaches, such as a toolbar item or a sidebar row, glows itself. A
+  /// sidebar row is a hop only off the tutorial pages, and only a row holding a tutorial worktree glows.
+  func glowsInPlace(_ anchor: TutorialAnchorID, workspaces: [String] = []) -> Bool {
+    anchor == .sidebarRow
+      ? targets.contains { $0.anchor == anchor } && workspaces.contains(where: paths.contains)
+      : targets.first?.anchor == anchor
+  }
 
   var offersShowMe: Bool {
     ["device", "agent", "logs", "finish", "done"].contains(step ?? "")
@@ -55,12 +60,8 @@ extension EnvironmentValues {
 
 extension View {
   func tutorialAnchor(_ id: TutorialAnchorID, workspace: String? = nil) -> some View {
-    tutorialAnchor(id, workspaces: [workspace])
-  }
-
-  func tutorialAnchor(_ id: TutorialAnchorID, workspaces: [String?]) -> some View {
-    anchorPreference(key: TutorialAnchorPreference.self, value: .bounds) { anchor in
-      Dictionary(workspaces.map { (TutorialAnchorKey(id: id, workspace: $0), anchor) }) { first, _ in first }
+    anchorPreference(key: TutorialAnchorPreference.self, value: .bounds) {
+      [TutorialAnchorKey(id: id, workspace: workspace): $0]
     }
   }
 
@@ -69,9 +70,9 @@ extension View {
   }
 
   /// A glow drawn on the view itself, for a control that no content overlay reaches, such as a toolbar item.
-  func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID) -> some View {
+  func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID, workspaces: [String] = []) -> some View {
     overlay {
-      if let hint, hint.glowsInPlace(anchor) {
+      if let hint, hint.glowsInPlace(anchor, workspaces: workspaces) {
         GeometryReader { geometry in
           TutorialGlow(
             rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,

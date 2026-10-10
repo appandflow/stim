@@ -8,6 +8,7 @@ struct SidebarWorktreeRow: View {
   var selection: SidebarItem?
   var openLogs: (String) -> Void
   var archives: [ArchivedWorkspace] = []
+  @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
   #if DEBUG
     @Environment(\.fixtureDate) private var fixtureDate
@@ -20,7 +21,7 @@ struct SidebarWorktreeRow: View {
     if archives.isEmpty {
       WorktreeActions(page: page, openLogs: showLogs) { menu in
         row
-          .tutorialAnchor(.sidebarRow, workspaces: page.apps.map(\.path))
+          .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: page.apps.map(\.path))
           .sidebarTag(.environment(page.id), selection: selection)
           .contextMenu { menu }
       }

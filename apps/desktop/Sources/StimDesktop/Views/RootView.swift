@@ -215,7 +215,7 @@ struct RootView: View {
     .onChange(of: [summaryWidth, narrowestSummaryWidth], initial: true) {
       summaryHidden = !summaryFits
     }
-    .tutorialHighlights()
+    .tutorialHighlights(showFallback: columnVisibility == .detailOnly)
     .environment(\.tutorialHint, tutorialHint)
     .focusedSceneValue(
       \.inspectorToggle,
