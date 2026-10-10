@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from 'fs';
+import fs from 'node:fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -117,6 +118,20 @@ test.skipIf(process.platform === 'win32')(
     expect(statSync(join(tmpHome, 'config.json')).mode & 0o777).toBe(0o600);
   },
 );
+
+test.skipIf(process.platform === 'win32')('saveConfig still writes when STIM_HOME refuses chmod', () => {
+  chmodSync(tmpHome, 0o755);
+  const chmod = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
+    throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  });
+  try {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    expect(chmod).toHaveBeenCalledWith(tmpHome, 0o700);
+  } finally {
+    chmod.mockRestore();
+  }
+  expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
+});
 
 test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
   const result = withConfigLock(() => {
