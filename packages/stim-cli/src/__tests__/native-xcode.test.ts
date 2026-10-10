@@ -657,7 +657,8 @@ test('relocation, shell location and task metadata preserve warm identities whil
   writeNativeXcodeProject(root);
   const before = fingerprint();
   expect(before).not.toHaveProperty('cacheIneligible');
-  for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID']) vi.stubEnv(name, `changed-${name}`);
+  for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID', 'LANG', 'LC_ALL'])
+    vi.stubEnv(name, `changed-${name}`);
   expect(fingerprint()).toEqual(before);
   const relocated = join(realpathSync(home), 'relocated');
   cpSync(root, relocated, { recursive: true });
@@ -811,6 +812,7 @@ test('the registered native iOS provider builds Release without a device and reu
   setExecutor(
     makeExecutor({
       runFile(file, args = []) {
+        if (args.includes('simctl')) throw new Error('A local artifact build must not inspect simulator runtimes');
         if (file === 'cp') cpSync(args.at(-2)!, args.at(-1)!, { recursive: true });
         return 'Xcode 26.0 build 17A';
       },
@@ -859,4 +861,89 @@ test('the registered native iOS provider builds Release without a device and reu
   expect(readFileSync(join(edited.appPath, 'Native'), 'utf8')).toBe('struct EditedApp {}');
   expect(readWorkspaceState(root)?.ios).toEqual(existing);
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
+});
+
+test('native run and worker build-only recipes share the selected architecture identity', async () => {
+  writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  const unused = () => {
+    throw new Error('Identity must not prepare or compile');
+  };
+  const context: IosArtifactContext = {
+    root,
+    logFile: join(home, 'build.ndjson'),
+    configuration: 'Debug',
+    target: {
+      udid: 'owned-device',
+      destination: null,
+      sdk: 'iphonesimulator',
+      arch: null,
+      keyArch: 'arm64',
+      offloadRuntime: () => 'iOS-26-0',
+      offloadRefusal: null,
+    },
+    device: null,
+    optimizations: resolveOptimizations({}, {}).ios,
+    cache: { read: true, write: true, remote: true },
+    phase: unused,
+    note: unused,
+    logWriter: unused,
+    estimates: unused,
+    step: unused,
+    setPodsMs: unused,
+  };
+  const project = nativeXcodeIosProject(root);
+  const run = project.artifact(context);
+  const worker = project.artifact({
+    ...context,
+    target: { ...context.target, udid: null, destination: 'generic/platform=iOS Simulator', arch: 'arm64' },
+  });
+  const identity = await run.identity();
+  expect(identity).not.toHaveProperty('cacheIneligible');
+  expect(await worker.identity()).toEqual(identity);
+  expect(run.offload!.request('iOS-26-0').native).toMatchObject({ arch: 'arm64' });
+  const other = project.artifact({ ...context, target: { ...context.target, keyArch: 'x86_64' } });
+  expect(await other.identity()).not.toEqual(identity);
+});
+
+test('an ignored native input keeps placement here instead of failing during the source transfer', async () => {
+  const real = getExecutor();
+  real.runFile('git', ['init', '--quiet', root]);
+  writeNativeXcodeProject(root);
+  write(join(root, '.gitignore'), '.DS_Store\n');
+  write(join(root, '.DS_Store'), 'Finder metadata');
+  setExecutor(
+    makeExecutor({ runFile: (file, args, options) => (file === 'git' ? real.runFile(file, args, options) : 'Xcode') }),
+  );
+  const unused = () => {
+    throw new Error('Placement must not prepare or compile');
+  };
+  const recipe = nativeXcodeIosProject(root).artifact({
+    root,
+    logFile: join(home, 'build.ndjson'),
+    configuration: 'Debug',
+    target: {
+      udid: 'owned-device',
+      destination: null,
+      sdk: 'iphonesimulator',
+      arch: null,
+      keyArch: 'arm64',
+      offloadRuntime: () => 'iOS-26-0',
+      offloadRefusal: null,
+    },
+    device: null,
+    optimizations: resolveOptimizations({}, {}).ios,
+    cache: { read: true, write: true, remote: true },
+    phase: unused,
+    note: unused,
+    logWriter: unused,
+    estimates: unused,
+    step: unused,
+    setPodsMs: unused,
+  });
+  expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
+  expect(recipe.offload!.context().unsupported).toContain('.DS_Store');
+  rmSync(join(root, '.DS_Store'));
+  expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
+  expect(recipe.offload!.context()).toEqual({ runtime: 'iOS-26-0', unsupported: null });
 });

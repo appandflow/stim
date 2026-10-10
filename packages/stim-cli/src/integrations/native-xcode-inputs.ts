@@ -11,7 +11,7 @@ export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
 }
 
-function nativeXcodeMetadataDirectories(selection: NativeXcodeSelection): string[] {
+export function nativeXcodeMetadataDirectories(selection: NativeXcodeSelection): string[] {
   const workspaces = selection.projects.map((project) => join(project.path, 'project.xcworkspace'));
   if (selection.container.kind === 'workspace') workspaces.push(selection.container.path);
   return workspaces.flatMap((workspace) => [
@@ -126,7 +126,7 @@ export function nativeXcodeInputSnapshot(
   for (const [name, value] of Object.entries(process.env).toSorted(([a], [b]) => a.localeCompare(b))) {
     if (
       value !== undefined &&
-      /^(?:DEVELOPER_DIR|TOOLCHAINS|SDKROOT|CFLAGS|CPPFLAGS|CXXFLAGS|OBJCFLAGS|LDFLAGS|ARCHS|ONLY_ACTIVE_ARCH|SOURCE_DATE_EPOCH|ZERO_AR_DATE|LANG|LC_ALL|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET|DEVELOPMENT_TEAM|XCODE_.*|SWIFT_.*|CLANG_.*|GCC_.*|OTHER_.*FLAGS|CODE_SIGN.*|PROVISIONING_.*)$/.test(
+      /^(?:DEVELOPER_DIR|TOOLCHAINS|SDKROOT|CFLAGS|CPPFLAGS|CXXFLAGS|OBJCFLAGS|LDFLAGS|ARCHS|ONLY_ACTIVE_ARCH|SOURCE_DATE_EPOCH|ZERO_AR_DATE|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET|DEVELOPMENT_TEAM|XCODE_.*|SWIFT_.*|CLANG_.*|GCC_.*|OTHER_.*FLAGS|CODE_SIGN.*|PROVISIONING_.*)$/.test(
         name,
       )
     )

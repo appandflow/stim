@@ -19,6 +19,7 @@ interface NativeInputEntry {
 export interface NativeInputSnapshot {
   hash: string;
   entries: NativeInputEntry[];
+  parameters: unknown;
 }
 
 export class NativeInputError extends Error {}
@@ -102,5 +103,5 @@ export function fingerprintNativeInputs(
     .update('\0')
     .update(manifestDigest(sorted))
     .digest('hex');
-  return { hash, entries: sorted };
+  return { hash, entries: sorted, parameters };
 }

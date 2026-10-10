@@ -9,6 +9,8 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
+  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
@@ -30,16 +32,25 @@ import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import { manifestDigest } from './manifest.ts';
-import type { NdjsonWriter } from '../ndjson.ts';
+import { parseNdjsonText, type NdjsonWriter } from '../ndjson.ts';
 import type { Optimizations } from '../optimizations.ts';
 import { podAction } from '../commands/ios/support.ts';
 import type { AndroidBuildOptions } from './client.ts';
 import { workerToolchain } from './toolchain.ts';
+import { verifyNativeTransfer } from './native-source.ts';
+import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
+import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
+import type { BuildStartParams } from '@stim-cli/core/protocol';
+import { projectRegistry } from '../integrations/projects.ts';
+import type { IosProject } from '../integrations/ios-project.ts';
+import { buildIosOperation } from '../commands/ios/build.ts';
+import { writeConfigSetting } from '../workspace/config.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
-/** One file of the client's checkout, as `git ls-files -co --exclude-standard` lists it. */
+/** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
 export interface ManifestEntry {
   path: string;
-  kind: 'file' | 'exec' | 'link';
+  kind: 'file' | 'exec' | 'link' | 'directory';
   size: number;
   sha256: string;
 }
@@ -67,6 +78,7 @@ export interface WorkerJob {
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string;
+  native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
   /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
   gradleDaemonIdleMs?: number;
@@ -87,6 +99,7 @@ export type WorkerResult =
       ok: true;
       artifact: { path: string; name: string; size: number; sha256: string };
       fingerprint: string;
+      sourceDigest?: string;
       compilationCache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
       timings: WorkerTimings;
     }
@@ -158,12 +171,6 @@ interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
 
-/**
- * Makes `src` hold exactly the manifest's files: a file the manifest names is rewritten unless this process
- * wrote that same content there and nothing touched it since; a file that git would list as untracked and not
- * ignored, and that the manifest does not name, is deleted, as is one the previous manifest named. Ignored
- * files (dependencies, generated native projects) stay, and the fingerprint check covers them.
- */
 function materialize(job: WorkerJob, src: string): { written: number; removed: number } {
   const recordFile = join(job.area, 'mirror.json');
   let previous: MirrorRecord = {};
@@ -175,10 +182,29 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     getExecutor().runFile('git', ['init', '--quiet', src], { timeoutMs: 30_000 });
     getExecutor().runFile('git', ['-C', src, 'config', 'core.excludesFile', '/dev/null'], { timeoutMs: 30_000 });
   }
+  getExecutor().runFile('git', ['-C', src, 'read-tree', '--empty'], { timeoutMs: 30_000 });
+  if (job.native) {
+    const keep = new Set(
+      job.manifest.flatMap((entry) => {
+        const parts = entry.path.split('/');
+        return parts.map((_, index) => parts.slice(0, index + 1).join('/'));
+      }),
+    );
+    const removeUnknown = (directory: string, prefix: string) => {
+      for (const name of readdirSync(directory)) {
+        if (!prefix && name === '.git') continue;
+        const path = prefix ? `${prefix}/${name}` : name;
+        const absolute = join(directory, name);
+        if (!keep.has(path)) rmSync(absolute, { recursive: true, force: true });
+        else if (lstatSync(absolute).isDirectory()) removeUnknown(absolute, path);
+      }
+    };
+    removeUnknown(src, '');
+  }
   const next: MirrorRecord = {};
   const wanted = new Set<string>();
   let written = 0;
-  for (const entry of job.manifest) {
+  for (const entry of job.manifest.toSorted((a, b) => a.path.split('/').length - b.path.split('/').length)) {
     wanted.add(entry.path);
     const target = join(src, entry.path);
     const known = previous[entry.path];
@@ -186,9 +212,19 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     try {
       stat = lstatSync(target);
     } catch {}
+    if (entry.kind === 'directory' && stat?.isDirectory()) {
+      next[entry.path] = { sha256: entry.sha256, kind: entry.kind, mtimeMs: stat.mtimeMs, size: stat.size };
+      continue;
+    }
     if (
       known &&
       stat &&
+      (!job.native ||
+        ((entry.kind === 'link' ? stat.isSymbolicLink() : stat.isFile()) &&
+          createHash('sha256')
+            .update(entry.kind === 'link' ? readlinkSync(target) : readFileSync(target))
+            .digest('hex') === entry.sha256 &&
+          (entry.kind === 'link' || (stat.mode & 0o111) === (entry.kind === 'exec' ? 0o111 : 0)))) &&
       known.sha256 === entry.sha256 &&
       known.kind === entry.kind &&
       stat.mtimeMs === known.mtimeMs &&
@@ -200,7 +236,9 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     ensureParents(src, entry.path);
     if (stat) rmSync(target, { recursive: true, force: true });
     const blob = blobPath(job.blobs, entry.sha256);
-    if (entry.kind === 'link') {
+    if (entry.kind === 'directory') {
+      mkdirSync(target);
+    } else if (entry.kind === 'link') {
       symlinkSync(readFileSync(blob, 'utf8'), target);
     } else {
       copyFileSync(blob, target, constants.COPYFILE_FICLONE);
@@ -210,18 +248,28 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     next[entry.path] = { sha256: entry.sha256, kind: entry.kind, mtimeMs: after.mtimeMs, size: after.size };
     written += 1;
   }
-  const untracked = getExecutor()
-    .runFile('git', ['-C', src, 'ls-files', '-z', '-o', '--exclude-standard'], {
-      untrimmed: true,
-      timeoutMs: 120_000,
-    })
-    .split('\0')
-    .filter(Boolean);
+  if (job.native) {
+    const indexed = job.manifest.filter((entry) => entry.kind !== 'directory').map((entry) => `${entry.path}\0`);
+    if (indexed.length)
+      getExecutor().runFile('git', ['-C', src, 'update-index', '--add', '--info-only', '-z', '--stdin'], {
+        input: indexed.join(''),
+        timeoutMs: 120_000,
+      });
+  }
+  const untracked = job.native
+    ? []
+    : getExecutor()
+        .runFile('git', ['-C', src, 'ls-files', '-z', '-o', '--exclude-standard'], {
+          untrimmed: true,
+          timeoutMs: 120_000,
+        })
+        .split('\0')
+        .filter(Boolean);
   let removed = 0;
   for (const path of new Set([...untracked, ...Object.keys(previous)])) {
     if (wanted.has(path) || !realParents(src, path)) continue;
     try {
-      rmSync(join(src, path), { force: true });
+      rmSync(join(src, path), { force: true, ...(job.native ? { recursive: true } : {}) });
       removed += 1;
     } catch {}
   }
@@ -337,7 +385,35 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
   note('sync', `${job.manifest.length} files, ${mirrored.written} written, ${mirrored.removed} removed`);
   let fingerprint: string;
   let compiled: Compiled;
-  if (job.platform === 'macos') {
+  if (job.native) {
+    if (job.platform !== 'ios' || job.native.provider !== 'xcode')
+      return failed('unsupported-provider', 'The worker does not implement this native provider.');
+    const selected = projectRegistry.selectIos(root);
+    if ('problem' in selected || selected.id !== 'native-xcode')
+      return failed('provider-mismatch', 'The transferred project did not select the native Xcode integration.');
+    let metadataDirectories: string[];
+    try {
+      metadataDirectories = nativeXcodeMetadataDirectories(
+        selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
+      );
+      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
+        return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
+    } catch (error) {
+      return failed('source-mismatch', (error as Error).message);
+    }
+    const refused = await time('fingerprintMs', () => nativeIdentityRefusal(job, root, selected.load));
+    if (refused) return failed('identity-mismatch', refused);
+    compiled = await compileNativeIos(job, root, log, time);
+    if (!compiled.ok) return failed(compiled.code, compiled.message);
+    try {
+      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
+        throw new Error('The native source changed while the worker compiled it.');
+    } catch (error) {
+      if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
+      return failed('source-moved', (error as Error).message);
+    }
+    fingerprint = job.expectedFingerprint;
+  } else if (job.platform === 'macos') {
     fingerprint = await time('fingerprintMs', () => manifestDigest(job.manifest));
     if (fingerprint !== job.expectedFingerprint)
       return failed(
@@ -408,39 +484,145 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
   }
-  const out = join(job.area, 'out', job.job);
-  if (job.platform !== 'macos') rmSync(out, { recursive: true, force: true });
-  mkdirSync(out, { recursive: true });
-  const archive = join(out, 'app.tgz');
-  const name = basename(compiled.path);
-  if (job.platform === 'ios' || job.platform === 'android')
-    cpSync(compiled.path, join(out, name), {
-      recursive: true,
-      verbatimSymlinks: true,
-      mode: constants.COPYFILE_FICLONE,
-    });
-  await time('packageMs', () =>
-    getExecutor().runFileAsync(
-      'tar',
-      ['-czf', archive, '--options', 'gzip:compression-level=1', '-C', dirname(compiled.path), name],
-      { timeoutMs: 600_000 },
-    ),
-  );
-  const sha256 = await time('packageMs', () => sha256Of(archive));
-  return {
-    ok: true,
-    artifact: { path: archive, name, size: statSync(archive).size, sha256 },
-    fingerprint,
-    compilationCache: compiled.cache,
-    timings,
-  };
+  try {
+    const out = join(job.area, 'out', job.job);
+    if (job.platform !== 'macos') rmSync(out, { recursive: true, force: true });
+    mkdirSync(out, { recursive: true });
+    const archive = join(out, 'app.tgz');
+    const name = basename(compiled.path);
+    if (job.platform === 'ios' || job.platform === 'android')
+      cpSync(compiled.path, join(out, name), {
+        recursive: true,
+        verbatimSymlinks: true,
+        mode: constants.COPYFILE_FICLONE,
+      });
+    await time('packageMs', () =>
+      getExecutor().runFileAsync(
+        'tar',
+        ['-czf', archive, '--options', 'gzip:compression-level=1', '-C', dirname(compiled.path), name],
+        { timeoutMs: 600_000 },
+      ),
+    );
+    const sha256 = await time('packageMs', () => sha256Of(archive));
+    return {
+      ok: true,
+      artifact: { path: archive, name, size: statSync(archive).size, sha256 },
+      fingerprint,
+      ...(job.native ? { sourceDigest: job.native.sourceDigest } : {}),
+      compilationCache: compiled.cache,
+      timings,
+    };
+  } finally {
+    if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });
+  }
 }
 
 type Timer = <T>(key: keyof WorkerTimings, run: () => T | Promise<T>) => Promise<T>;
 
 type Compiled =
-  | { ok: true; path: string; cache: CompilationCacheActivity | CcacheActivity | Record<string, never> }
+  | {
+      ok: true;
+      path: string;
+      cache: CompilationCacheActivity | CcacheActivity | Record<string, never>;
+      temporary?: string;
+    }
   | { ok: false; code: string; message: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function differingParameters(here: unknown, there: unknown, path: string): string[] {
+  if (JSON.stringify(here) === JSON.stringify(there)) return [];
+  if (!isRecord(here) || !isRecord(there)) return [path];
+  return [...new Set([...Object.keys(here), ...Object.keys(there)])]
+    .toSorted()
+    .flatMap((key) => differingParameters(here[key], there[key], `${path}.${key}`));
+}
+
+function unused(): never {
+  throw new Error('The native identity check does not prepare or compile.');
+}
+
+async function nativeIdentityRefusal(
+  job: WorkerJob,
+  root: string,
+  load: () => Promise<IosProject>,
+): Promise<string | null> {
+  const native = job.native!;
+  if (!job.optimizations) return 'The native Xcode build has no compiler options.';
+  try {
+    const recipe = (await load()).artifact({
+      root,
+      logFile: join(job.area, 'build.ndjson'),
+      configuration: job.configuration,
+      ...(job.scheme ? { buildScheme: job.scheme } : {}),
+      target: {
+        udid: null,
+        destination: 'generic/platform=iOS Simulator',
+        sdk: 'iphonesimulator',
+        arch: native.arch,
+        keyArch: native.arch,
+        offloadRuntime: () => job.runtime,
+        offloadRefusal: null,
+      },
+      device: null,
+      optimizations: job.optimizations,
+      cache: { read: true, write: true, remote: false },
+      phase: unused,
+      note: unused,
+      logWriter: unused,
+      estimates: unused,
+      step: unused,
+      setPodsMs: unused,
+    });
+    const identity = await recipe.identity();
+    if ('cacheIneligible' in identity) return `This Mac cannot key the native build: ${identity.cacheIneligible}`;
+    if (identity.key === native.cacheKey) return null;
+    const here = recipe.offload?.request(job.runtime ?? '').native?.snapshot.parameters;
+    const differing = differingParameters(native.parameters, here, 'parameters');
+    return differing.length
+      ? `This Mac keys the native build differently in ${differing.join(', ')}.`
+      : 'This Mac keys the native build differently from the same parameters.';
+  } catch (error) {
+    return `This Mac cannot key the native build: ${(error as Error).message}`;
+  }
+}
+
+async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
+  if (!job.native || !job.optimizations)
+    return { ok: false, code: 'bad-request', message: 'The native Xcode build has no compiler options.' };
+  for (const key of ['compilationCache', 'swiftCompilationCache', 'prefixMapping'] as const) {
+    const value = job.optimizations[key];
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.ios.${key}`, value ?? undefined);
+  }
+  note('build', `native Xcode ${job.configuration ?? 'Debug'}`);
+  const logFile = join(workspaceLogsDir(root), 'build-ios.ndjson');
+  try {
+    rmSync(logFile, { force: true });
+    const built = await time('buildMs', () =>
+      buildIosOperation(root, {
+        scheme: job.scheme ?? undefined,
+        configuration: job.configuration ?? undefined,
+        arch: job.native!.arch ?? 'all',
+        remoteBuild: 'local',
+      }),
+    );
+    if (built.cacheKey !== job.native.cacheKey || built.cacheSkipped) {
+      rmSync(dirname(built.appPath), { recursive: true, force: true });
+      return {
+        ok: false,
+        code: 'fingerprint-mismatch',
+        message: 'The worker resolved a different native artifact identity.',
+      };
+    }
+    return { ok: true, path: built.appPath, cache: built.compilationCache, temporary: dirname(built.appPath) };
+  } catch (error) {
+    return { ok: false, code: 'native-build-failed', message: (error as Error).message };
+  } finally {
+    if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
+  }
+}
 
 async function compileMacos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   const options = job.macos;

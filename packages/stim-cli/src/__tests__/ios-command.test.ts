@@ -8425,29 +8425,34 @@ describe('strict remote Mac selection', () => {
     },
   );
 
-  test('a paired pending worker refusal records failure without compiling or taking a local slot', async () => {
-    reserve();
-    configureMini(true, 'pending');
-    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
-    const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
-    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.stderr).toContain('mini: approval-pending');
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
-    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
-      status: 'failed',
-      errorCode: 'STIM_OFFLOAD_REFUSED',
-      buildMachine: 'mini',
-    });
-    expect(choose).toHaveBeenCalledWith(
-      expect.objectContaining({
-        selected: 'mini',
-        machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
-      }),
-    );
-  });
+  test.each(['auto', 'off'])(
+    'a paired pending named worker refusal preserves provider context when configured mode is %s',
+    async (mode) => {
+      reserve();
+      configureMini(true, 'pending');
+      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', mode);
+      const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: approval-pending');
+      const build = vi.fn<() => never>();
+      const slot = vi.fn<() => never>();
+      const result = await run({ remoteBuild: 'mini', json: true }, { buildIos: build, acquireBuildSlot: slot });
+      expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
+      expect(result.stderr).toContain('mini: approval-pending');
+      expect(build).not.toHaveBeenCalled();
+      expect(slot).not.toHaveBeenCalled();
+      expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
+        status: 'failed',
+        errorCode: 'STIM_OFFLOAD_REFUSED',
+        buildMachine: 'mini',
+      });
+      expect(choose).toHaveBeenCalledWith(
+        expect.objectContaining({
+          selected: 'mini',
+          machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
+          target: expect.objectContaining({ platform: 'ios', runtime: 'iOS-27-0' }),
+        }),
+      );
+    },
+  );
 
   test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
     reserve();

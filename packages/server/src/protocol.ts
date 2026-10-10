@@ -1464,7 +1464,7 @@ export function protocolJsonSchema(): JsonSchema {
                   additionalProperties: false,
                   properties: {
                     path: { type: 'string', minLength: 1 },
-                    kind: { enum: ['file', 'exec', 'link'] },
+                    kind: { enum: ['file', 'exec', 'link', 'directory'] },
                     size: { type: 'integer', minimum: 0 },
                     sha256,
                   },
@@ -1495,6 +1495,21 @@ export function protocolJsonSchema(): JsonSchema {
               scheme: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: 'string', minLength: 1 },
+              native: {
+                type: 'object',
+                required: ['provider', 'sourceDigest', 'cacheKey', 'arch', 'parameters'],
+                additionalProperties: false,
+                properties: {
+                  provider: { const: 'xcode' },
+                  sourceDigest: sha256,
+                  cacheKey: { type: 'string', minLength: 1 },
+                  arch: { enum: ['arm64', 'x86_64', null] },
+                  parameters: {
+                    type: 'object',
+                    description: 'The non-file parameters of the client artifact identity, to name what differs.',
+                  },
+                },
+              },
               packageName: { type: ['string', 'null'] },
               isExpo: { type: 'boolean' },
               optimizations: { type: ['object', 'null'] },

@@ -891,6 +891,7 @@ describe('pairing', () => {
           'hosted-congestion',
           'hosted-ios-data',
           'hosted-ios-process',
+          'native-xcode-build',
           'hosted-android-data',
           'server-update',
         ],
@@ -1367,6 +1368,73 @@ test('build.start rejects escaping or oversized macOS resources before probing t
         },
       }),
     ).toBe(false);
+  } finally {
+    toolchain.mockRestore();
+    await host.close();
+  }
+});
+
+test('native build admission rejects invalid provider identity before toolchain or worker work', async () => {
+  const host = new BuildHost({ worker: 'unused-worker', env: process.env });
+  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const session = host.session('client', {} as WebSocket, () => {});
+  const native = {
+    provider: 'xcode',
+    sourceDigest: 'a'.repeat(64),
+    cacheKey: 'artifact-key',
+    arch: 'arm64',
+    parameters: {},
+  };
+  const base = {
+    repo: 'app-1',
+    project: '',
+    platform: 'ios',
+    runtime: 'iOS-27-0',
+    configuration: 'Debug',
+    scheme: 'Native',
+    packageName: null,
+    isExpo: false,
+    fingerprint: 'input-key',
+    stimBuild: 'b1',
+    native,
+    optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
+  };
+  const empty = createHash('sha256').update('').digest('hex');
+  const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
+  try {
+    expect(
+      session.sync({
+        repo: 'app-1',
+        files: [{ path: 'Empty.bundle', kind: 'directory', size: 1, sha256: empty }],
+        done: true,
+      }),
+    ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      session.sync({
+        repo: 'app-1',
+        files: [{ path: 'Empty.bundle', kind: 'directory', size: 0, sha256: empty }],
+        done: true,
+      }),
+    ).toHaveProperty('result.missing', [empty]);
+    expect(session.blob(Buffer.from(empty, 'hex'))).toBeNull();
+    for (const changed of [
+      { provider: 'gradle' },
+      { sourceDigest: 'unverified' },
+      { cacheKey: '' },
+      { arch: 'armv7' },
+      { parameters: null },
+    ]) {
+      const params = { ...base, native: { ...native, ...changed } };
+      expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
+      expect(await session.start(params)).toHaveProperty('error.code', 'bad-request');
+    }
+    expect(await session.start({ ...base, native: undefined })).toHaveProperty('error.code', 'bad-request');
+    expect(await session.start({ ...base, platform: 'android' })).toHaveProperty('error.code', 'bad-request');
+    expect(await session.start({ ...base, optimizations: null })).toHaveProperty('error.code', 'bad-request');
+    expect(toolchain).not.toHaveBeenCalled();
+    expect(validate({ id: 'request', method: 'build.start', params: base })).toBe(true);
+    expect(await session.start(base)).toHaveProperty('error.code', 'build-refused');
+    expect(toolchain).toHaveBeenCalledOnce();
   } finally {
     toolchain.mockRestore();
     await host.close();

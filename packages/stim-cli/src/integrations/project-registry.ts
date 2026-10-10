@@ -39,7 +39,7 @@ export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
   selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
-  selectIos(root: string): { load: () => Promise<IosProject> } | { problem: ProjectProblem };
+  selectIos(root: string): { id: string; load: () => Promise<IosProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
   selectDoctor(
@@ -198,7 +198,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     if (problem) return { problem };
     const selected = operationSelection(root, matches, 'ios');
     if ('problem' in selected) return selected;
-    if (selected.match.ios) return { load: selected.match.ios };
+    if (selected.match.ios) return { id: selected.match.id, load: selected.match.ios };
     return {
       problem: {
         kind: 'not-an-app',
