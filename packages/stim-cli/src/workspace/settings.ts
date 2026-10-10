@@ -590,7 +590,7 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
 }
 
 export function projectSetsMetroCommand(root: string): boolean {
-  return settingValueAt(settingsForProject(root), 'metro.command') !== undefined;
+  return settingValueAt(resolveSettings({ projectPath: root }), 'metro.command') !== undefined;
 }
 
 export function projectMetroCommand(root: string): string[] | null {
