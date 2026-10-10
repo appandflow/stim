@@ -17,7 +17,8 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts';
 import { nativeXcodeIosProject } from '../integrations/native-xcode-ios.ts';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-project.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
@@ -475,6 +476,85 @@ test('source, ignored resources and build settings invalidate native reuse', () 
   expect(fingerprint()).not.toEqual(source);
 });
 
+test('a git checkout ignores ignored content and nested worktrees but keeps ignored files the project references', () => {
+  const project = writeNativeXcodeProject(root);
+  write(join(root, '.gitignore'), 'ignored/\nSecrets.plist\n');
+  write(join(root, 'Secrets.plist'), 'one');
+  const pbx = join(project, 'project.pbxproj');
+  writeFileSync(
+    pbx,
+    readFileSync(pbx, 'utf8')
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, SECRETS, );')
+      .replace(
+        'objects = {',
+        'objects = {\nSECRETS = { isa = PBXFileReference; path = Secrets.plist; sourceTree = "<group>"; };',
+      ),
+  );
+  const git = (...args: string[]) =>
+    getExecutor().runFile('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Stim',
+      '-c',
+      'user.email=stim@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      ...args,
+    ]);
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-qm', 'fixture');
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(root, 'ignored', 'cache.bin'), 'generated');
+  symlinkSync(join(root, 'missing'), join(root, 'ignored', 'dangling'));
+  git('worktree', 'add', '-q', '--detach', join(root, 'nested'));
+  expect(fingerprint()).toEqual(before);
+  write(join(root, 'Secrets.plist'), 'two');
+  const referenced = fingerprint();
+  expect(referenced).not.toEqual(before);
+  write(join(root, 'Untracked.swift'), 'struct Untracked {}');
+  expect(fingerprint()).not.toEqual(referenced);
+});
+
+test('a git checkout keeps files whose on-disk names differ from the index in case or Unicode normalization', () => {
+  writeNativeXcodeProject(root);
+  write(join(root, 'helper.swift'), 'struct Helper {}');
+  const decomposed = 'Cafe\u0301';
+  write(join(root, decomposed, 'Menu.swift'), 'struct Menu {}');
+  const git = (...args: string[]) =>
+    getExecutor().runFile('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Stim',
+      '-c',
+      'user.email=stim@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      ...args,
+    ]);
+  git('init', '-q');
+  git('config', 'core.ignorecase', 'true');
+  git('config', 'core.precomposeunicode', 'true');
+  git('add', '-A');
+  git('commit', '-qm', 'fixture');
+  rmSync(join(root, 'helper.swift'));
+  write(join(root, 'Helper.swift'), 'struct Helper {}');
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(root, 'Helper.swift'), 'struct HelperChanged {}');
+  const renamed = fingerprint();
+  expect(renamed).not.toEqual(before);
+  write(join(root, decomposed, 'Menu.swift'), 'struct MenuChanged {}');
+  expect(fingerprint()).not.toEqual(renamed);
+});
+
 test('a referenced source outside the application participates in native identity', () => {
   const app = join(root, 'App');
   mkdirSync(app);
@@ -579,7 +659,7 @@ test('relocation, shell location and task metadata preserve warm identities whil
   expect(before).not.toHaveProperty('cacheIneligible');
   for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID']) vi.stubEnv(name, `changed-${name}`);
   expect(fingerprint()).toEqual(before);
-  const relocated = join(home, 'relocated');
+  const relocated = join(realpathSync(home), 'relocated');
   cpSync(root, relocated, { recursive: true });
   expect(
     nativeXcodeInputSnapshot(relocated, selectNativeXcodeProject(relocated), {
@@ -663,6 +743,48 @@ test('native planning refuses unresolved source closure without dependency prepa
   expect(commands.some((command) => command.includes('-resolvePackageDependencies') || command.includes('build'))).toBe(
     false,
   );
+});
+
+test('stim ios, the build API and --plan share one native artifact key for the same project', async () => {
+  writeNativeXcodeProject(root);
+  vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const host = process.arch === 'arm64' ? 'arm64' : 'x86_64';
+  const identity = async (arch: 'arm64' | 'x86_64' | null) => {
+    const recipe = nativeXcodeIosProject(root).artifact({
+      root,
+      configuration: 'Debug',
+      target: { udid: null, destination: null, sdk: 'iphonesimulator', arch, keyArch: host },
+      optimizations: resolveOptimizations({}, {}).ios,
+    } as unknown as IosArtifactContext);
+    return recipe.identity();
+  };
+  const run = await identity(null);
+  expect(run).toHaveProperty('key');
+  expect(await identity(host)).toEqual(run);
+  expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({ cacheKey: (run as { key: string }).key });
+});
+
+test('a native project removed after recipe selection refuses instead of escaping as an unexpected error', async () => {
+  const project = writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  const recipe = nativeXcodeIosProject(root).artifact({
+    root,
+    configuration: 'Debug',
+    target: { udid: null, destination: null, sdk: 'iphonesimulator', arch: null, keyArch: null },
+    optimizations: resolveOptimizations({}, {}).ios,
+  } as unknown as IosArtifactContext);
+  rmSync(project, { recursive: true });
+  await expect(recipe.identity()).rejects.toBeInstanceOf(IosRecipeRefusal);
+});
+
+test('native planning validates the simulator model flags like stim ios does', async () => {
+  writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' })).toMatchObject({
+    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--device-type') },
+  });
 });
 
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {

@@ -5,7 +5,13 @@ import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.t
 import { explainBuildMiss, skippedMissReason } from '../cache/miss-reason.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
-import { resolveConfiguration, simulatorBuildArch } from '../commands/ios/support.ts';
+import {
+  deviceModelRefusal,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+  simulatorBuildArch,
+} from '../commands/ios/support.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { planCachedBuild, planFlagRefusal } from '../commands/build-plan.ts';
 import {
@@ -91,15 +97,22 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       ...(context.target.keyArch ? { arch: context.target.keyArch } : {}),
     }),
   });
+  const reselect = () => {
+    try {
+      selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+    } catch (error) {
+      throw new IosRecipeRefusal(refusal(error));
+    }
+  };
   const read = () => {
     if (!tools) return { cacheIneligible: ineligible ?? 'Xcode toolchain identity is unavailable' };
-    selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+    reselect();
     return nativeXcodeInputSnapshot(
       root,
       selected,
       {
         sdk: context.target.sdk,
-        architecture: context.target.arch,
+        architecture: context.target.keyArch,
         toolchain: tools,
         optimizations: context.optimizations,
       },
@@ -142,7 +155,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
           });
         context.setPodsMs(result.durationMs ?? 0);
         mutations.push('pod install');
-        selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+        reselect();
       }
       if (nativeXcodeHasPackages(selected)) {
         beforePrepare();
@@ -179,7 +192,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       }
     },
     async reconcile() {
-      const current = read();
+      const current = snapshot && !mutations.length ? snapshot : read();
       if ('cacheIneligible' in current) {
         ineligible = current.cacheIneligible;
         snapshot = null;
@@ -278,17 +291,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
 }
 
 async function planNativeXcode(root: string, options: IosCommandOptions) {
-  const flag =
-    options.device !== undefined
-      ? '--device'
-      : options.remote
-        ? '--remote'
-        : options.easProfile !== undefined
-          ? '--eas-profile'
-          : options.wait !== undefined
-            ? '--wait'
-            : null;
-  if (flag) return { refusal: planFlagRefusal(flag) };
+  if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
   try {
     const context = settingsContext(root);
     const settings = resolveSettings(context);
@@ -299,6 +302,20 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
         'Native Xcode planning does not resolve hosted placement.',
         'Unset ios.remote to plan a local build, or run stim ios without --plan.',
       );
+    const layers = DEFAULT_DEPS.settingsLayers(context);
+    const modelRefusal = deviceModelRefusal({
+      slot: options.slot ?? 'default',
+      deviceTypeFlag: options.deviceType,
+      runtimeFlag: options.runtime,
+      deviceType: resolveDeviceType(options.deviceType, settings),
+      runtime: resolveRuntime(options.runtime, settings),
+      deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
+      runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
+      physical: false,
+      remoteBackend: null,
+      listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+    });
+    if (modelRefusal) return { refusal: modelRefusal };
     const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
     const selection = selectNativeXcodeProject(root, options.scheme, configuration);
     const optimizations = resolveOptimizations(settings);
@@ -313,7 +330,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
       selection,
       {
         sdk: 'iphonesimulator',
-        architecture: null,
+        architecture,
         toolchain: toolchain('iphonesimulator'),
         optimizations: optimizations.ios,
       },
