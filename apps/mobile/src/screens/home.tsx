@@ -33,6 +33,7 @@ import {
   gridRows,
   projectNames,
   runningDevices,
+  STATUSES,
   type DeviceTileItem,
   type HomeItem,
 } from '@/lib/home';
@@ -282,7 +283,7 @@ export function Home() {
           )
         }
         ListEmptyComponent={
-          filters.activity === 'archived' ? (
+          filters.statuses.every((status) => status === 'archived') ? (
             <Text tone="secondary" style={styles.emptyMessage}>
               <Trans>No archived workspaces. Removed workspaces appear here when the server keeps an archive.</Trans>
             </Text>
@@ -296,8 +297,8 @@ export function Home() {
           )
         }
         ListFooterComponent={
-          filters.activity === 'live' && hiddenByActivity > 0 ? (
-            <Touch feedback="row" onPress={() => update({ activity: 'all' })} style={styles.footer}>
+          filters.statuses.includes('live') && hiddenByActivity > 0 ? (
+            <Touch feedback="row" onPress={() => update({ statuses: [...STATUSES] })} style={styles.footer}>
               <Text tone="secondary">
                 {plural(hiddenByActivity, { one: '# idle workspace hidden.', other: '# idle workspaces hidden.' })}{' '}
                 <Text tone="brand">

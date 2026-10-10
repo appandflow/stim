@@ -48,8 +48,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
   [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
-  Source-only worktrees share their repo's section and count as idle. **Idle**, **All**
-  and **Show All** reveal them; the default **Active** filter hides them. Their rows
+  Source-only worktrees share their repo's section and count as idle. **Idle**, **Not set up**,
+  **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
   than one is paired. They have no app activity or controls and do not open a
   workspace page. Machine and project filters apply; errors and remote-session
@@ -136,8 +136,10 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   worktree share a heading and keep their app labels. Rows show removal time,
   size, the PR number (or Merged), and an indicator for expired content or
   content expiring within 24 hours. Missing branch or repository facts fall back
-  to the worktree folder. Active and Idle show only current workspaces; All
-  shows them followed by the archived ones.
+  to the worktree folder. **Show** in Filters is a multi-select over Active, Idle,
+  Not set up and Archived; **All** selects all four, so it includes archived
+  workspaces, which follow the current ones. At least one stays selected. A
+  filter saved by an older app version keeps what it showed.
   An archive opens the same workspace page as a read-only variant: Status shows
   removal, last activity, retention dates, size by content and activity totals;
   Build opens the same build history sheet with cache results, durations,
