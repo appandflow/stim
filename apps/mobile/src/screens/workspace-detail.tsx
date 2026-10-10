@@ -40,6 +40,7 @@ import { useAppForeground } from '@/hooks/app-foreground';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
+import { isGitHubPullUrl } from '@/lib/github';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
 import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
 import { useAnnounce } from '@/hooks/screen-reader';
@@ -183,7 +184,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
               subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
               onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
             >{t`Copy Path`}</Stack.Toolbar.MenuAction>
-            {pr ? (
+            {pr && isGitHubPullUrl(pr.url) ? (
               <Stack.Toolbar.MenuAction
                 icon="arrow.up.right"
                 onPress={() => void Linking.openURL(pr.url)}

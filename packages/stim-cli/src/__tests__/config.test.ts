@@ -1,4 +1,15 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import fs from 'node:fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -94,6 +105,31 @@ test('saveConfig writes through a temp file and leaves none behind', () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
   expect(strays).toEqual([]);
+  expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
+});
+
+test.skipIf(process.platform === 'win32')(
+  'saveConfig leaves STIM_HOME and config.json readable only by the owner',
+  () => {
+    chmodSync(tmpHome, 0o755);
+    writeFileSync(join(tmpHome, 'config.json'), '{}', { mode: 0o644 });
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    expect(statSync(tmpHome).mode & 0o777).toBe(0o700);
+    expect(statSync(join(tmpHome, 'config.json')).mode & 0o777).toBe(0o600);
+  },
+);
+
+test.skipIf(process.platform === 'win32')('saveConfig still writes when STIM_HOME refuses chmod', () => {
+  chmodSync(tmpHome, 0o755);
+  const chmod = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
+    throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  });
+  try {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    expect(chmod).toHaveBeenCalledWith(tmpHome, 0o700);
+  } finally {
+    chmod.mockRestore();
+  }
   expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
 });
 

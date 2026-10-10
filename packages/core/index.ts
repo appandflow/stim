@@ -28,6 +28,15 @@ export function configDir(): string {
   return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
 }
 
+/** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */
+export function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  try {
+    if ((fs.statSync(dir).mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  } catch {}
+}
+
 export function workspaceSlug(projectRoot: string): string {
   const name = path
     .basename(path.resolve(projectRoot))

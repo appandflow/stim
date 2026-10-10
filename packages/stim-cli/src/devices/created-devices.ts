@@ -1,4 +1,5 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { ensurePrivateDir } from '@stim-cli/core';
 import {
   createdDevicesFile,
   createdDevicesLock,
@@ -27,7 +28,7 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
       };
       const file = createdDevicesFile();
       const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
       try {
         renameSync(tmp, file);
       } catch (error) {
@@ -35,7 +36,7 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
         throw error;
       }
     },
-    { ensureParent: () => mkdirSync(dir, { recursive: true }) },
+    { ensureParent: () => ensurePrivateDir(dir) },
   );
 }
 

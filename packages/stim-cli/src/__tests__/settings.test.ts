@@ -33,6 +33,7 @@ import {
   resolveCacheProviderConfig,
   resolveSettings,
   settingShapeErrors,
+  settingValueAt,
   settingOriginScope,
   settingsLayers,
   tunnelModeSetting,
@@ -104,6 +105,17 @@ test('an array value is replaced wholesale, not concatenated', () => {
   ]) as SettingsView;
   assert(merged.worktree);
   expect(merged.worktree.exclude).toEqual(['a']);
+});
+
+test('a __proto__ key in a committed .stim.json sets no effective setting', () => {
+  writeFileSync(
+    join(tmpHome, '.stim.json'),
+    '{ "__proto__": { "ios": { "remote": "eas" } }, "ios": { "deviceType": "iPhone 17" } }',
+  );
+  const merged = resolveSettings({ repoRoot: tmpHome });
+  expect(settingValueAt(merged, 'ios.remote')).toBeUndefined();
+  expect(Object.getPrototypeOf(merged)).toBe(Object.prototype);
+  expect(merged.ios).toEqual({ deviceType: 'iPhone 17' });
 });
 
 test('readCommittedSettings reads .stim.json', () => {

@@ -298,14 +298,20 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         android project carries -- the right default, because
                         what this signs is a local emulator install and never
                         anything distributed. Set it only when the release
-                        variant must be signed with the repo's own key.
+                        variant must be signed with the repo's own key. A
+                        value in the committed .stim.json must resolve
+                        inside the repository (symlinks included); an
+                        absolute path outside it needs --scope workspace
+                        or repo.
   android.keystorePassword
                         the password for it. apksigner's SCHEMED form is
                         passed through unchanged (\`env:MY_KS_PASS\`,
                         \`file:/keys/pw.txt\`, \`stdin\`), which is how a
                         committed .stim.json avoids carrying a secret; a
-                        bare string is used as the literal password. Unset
-                        means the debug keystore's fixed "android".
+                        bare string (or \`pass:<password>\`) is the literal
+                        password, handed to apksigner through its
+                        environment, never its command line. Unset means
+                        the debug keystore's fixed "android".
   android.remote        "proxy", "eas", or a named approved Mac in
                         remote.machines; "auto" places on an approved Mac when
                         this Mac is full or busy. Unset runs here; "local"

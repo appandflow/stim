@@ -28,7 +28,13 @@ import { loadProjectProvider } from '../engine/remote-cache.ts';
 import { androidRequirements, androidToolchain } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
-import { resolveAndroidLayout, type AndroidLayout, type ResolvedProjectSettings } from '../workspace/settings.ts';
+import {
+  resolveAndroidLayout,
+  settingOriginScope,
+  settingsLayers,
+  type AndroidLayout,
+  type ResolvedProjectSettings,
+} from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { buildAndroid, productFlavorRefusal, readProductFlavors } from './react-native-build.ts';
 import {
@@ -85,7 +91,7 @@ export function reactNativeAndroidProject(
             return { ok: true, prepared: { metroPort: null } };
           }, 'embedded-js')
         : androidMetroRuntime(prepareMetro),
-    artifact: (artifactContext) => reactNativeAndroidArtifact(artifactContext, isExpo, layout, dependencies),
+    artifact: (artifactContext) => reactNativeAndroidArtifact(artifactContext, isExpo, layout, context, dependencies),
   };
 }
 
@@ -93,6 +99,7 @@ function reactNativeAndroidArtifact(
   { root, buildLog, writer, settings, buildPlan, target, phase, out, step, estimates }: AndroidArtifactContext,
   isExpo: boolean,
   layout: AndroidLayout,
+  context: ResolvedProjectSettings['context'],
   {
     fingerprint = fingerprintProject,
     untracked = untrackedNativeFiles,
@@ -127,11 +134,19 @@ function reactNativeAndroidArtifact(
   const materialize: AndroidArtifactRecipe['materialize'] = async (key, cachedPath) => {
     if (!release) return { apkPath: cachedPath, directory: null };
     phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
+    let keystore;
+    try {
+      const committed = settingOriginScope(settingsLayers(context), 'android.keystore') === 'committed';
+      keystore = resolveKeystore(root, settings, layout, committed ? (context.repoRoot ?? root) : null);
+    } catch (error) {
+      phase('swap', chalk.yellow(`${(error as Error).message} -- building fresh instead`));
+      return null;
+    }
     const swap = await swapApk({
       root,
       isExpo,
       cachedApkPath: cachedPath,
-      keystore: resolveKeystore(root, settings, layout),
+      keystore,
       layout,
       logWriter: writer,
       storedAssets: storedAssets('android', key),

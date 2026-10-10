@@ -65,7 +65,7 @@ import {
 import { watchTailscale } from '../src/tailscale-monitor.ts';
 import type { TailscaleState } from '../src/tailscale.ts';
 import { createRequestLog } from '../src/request-log.ts';
-import { startServer, type RunningServer, type ServerOptions } from '../src/server.ts';
+import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
 import { workspaceName, workspaceStateDir } from '@stim-cli/core';
 import { captureProcessToken, processStartMicros } from '@stim-cli/core/process-identity';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
@@ -803,7 +803,7 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     ['forwarded host', true, { 'x-forwarded-host': 'test.tail.ts.net' }],
     ['forwarded proto', true, { 'x-forwarded-proto': 'https' }],
     ['Forwarded', true, { forwarded: 'for=100.64.0.2' }],
-    ['browser', true, { origin: 'http://attacker.example' }],
+    ['an app sending its origin', true, { host: '127.0.0.1', origin: 'http://127.0.0.1' }],
     ['rebound host', true, { host: 'attacker.example' }],
   ])('refuses %s even when it authenticates with a local token', async (_name, control, headers) => {
     const fixture = await routeServer();
@@ -1028,7 +1028,8 @@ describe.each(['build', 'device-host'] as const)('%s access', (capability) => {
       result: { capabilities: [], actions: [], approval: { state: 'pending' }, deviceToken: expect.any(String) },
     });
     expect(await asking.closed).toBe(4401);
-    const { device, deviceToken } = (reply as { result: HelloResult }).result;
+    const { device, deviceToken, server: pendingServer } = (reply as { result: HelloResult }).result;
+    expect(pendingServer).not.toHaveProperty('home');
 
     for (let attempt = 0; attempt < 3; attempt++) {
       const waiting = await connect(port, '100.64.0.2');
@@ -2686,6 +2687,53 @@ describe('unauthenticated connections', () => {
       expect(otherPeer.socket.readyState).toBe(WebSocket.OPEN);
     },
   );
+
+  it('refuses a web page before it can spend the failed-attempt budget of this Mac', async () => {
+    const port = await start({ authTimeoutMs: 100, maxAuthFailures: 2 });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(connect(port, undefined, { origin: 'https://attacker.example' })).rejects.toThrow('HTTP 403');
+    }
+    const desktop = await connect(port);
+    expect(desktop.socket.readyState).toBe(WebSocket.OPEN);
+  });
+});
+
+describe('upgradeFromWebPage', () => {
+  it.each([
+    ['Desktop or the CLI on loopback', true, { host: '127.0.0.1:7787' }, false],
+    ['a simulator app on loopback', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:7787' }, false],
+    ['an app on localhost', true, { host: 'localhost:7787', origin: 'http://localhost:7787' }, false],
+    ['an app on IPv6 loopback', true, { host: '[::1]:7787', origin: 'http://[::1]:7787' }, false],
+    ['a cross-site page on loopback', true, { host: '127.0.0.1:7787', origin: 'https://attacker.example' }, true],
+    ['a page on another local port', true, { host: '127.0.0.1:7787', origin: 'http://127.0.0.1:8081' }, true],
+    ['a DNS-rebound page', true, { host: 'attacker.example:7787', origin: 'http://attacker.example:7787' }, true],
+    ['an https origin on loopback', true, { host: '127.0.0.1:7787', origin: 'https://127.0.0.1:7787' }, true],
+    ['an opaque origin', true, { host: '127.0.0.1:7787', origin: 'null' }, true],
+    ['an origin without a host', true, { origin: 'http://127.0.0.1:7787' }, true],
+    ['a loopback browser fetch', true, { host: '127.0.0.1:7787', 'sec-fetch-site': 'same-origin' }, true],
+    ['the CLI over the tailnet', false, { host: 'mac.tail.ts.net:7443' }, false],
+    [
+      'a phone over the tailnet',
+      false,
+      { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443' },
+      false,
+    ],
+    ['an iOS phone on port 443', false, { host: 'mac.tail.ts.net:443', origin: 'https://mac.tail.ts.net' }, false],
+    ['an Android phone on port 443', false, { host: 'mac.tail.ts.net', origin: 'https://mac.tail.ts.net:443' }, false],
+    ['a phone on an IPv6 address', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::1]:7443' }, false],
+    ['a page on another tailnet host', false, { host: 'mac.tail.ts.net:7443', origin: 'https://evil.example' }, true],
+    ['a page on another IPv6 host', false, { host: '[fd7a::1]:7443', origin: 'https://[fd7a::2]:7443' }, true],
+    ['a page on another port', false, { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net' }, true],
+    ['an http origin over the tailnet', false, { host: '100.64.0.1:7787', origin: 'http://100.64.0.1:7787' }, true],
+    [
+      'a same-origin browser fetch over the tailnet',
+      false,
+      { host: 'mac.tail.ts.net:7443', origin: 'https://mac.tail.ts.net:7443', 'sec-fetch-site': 'same-origin' },
+      true,
+    ],
+  ])('%s', (_name, local, headers, refused) => {
+    expect(upgradeFromWebPage(headers, local)).toBe(refused);
+  });
 });
 
 describe('a client that leaves during hello', () => {

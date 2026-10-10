@@ -22,6 +22,8 @@ interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
+  /** `runFile` and `runFileAsync`: exact values replaced with `***` in every string field of a thrown error, including message, stack, stdout, stderr and output. */
+  redact?: readonly string[];
 }
 
 export interface Executor {
@@ -69,6 +71,20 @@ function refuseUnsafeBatchArguments(file: string, args: readonly string[]): void
   }
 }
 
+function redactError<T>(error: T, values: readonly string[] | undefined): T {
+  const secrets = values?.filter(Boolean) ?? [];
+  if (secrets.length === 0 || !error || typeof error !== 'object') return error;
+  const scrub = (text: string) => secrets.reduce((acc, secret) => acc.split(secret).join('***'), text);
+  const fields = error as Record<string, unknown>;
+  for (const key of Object.getOwnPropertyNames(error)) {
+    const value = fields[key];
+    if (typeof value === 'string') fields[key] = scrub(value);
+    else if (Array.isArray(value))
+      fields[key] = value.map((item: unknown) => (typeof item === 'string' ? scrub(item) : item));
+  }
+  return error;
+}
+
 const defaultExecutor: Executor = {
   run(cmd, { timeoutMs, killSignal, cwd, env } = {}) {
     const opts: Parameters<typeof execSync>[1] = {
@@ -93,7 +109,7 @@ const defaultExecutor: Executor = {
   runFile(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent } = {},
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent, redact } = {},
   ) {
     const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & { detached?: boolean } = {
       encoding: 'utf-8',
@@ -112,11 +128,13 @@ const defaultExecutor: Executor = {
     }
     refuseUnsafeBatchArguments(file, args);
     const result = spawn.sync(file, args, opts);
-    if (result.error) throw nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs);
+    if (result.error) {
+      throw redactError(nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs), redact);
+    }
     if (result.status !== 0 || (rejectStderr && String(result.stderr ?? '').trim())) {
       const stderr = String(result.stderr ?? '');
       const message = `Command failed: ${[file, ...args].join(' ')}${stderr ? `\n${stderr}` : ''}`;
-      throw Object.assign(new Error(message), result);
+      throw redactError(Object.assign(new Error(message), result), redact);
     }
     if (detachedSilent) return '';
     return untrimmed ? String(result.stdout) : String(result.stdout).trim();
@@ -124,7 +142,7 @@ const defaultExecutor: Executor = {
   runFileAsync(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent } = {},
+    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent, redact } = {},
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
@@ -159,7 +177,7 @@ const defaultExecutor: Executor = {
       child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
       child.on('error', (error) => {
         clearTimeout(timer);
-        reject(error);
+        reject(redactError(error, redact));
       });
       child.on('close', (status, signal) => {
         clearTimeout(timer);
@@ -167,9 +185,16 @@ const defaultExecutor: Executor = {
         const err = Buffer.concat(stderr).toString('utf-8');
         const result = { status, signal, stdout: out, stderr: err };
         if (timedOut) {
-          reject(nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs));
+          reject(
+            redactError(
+              nameTimeout(Object.assign(new Error(command), result, { code: 'ETIMEDOUT' }), command, timeoutMs),
+              redact,
+            ),
+          );
         } else if (status !== 0 || (rejectStderr && err.trim())) {
-          reject(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result));
+          reject(
+            redactError(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result), redact),
+          );
         } else {
           resolve(detachedSilent ? '' : out.trim());
         }

@@ -172,7 +172,7 @@ export async function runWebSupervisor(
   let finished = false;
   let stopping = false;
 
-  const chromeGone = () => !chromeRecord || chromeProcessState(chromeRecord) === 'gone';
+  const chromeGone = () => !chromeRecord || chromeProcessState(chromeRecord, profile) === 'gone';
 
   const finish = (code: number, level: string, event: string, msg: string) => {
     if (finished) return;
@@ -211,7 +211,7 @@ export async function runWebSupervisor(
     } catch {}
     const deadline = Date.now() + CHROME_EXIT_WAIT_MS;
     while (!chromeGone() && Date.now() < deadline) await sleep(POLL_MS);
-    const state = chromeRecord ? chromeProcessState(chromeRecord) : 'gone';
+    const state = chromeRecord ? chromeProcessState(chromeRecord, profile) : 'gone';
     if (chromeRecord && (state === 'running' || state === 'lingering')) {
       try {
         signalProcessTree(chromeRecord.pid, 'SIGKILL', { group: true });

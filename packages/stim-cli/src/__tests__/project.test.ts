@@ -364,6 +364,30 @@ test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.
   }
 });
 
+test('an Android id that is not a dotted package name is not detected, and the problem is reported', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bad-package-')));
+  try {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
+    const gradle = join(root, 'android', 'app', 'build.gradle');
+    writeFileSync(gradle, 'android {\n  defaultConfig {\n    applicationId "com.x;reboot"\n  }\n}\n');
+    const bad = detectAppIds(root);
+    expect(bad.androidPackage).toBeNull();
+    expect(bad.androidPackageProblem).toMatch(/Invalid Android package "com\.x;reboot" in .*build\.gradle/);
+    writeFileSync(
+      gradle,
+      'android {\n  namespace "${ns}"\n  defaultConfig {\n    applicationId "com.example_1.app"\n  }\n}\n',
+    );
+    expect(detectAppIds(root).androidPackage).toBe('com.example_1.app');
+    writeFileSync(gradle, 'android {\n  namespace "com.example_1.app"\n}\n');
+    expect(detectAppIds(root)).toMatchObject({ androidPackage: 'com.example_1.app', androidPackageProblem: null });
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: "com.x'; reboot; '" } } }));
+    expect(detectAppIds(root).androidPackageProblem).toMatch(/in the Expo config android\.package/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')(
   'app ids from a dynamic app config (POSIX executable stub; skipped on win32)',
   { timeout: 30_000 },
@@ -422,7 +446,11 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
           expo: { ios: { bundleIdentifier: 'com.example.json' }, android: { package: 'com.example.json' } },
         }),
       );
-      expect(detectAppIds(root)).toEqual({ bundleId: 'com.example.json', androidPackage: 'com.example.json' });
+      expect(detectAppIds(root)).toEqual({
+        bundleId: 'com.example.json',
+        androidPackage: 'com.example.json',
+        androidPackageProblem: null,
+      });
     });
   },
 );
