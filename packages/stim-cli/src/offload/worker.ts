@@ -182,6 +182,7 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     getExecutor().runFile('git', ['init', '--quiet', src], { timeoutMs: 30_000 });
     getExecutor().runFile('git', ['-C', src, 'config', 'core.excludesFile', '/dev/null'], { timeoutMs: 30_000 });
   }
+  getExecutor().runFile('git', ['-C', src, 'read-tree', '--empty'], { timeoutMs: 30_000 });
   if (job.native) {
     const keep = new Set(
       job.manifest.flatMap((entry) => {
@@ -246,6 +247,14 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
     const after = lstatSync(target);
     next[entry.path] = { sha256: entry.sha256, kind: entry.kind, mtimeMs: after.mtimeMs, size: after.size };
     written += 1;
+  }
+  if (job.native) {
+    const indexed = job.manifest.filter((entry) => entry.kind !== 'directory').map((entry) => `${entry.path}\0`);
+    if (indexed.length)
+      getExecutor().runFile('git', ['-C', src, 'update-index', '--add', '--info-only', '-z', '--stdin'], {
+        input: indexed.join(''),
+        timeoutMs: 120_000,
+      });
   }
   const untracked = job.native
     ? []

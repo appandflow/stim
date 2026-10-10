@@ -119,9 +119,10 @@ Progress stays in this app's preferences. Closing the panel preserves it;
 Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
 its path, and an archived tour opens as complete. **Skip Step** advances without
 waiting for a signal. **Mark Done** appears after two minutes. The **…** menu
-also offers **Restart Tutorial**, which shows a restart prompt and resets
-checkpoints when the tracked tour disappears and returns, or its oldest build
-starts after Restart. A newer phase timestamp alone does not reset progress.
+also offers **Restart Tutorial**, which starts over at Get the Test App as on a
+first start; worktrees from before the restart stay and no longer count. When
+the tutorial workspace comes from an older tutorial version, the panel says so
+and offers only **Restart Tutorial**.
 
 Each step shows a plain request to copy for your coding agent, with the paths
 filled in from the tour's repository. Below it, a collapsed **Commands your agent
@@ -423,15 +424,8 @@ cards in an adaptive grid, with their last activity, an open pull request, a fai
 build and errors. The grid shows the first six, and **Show more (N)** expands the rest in
 place. Click a card to open the project with all of its worktrees listed, under a
 **Showing all workspaces** chip you can clear to return to the active ones. A project page
-whose worktrees are all inactive says so and has a **Show All** button. A **Recently archived** row and a **Try this** section
-follow. **Try this** suggests one feature a day, preferring ones you have not used yet, such as EAS
-development builds and simulators, another Mac for builds or simulators, `stim macos`,
-running on a phone with `--device`, `stim web` and `stim logs --errors`, each with a
-copyable prompt for your coding agent. A tip appears only when it applies, so EAS tips
-need an `eas.json`, and Mac tips disappear once `remote.machines` is set. Dismiss a tip
-with the **x** and the next one appears; it stays dismissed on this Mac. **Next Tip** shows another
-for today. The tip stays the same all day, and the next day shows the least recently shown one. It never repeats the
-sidebar's tip card, and the section is hidden when no tip applies.
+whose worktrees are all inactive says so and has a **Show All** button. A **Recently archived** row
+follows.
 
 **Active Workspaces** shows every worktree with something running, building or warming
 as a card in a grid: two columns at typical widths, one when the window is narrow and
@@ -621,7 +615,11 @@ until the thresholds are met, the workspace paths and build IDs counted.
 
 Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
 there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. Only applicable tips appear. One tip stays for the calendar day;
+simulators. The replay tip appears when an archived workspace still has recordings and opens it.
+Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
+development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
+package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
+errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.

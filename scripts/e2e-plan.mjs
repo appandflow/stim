@@ -6,7 +6,8 @@ const ALL = ['loop', 'caches', 'pool'];
 const PLATFORMS = {
   ios: ['smoke', 'loop', 'caches', 'pool'],
   android: ['smoke', 'loop', 'caches'],
-  windows: ['smoke', 'loop'],
+  // The loop fails at its final stop until https://github.com/appandflow/stim/issues/3086 is fixed.
+  windows: ['smoke'],
 };
 
 function requested({ eventName, labels, suite }) {

@@ -15,11 +15,10 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits } from '../../workspace/config.ts';
+import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import { resolveSettings } from '../../workspace/settings.ts';
+import { resolveProjectSettings } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
@@ -59,14 +58,13 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
       remedy: selected.problem.remedy,
     });
   const integration = await selected.load();
-  const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
-  const settings = resolveSettings(settingsContext);
+  const { context: settingsContext, settings } = resolveProjectSettings(root);
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   const plan = resolveAndroidBuildPlan(
     { settings, settingsContext, variant: options.variant ?? null, buildCache: options.buildCache !== false },
     { warn: phase, runtimeKind: integration.runtimeKind, variantProblem: integration.variantProblem },
   );
-  if (!plan.ok) throw Object.assign(new Error(plan.message), plan);
+  if (!plan.ok) throw Object.assign(new Error(plan.message), plan, { details: { lines: plan.lines } });
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
   if (options.abi !== undefined && !['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'].includes(options.abi))
@@ -82,6 +80,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
     root,
     { command: 'build', platform: 'android' },
     async (claim) => {
+      if (!getProject(root)) upsertProject(root, {});
       recordWorkspaceUse(root);
       const started = Date.now();
       const startedAt = new Date(started).toISOString();
@@ -175,7 +174,9 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           },
         );
         if (!acquired.ok)
-          throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure);
+          throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure, {
+            details: acquired.failure.extra,
+          });
         artifact = acquired.artifact;
         if (runCancellationSignal()?.aborted)
           throw Object.assign(new Error('The Android build was cancelled.'), { code: 'STIM_CANCELLED' });

@@ -79,7 +79,7 @@ import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } 
 import { ensureBooted } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
-import { deviceModelRefusal, resolveIosWait } from '../commands/ios/support.ts';
+import { deviceModelRefusal, resolveIosWait, resolveSchemeSelection } from '../commands/ios/support.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimSnapshot } from '../devices/ios.ts';
@@ -4088,6 +4088,25 @@ describe('explicit Xcode schemes', () => {
     resolveScheme: (_project, options) => ({ scheme: options?.scheme, schemes: ['App', 'App Staging'] }),
   };
 
+  test('ios.scheme selects the scheme without the flag, and the flag still overrides it', async () => {
+    reserve();
+    const settings = { ios: { scheme: 'App Staging' } };
+    const flagged = await run({ scheme: 'App Staging', json: true }, schemeDeps);
+    const fromSetting = await run({ json: true }, { ...schemeDeps, resolveSettings: () => settings });
+    expect(fromSetting.calls.args.buildIos.scheme).toBe('App Staging');
+    expect(fromSetting.calls.args.resolveBuild.key).toBe(flagged.calls.args.resolveBuild.key);
+    const overridden = await run({ scheme: 'App', json: true }, { ...schemeDeps, resolveSettings: () => settings });
+    expect(overridden.calls.args.buildIos.scheme).toBe('App');
+  });
+
+  test('stim ios --plan reports the cache key the run uses when only ios.scheme names the scheme', async () => {
+    reserve();
+    const deps = { ...schemeDeps, resolveSettings: () => ({ ios: { scheme: 'App Staging' } }) };
+    const built = await run({ json: true }, deps);
+    const planned = await run({ plan: true, json: true }, deps);
+    expect(parseFirst(planned.logs).cacheKey).toBe(built.calls.args.resolveBuild.key);
+  });
+
   test('explicit selection separates lookup, lock and storage keys and is not a dev-client URL scheme', async () => {
     reserve();
     const normal = await run({ json: true });
@@ -4213,6 +4232,15 @@ describe('explicit Xcode schemes', () => {
     expect(regenerated).toBe(true);
     expect(result.calls.order).not.toContain('runPodInstall');
     expect(result.calls.order).not.toContain('buildIos');
+  });
+});
+
+describe('scheme resolution', () => {
+  test('a blank flag still reaches validation, and an EAS profile build takes only the flag', () => {
+    expect(resolveSchemeSelection({}, { ios: { scheme: ' RNTester ' } })).toBe('RNTester');
+    expect(resolveSchemeSelection({ scheme: '  ' }, { ios: { scheme: 'RNTester' } })).toBe('  ');
+    expect(resolveSchemeSelection({ easProfile: 'development' }, { ios: { scheme: 'RNTester' } })).toBeUndefined();
+    expect(resolveSchemeSelection({}, {})).toBeUndefined();
   });
 });
 

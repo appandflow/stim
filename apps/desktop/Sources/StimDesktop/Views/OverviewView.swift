@@ -5,8 +5,6 @@ import SwiftUI
 struct OverviewView: View {
   @ObservedObject var store: StatusStore
   var metrics: MetricsStore
-  var machines: BuildMachinesModel
-  var sidebarTopic: TipTopic?
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
   var openDevice: (String, String) -> Void
@@ -15,12 +13,7 @@ struct OverviewView: View {
   @State private var showsAllIdle = false
   @State private var showsAllArchived = false
   @State private var contentWidth: CGFloat = 1000
-  @State private var capabilities: [String: ProjectCapabilities] = [:]
-  @State private var capabilitiesLoaded = false
-  @State private var dismissedTips = TryThisStore(defaults: .standard).dismissed
-  @State private var tipState = TryThisStore(defaults: .standard).state
 
-  private static let cardWidth: CGFloat = 340
   private static let projectCardMinimum: CGFloat = 220
 
   private var projectColumns: Int {
@@ -50,7 +43,6 @@ struct OverviewView: View {
     let idle = Overview.idleProjects(
       summaries: projects, environments: store.payload?.environments ?? [], project: store.project(ofPath:))
     let archived = ArchivedWorkspace.newestFirst(store.payload?.archived ?? [])
-    let tip = tip
     if running.isEmpty && idle.isEmpty && archived.isEmpty {
       EmptyState(
         title: "Nothing Here Yet",
@@ -62,18 +54,10 @@ struct OverviewView: View {
           runningSection(running)
           if !idle.isEmpty { idleSection(idle) }
           if !archived.isEmpty { archivedSection(archived) }
-          if let tip { tipSection(tip) }
         }
         .padding(.horizontal, PageInset.horizontal).padding(.vertical, Space.xxxl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self, of: { max(0, $0.size.width - PageInset.horizontal * 2) }) { contentWidth = $0 }
-      }
-      .task(id: projects.map(\.project.root)) {
-        let roots = projects.map(\.project.root)
-        capabilities = await Task.detached {
-          Dictionary(uniqueKeysWithValues: roots.map { ($0, ProjectCapabilities.detect(root: $0)) })
-        }.value
-        capabilitiesLoaded = true
       }
     }
   }
@@ -208,76 +192,5 @@ struct OverviewView: View {
         .foregroundStyle(Palette.primary)
       }
     }
-  }
-
-  private var tipInputs: TryThisInputs {
-    var inputs = TryThisInputs()
-    inputs.remoteMachines =
-      machines.settings.error == nil
-      ? machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] } : nil
-    inputs.hasEASProject = capabilities.values.contains { $0.eas }
-    inputs.hasMacosTarget = capabilities.values.contains { $0.macos }
-    inputs.workspaces = store.payload?.environments ?? []
-    return inputs
-  }
-
-  private var tip: TryThisTip? {
-    guard capabilitiesLoaded, machines.settings.payload != nil || machines.settings.error != nil else { return nil }
-    return TryThis.select(
-      inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic, state: tipState, now: Date(),
-      calendar: .current)
-  }
-
-  private func showNextTip(after tip: TryThisTip) {
-    guard
-      let next = TryThis.next(
-        after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic)
-    else { return }
-    recordTip(next)
-  }
-
-  private func recordTip(_ tip: TryThisTip) {
-    var state = tipState
-    let now = Date()
-    let today = Tips.day(now, calendar: .current)
-    guard state.current?.tip != tip || state.current?.day != today else { return }
-    TryThis.record(tip, state: &state, now: now, calendar: .current)
-    tipState = state
-    TryThisStore(defaults: .standard).state = state
-  }
-
-  private func tipSection(_ tip: TryThisTip) -> some View {
-    let prompt = TryThisPrompts.byTip[tip.rawValue] ?? ""
-    let hasNext = TryThis.next(after: tip, inputs: tipInputs, dismissed: dismissedTips, sidebarTopic: sidebarTopic) != nil
-    return Card {
-      VStack(alignment: .leading, spacing: Space.md) {
-        HStack(alignment: .top) {
-          Image(systemName: "lightbulb").foregroundStyle(Palette.accent)
-          Text(tip.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
-          Spacer(minLength: 0)
-          IconButton(systemImage: "xmark", help: "Dismiss this tip", circular: true) {
-            TryThisStore(defaults: .standard).dismiss(tip)
-            dismissedTips.insert(tip)
-          }
-        }
-        Text(tip.detail).font(.stim(.callout)).foregroundStyle(Palette.secondary)
-          .fixedSize(horizontal: false, vertical: true)
-        Text(prompt)
-          .font(.stim(.caption, mono: true))
-          .foregroundStyle(Palette.secondary)
-          .lineLimit(6)
-          .padding(Space.md)
-          .frame(maxWidth: .infinity, alignment: .leading)
-          .background(Palette.raised, in: RoundedRectangle(cornerRadius: Radius.chip))
-        HStack {
-          if hasNext { Button("Next Tip") { showNextTip(after: tip) }.buttonStyle(.stim(.plain, .small)) }
-          Spacer(minLength: 0)
-          CopyButton(prompt, title: "Copy Prompt", accessibilityLabel: "Copy prompt: \(tip.title)")
-        }
-      }
-      .padding(Space.xl)
-    }
-    .frame(maxWidth: Self.cardWidth * 2, alignment: .leading)
-    .onChange(of: tip, initial: true) { _, tip in recordTip(tip) }
   }
 }

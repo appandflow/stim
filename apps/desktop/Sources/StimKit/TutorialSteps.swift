@@ -13,7 +13,6 @@ public struct TutorialStep: Sendable {
 
 public enum TutorialSteps {
   public static let supportedVersions: Set<Int> = [2]
-  public static let restartPrompt = "Restart the Stim tutorial."
   public static let retryAsk = "The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again."
   public static let all: [TutorialStep] = [
     TutorialStep(

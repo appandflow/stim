@@ -11,6 +11,8 @@ import { skippedMissReason } from '../cache/miss-reason.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { AndroidProject } from '../integrations/android-project.ts';
 import { readBuildHistory } from '@stim-cli/core/state';
+import { cacheEntryProtection } from '../maintenance/protect.ts';
+import { getProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -140,6 +142,8 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(compilations).toBe(4);
   expect(readFileSync(cold.apkPath, 'utf8')).toBe(bytes);
   expect(readWorkspaceState(root)).toMatchObject({ android: existing, lastBuild: running, lastAndroidBuild: running });
+  expect(getProject(root)).not.toBeNull();
+  expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();
   expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
 });
 

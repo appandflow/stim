@@ -24,6 +24,23 @@ struct TipsTests {
     """
   }
 
+  func archive(
+    _ id: String, path: String? = nil, removedAt: String = "2026-10-05T12:00:00Z", recordings: Int64 = 1024,
+    expires: String? = "2026-10-06T12:00:00Z"
+  ) throws -> ArchivedWorkspace {
+    var archive = try #require(
+      try JSONDecoder().decode(
+        StatusPayload.self,
+        from: Data(contentsOf: Bundle.module.url(forResource: "Fixtures/archived-status.json", withExtension: nil)!)
+      ).archived?.first)
+    archive.id = id
+    archive.projectRoot = path ?? "/archived/\(id)"
+    archive.removedAt = removedAt
+    archive.bytes.recordings = recordings
+    archive.expires.recordings = expires
+    return archive
+  }
+
   func realUsage(days: Int = 3, workspaces: Int = 3, builds: Int = 0) -> UsageRecord {
     var usage = UsageRecord()
     usage.days = (0..<days).map { "2026-10-\(10 + $0)" }
@@ -47,7 +64,12 @@ struct TipsTests {
     inputs.pairedPhones = 0
     inputs.phoneApp = true
     inputs.rows = 11
-    inputs.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":true}")]
+    inputs.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":2}")]
+    inputs.hasEASProject = true
+    inputs.hasMacosTarget = true
+    inputs.archived = [try archive("a")]
+    inputs.serverRunning = true
+    inputs.now = now
     for topic in TipTopic.allCases {
       #expect(Tips.applicable(topic, inputs: inputs))
       var negative = inputs
@@ -57,8 +79,18 @@ struct TipsTests {
       case .tutorial: negative.tutorialCompleted = true
       case .hideWorkspaces: negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
       case .statusFilter: negative.sidebar.statuses = [.live]
-      case .replay: negative.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":false}")]
+      case .replay: negative.archived = []
       case .hostedSimulators: negative.machines = ["mini"]
+      case .easProfile: negative.hasEASProject = false
+      case .macos:
+        negative.workspaces = [
+          try workspace(
+            fields: """
+              ,"macos":{"launchId":"m","product":"App","bundle":"/A.app","bundleId":"dev.a","executable":"/A.app/A",
+              "state":"running","build":{"state":"ok","startedAt":"2026-10-05T09:00:00.000Z"}}
+              """)
+        ]
+      case .logs: negative.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":0}")]
       }
       #expect(!Tips.applicable(topic, inputs: negative))
     }
@@ -77,7 +109,25 @@ struct TipsTests {
       #expect(!Tips.applicable(.buildMachine, inputs: inputs))
       #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
     }
-    inputs.workspaces = [try workspace()]
+  }
+
+  @Test func replayOpensTheNewestArchiveWhoseRecordingsCanStillBePlayed() throws {
+    var inputs = TipInputs()
+    inputs.now = now
+    inputs.serverRunning = true
+    inputs.workspaces = [try workspace("/archived/recreated", fields: ",\"recording\":{\"enabled\":true}")]
+    inputs.archived = [
+      try archive("older", removedAt: "2026-10-04T12:00:00Z"),
+      try archive("empty", removedAt: "2026-10-05T15:00:00Z", recordings: 0),
+      try archive("expired", removedAt: "2026-10-05T14:00:00Z", expires: "2026-10-05T11:00:00Z"),
+      try archive("recreated", removedAt: "2026-10-05T13:00:00Z"),
+      try archive("playable", removedAt: "2026-10-05T12:00:00Z"),
+    ]
+    #expect(Tips.replayArchive(inputs)?.id == "playable")
+    inputs.serverRunning = false
+    #expect(Tips.replayArchive(inputs) == nil)
+    inputs.serverRunning = true
+    inputs.archived = [try archive("empty", recordings: 0), try archive("expired", expires: "2026-10-01T00:00:00Z")]
     #expect(!Tips.applicable(.replay, inputs: inputs))
   }
 

@@ -146,6 +146,12 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Xcode configuration to build, such as Debug or Release',
   },
   {
+    key: 'ios.scheme',
+    type: STRING,
+    scopes: ['workspace', 'committed'],
+    description: 'Shared Xcode scheme to build when the workspace has several',
+  },
+  {
     key: 'ios.remote',
     type: {
       kind: 'string',

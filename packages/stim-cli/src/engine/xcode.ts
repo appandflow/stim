@@ -127,7 +127,8 @@ export function resolveScheme(
       error: {
         code: 'STIM_NO_SCHEME',
         message: `No shared Xcode scheme named ${JSON.stringify(requested)} in ${project.path}. Available schemes: ${listing.schemes.join(', ') || 'none'}.`,
-        remedy: 'Pass an exact available name with --scheme, or share the intended app scheme in Xcode.',
+        remedy:
+          'Pass an exact available name with --scheme or set it in ios.scheme, or share the intended app scheme in Xcode.',
       },
     };
   }
@@ -146,7 +147,7 @@ export function resolveScheme(
         message: `Could not select an app scheme in ${project.path} (schemes: ${found}).`,
         remedy:
           listing.schemes.length > 0
-            ? 'Pass --scheme <name> to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
+            ? 'Pass --scheme <name>, or set ios.scheme, to select the intended shared app scheme. Stim does not guess between unmatched schemes.'
             : 'Share the app scheme in Xcode (Product > Scheme > Manage Schemes, tick Shared) so xcodebuild can see it.',
       },
     };

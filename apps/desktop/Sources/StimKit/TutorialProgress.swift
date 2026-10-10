@@ -185,6 +185,27 @@ public struct TutorialInput: Sendable {
   }
 }
 
+public enum TutorialAction: Equatable, Sendable {
+  case restart, updateCLI, updateDesktop
+}
+
+public struct TutorialNotice: Equatable, Sendable {
+  public var text: String
+  public var action: TutorialAction?
+
+  public init(_ text: String, action: TutorialAction? = nil) {
+    self.text = text
+    self.action = action
+  }
+
+  public static func version(_ version: Int) -> Self? {
+    guard !TutorialSteps.supportedVersions.contains(version) else { return nil }
+    return version < TutorialSteps.supportedVersions.min()!
+      ? Self("This tutorial was started with an older version. Restart it to follow the new steps.", action: .restart)
+      : Self("Update Stim Desktop to follow this tutorial", action: .updateDesktop)
+  }
+}
+
 public enum TutorialStepState: Equatable, Sendable {
   case pending, current, done, skipped
   case failed(String)
@@ -200,6 +221,7 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var id: String
   public var state: TutorialStepState
   public var detail: String
+  public var action: TutorialAction?
   public var ticks: [TutorialTick]
   public var canMarkDone: Bool
 }
@@ -216,15 +238,10 @@ public struct TutorialProgress: Sendable {
   public private(set) var record: TutorialRecord?
   private var viewerOpened = false
   private var viewerInput = false
-  private var details: [String: String] = [:]
+  private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
 
   public init() {}
-
-  public mutating func requestRestart(now: Date) {
-    self = Self()
-    record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: now)
-  }
 
   public mutating func skip(now: Date) {
     guard var record, record.step != "done" else { return }
@@ -300,11 +317,9 @@ public struct TutorialProgress: Sendable {
         if event == .input(udid), viewerOpened { viewerInput = true }
       }
     }
-    var failure: String?
-    if let version = tracked?.version ?? record?.version, !TutorialSteps.supportedVersions.contains(version) {
-      failure =
-        version < TutorialSteps.supportedVersions.min()!
-        ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
+    var failure: TutorialNotice?
+    if let version = tracked?.version ?? record?.version, let notice = TutorialNotice.version(version) {
+      failure = notice
     } else {
       while record!.step != "done" {
         let id = record!.step
@@ -317,9 +332,9 @@ public struct TutorialProgress: Sendable {
         }
         let since = record!.stepSince ?? record!.startedAt
         let checkpoint = checkpoint(id, since: since, environment: tracked, second: second, logs: logs, input: input)
-        details[id] = checkpoint.detail
+        details[id] = TutorialNotice(checkpoint.detail, action: checkpoint.action)
         if let reason = checkpoint.failure {
-          failure = reason
+          failure = TutorialNotice(reason)
           break
         }
         guard let completed = checkpoint.completed else { break }
@@ -338,13 +353,15 @@ public struct TutorialProgress: Sendable {
         ? .skipped
         : record!.done.contains(step.id)
           ? .done
-          : current == step.id ? failure.map(TutorialStepState.failed) ?? .current : .pending
+          : current == step.id ? failure.map { TutorialStepState.failed($0.text) } ?? .current : .pending
       let checkpoint = checkpoint(
         step.id, since: record!.stepTimes?[step.id] ?? record!.startedAt, environment: tracked, second: second, logs: logs,
         input: input)
+      let notice =
+        current == step.id ? failure ?? details[step.id] : details[step.id]
+      let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
       return TutorialStepProgress(
-        id: step.id, state: state,
-        detail: failure != nil && current == step.id ? failure! : details[step.id] ?? checkpoint.detail,
+        id: step.id, state: state, detail: shown.text, action: shown.action,
         ticks: checkpoint.ticks,
         canMarkDone: current == step.id && input.now.timeIntervalSince(record!.stepSince ?? record!.startedAt) >= 120)
     }
@@ -410,6 +427,7 @@ public struct TutorialProgress: Sendable {
     var completed: Date?
     var failure: String?
     var detail = ""
+    var action: TutorialAction?
     var ticks: [TutorialTick] = []
   }
 
@@ -433,10 +451,11 @@ public struct TutorialProgress: Sendable {
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
       let newClone = Self.registeredClones(input.siblings).first { isNewClone($0) }
       let exists = environment != nil || newClone != nil
+      let timedOut = record?.beginWaitTimedOut(now: now) == true && environment == nil
       return Checkpoint(
         completed: exists ? appeared : nil,
-        detail: record?.beginWaitTimedOut(now: now) == true && environment == nil
-          ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace")
+        detail: timedOut ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace",
+        action: timedOut ? .restart : nil)
     case "build":
       if let last, last.status == "failed", parseTimestamp(last.startedAt).map({ $0 >= since }) == true {
         return Checkpoint(
@@ -509,11 +528,13 @@ public struct TutorialProgress: Sendable {
       let absent = environment == nil && second == nil && record?.tourPath != nil
       let archived = record?.allArchived(input.archivedProjectRoots) == true
       let complete = absent && (!input.archiveEnabled || archived)
+      let gone = input.archiveEnabled && absent && !complete
       return Checkpoint(
         completed: complete ? now : nil,
         detail: !input.archiveEnabled
           ? "Archived is off"
-          : absent && !complete ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
+          : gone ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
+        action: gone ? .restart : nil,
         ticks: [tick("stopped", record?.stopped == true), tick("archived", absent && archived)])
     default: return Checkpoint()
     }
