@@ -1,3 +1,5 @@
+import { BUILD_HISTORY_LIMIT } from '@stim-cli/core/state';
+import { WATCH_BUILDS_PER_PLATFORM, WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
@@ -248,7 +250,12 @@ WAITING FOR A CHANGE
   To wait for a device, a build or a dev server instead of polling, run
   \`stim status --watch --json\`. It keeps running and prints one complete
   status payload per line: one at once, then one each time the payload
-  changes, never two identical ones in a row. It reacts to Stim state files,
+  changes, never two identical ones in a row. In a watch line, each
+  environment's builds keeps its newest ${WATCH_BUILDS_PER_PLATFORM} runs per platform (one-shot
+  status --json keeps ${BUILD_HISTORY_LIMIT}), and a usage figure repeats its value in the
+  previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  changes as a whole, so its residentMb and processes update with it. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds

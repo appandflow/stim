@@ -6,10 +6,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
-import { makeConfig } from './_factories.ts';
+import { makeConfig, makeEnvironmentState } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { createRefreshScheduler, statusChange, watchStatusSources, type RefreshKind } from '../status-watch.ts';
+import {
+  createRefreshScheduler,
+  statusChange,
+  watchPayload,
+  watchStatusSources,
+  type RefreshKind,
+} from '../status-watch.ts';
+import type { BuildHistoryEntry, MachineOwner, StatusPayload } from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
 
@@ -160,6 +167,115 @@ test('a log append or build detail needs only a log refresh; other state changes
   expect(statusChange('leases', null)).toBe('full');
   expect(statusChange('eas', 'sessions.json')).toBe('full');
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
+});
+
+describe('watchPayload', () => {
+  const owner = (overrides: Partial<MachineOwner> = {}): MachineOwner => ({
+    kind: 'simulator',
+    name: 'sim',
+    workspace: '/w/a',
+    id: 'UDID',
+    owned: true,
+    cpuPercent: 10,
+    residentMb: 500,
+    memoryMb: 300,
+    processes: 6,
+    ...overrides,
+  });
+  const payload = (overrides: Partial<StatusPayload> = {}): StatusPayload => ({
+    environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 300 })],
+    capacity: { liveCount: 1, committedMb: 300, totalMemoryMb: 16384, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+    machine: { memorySource: 'footprint', owners: [owner()] },
+    ...overrides,
+  });
+  const jittered = (): StatusPayload =>
+    payload({
+      environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 311 })],
+      capacity: { liveCount: 1, committedMb: 311, totalMemoryMb: 16384, overCapacity: false },
+      machine: {
+        memorySource: 'footprint',
+        owners: [owner({ cpuPercent: 14, residentMb: 490, memoryMb: 311, processes: 7 })],
+      },
+    });
+
+  test('usage that moved less than a step prints the previous payload byte for byte', () => {
+    const previous = watchPayload(null, payload());
+    expect(JSON.stringify(watchPayload(previous, jittered()))).toBe(JSON.stringify(previous));
+  });
+
+  test.each([
+    ['cpu', { cpuPercent: 15 }],
+    ['footprint memory', { memoryMb: 284 }],
+  ])('a %s move of one step prints the owner row with its current process count', (_name, change) => {
+    const previous = watchPayload(null, payload());
+    const next = payload({ machine: { memorySource: 'footprint', owners: [owner({ ...change, processes: 9 })] } });
+    expect(watchPayload(previous, next).machine?.owners[0]).toEqual(owner({ ...change, processes: 9 }));
+  });
+
+  test('a step is measured from the last printed value, so slow drift still prints', () => {
+    const at = (memoryMb: number) => payload({ environments: [makeEnvironmentState({ path: '/w/a', memoryMb })] });
+    const first = watchPayload(null, at(300));
+    const second = watchPayload(first, at(310));
+    const third = watchPayload(second, at(317));
+    expect([first, second, third].map((p) => p.environments[0]!.memoryMb)).toEqual([300, 300, 317]);
+  });
+
+  test('capacity keeps its sum below a step and changes at a step or when overCapacity flips', () => {
+    const previous = watchPayload(null, payload());
+    const capacity = (committedMb: number, overCapacity = false) =>
+      watchPayload(previous, payload({ capacity: { liveCount: 1, committedMb, totalMemoryMb: 16384, overCapacity } }))
+        .capacity;
+    expect(capacity(315).committedMb).toBe(300);
+    expect(capacity(316).committedMb).toBe(316);
+    expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
+  });
+
+  test('a new, gone or changed-ownership owner prints the current rows', () => {
+    const previous = watchPayload(null, payload());
+    const rows = (owners: MachineOwner[]) =>
+      watchPayload(previous, payload({ machine: { memorySource: 'footprint', owners } })).machine?.owners;
+    expect(rows([owner(), owner({ name: 'metro', id: '8081' })])).toHaveLength(2);
+    expect(rows([])).toEqual([]);
+    expect(rows([owner({ owned: false })])?.[0]?.owned).toBe(false);
+  });
+
+  test('machine usage appearing or its memory source changing prints the current machine', () => {
+    const previous = watchPayload(null, payload());
+    expect(watchPayload(previous, payload({ machine: null })).machine).toBeNull();
+    const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
+    expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
+    expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
+  });
+
+  describe('builds', () => {
+    const run = (n: number): BuildHistoryEntry =>
+      ({
+        platform: 'ios',
+        result: 'succeeded',
+        build: { startedAt: `2026-10-01T00:00:${String(n).padStart(2, '0')}Z` },
+      }) as unknown as BuildHistoryEntry;
+    const history = (count: number) => Array.from({ length: count }, (_, i) => run(count - i));
+
+    test('keeps the newest five runs of each platform and leaves the input alone', () => {
+      const env = makeEnvironmentState({
+        path: '/w/a',
+        builds: { ios: history(10), android: history(3), macos: history(7) },
+      });
+      const input = payload({ environments: [env] });
+      const out = watchPayload(null, input).environments[0]!.builds!;
+      expect(out.ios).toEqual(history(10).slice(0, 5));
+      expect(out.android).toEqual(history(3));
+      expect(out.macos).toEqual(history(7).slice(0, 5));
+      expect(env.builds!.ios).toHaveLength(10);
+    });
+
+    test('adds no builds to an environment without any', () => {
+      expect(watchPayload(null, payload()).environments[0]).not.toHaveProperty('builds');
+    });
+  });
 });
 
 test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
@@ -398,7 +514,7 @@ describe('stim status --watch --json', () => {
         [
           '#!/bin/sh',
           `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
-          `echo "100 1 1024 $n.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
+          `echo "100 1 1024 $((n * 10)).0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
         ].join('\n'),
       );
       chmodSync(join(bin, 'xcrun'), 0o755);
