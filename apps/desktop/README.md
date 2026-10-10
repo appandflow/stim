@@ -1281,13 +1281,23 @@ server, restarts, and switches back if the new one does not answer. The row
 follows `machines.update.status` every 2 seconds:
 
 - sending the build;
-- the machine's last update log line;
+- the machine's last update log line, or, while it waits, the offloaded builds
+  and hosted simulators it waits for ("Waiting for 1 hosted simulator to end...");
 - the restart;
-- the outcome, or the refusal (for example, the setting the machine needs).
+- the outcome, or the refusal (for example, the setting the machine needs, or
+  another update already running there).
 
 A failure shows its full text, selectable, with a **Copy** button.
 
-If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
+While the update waits for hosted simulators that this Mac's workspaces run on
+that machine, the row offers **Stop and Update...**. After a confirmation that
+names each device and workspace, it runs the same `stim stop` as stopping that
+device, and the update continues on its own. Hosted simulators of other Macs
+can only be stopped on that machine; the row says how many there are.
+
+The update ends as finished once the machine reports this Mac's Stim build,
+even when another update installed it. If the machine stops answering for 5 minutes, or answers for 4 minutes without an update running or an outcome, the update shows as failed with the reason.
+**Add Remote Machine...** stays available while an update runs.
 Then the row checks the machine again. **Keep remote machines on this Mac's Stim
 version** (off by default; "When this Mac's Stim changes, update stim-server on
 approved remote Macs so builds can keep offloading.") does the same the next time Desktop

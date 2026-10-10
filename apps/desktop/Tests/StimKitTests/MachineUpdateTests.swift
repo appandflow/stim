@@ -46,6 +46,38 @@ import Testing
     #expect(MachineUpdatePhase.from(stale, startedAt: started) == .restarting)
   }
 
+  @Test func readsTheWorkAnUpdateWaitsForFromItsLog() throws {
+    let waiting = try status(
+      #"""
+      {"remote":{"server":{"version":"1.18.0","stimBuild":"a"},"service":"dev.stim.server","acceptsClientBuilds":true,
+        "running":{"state":"installing","startedAt":"2026-10-05T22:00:00.000Z",
+          "log":["Installing.","Waiting for 0 offloaded build(s) and 1 hosted session(s) to finish."]},"last":null},
+       "unreachable":null,"upload":null}
+      """#)
+    let phase = MachineUpdatePhase.from(waiting, startedAt: started)
+    #expect(phase == .waiting(builds: 0, hostedSessions: 1))
+    #expect(phase.line == "Waiting for 1 hosted simulator to end\u{2026}")
+    #expect(!phase.isDone)
+    #expect(
+      MachineUpdatePhase.waiting(builds: 2, hostedSessions: 3).line
+        == "Waiting for 2 offloaded builds and 3 hosted simulators to end\u{2026}")
+  }
+
+  @Test func finishesWhenTheHostAlreadyRunsThisMacsBuildWithoutAnOutcomeOfItsOwn() throws {
+    let current = try status(
+      #"""
+      {"remote":{"server":{"version":"1.19.0","stimBuild":"d9b8bdb39828c9a0"},"service":"dev.stim.server",
+        "acceptsClientBuilds":true,"running":null,
+        "last":{"at":"2026-10-05T21:50:46.000Z","target":"release 1.19.0","ok":true,"message":"another update"}},
+       "unreachable":null,"upload":null}
+      """#)
+    #expect(MachineUpdatePhase.from(current, startedAt: started) == .restarting)
+    #expect(
+      MachineUpdatePhase.from(current, startedAt: started, expectedBuild: "d9b8bdb39828c9a0")
+        == .finished("It now runs this Mac's Stim build."))
+    #expect(MachineUpdatePhase.from(current, startedAt: started, expectedBuild: "other") == .restarting)
+  }
+
   @Test func failsOnAnUploadErrorOrAFailedOutcome() throws {
     let refused = try status(
       #"{"remote":null,"unreachable":null,"upload":{"sent":10,"total":20,"error":"stim-server.tgz does not match the sha256 it offered."}}"#
@@ -73,5 +105,6 @@ import Testing
           {"machine":"old","state":"revoked","problems":[{"code":"stim-build","reason":"x"}]}]}
         """#.utf8))
     #expect(try #require(report.remoteMachines).map(needsStimUpdate) == [true, false, false])
+    #expect(try #require(report.remoteMachines).map(stimBuildHere) == ["b", nil, nil])
   }
 }

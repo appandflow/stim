@@ -289,7 +289,7 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions)
         .environmentObject(autopilot)
         .environmentObject(onboarding)
     }

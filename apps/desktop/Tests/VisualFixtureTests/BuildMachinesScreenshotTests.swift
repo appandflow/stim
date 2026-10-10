@@ -23,7 +23,7 @@
 
     @MainActor private func content(
       entries: [String], statuses: [BuildMachineStatus]?, tailscale: Bool?, updates: [String: MachineUpdatePhase] = [:],
-      poolDisabled: [String: [String]]? = nil, failure: String? = nil
+      poolDisabled: [String: [String]]? = nil, failure: String? = nil, hosted: [HostedOnMachine] = []
     ) -> some View {
       BuildMachinesContent(
         entries: entries, statuses: statuses,
@@ -33,7 +33,8 @@
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false,
         updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
-        remove: { _ in }, poolDisabled: poolDisabled, thisMacName: "MacBook Pro", thisMac: EmptyView()
+        remove: { _ in }, poolDisabled: poolDisabled, hosted: { _ in hosted }, thisMacName: "MacBook Pro",
+        thisMac: EmptyView()
       )
       .font(.stim(.body))
       .foregroundStyle(Palette.text)
@@ -91,6 +92,24 @@
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let pools: [String: [String]] = ["build": [], "device": []]
       let fixtures: [(String, AnyView)] = [
+        (
+          "section-waiting-own",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              updates: ["janics-mac-mini": .waiting(builds: 0, hostedSessions: 2)], poolDisabled: pools,
+              hosted: [
+                HostedOnMachine(
+                  workspace: "rn-tester", device: "iPhone 17 Pro", stop: StimCommand(["stop", "--slot", "default"], cwd: "/w"))
+              ]))
+        ),
+        (
+          "section-waiting-other",
+          AnyView(
+            content(
+              entries: ["janics-mac-mini"], statuses: try mismatch(), tailscale: true,
+              updates: ["janics-mac-mini": .waiting(builds: 0, hostedSessions: 1)], poolDisabled: pools))
+        ),
         (
           "section-ready",
           AnyView(
