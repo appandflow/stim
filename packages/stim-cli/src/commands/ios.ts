@@ -959,7 +959,7 @@ async function runIos(
             }));
       const startBoot = (): Promise<string> => {
         const bootTimer = stepTimer(d.now);
-        bootPending = true;
+        bootPending = remoteDevice?.ctx.backend !== 'eas';
         bootPromise = (
           remoteDevice?.ctx.backend === 'eas'
             ? d.ensureRemoteBootOwned({

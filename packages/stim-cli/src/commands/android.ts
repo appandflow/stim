@@ -1146,7 +1146,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       }));
     const startBoot = (): Promise<AndroidBootLike> => {
       const bootTimer = stepTimer(now);
-      bootPending = true;
+      bootPending = remoteDevice?.ctx.backend !== 'eas';
       return (
         remoteDevice?.ctx.backend === 'eas'
           ? ensureRemoteOwned({

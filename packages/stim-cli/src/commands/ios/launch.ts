@@ -775,6 +775,7 @@ export async function finishIosRun({
   enterPhase('device');
   if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
+  enterActivity(null);
   if (!booted?.ok) {
     return fail({
       code: booted?.code || 'STIM_NO_DEVICE',

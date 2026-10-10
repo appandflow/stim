@@ -482,7 +482,7 @@ extension Build {
   }
 
   /// Whether the current phase waits on something whose progress nothing measures, so its bar shows no fill amount.
-  public var waitsWithoutProgress: Bool { currentActivity != nil && bundledFraction == nil }
+  public var waitsWithoutProgress: Bool { activityLabel != nil && bundledFraction == nil }
 
   /// How long the current activity has lasted; nil without one.
   public func activityElapsedMs(at now: Date) -> Double? {

@@ -689,6 +689,7 @@ export async function finishAndroidRun({
   enterPhase('device');
   if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
+  enterActivity(null);
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = diagnoseBootFailure(booted, emuLog, runCommand, physical);
