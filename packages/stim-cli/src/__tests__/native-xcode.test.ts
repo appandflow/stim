@@ -18,7 +18,7 @@ import { selectNativeXcodeProject } from '../integrations/native-xcode-project.t
 import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts';
 import { nativeXcodeIosProject } from '../integrations/native-xcode-ios.ts';
 import type { IosArtifactContext } from '../integrations/ios-project.ts';
-import { setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
@@ -474,6 +474,50 @@ test('source, ignored resources and build settings invalidate native reuse', () 
   const pbx = join(project, 'project.pbxproj');
   writeFileSync(pbx, readFileSync(pbx, 'utf8').replaceAll('org.example.Native', 'org.example.Other'));
   expect(fingerprint()).not.toEqual(source);
+});
+
+test('a git checkout ignores ignored content and nested worktrees but keeps ignored files the project references', () => {
+  const project = writeNativeXcodeProject(root);
+  write(join(root, '.gitignore'), 'ignored/\nSecrets.plist\n');
+  write(join(root, 'Secrets.plist'), 'one');
+  const pbx = join(project, 'project.pbxproj');
+  writeFileSync(
+    pbx,
+    readFileSync(pbx, 'utf8')
+      .replace('children = ( SOURCE, );', 'children = ( SOURCE, SECRETS, );')
+      .replace(
+        'objects = {',
+        'objects = {\nSECRETS = { isa = PBXFileReference; path = Secrets.plist; sourceTree = "<group>"; };',
+      ),
+  );
+  const git = (...args: string[]) =>
+    getExecutor().runFile('git', [
+      '-C',
+      root,
+      '-c',
+      'user.name=Stim',
+      '-c',
+      'user.email=stim@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      '-c',
+      'core.hooksPath=/dev/null',
+      ...args,
+    ]);
+  git('init', '-q');
+  git('add', '-A');
+  git('commit', '-qm', 'fixture');
+  const before = fingerprint();
+  expect(before).toHaveProperty('hash');
+  write(join(root, 'ignored', 'cache.bin'), 'generated');
+  symlinkSync(join(root, 'missing'), join(root, 'ignored', 'dangling'));
+  git('worktree', 'add', '-q', '--detach', join(root, 'nested'));
+  expect(fingerprint()).toEqual(before);
+  write(join(root, 'Secrets.plist'), 'two');
+  const referenced = fingerprint();
+  expect(referenced).not.toEqual(before);
+  write(join(root, 'Untracked.swift'), 'struct Untracked {}');
+  expect(fingerprint()).not.toEqual(referenced);
 });
 
 test('a referenced source outside the application participates in native identity', () => {

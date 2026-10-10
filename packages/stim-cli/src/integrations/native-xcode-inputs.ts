@@ -5,6 +5,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { fingerprintNativeInputs, NativeInputError, type NativeInputSnapshot } from './native-inputs.ts';
 import { pbxReferences, pbxString, type NativeXcodeModel, type NativeXcodeSelection } from './native-xcode-project.ts';
 import { workspaceDir, workspaceDerivedData } from '../workspace/paths.ts';
+import { getExecutor } from '../exec.ts';
 
 export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
@@ -71,6 +72,33 @@ function inside(root: string, path: string): boolean {
   return part === '' || (!part.startsWith(`..${sep}`) && part !== '..' && !isAbsolute(part));
 }
 
+function gitVisibility(sourceRoot: string) {
+  if (!existsSync(join(sourceRoot, '.git'))) return null;
+  const listing = getExecutor().runFileQuiet(
+    'git',
+    ['-C', sourceRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    { untrimmed: true },
+  );
+  if (listing === null) return null;
+  const listed = new Set<string>();
+  const whole = new Set<string>();
+  const include = (path: string) => {
+    whole.add(path);
+    listed.add(path);
+    for (let index = path.indexOf('/'); index !== -1; index = path.indexOf('/', index + 1))
+      listed.add(path.slice(0, index));
+  };
+  // git ls-files names an untracked nested repository, such as a linked worktree, as one "dir/" entry.
+  for (const entry of listing.split('\0')) if (entry && !entry.endsWith('/')) include(entry);
+  const admit = (path: string) => {
+    if (listed.has(path)) return true;
+    for (let index = path.indexOf('/'); index !== -1; index = path.indexOf('/', index + 1))
+      if (whole.has(path.slice(0, index))) return true;
+    return false;
+  };
+  return { admit, include };
+}
+
 export function nativeXcodeInputSnapshot(
   root: string,
   selection: NativeXcodeSelection,
@@ -79,7 +107,10 @@ export function nativeXcodeInputSnapshot(
 ): NativeInputSnapshot | { cacheIneligible: string } {
   if (selection.platform === 'unknown')
     return { cacheIneligible: 'The selected application platform cannot be resolved from its project configuration' };
-  const inputs: { name: string; path: string; optional?: boolean }[] = [{ name: 'repository', path: sourceRoot }];
+  const visibility = gitVisibility(sourceRoot);
+  const inputs: { name: string; path: string; optional?: boolean; admit?: (path: string) => boolean }[] = [
+    { name: 'repository', path: sourceRoot, ...(visibility ? { admit: visibility.admit } : {}) },
+  ];
   const excluded = [join(sourceRoot, '.git'), join(root, '.git'), workspaceDerivedData(root)];
   const reasons = new Set<string>();
   const environment: Record<string, string> = {};
@@ -94,8 +125,13 @@ export function nativeXcodeInputSnapshot(
   }
   const dependencyRoots = new Map<string, string>();
   const synchronizedRoots: string[] = [];
-  const include = (path: string, name: string) => {
-    if (!inside(sourceRoot, path)) dependencyRoots.set(name, path);
+  const reveal = (path: string, complete = true) => {
+    const part = relative(sourceRoot, path).split(sep).join('/');
+    if (visibility && part && (complete || !visibility.admit(part))) visibility.include(part);
+  };
+  const include = (path: string, name: string, complete = true) => {
+    if (inside(sourceRoot, path)) reveal(path, complete);
+    else dependencyRoots.set(name, path);
   };
   const expand = (value: string, project: NativeXcodeModel): string | null => {
     const known: Record<string, string> = {
@@ -157,7 +193,8 @@ export function nativeXcodeInputSnapshot(
   try {
     if (selection.schemeBuildScripts) reasons.add('Xcode scheme execution actions can consume undeclared inputs');
     for (const [projectIndex, project] of selection.projects.entries()) {
-      include(project.directory, `referenced-project:${projectIndex}`);
+      include(project.directory, `referenced-project:${projectIndex}`, false);
+      if (inside(sourceRoot, project.path)) reveal(project.path);
       if (Array.isArray(project.project.projectReferences) && project.project.projectReferences.length)
         reasons.add('Referenced Xcode subprojects have no verified dependency input closure');
       excluded.push(join(project.path, 'xcuserdata'), join(project.path, 'project.xcworkspace', 'xcuserdata'));
@@ -188,7 +225,7 @@ export function nativeXcodeInputSnapshot(
           reasons.add(`Unresolved source tree ${tree}`);
           return;
         }
-        include(path, `reference:${projectIndex}:${id}`);
+        include(path, `reference:${projectIndex}:${id}`, entry.isa !== 'PBXGroup');
         if (entry.isa === 'PBXFileSystemSynchronizedRootGroup') {
           synchronizedRoots.push(
             inside(sourceRoot, path)
@@ -248,6 +285,7 @@ export function nativeXcodeInputSnapshot(
       }
     }
     excluded.push(join(selection.container.path, 'xcuserdata'));
+    if (inside(sourceRoot, selection.container.path)) reveal(selection.container.path);
     for (const name of [
       'CPATH',
       'C_INCLUDE_PATH',

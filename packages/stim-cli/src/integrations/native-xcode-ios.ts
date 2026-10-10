@@ -179,7 +179,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       }
     },
     async reconcile() {
-      const current = read();
+      const current = snapshot && !mutations.length ? snapshot : read();
       if ('cacheIneligible' in current) {
         ineligible = current.cacheIneligible;
         snapshot = null;
