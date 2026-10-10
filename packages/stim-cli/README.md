@@ -33,9 +33,11 @@ stim stop
 ```
 
 `stim doctor` never loads `fingerprint.config.js` or runs an `eas` from the
-project tree. Its fingerprint checks can still run installed Expo packages,
-including ones hoisted above the app, as a build does. `worktree warm`, `start`, `ios`, and
-`android` run project code.
+project tree. On a checkout without its own dependencies, it skips the
+fingerprint parity check when Expo packages resolve from above the app or when
+the check would need `npx react-native config`. Its linked-library check can
+still run installed Expo packages on the main checkout, as a build does.
+`worktree warm`, `start`, `ios`, and `android` run project code.
 
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use

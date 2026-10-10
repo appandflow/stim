@@ -1356,6 +1356,29 @@ function fingerprintConfigSkipped(root: string): Finding | null {
   };
 }
 
+function fingerprintParitySkipped(title: string, detail: string, fix: string): Finding {
+  return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
+}
+
+function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
+  const resolved = ['expo', 'expo-modules-autolinking'].find((name) => isPackageResolvable(root, name));
+  if (resolved) {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check: dependencies resolve from above the app',
+      `This app has no node_modules of its own, but ${resolved} resolves from a directory above it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  if (platform !== 'ios') {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check for Android on a checkout without dependencies',
+      'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
+      'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  return null;
+}
+
 function gitMetadataAt(path: string): boolean {
   try {
     const git = lstatSync(join(path, '.git'));
@@ -1477,6 +1500,11 @@ export async function detectFingerprintParity(
       : existsSync(join(projectRoot, 'android'))
         ? 'android'
         : undefined);
+  const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
+  if (unsafe) return unsafe;
+  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  const coldFingerprint: typeof createFingerprint = (root, options) =>
+    createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 
   let base: string;
   try {
@@ -1496,10 +1524,14 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const headSkipped = fingerprintConfigSkipped(worktree);
+    const headSkipped = fingerprintConfigSkipped(worktree) ?? coldFingerprintRunsProjectCode(worktree, platform);
     if (headSkipped) return headSkipped;
-    const project = await fingerprintProject(projectRoot, { platform, iosProjectPath, createFingerprint });
-    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint });
+    const project = await fingerprintProject(projectRoot, {
+      platform,
+      iosProjectPath,
+      createFingerprint: coldFingerprint,
+    });
+    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint: coldFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
