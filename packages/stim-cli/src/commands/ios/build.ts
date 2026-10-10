@@ -23,7 +23,14 @@ import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
 import { lastBuildRecord } from './result.ts';
-import { resolveConfiguration, resolveIosBuildSetup, resolveSchemeSelection, simulatorBuildArch } from './support.ts';
+import {
+  iosProjectPathError,
+  resolveConfiguration,
+  resolveIosBuildSetup,
+  resolveSchemeSelection,
+  simulatorBuildArch,
+} from './support.ts';
+import { detectIsExpo } from '../../workspace/project-files.ts';
 
 export interface IosBuildOptions {
   configuration?: string;
@@ -60,8 +67,10 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const integration = await selected.load();
   const { context, settings } = resolveProjectSettings(root);
+  const projectPathError = iosProjectPathError(settings, root, () => detectIsExpo(root));
+  if (projectPathError) throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG' });
+  const integration = await selected.load(settings);
   const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
     note(phaseLine(label, message)),
   );

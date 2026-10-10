@@ -9,6 +9,8 @@ import type { IosCommandOptions, DeviceLike, PodStateLike, PodVerdictLike, FailA
 import type { BuildIosResult } from '../../engine/xcode.ts';
 import {
   cacheProviderSettingError,
+  iosProjectDirSetting,
+  iosProjectDirSettingError,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   unknownSettingKeys,
@@ -35,6 +37,12 @@ export const PLATFORM = 'ios';
 
 export function buildLogFile(root: string): string {
   return join(workspaceLogsDir(root), `build-${PLATFORM}.ndjson`);
+}
+
+export function iosProjectPathError(settings: unknown, root: string, isExpo: () => boolean): string | null {
+  const error = iosProjectDirSettingError(settings, root);
+  if (error || !iosProjectDirSetting(settings, root).custom || !isExpo()) return error;
+  return 'ios.projectPath applies to bare React Native apps only: expo prebuild generates and builds ios/. Remove it for this Expo app.';
 }
 
 export function resolveIosBuildSetup(

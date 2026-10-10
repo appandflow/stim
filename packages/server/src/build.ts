@@ -929,6 +929,7 @@ export class BuildSession {
         isExpo: params.isExpo === true,
         configuration: optional(params.configuration),
         scheme: optional(params.scheme),
+        iosProjectPath: optional(params.iosProjectPath),
         runtime: optional(params.runtime),
         expectedFingerprint: params.fingerprint,
         optimizations: isJsonObject(params.optimizations) ? params.optimizations : null,

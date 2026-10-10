@@ -245,7 +245,7 @@ interface RecordedArgs {
   replaceCollector: { udid?: unknown; bundleId?: unknown; appName?: unknown; appExecutable?: unknown };
   loadProjectProvider: { isExpo?: unknown };
   acquireBuildLock: { root?: unknown; platform?: unknown; logFile?: unknown; key?: unknown };
-  untrackedNativeFiles: { projectRoot?: unknown };
+  untrackedNativeFiles: { projectRoot?: unknown; iosProjectPath?: unknown };
   ensureWorkspaceStorage: unknown;
 }
 
@@ -472,8 +472,12 @@ function harness(overrides: LooseDeps = {}) {
               return match
                 ? {
                     ...match,
-                    ios: async () =>
-                      reactNativeIosProject(path, deps as Partial<import('../commands/ios/dependencies.ts').IosDeps>),
+                    ios: async (settings) =>
+                      reactNativeIosProject(
+                        path,
+                        settings,
+                        deps as Partial<import('../commands/ios/dependencies.ts').IosDeps>,
+                      ),
                   }
                 : null;
             },
@@ -5022,11 +5026,41 @@ test('a first miss lists untracked files under the native dirs and points at .fi
       },
     },
   );
-  expect(asked).toEqual([{ projectRoot: root }]);
+  expect(asked).toEqual([{ projectRoot: root, iosProjectPath: 'ios' }]);
   const line = errs.find((e) => e.includes('untracked'));
   assert(line, 'expected the untracked-files note on stderr');
   expect(line).toMatch(/ios\/scratch\.txt, android\/local\.properties/);
   expect(line).toMatch(/\.fingerprintignore/);
+});
+
+test('ios.projectPath set to the app directory reaches pods, the Xcode build, fingerprinting and untracked files', async () => {
+  mkdirSync(join(root, 'Fixture.xcworkspace'));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ ios: { projectPath: '.' } }));
+  const podDirs: unknown[] = [];
+  const fingerprintOptions: unknown[] = [];
+  const untracked: unknown[] = [];
+  const { calls, exitCode } = await run(
+    { metroCheck: false },
+    {
+      readPodState: (_root: string, directory?: string) => {
+        podDirs.push(directory);
+        return { hasPodfile: false, lockText: null, manifestText: null };
+      },
+      fingerprintProject: async (_path: string, options: unknown) => {
+        fingerprintOptions.push(options);
+        return { hash: FINGERPRINT, sources: [] };
+      },
+      untrackedNativeFiles: (args: unknown) => {
+        untracked.push(args);
+        return [];
+      },
+    },
+  );
+  expect(exitCode).toBe(null);
+  expect(podDirs).toContain(root);
+  expect(fingerprintOptions).toContainEqual(expect.objectContaining({ iosProjectPath: '.' }));
+  expect(untracked).toEqual([{ projectRoot: root, iosProjectPath: '.' }]);
+  expect(calls.args.buildIos).toMatchObject({ iosDir: root });
 });
 
 test('a miss that CAN be diffed says what changed instead of guessing at untracked files', async () => {
@@ -8965,8 +8999,8 @@ describe('registered iOS project recipes', () => {
           return match
             ? {
                 ...match,
-                ios: async () => {
-                  const project = await match.ios!();
+                ios: async (settings) => {
+                  const project = await match.ios!(settings);
                   return {
                     ...project,
                     artifact(context) {
@@ -9212,8 +9246,8 @@ describe('registered iOS project recipes', () => {
           return match
             ? {
                 ...match,
-                ios: async () => {
-                  const project = await match.ios!();
+                ios: async (settings) => {
+                  const project = await match.ios!(settings);
                   return {
                     ...project,
                     artifact(context) {

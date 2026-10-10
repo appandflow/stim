@@ -19,6 +19,7 @@ export interface XcodeProject {
   file?: string;
   name?: string | null;
   dir?: string;
+  appRoot?: string;
   path?: string;
   error?: { code: string; message: string; remedy: string | null };
 }
@@ -135,7 +136,7 @@ export function resolveScheme(
   let scheme = pickScheme(listing.schemes, listing.name || project.name);
   if (!scheme && project.dir) {
     try {
-      const app = JSON.parse(readFileSync(join(project.dir, '..', 'app.json'), 'utf8'));
+      const app = JSON.parse(readFileSync(join(project.appRoot ?? join(project.dir, '..'), 'app.json'), 'utf8'));
       scheme = pickScheme(listing.schemes, app?.name);
     } catch {}
   }

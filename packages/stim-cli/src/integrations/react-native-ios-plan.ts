@@ -6,8 +6,9 @@ import { statsProjectKey } from '../engine/stats.ts';
 import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../optimizations.ts';
 import {
   cacheProviderSettingError,
-  projectSettingsContext,
   publicUrlSetting,
+  resolveIosProjectDir,
+  type ResolvedProjectSettings,
   remoteEasFallbackSetting,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
@@ -47,9 +48,9 @@ export async function planReactNativeIos(
   opts: IosCommandOptions,
   d: IosDeps,
   schemeProblem: (scheme: string | undefined) => FailArgs | null,
+  { context: settingsContext, settings }: ResolvedProjectSettings,
 ): Promise<ProjectPlanResult> {
-  const settingsContext = projectSettingsContext(root, d);
-  const settings = d.resolveSettings(settingsContext);
+  const iosProject = resolveIosProjectDir(settings, root);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError)
     return refuse({ code: 'STIM_BAD_ARG', message: shapeError, remedy: SETTING_SHAPE_REMEDY }, moreShapeErrors);
@@ -129,7 +130,7 @@ export async function planReactNativeIos(
 
   let fingerprint;
   try {
-    fingerprint = await d.fingerprintProject(root, { platform: PLATFORM });
+    fingerprint = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
   } catch (error) {
     note(chalk.dim(`Fingerprinting failed: ${(error as Error)?.message || error}`));
   }

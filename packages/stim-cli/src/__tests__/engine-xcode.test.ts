@@ -135,6 +135,19 @@ function stubProject(root: string, { workspace = false, project = true, name = '
   return ios;
 }
 
+describe('discoverXcodeProject with ios.projectPath', () => {
+  test('finds the project in the configured directory instead of ios/', () => {
+    mkdirSync(join(tmp, 'RNTesterPods.xcodeproj'));
+    mkdirSync(join(tmp, 'RNTesterPods.xcworkspace'));
+    expect(discoverXcodeProject(tmp, tmp)).toMatchObject({
+      flag: '-workspace',
+      dir: tmp,
+      appRoot: tmp,
+      path: join(tmp, 'RNTesterPods.xcworkspace'),
+    });
+  });
+});
+
 describe('pickXcodeProject', () => {
   test('a workspace wins over a project, because CocoaPods links through it', () => {
     expect(pickXcodeProject(['App.xcodeproj', 'App.xcworkspace', 'Podfile'])).toEqual({
@@ -180,18 +193,19 @@ describe('pickXcodeProject', () => {
 describe('discoverXcodeProject', () => {
   test('finds the workspace and reports the flag, the container dir and the full path', () => {
     stubProject(tmp, { workspace: true });
-    expect(discoverXcodeProject(tmp)).toEqual({
+    expect(discoverXcodeProject(tmp, join(tmp, 'ios'))).toEqual({
       kind: 'workspace',
       flag: '-workspace',
       file: 'App.xcworkspace',
       name: 'App',
       dir: join(tmp, 'ios'),
+      appRoot: tmp,
       path: join(tmp, 'ios', 'App.xcworkspace'),
     });
   });
 
   test('no ios/ directory is an error naming prebuild, not an exception', () => {
-    const { error } = discoverXcodeProject(tmp);
+    const { error } = discoverXcodeProject(tmp, join(tmp, 'ios'));
     assert(error);
     expect(error.code).toBe('STIM_BUILD_FAILED');
     expect(error.message).toMatch(/No ios\/ directory/);
@@ -201,7 +215,7 @@ describe('discoverXcodeProject', () => {
   test('an ios/ directory with nothing buildable in it says exactly that', () => {
     mkdirSync(join(tmp, 'ios'), { recursive: true });
     writeFileSync(join(tmp, 'ios', 'Podfile'), 'platform :ios');
-    const { error } = discoverXcodeProject(tmp);
+    const { error } = discoverXcodeProject(tmp, join(tmp, 'ios'));
     assert(error);
     expect(error.code).toBe('STIM_BUILD_FAILED');
     expect(error.message).toMatch(/contains no \.xcworkspace and no \.xcodeproj/);
@@ -377,6 +391,21 @@ describe('listSchemes and resolveScheme', () => {
     });
     expect(result.scheme).toBe(expected);
     expect(result.error?.code).toBe(expected ? undefined : 'STIM_NO_SCHEME');
+  });
+
+  test('resolveScheme reads app.json from the app directory when the Xcode project sits in it', () => {
+    mkdirSync(join(tmp, 'RNSACExample.xcworkspace'));
+    writeFileSync(join(tmp, 'app.json'), '{"name":"safe-area-example"}');
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () =>
+        JSON.stringify({
+          workspace: { name: 'RNSACExample', schemes: ['Pods-ReactTestApp', 'ReactTestApp', 'safe-area-example'] },
+        }),
+    });
+    expect(resolveScheme(discoverXcodeProject(tmp, tmp)).scheme).toBe('safe-area-example');
   });
 
   test('the workspace scheme retains priority over an app.json name', () => {
@@ -739,12 +768,12 @@ describe('the ccache detection both the build and doctor read', () => {
   test('an absent or unreadable Podfile.properties.json reads as no ccache', () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-podprops-'));
     try {
-      expect(readPodfileProperties(dir)).toBe(null);
+      expect(readPodfileProperties(join(dir, 'ios'))).toBe(null);
       mkdirSync(join(dir, 'ios'), { recursive: true });
       writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), '{ not json');
-      expect(readPodfileProperties(dir)).toBe(null);
+      expect(readPodfileProperties(join(dir, 'ios'))).toBe(null);
       writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), JSON.stringify({ 'apple.ccacheEnabled': 'true' }));
-      expect(ccacheEnabled(readPodfileProperties(dir))).toBe(true);
+      expect(ccacheEnabled(readPodfileProperties(join(dir, 'ios')))).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1133,6 +1162,7 @@ describe('buildIos with a mocked executor', () => {
       );
       const promise = buildIos({
         root: tmp,
+        iosDir: join(tmp, 'ios'),
         scheme: 'App',
         udid: 'u',
         logWriter: recordingWriter(),
@@ -1152,6 +1182,7 @@ describe('buildIos with a mocked executor', () => {
     const spawnCalls = harness(tmp, { child });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
@@ -1174,6 +1205,7 @@ describe('buildIos with a mocked executor', () => {
     const spawnCalls = harness(tmp, { child });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       destination: 'generic/platform=iOS Simulator',
       arch,
       logWriter: recordingWriter(),
@@ -1192,6 +1224,7 @@ describe('buildIos with a mocked executor', () => {
     const spawnCalls = harness(tmp, { child });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       compilationCache: null,
@@ -1220,6 +1253,7 @@ describe('buildIos with a mocked executor', () => {
     });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       onNote: (line) => notes.push(line),
@@ -1275,6 +1309,7 @@ describe('buildIos with a mocked executor', () => {
     });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       onNote: (line) => notes.push(line),
@@ -1309,6 +1344,7 @@ describe('buildIos with a mocked executor', () => {
     });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       onNote: (line) => notes.push(line),
@@ -1334,6 +1370,7 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
       compilationCache: null,
@@ -1349,7 +1386,12 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
     const dd = workspaceDerivedData(tmp);
-    const promise = buildIos({ root: tmp, udid: 'BF2A-1111-2222', logWriter: recordingWriter() });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'BF2A-1111-2222',
+      logWriter: recordingWriter(),
+    });
 
     expect(spawnCalls.length).toBe(1);
     const firstCall = spawnCalls[0];
@@ -1388,7 +1430,13 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const writer = recordingWriter();
     const dd = join(tmp, 'dd');
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: dd });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: dd,
+    });
 
     expect(writer.records.map((r) => r.event)).toEqual(['build_start']);
 
@@ -1413,6 +1461,7 @@ describe('buildIos with a mocked executor', () => {
     const dd = join(tmp, 'dd');
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'u',
       logWriter: writer,
       derivedDataPath: dd,
@@ -1450,6 +1499,7 @@ describe('buildIos with a mocked executor', () => {
     const dd = join(tmp, 'dd');
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'u',
       logWriter: writer,
       derivedDataPath: dd,
@@ -1490,7 +1540,13 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: join(tmp, 'dd'),
+    });
     child.stdout.emit('data', 'error: died mid-line with no newline');
     child.emit('close', 65, null);
     const result = await promise;
@@ -1503,7 +1559,13 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child });
     const writer = recordingWriter();
     const dd = join(tmp, 'dd');
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: dd });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: dd,
+    });
     child.stdout.emit('data', 'one\n\n\ntwo\n');
     makeProduct(dd);
     child.emit('close', 0, null);
@@ -1521,6 +1583,7 @@ describe('buildIos with a mocked executor', () => {
     let clock = 1000;
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'u',
       logWriter: writer,
       derivedDataPath: dd,
@@ -1545,7 +1608,13 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: join(tmp, 'dd'),
+    });
     child.stdout.emit(
       'data',
       [
@@ -1576,7 +1645,13 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = { ...recordingWriter(), write: () => true };
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: join(tmp, 'dd'),
+    });
     const before = heapUsedAfterGc();
     child.stdout.emit('data', '/src/App/Early.m:3:1: error: early failure\n');
     const filler = 'x'.repeat(500);
@@ -1600,7 +1675,13 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: join(tmp, 'dd'),
+    });
     const lines = Array.from({ length: 13 }, (_, i) => `/src/File${i}.m:${i + 1}:1: error: broken ${i}`);
     child.stdout.emit('data', `${lines.join('\n')}\n** BUILD FAILED **\n`);
     child.emit('close', 65, null);
@@ -1615,7 +1696,13 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     harness(tmp, { child });
     const writer = recordingWriter();
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: writer, derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: writer,
+      derivedDataPath: join(tmp, 'dd'),
+    });
     child.stdout.emit('data', 'something\nwent\n\nwrong\nsomehow\nentirely\n');
     child.emit('close', 70, null);
     const result = await promise;
@@ -1630,7 +1717,12 @@ describe('buildIos with a mocked executor', () => {
     const child = fakeChild();
     const spawnCalls = harness(join(tmp, 'elsewhere'), { child });
     const writer = recordingWriter();
-    const result = await buildIos({ root: join(tmp, 'nothing-here'), udid: 'u', logWriter: writer });
+    const result = await buildIos({
+      root: join(tmp, 'nothing-here'),
+      iosDir: join(tmp, 'nothing-here', 'ios'),
+      udid: 'u',
+      logWriter: writer,
+    });
     assert(!result.ok);
     expect(result.code).toBe('STIM_BUILD_FAILED');
     expect(result.diagnostics[0]?.remedy).toMatch(/prebuild/);
@@ -1641,7 +1733,7 @@ describe('buildIos with a mocked executor', () => {
   test('an unresolvable scheme fails as STIM_NO_SCHEME before anything is spawned', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child, listing: '{"project":{"name":"App","schemes":["one","two"]}}' });
-    const result = await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() });
+    const result = await buildIos({ root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() });
     assert(!result.ok);
     expect(result.code).toBe('STIM_NO_SCHEME');
     expect(spawnCalls).toEqual([]);
@@ -1657,7 +1749,7 @@ describe('buildIos with a mocked executor', () => {
         throw Object.assign(new Error('spawn xcodebuild ENOENT'), { code: 'ENOENT' });
       },
     });
-    const result = await buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter() });
+    const result = await buildIos({ root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() });
     assert(!result.ok);
     expect(result.diagnostics[0]?.message).toMatch(/Could not run xcodebuild/);
     expect(result.diagnostics[0]?.remedy).toMatch(/xcode-select/);
@@ -1666,7 +1758,13 @@ describe('buildIos with a mocked executor', () => {
   test('an asynchronous spawn error resolves the build instead of hanging it', async () => {
     const child = fakeChild();
     harness(tmp, { child });
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: join(tmp, 'dd'),
+    });
     child.emit('error', new Error('spawn xcodebuild EACCES'));
     const result = await promise;
     assert(!result.ok);
@@ -1676,7 +1774,13 @@ describe('buildIos with a mocked executor', () => {
   test('a build that succeeds without producing an app is a failure, not a success with no path', async () => {
     const child = fakeChild();
     harness(tmp, { child });
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: join(tmp, 'dd') });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: join(tmp, 'dd'),
+    });
     child.emit('close', 0, null);
     const result = await promise;
     assert(!result.ok);
@@ -1689,7 +1793,13 @@ describe('buildIos with a mocked executor', () => {
     harness(tmp, { child, bundleId: null });
     const dd = join(tmp, 'dd');
     makeProduct(dd);
-    const promise = buildIos({ root: tmp, udid: 'u', logWriter: recordingWriter(), derivedDataPath: dd });
+    const promise = buildIos({
+      root: tmp,
+      iosDir: join(tmp, 'ios'),
+      udid: 'u',
+      logWriter: recordingWriter(),
+      derivedDataPath: dd,
+    });
     child.emit('close', 0, null);
     const result = await promise;
     assert(!result.ok);
@@ -1703,6 +1813,7 @@ describe('buildIos with a mocked executor', () => {
     const dd = join(tmp, 'dd');
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'u',
       logWriter: recordingWriter(),
       derivedDataPath: dd,
@@ -1728,6 +1839,7 @@ describe('buildIos with a mocked executor', () => {
     const dd = join(tmp, 'dd');
     const promise = buildIos({
       root: tmp,
+      iosDir: join(tmp, 'ios'),
       udid: 'u',
       logWriter: recordingWriter(),
       derivedDataPath: dd,
@@ -1747,10 +1859,10 @@ describe('buildIos with a mocked executor', () => {
       TypeError,
     );
     await expect(() => buildIos({ root: tmp, udid: 'u' } as unknown as BuildIosArgs)).rejects.toThrow(TypeError);
-    await expect(() => buildIos({ root: tmp, udid: 'u', logWriter: {} as unknown as NdjsonWriter })).rejects.toThrow(
-      TypeError,
-    );
-    await expect(() => buildIos({ root: tmp, logWriter: writer })).rejects.toThrow(TypeError);
+    await expect(() =>
+      buildIos({ root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: {} as unknown as NdjsonWriter }),
+    ).rejects.toThrow(TypeError);
+    await expect(() => buildIos({ root: tmp, iosDir: join(tmp, 'ios'), logWriter: writer })).rejects.toThrow(TypeError);
   });
 });
 

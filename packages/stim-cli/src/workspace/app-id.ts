@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
 import { join } from 'path';
 import { readProjectConfig } from '../engine/remote-cache.ts';
 import { readAppConfigText, readAppJson } from './project.ts';
+import { DEFAULT_IOS_PROJECT_PATH } from './settings.ts';
 
 interface AppIds {
   bundleId: string | null;
@@ -38,24 +39,29 @@ function idsFromConfig(projectRoot: string): AppIds {
   };
 }
 
-export function detectAppIds(projectRoot: string): AppIds {
+export function detectAppIds(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+): AppIds {
   const ids = idsFromConfig(projectRoot);
   return {
-    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(projectRoot),
+    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
     androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(projectRoot),
   };
 }
 
-export function detectBundleId(projectRoot: string): string | null {
-  return detectAppIds(projectRoot).bundleId;
+export function detectBundleId(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+): string | null {
+  return detectAppIds(projectRoot, iosDir).bundleId;
 }
 
 export function detectAndroidPackage(projectRoot: string): string | null {
   return detectAppIds(projectRoot).androidPackage;
 }
 
-function detectBundleIdFromPbxproj(projectRoot: string): string | null {
-  const iosDir = join(projectRoot, 'ios');
+function detectBundleIdFromPbxproj(iosDir: string): string | null {
   if (!existsSync(iosDir)) return null;
   let entries: Dirent[];
   try {
