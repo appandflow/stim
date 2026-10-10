@@ -94,7 +94,7 @@ device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflo
 a tiny Expo app, and shows:
 
 - **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it. An existing `~/stim-tutorial` that is a clean clone of the tutorial repository is reused; any other existing folder makes your agent ask for another one. **Restart Tutorial** asks before it deletes the folder and its tutorial worktrees through `stim worktree remove`, then moves the folder to the Trash; a folder without the tutorial marker is left alone. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
-- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
+- **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes.
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
@@ -130,9 +130,8 @@ yourself, with the agent-device state directory and simulator filled in when
 known. Create the Tutorial has only the prompt. Desktop remembers whether the
 section is open. Copying a command does not start the three-minute workspace
 warning. The default base is `~/stim-tutorial`.
-**Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
-for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way. To
+The agent keeps the tutorial's own runs local, whatever `ios.remote` or
+`remote.build` say. To
 read the complete manual:
 
 <StimTabs code={`stim guide tutorial manual`} />

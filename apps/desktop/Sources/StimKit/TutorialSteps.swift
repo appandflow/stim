@@ -23,7 +23,7 @@ public enum TutorialSteps {
       ]),
     TutorialStep(
       id: "build", title: "Make a Change", who: "you", optional: false,
-      ask: nil, section: nil,
+      ask: "Make the title purple in the Stim tutorial app and check it on the simulator.", section: nil,
       commands: [
 
       ]),
