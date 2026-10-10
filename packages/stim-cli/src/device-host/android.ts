@@ -119,8 +119,14 @@ export async function runHostedAndroidDevice(
       assertHostedDeviceLedger(home, avdName, 'android');
       if (portIsOccupied(selected.consolePort)) throw new Error('The selected Android console port became occupied.');
       bootAndroidEmulator(avdName, selected.consolePort, { openViewer: false, logFile: join(home, 'emulator.log') });
+      const boot = await waitForBoot(selected.serial, 240000, { commandTimeoutMs: 5000 });
+      if (!boot.ok) {
+        const { sysBoot, devBoot, bootAnim, packageManager } = boot.diagnostic ?? {};
+        throw new Error(
+          `Hosted Android boot could not be verified for its exact owned AVD. Diagnostic: ${JSON.stringify({ sysBoot, devBoot, bootAnim, packageManager })}`,
+        );
+      }
       if (
-        !(await waitForBoot(selected.serial, 240000, { commandTimeoutMs: 5000 })).ok ||
         getAvdNameForSerial(selected.serial) !== avdName ||
         androidDeviceAbi(selected.serial) !== selected.architecture
       )
@@ -170,8 +176,14 @@ export async function runHostedAndroidDevice(
         openViewer: false,
         logFile: join(home, 'emulator.log'),
       });
+      const boot = await waitForBoot(device.serial, 240000, { commandTimeoutMs: 5000 });
+      if (!boot.ok) {
+        const { sysBoot, devBoot, bootAnim, packageManager } = boot.diagnostic ?? {};
+        throw new Error(
+          `Hosted Android boot could not be verified for its exact owned AVD. Diagnostic: ${JSON.stringify({ sysBoot, devBoot, bootAnim, packageManager })}`,
+        );
+      }
       if (
-        !(await waitForBoot(device.serial, 240000, { commandTimeoutMs: 5000 })).ok ||
         getAvdNameForSerial(device.serial) !== device.avdName ||
         androidDeviceAbi(device.serial) !== device.architecture
       )

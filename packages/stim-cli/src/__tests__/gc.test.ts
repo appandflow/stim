@@ -663,7 +663,9 @@ describe('android ledger names', () => {
         return listing;
       },
       runQuiet: () => null,
-      runFile: () => '',
+      runFile(file, args = []) {
+        return this.run!([file, ...args].join(' '));
+      },
     });
   });
 
@@ -751,7 +753,10 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       }
       throw new Error(`unexpected run: ${cmd}`);
     },
-    runFile: () => JSON.stringify({ devices: {} }),
+    runFile(file, args = []) {
+      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
+      return JSON.stringify({ devices: {} });
+    },
     runQuiet: () => null,
     runFileQuiet: () => null,
     spawn: () => null,
@@ -2759,6 +2764,7 @@ test('gc --json lists every device with its owner and every runtime and system i
   setExecutor({
     ...getExecutor(),
     runFile(file, args: string[] = []) {
+      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
       const cmd = [file, ...args].join(' ');
       execCalls.push(cmd);
       if (cmd === 'xcrun simctl list devices --json') return iosListJson(devices);
