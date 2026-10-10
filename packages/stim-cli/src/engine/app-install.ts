@@ -337,17 +337,20 @@ export function launchIosApp(
   ];
   let runningPid = iosAppProcess(udid, bundleId, { exec: e });
   const restart: { restartedPid?: number } = {};
-  if (runningPid) {
+  if (runningPid !== null) {
     try {
       e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
-      return {
-        failed: true,
-        code: LAUNCH_ERROR,
-        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${runningPid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
-      };
+      const stderr = String((err as { stderr?: unknown })?.stderr ?? '');
+      if (runningPid !== undefined || !stderr.includes('found nothing to terminate')) {
+        return {
+          failed: true,
+          code: LAUNCH_ERROR,
+          reason: `simctl terminate ${bundleId} failed, so the running app${runningPid ? ` (pid ${runningPid})` : ''} was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+        };
+      }
     }
-    restart.restartedPid = runningPid;
+    if (runningPid) restart.restartedPid = runningPid;
     runningPid = null;
   }
   if (metroPort !== null) {
