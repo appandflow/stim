@@ -74,8 +74,7 @@ shows six, and **Show more (N)** expands the rest in place. Clicking a card open
 the project with all its worktrees, under a **Showing all workspaces** chip that
 returns to the active ones; the saved sidebar filter does not change. A project
 page whose worktrees are all inactive offers **Show All**. A **Recently archived** row lists the last five
-archives, and **Try this** suggests one feature a day with a copyable agent
-prompt. **Next Tip** shows another one, and the x dismisses a tip for good.
+archives.
 
 **Active Workspaces** shows every worktree with something running, building or
 warming as a card in a grid: two columns at typical widths, one when the window is
@@ -1584,7 +1583,11 @@ until the thresholds are met, the workspace paths and build IDs counted.
 
 Tips cover remote Macs, phone pairing, the tutorial, hiding workspaces when
 there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. Only applicable tips appear. One tip stays for the calendar day;
+simulators. The replay tip appears when an archived workspace still has recordings and opens it.
+Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
+development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
+package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
+errors. Only applicable tips appear. One tip stays for the calendar day;
 the next day picks the least recently shown applicable tip, with unseen tips
 first. **Next Tip** cycles through the remaining choices. The X hides the card
 until tomorrow. Turn off **Settings > App > Show tips** to disable tips; the Machine page card stays.
