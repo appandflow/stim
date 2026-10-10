@@ -22,7 +22,7 @@ public enum TutorialSteps {
       ask: nil, section: nil),
     TutorialStep(
       id: "parallel", title: "Change It Again in Parallel", who: "you", optional: false,
-      ask: nil, section: nil),
+      ask: "While that builds, make the Tap me button green in a new worktree and check it on the simulator.", section: nil),
     TutorialStep(
       id: "device", title: "Live View and Control", who: "you", optional: true,
       ask: nil, section: nil),

@@ -22,11 +22,9 @@ const tutorial: GuideTopic = {
   preamble: () => `STIM TUTORIAL
 
 The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, into {base}; the clone is
-never run, and only the optional delete step removes it. The user then asks for a visual change, and for another
-change while the first builds. Each change runs in its own linked worktree of
-{base}, so each has its own simulator and Metro port, and the second worktree's
-first iOS build reuses the first one's native build. Only the clone, the
-optional share and the cleanup need this guide: the changes are ordinary
+never run, and only the optional delete step removes it. The user then asks for a visual change, which runs in a
+linked worktree of {base} with its own simulator and Metro port. Only the clone,
+the optional share and the cleanup need this guide: the changes are ordinary
 requests, so follow stim guide agent for them, and check each change on the
 device.
 
@@ -72,9 +70,8 @@ and stop.
 ${local}
 
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
-making the title purple, in their own words. Each change runs in a new linked
-worktree of {base} (stim guide agent), and its first iOS build takes a few
-minutes.`,
+making the title purple, in their own words. It runs in a new linked worktree
+of {base} (stim guide agent), and its first iOS build takes a few minutes.`,
     },
     finish: {
       summary: 'Stop and remove the two tutorial worktrees, keeping the clone',
