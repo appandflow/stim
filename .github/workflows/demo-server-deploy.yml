@@ -7,6 +7,7 @@ on:
     paths:
       - 'apps/demo-server/**'
       - 'apps/mobile/mock-server/payloads.mjs'
+      - 'packages/core/**'
       - '.github/workflows/demo-server-deploy.yml'
 
 concurrency:
@@ -34,7 +35,9 @@ jobs:
           install: 'false'
           build: 'false'
       - if: env.HAS_CLOUDFLARE == 'true'
-        run: pnpm install --frozen-lockfile --filter stim-demo-server
+        run: pnpm install --frozen-lockfile --filter stim-demo-server... --filter stim-monorepo
+      - if: env.HAS_CLOUDFLARE == 'true'
+        run: pnpm --filter @stim-cli/core run build
       - name: Deploy
         if: env.HAS_CLOUDFLARE == 'true'
         working-directory: apps/demo-server

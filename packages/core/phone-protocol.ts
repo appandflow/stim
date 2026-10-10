@@ -2,6 +2,7 @@ import type * as Wire from './protocol.ts';
 import type * as State from './state/index.ts';
 
 export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
+export { withDerivedFacts } from './state/status-derived.ts';
 
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;

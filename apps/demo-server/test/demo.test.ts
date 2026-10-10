@@ -133,6 +133,23 @@ describe('the phone protocol', () => {
     ).toEqual([]);
   });
 
+  it('serves the stage, git chip and app presence stim derives, which the phone renders without deriving', () => {
+    const { environments } = new DemoMachine(fixtures, 'Demo Mac', TOKEN).status() as unknown as {
+      environments: {
+        stage?: unknown;
+        worktree?: { gitChip?: unknown };
+        ios?: { appPresence?: unknown };
+        android?: { appPresence?: unknown };
+      }[];
+    };
+    expect(environments.length).toBeGreaterThan(0);
+    for (const env of environments) {
+      expect(env.stage).toMatchObject({ kind: expect.any(String) });
+      expect(env.worktree?.gitChip).toMatchObject({ parts: expect.any(Array) });
+      for (const device of [env.ios, env.android].filter(Boolean)) expect(device).toHaveProperty('appPresence');
+    }
+  });
+
   it('keeps initial and periodic log events within their workspace, including empty workspaces', async () => {
     vi.useFakeTimers();
     const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
