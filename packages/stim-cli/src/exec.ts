@@ -49,8 +49,7 @@ const WINDOWS_BATCH_FILE = /\.(?:bat|cmd)$/i;
 const BATCH_UNSAFE_ARGUMENT = /["%\r\n]/;
 
 // cross-spawn runs a .bat/.cmd target through `cmd.exe /d /s /c` with escaping the batch file's own
-// %* expansion undoes (moxystudio/node-cross-spawn#171). Node refuses the same characters for its
-// own batch spawning since CVE-2024-27980.
+// %* expansion undoes (moxystudio/node-cross-spawn#171).
 export function isUnsafeBatchSpawn(
   target: string,
   args: readonly string[],

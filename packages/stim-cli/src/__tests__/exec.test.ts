@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { getExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
 
 test('default executor runs commands and returns stdout trimmed', () => {
   resetExecutor();
@@ -103,4 +103,18 @@ test.skipIf(process.platform !== 'win32')('runFile launches a .cmd shim on Windo
   expect(getExecutor().findExecutable('npm')).toMatch(/\.cmd$/i);
   const shim = fileURLToPath(new URL('./fixtures/cmd-shim/echo-first-arg.cmd', import.meta.url));
   expect(getExecutor().runFile(shim, ['--version'])).toBe('--version');
+});
+
+test.each([
+  ['avdmanager.bat', ['--device', 'pixel_6"&calc&"'], 'win32', true],
+  ['eas.CMD', ['%PATH%'], 'win32', true],
+  ['avdmanager.bat', ['a\rcalc'], 'win32', true],
+  ['avdmanager.bat', ['a\ncalc'], 'win32', true],
+  ['agent-device.cmd', ['open', 'scheme://x/?url=http%3A%2F%2Flocalhost'], 'win32', true],
+  ['adb.exe', ['"quoted"'], 'win32', false],
+  ['avdmanager.bat', ['"quoted"'], 'darwin', false],
+  ['avdmanager.bat', ['--device', 'Nexus 5X'], 'win32', false],
+  ['avdmanager.bat', ['a&b'], 'win32', false],
+] as const)('isUnsafeBatchSpawn(%s, %j, %s) is %s', (target, args, platform, unsafe) => {
+  expect(isUnsafeBatchSpawn(target, args, platform)).toBe(unsafe);
 });
