@@ -419,11 +419,11 @@ STALE STATUS CACHE ENTRIES
   if it comes back.
 
 NAMED SERVER PORTS
-  worktree remove stops TCP listeners on each named allocation and releases
-  the ports. gc reports named allocations for missing workspaces; gc --delete
-  stops their listeners and releases them. Unmounted or unresolved paths stay
-  registered. Failed stops retain their allocations for a later retry.
-  stim stop does not touch named ports. See guide ports.
+  worktree remove, gc --delete and automatic maintenance release named
+  allocations without signalling their listeners. gc reports named
+  allocations for missing workspaces; gc --delete releases them. Unmounted or
+  unresolved paths stay registered. Only ports stop stops a named listener,
+  and stim stop does not touch named ports. See guide ports.
 
 ON THE SOURCE CHECKOUT
   git cannot remove a repository's main working tree, and deleting the source
