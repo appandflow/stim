@@ -280,8 +280,8 @@ async function verifyAndroidMetroRun({
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
         processAlive: () => {
-          const pid = androidAppProcess(serial, androidPackage);
-          return pid === undefined ? null : pid !== null;
+          const running = androidAppProcess(serial, androidPackage);
+          return running.state === 'unknown' ? null : running.state === 'running';
         },
       })
     : { verified: false, skipped: true };

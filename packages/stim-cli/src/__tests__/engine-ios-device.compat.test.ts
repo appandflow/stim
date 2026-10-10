@@ -53,7 +53,7 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
     let failure = '';
     let timedOut = false;
     let probedUdid: string | undefined;
-    const pid = iosDeviceProcess(
+    const probe = iosDeviceProcess(
       { udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' },
       {
         exec: {
@@ -73,10 +73,10 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
       },
     );
     expect(probedUdid).toBe(connected.udid);
-    if (pid === undefined) {
+    if (probe.state === 'unknown') {
       if (timedOut) throw new Error(`devicectl process probe timed out\n${failure}`);
       throw new Error(failure || 'The probe failed without a devicectl error');
     }
-    expect(pid).toBe(null);
+    expect(probe).toEqual({ state: 'stopped' });
   }, 120_000);
 });

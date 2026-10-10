@@ -1468,11 +1468,12 @@ A RUNNING APP IS RESTARTED, LIKE XCODE'S RUN
   A stop that fails refuses the launch rather than reusing the old process.
   When a simulator's process list cannot be read, Stim launches with
   \`simctl launch --terminate-running-process\`, which replaces any running
-  copy. When an emulator's cannot be read, Stim launches without stopping
-  anything and verification reports what it observes. An iPhone run
-  (\`ios --device\`) needs no extra step: its collector launches with
-  devicectl's \`--terminate-existing\`. Remote targets launch through
-  \`agent-device open --relaunch\`.
+  copy. When an Android device's cannot be read, Stim launches with
+  \`am start -S\`, which force-stops the app first; an app without a
+  launcher activity gets a best-effort \`am force-stop\` before \`monkey\`.
+  Neither claims a restart. An iPhone run (\`ios --device\`) needs no extra
+  step: its collector launches with devicectl's \`--terminate-existing\`.
+  Remote targets launch through \`agent-device open --relaunch\`.
 
 RUNTIME STATE AND BUILD INPUTS
 Runtime state is stored outside the project tree under

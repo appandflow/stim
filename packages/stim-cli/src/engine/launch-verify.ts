@@ -66,10 +66,12 @@ export async function verifyAndroidReleaseLaunch({
   const e = exec || getExecutor();
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const pid = androidAppProcess(serial, packageName, { exec: e });
+  const running = androidAppProcess(serial, packageName, { exec: e });
   const waitedMs = now() - startedAt;
-  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
-  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
+  if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
+  return running.state === 'running'
+    ? { verified: true, waitedMs, pid: running.pid }
+    : { verified: false, reason: 'exited', waitedMs, pid: null };
 }
 
 function isProcessAlive(pid: number): boolean {

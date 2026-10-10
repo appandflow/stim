@@ -256,8 +256,8 @@ async function verifyIosMetroRun({
           logsDir,
         );
   const deviceProcess = (): boolean | null => {
-    const pid = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
-    return pid === undefined ? null : pid !== null;
+    const running = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
+    return running.state === 'unknown' ? null : running.state === 'running';
   };
 
   const siblings = metroCheck ? siblingPlatformSlots(root, 'ios', slot) : [];
@@ -280,8 +280,8 @@ async function verifyIosMetroRun({
             ? deviceProcess
             : () => {
                 if (launched?.pid) return d.pidExists(launched.pid);
-                const pid = iosAppProcess(udid, bundleId);
-                return pid === undefined ? null : pid !== null;
+                const running = iosAppProcess(udid, bundleId);
+                return running.state === 'unknown' ? null : running.state === 'running';
               },
       })
     : { verified: false, skipped: true };
