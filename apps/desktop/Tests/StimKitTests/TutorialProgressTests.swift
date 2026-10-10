@@ -8,7 +8,7 @@ private let tourStart = parseTimestamp("2026-10-07T04:56:00.000Z")!
 private let afterBuild = parseTimestamp("2026-10-07T05:02:00.000Z")!
 private let afterRebuild = parseTimestamp("2026-10-07T05:06:00.000Z")!
 private let stepIDs = [
-  "begin", "build", "parallel", "device", "agent", "logs", "phone", "share", "finish",
+  "begin", "build", "parallel", "device", "agent", "logs", "phone", "share", "finish", "delete",
 ]
 
 private func fixture(_ name: String) throws -> StatusPayload {
@@ -264,8 +264,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   _ = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "finish")))
   let archives = try fixture("06-archived").archived!.map(\.projectRoot)
   let result = progress.update(TutorialInput(environment: nil, archivedProjectRoots: archives, now: afterRebuild))
-  #expect(result.isComplete)
-  #expect(result.currentStep == nil)
+  #expect(result.currentStep == "delete")
   #expect(state("finish", in: result).state == .done)
   #expect(state("finish", in: result).ticks.first { $0.id == "stopped" }?.done == false)
   #expect(state("finish", in: result).ticks.first { $0.id == "archived" }?.done == true)
@@ -287,7 +286,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("finish", in: firstOnly).ticks.first { $0.id == "archived" }?.done == false)
   let both = progress.update(
     TutorialInput(environment: nil, archivedProjectRoots: archives + [secondPath], now: afterRebuild))
-  #expect(both.currentStep == nil)
+  #expect(both.currentStep == "delete")
 }
 
 @Test func tutorialFinishStopTickAloneDoesNotComplete() throws {
@@ -310,7 +309,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(missing.currentStep == "finish")
   #expect(state("finish", in: missing).action == .restart)
   let result = progress.update(TutorialInput(environment: nil, archiveEnabled: false, now: afterRebuild))
-  #expect(result.isComplete)
+  #expect(result.currentStep == "delete")
   #expect(state("finish", in: result).detail == "Archived is off")
 }
 
@@ -319,8 +318,35 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var progress = TutorialProgress()
   let result = progress.update(
     TutorialInput(environment: nil, archivedProjectRoots: archives, now: afterRebuild, record: saved(at: "finish")))
+  #expect(result.currentStep == "delete")
+  #expect(result.steps.filter { $0.id != "delete" }.allSatisfy { $0.state == .done })
+}
+
+@Test func tutorialDeleteCompletesOnlyOnceTheCloneIsUnregisteredAndItsFolderIsGone() throws {
+  var record = saved(at: "delete")
+  record.clonePath = "/Users/example/stim-tutorial"
+  var clone = try environment()
+  clone.path = "/Users/example/stim-tutorial"
+  clone.repository = clone.path
+  var progress = TutorialProgress()
+  let registered = progress.update(
+    TutorialInput(environment: nil, siblings: [clone], cloneFolderExists: false, now: afterRebuild, record: record))
+  #expect(registered.currentStep == "delete")
+  #expect(state("delete", in: registered).ticks.map(\.done) == [true, false])
+  let folderLeft = progress.update(TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild))
+  #expect(folderLeft.currentStep == "delete")
+  let gone = progress.update(TutorialInput(environment: nil, cloneFolderExists: false, now: afterRebuild))
+  #expect(gone.isComplete)
+  #expect(state("delete", in: gone).state == .done)
+}
+
+@Test func tutorialCompletedBeforeTheDeleteStepExistedStaysComplete() throws {
+  var record = saved(at: "done")
+  record.done = stepIDs.filter { $0 != "delete" }
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild, record: record))
   #expect(result.isComplete)
-  #expect(result.steps.allSatisfy { $0.state == .done })
 }
 
 @Test func tutorialSkipAndTimedMarkDonePersistAndResumeAtFirstUnfinishedStep() throws {
@@ -402,7 +428,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var progress = TutorialProgress()
   let result = progress.update(
     TutorialInput(environment: nil, archiveEnabled: false, now: afterRebuild, record: saved(at: "finish")))
-  #expect(result.isComplete)
+  #expect(result.currentStep == "delete")
   #expect(state("finish", in: result).detail == "Archived is off")
 }
 

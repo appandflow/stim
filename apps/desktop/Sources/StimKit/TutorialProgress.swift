@@ -129,7 +129,7 @@ public final class TutorialRecordStore {
 
   public init(_ defaults: UserDefaults = .standard) { self.defaults = defaults }
 
-  public var completed: Bool { record?.step == "done" }
+  public var completed: Bool { ["done", "delete"].contains(record?.step) }
 
   public var record: TutorialRecord? {
     get {
@@ -156,6 +156,7 @@ public struct TutorialInput: Sendable {
   public var phoneApp: Bool
   public var replayOff: Bool
   public var archiveEnabled: Bool
+  public var cloneFolderExists: Bool?
   public var now: Date
   public var record: TutorialRecord?
 
@@ -163,7 +164,7 @@ public struct TutorialInput: Sendable {
     environment: TutorialEnvironment?, siblings: [TutorialEnvironment] = [], archivedProjectRoots: [String] = [],
     logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
-    replayOff: Bool = false, archiveEnabled: Bool = true,
+    replayOff: Bool = false, archiveEnabled: Bool = true, cloneFolderExists: Bool? = nil,
     now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
@@ -175,6 +176,7 @@ public struct TutorialInput: Sendable {
     self.phoneApp = phoneApp
     self.replayOff = replayOff
     self.archiveEnabled = archiveEnabled
+    self.cloneFolderExists = cloneFolderExists
     self.now = now
     self.record = record
   }
@@ -227,6 +229,7 @@ public struct TutorialSnapshot: Sendable {
   public var record: TutorialRecord
   public var shouldReopen: Bool
   public var isComplete: Bool { currentStep == nil }
+  public var isFinished: Bool { isComplete || currentStep == "delete" }
 }
 
 public struct TutorialProgress: Sendable {
@@ -287,13 +290,14 @@ public struct TutorialProgress: Sendable {
     }
     let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
     let second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
-    if launching, record?.tourPath != nil, tracked == nil, second == nil,
+    if launching, record?.step != "done", record?.tourPath != nil, tracked == nil, second == nil,
       record?.allArchived(input.archivedProjectRoots) == true || (!input.archiveEnabled && record?.step == "finish")
     {
       let skipped = record!.skipped
-      record?.done = TutorialSteps.all.map(\.id).filter { !skipped.contains($0) }
-      record?.step = "done"
-    } else if launching {
+      record?.done = TutorialSteps.all.prefix { $0.id != "delete" }.map(\.id).filter { !skipped.contains($0) }
+      let step = firstUnfinished
+      record?.step = step
+    } else if launching, record?.step != "done" {
       let step = firstUnfinished
       record?.step = step
     }
@@ -518,6 +522,14 @@ public struct TutorialProgress: Sendable {
           : gone ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
         action: gone ? .restart : nil,
         ticks: [tick("stopped", record?.stopped == true), tick("archived", absent && archived)])
+    case "delete":
+      let worktreesGone = environment == nil && second == nil
+      let registered = input.siblings.contains { $0.path == record?.clonePath }
+      let cloneGone = record?.clonePath != nil && !registered && input.cloneFolderExists == false
+      return Checkpoint(
+        completed: worktreesGone && cloneGone ? now : nil,
+        detail: "Waiting for your agent to remove the tutorial",
+        ticks: [tick("worktrees", worktreesGone), tick("clone", cloneGone)])
     default: return Checkpoint()
     }
   }

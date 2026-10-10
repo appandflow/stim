@@ -422,7 +422,7 @@ struct RootView: View {
     return TutorialHint(
       step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath, selectedPath: selected,
       showMe: {
-        if tutorial.snapshot?.isComplete == true {
+        if tutorial.snapshot?.isFinished == true {
           openTutorialArchive()
         } else if let path = tutorial.tourPath {
           navigate(.environment(path), .click("tutorial Show me"))

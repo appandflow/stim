@@ -71,7 +71,7 @@
       XCTAssertEqual(model.snapshot?.record.skipped, ["device"])
     }
 
-    @MainActor func testResumeArchivedTourShowsDone() throws {
+    @MainActor func testResumeArchivedTourOffersTheDeleteStep() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(
         version: 2, tourPath: "/tmp/tutorial-tour", startedAt: ISO8601DateFormatter().date(from: "2026-10-07T12:00:00Z")!,
@@ -79,7 +79,8 @@
       let model = TutorialModel(defaults: defaults)
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
       XCTAssertTrue(model.isOpen)
-      XCTAssertTrue(model.snapshot?.isComplete == true)
+      XCTAssertEqual(model.snapshot?.currentStep, "delete")
+      XCTAssertNil(model.notice)
     }
 
     @MainActor func testOpeningBeforeStatusLoadsPreservesArchivedResumeDetection() throws {
@@ -91,7 +92,7 @@
       model.open()
       XCTAssertNil(model.snapshot)
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
-      XCTAssertTrue(model.snapshot?.isComplete == true)
+      XCTAssertEqual(model.snapshot?.currentStep, "delete")
     }
 
     @MainActor func testBeginningStartsNowAndIgnoresWorktreesFromBefore() throws {
@@ -121,7 +122,7 @@
       XCTAssertEqual(model.snapshot?.currentStep, "finish")
       entry.removedAt = "2026-10-07T12:03:00Z"
       model.update(workspaces: [], archived: [entry], sheetOpen: false)
-      XCTAssertTrue(model.snapshot?.isComplete == true)
+      XCTAssertEqual(model.snapshot?.currentStep, "delete")
     }
 
     @MainActor func testRestartLooksLikeAFirstStartWhileAnOlderVersionTourIsStillRegistered() throws {
@@ -241,7 +242,7 @@
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now)
       XCTAssertFalse(model.snapshot?.isComplete == true)
       model.update(workspaces: [], archived: [], sheetOpen: false, now: now.addingTimeInterval(11))
-      XCTAssertTrue(model.snapshot?.isComplete == true)
+      XCTAssertEqual(model.snapshot?.currentStep, "delete")
     }
 
     @MainActor func testStoredVersionOneProgressStartsOverOnAVersionTwoTourAtANewPath() throws {

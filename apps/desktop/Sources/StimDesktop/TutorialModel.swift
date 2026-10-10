@@ -65,7 +65,7 @@ final class TutorialModel: ObservableObject {
         ? TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart)
         : TutorialNotice("Waiting for the tutorial workspace...")
     }
-    if workspace == nil, tourPath != nil, snapshot?.isComplete == false,
+    if workspace == nil, tourPath != nil, snapshot?.isComplete == false, snapshot?.currentStep != "delete",
       !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
     {
       return TutorialNotice("Tutorial workspace gone: Restart", action: .restart)
@@ -154,6 +154,7 @@ final class TutorialModel: ObservableObject {
         pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
         replayOff: workspace?.replayOff ?? false,
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
+        cloneFolderExists: saved?.clonePath.map { FileManager.default.fileExists(atPath: $0) },
         now: now, record: records.record))
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }

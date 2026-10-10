@@ -74,7 +74,7 @@ struct TutorialPanel: View {
 
   private var stepList: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if snapshot.isComplete {
+      if snapshot.isFinished {
         Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
           .font(.stim(.headline)).foregroundStyle(Palette.success)
         Text(
@@ -309,6 +309,9 @@ struct TutorialPanel: View {
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
+    case "delete":
+      return
+        "Optional. Your agent removes any tutorial worktrees left and then the clone, through Stim so their simulators and dev servers go too, and deletes the folder. Skip this step to keep the clone."
     default: return ""
     }
   }
@@ -320,6 +323,8 @@ struct TutorialPanel: View {
     case "action": return "Agent action received"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
+    case "worktrees": return "Tutorial worktrees removed"
+    case "clone": return "Clone removed and deleted"
     default: return PhaseStep.name(id)
     }
   }

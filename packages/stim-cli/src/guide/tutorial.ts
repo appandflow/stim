@@ -22,7 +22,7 @@ const tutorial: GuideTopic = {
   preamble: () => `STIM TUTORIAL
 
 The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, into {base}; the clone is
-never run or removed. The user then asks for a visual change, and for another
+never run, and only the optional delete step removes it. The user then asks for a visual change, and for another
 change while the first builds. Each change runs in its own linked worktree of
 {base}, so each has its own simulator and Metro port, and the second worktree's
 first iOS build reuses the first one's native build. Only the clone, the
@@ -34,6 +34,7 @@ ${local}
 
 "Follow stim guide tutorial run" means stim guide tutorial run.
 "Follow stim guide tutorial finish" means stim guide tutorial finish.
+"Follow stim guide tutorial delete" means stim guide tutorial delete.
 "${TUTORIAL_RESTART_PROMPT}" means stim guide tutorial restart.
 
 ${paths}
@@ -62,7 +63,8 @@ ${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user need
 Enter the clone and install its dependencies (npm ci) so the worktrees made for
 the changes inherit them, then run stim doctor --platform ios there: it registers
 the clone with Stim so Stim Desktop sees it, and builds or boots nothing. Do not
-run the app: the clone is only the base for the user's changes and is never removed.
+run the app: the clone is only the base for the user's changes; only the optional
+delete step removes it.
 Report the findings of stim doctor and do not act on them: no SimSlim install, no
 --fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
 and stop.
@@ -93,15 +95,44 @@ changes, which is the consent stim guide agent asks for before worktree remove
 --force, for exactly those two paths: if the plain remove refuses one of them
 only because of uncommitted changes or commits found nowhere else, remove that
 worktree with --force. Never use --force on the clone or on any other
-worktree, and on any other refusal report it and stop. Keep the clone. Print
-these optional cleanup commands for the user; do not run them:
-
-  rm -rf "{base}"
+worktree, and on any other refusal report it and stop. Keep the clone: the
+optional delete step removes it only when the user asks (stim guide tutorial
+delete).
 
 If archive is enabled, tell the user the worktrees appear under Archived in
 Stim Desktop. With archive disabled, report removal without promising an
 archive. Without Desktop, inspect stim status --json for the removed
 environments. End the turn.`,
+    },
+    delete: {
+      summary: 'Remove the tutorial worktrees and the clone through Stim, then delete the folder',
+      body: () => `DELETE THE TEST APP (OPTIONAL)
+
+${paths}
+
+Only on the user's explicit request, which the delete prompt is. It covers
+{base} and its linked worktrees, nothing else. Remove them through Stim so their
+simulators, Metro ports and Stim records are torn down before the files go.
+
+First check that {base}/app.json has expo.extra.stimTutorial. If it does not,
+{base} is not the tutorial clone: report it and stop.
+
+List the worktrees with git -C "{base}" worktree list. For each linked worktree
+(every entry except {base} itself), run stim stop from its path, then
+stim worktree remove "<path>" from {base}. Never use --force here: the delete
+request does not say which changes the user can lose. If a remove refuses, report
+it and stop without deleting anything, so the user can decide about that
+worktree.
+
+Then, from {base}, run stim stop and stim worktree remove "{base}". On the
+source checkout it reclaims the Stim environment and leaves the files. If it
+refuses, report it and stop. Only after it succeeds, from the parent folder,
+delete the clone:
+
+  rm -rf "{base}"
+
+Never use --force in this step, and never delete any path other than {base}. Report
+what you removed and end the turn.`,
     },
     share: {
       summary: 'Optionally open a public pull request with a screenshot of the change',

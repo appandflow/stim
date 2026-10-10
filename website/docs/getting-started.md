@@ -106,7 +106,7 @@ To type the commands yourself:
 <StimTabs code={`stim guide tutorial manual`} />
 
 Finishing stops the apps and removes only the two experiment worktrees, keeping
-the base repository. With archiving enabled, the tour appears under Archived.
+the base repository; an optional last step deletes it. With archiving enabled, the tour appears under Archived.
 Phone viewing is optional.
 
 ## Common prompts

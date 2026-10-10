@@ -596,6 +596,18 @@ test('tutorial finish names the two tracked worktrees as the only --force target
   expect(ask).toContain('{worktrees}');
 });
 
+test('tutorial delete tears down the worktrees and the clone through Stim before deleting only the clone', () => {
+  const remove = flat('delete');
+  expect(remove).toMatch(
+    /expo\.extra\.stimTutorial\. If it does not, \{base\} is not the tutorial clone: report it and stop/,
+  );
+  expect(remove.indexOf('stim worktree remove "<path>"')).toBeLessThan(remove.indexOf('stim worktree remove "{base}"'));
+  expect(remove.indexOf('stim worktree remove "{base}"')).toBeLessThan(remove.indexOf('rm -rf "{base}"'));
+  expect(remove).toMatch(/Never use --force in this step, and never delete any path other than \{base\}/);
+  expect(remove).not.toMatch(/remove it with --force/);
+  expect(flat('finish')).not.toContain('rm -rf');
+});
+
 test('tutorial restart removes nothing, so it cannot contradict the finish force rule', () => {
   expect(flat('restart')).toMatch(/remove nothing/i);
 });

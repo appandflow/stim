@@ -6,13 +6,15 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
 /**
  * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour} and {worktrees}
- * are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
+ * are filled in by Desktop. A step with a section names the guide section that holds its safety rules.
  */
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and follow stim guide tutorial run.`,
   agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
+  delete:
+    'Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.',
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
   retry: 'The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again.',
 };
@@ -127,6 +129,23 @@ export const TUTORIAL_STEPS: {
       'cd "{base}"',
       'stim worktree remove "{tour}"',
       'stim worktree remove "{second}"',
+    ],
+  },
+  {
+    id: 'delete',
+    title: 'Delete the Test App',
+    who: 'agent',
+    optional: true,
+    ask: TUTORIAL_ASKS.delete,
+    section: 'delete',
+    commands: [
+      'cd "{base}"',
+      'grep stimTutorial app.json',
+      'git worktree list',
+      'stim stop',
+      'stim worktree remove "{base}"',
+      'cd ..',
+      'rm -rf "{base}"',
     ],
   },
 ];

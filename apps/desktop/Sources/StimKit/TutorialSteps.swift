@@ -86,5 +86,17 @@ public enum TutorialSteps {
         "stim worktree remove \"{tour}\"",
         "stim worktree remove \"{second}\"",
       ]),
+    TutorialStep(
+      id: "delete", title: "Delete the Test App", who: "agent", optional: true,
+      ask: "Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.", section: "delete",
+      commands: [
+        "cd \"{base}\"",
+        "grep stimTutorial app.json",
+        "git worktree list",
+        "stim stop",
+        "stim worktree remove \"{base}\"",
+        "cd ..",
+        "rm -rf \"{base}\"",
+      ]),
   ]
 }
