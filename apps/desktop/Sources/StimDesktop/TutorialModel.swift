@@ -22,7 +22,6 @@ final class TutorialModel: ObservableObject {
   private var viewerEvents: [TutorialViewerEvents.Entry] = []
   private var viewerEventSequence = 0
   @Published private(set) var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
-  @Published private(set) var machineState = TutorialMachineState.none
   private var pairedPhoneCount: Int?
   private var removalRefused = false
   private var missingSince: Date?
@@ -33,8 +32,11 @@ final class TutorialModel: ObservableObject {
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
 
-  init(defaults: UserDefaults = .standard) {
+  private let cloneBase: String
+
+  init(defaults: UserDefaults = .standard, cloneBase: String = NSHomeDirectory() + "/stim-tutorial") {
     self.defaults = defaults
+    self.cloneBase = cloneBase
     records = TutorialRecordStore(defaults)
   }
 
@@ -53,20 +55,16 @@ final class TutorialModel: ObservableObject {
     let existing = Set(workspaces.map(\.path))
     return template.map {
       tutorialAsk(
-        $0, tourPath: tourPath, repository: workspace?.worktree?.repository, machine: snapshot?.record.approvedMachine,
-        second: snapshot?.record.secondPath, existing: existing)
+        $0, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
+        second: snapshot?.record.secondPath,
+        existing: existing)
     }
   }
 
   var notice: TutorialNotice? {
     if let cliFailure { return TutorialNotice(cliFailure, action: .updateCLI) }
     if let notice = workspace?.tutorial.flatMap({ TutorialNotice.version($0.version) }) { return notice }
-    if snapshot?.currentStep == "begin" {
-      return snapshot?.record.beginWaitTimedOut(now: now) == true
-        ? TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart)
-        : TutorialNotice("Waiting for the tutorial workspace...")
-    }
-    if workspace == nil, tourPath != nil, snapshot?.isComplete == false,
+    if workspace == nil, tourPath != nil, snapshot?.isComplete == false, snapshot?.currentStep != "delete",
       !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
     {
       return TutorialNotice("Tutorial workspace gone: Restart", action: .restart)
@@ -86,8 +84,7 @@ final class TutorialModel: ObservableObject {
 
   func update(
     workspaces: [Workspace], archived: [ArchivedWorkspace], sheetOpen: Bool, now: Date = Date(),
-    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil,
-    machineState: TutorialMachineState = .none, approvedMachine: String? = nil, removalRefused: Bool = false
+    viewerEvents: [TutorialViewerEvents.Entry] = [], pairedPhoneCount: Int? = nil, removalRefused: Bool = false
   ) {
     self.now = now
     if let stored = progress.record ?? records.record, !TutorialSteps.supportedVersions.contains(stored.version) {
@@ -102,7 +99,6 @@ final class TutorialModel: ObservableObject {
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     phoneState = TutorialPhoneState(pairedPhoneCount: pairedPhoneCount)
-    self.machineState = machineState
     self.removalRefused = removalRefused
     self.workspaces = workspaces
     self.archived = archived
@@ -155,10 +151,12 @@ final class TutorialModel: ObservableObject {
         archivedProjectRoots: archivedRoots,
         logRecords: logs, viewerEvents: viewerEvents.filter { $0.sequence > viewerEventSequence }.map(\.event),
         pairedPhoneCount: pairedPhoneCount, phoneApp: FeatureFlags.isEnabled(.phoneApp, defaults: defaults),
-        machineApproved: machineState == .approved, approvedMachine: approvedMachine, replayOff: workspace?.replayOff ?? false,
+        replayOff: workspace?.replayOff ?? false,
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
+        cloneFolderExists: saved?.clonePath.map { FileManager.default.fileExists(atPath: $0) },
+        newCloneFolder: saved?.step == "begin"
+          ? TutorialCloneFolder(path: cloneBase) : nil,
         now: now, record: records.record))
-    if snapshot?.steps.first(where: { $0.id == "machine" })?.state == .done { self.machineState = .approved }
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
     syncFollowers()
@@ -201,8 +199,8 @@ final class TutorialModel: ObservableObject {
 
   func commands(for step: TutorialStep) -> String {
     tutorialCommands(
-      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository,
-      stateDir: workspace?.agentDevice?.stateDir, machine: snapshot?.record.approvedMachine,
+      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
+      stateDir: workspace?.agentDevice?.stateDir,
       udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
@@ -210,8 +208,7 @@ final class TutorialModel: ObservableObject {
     guard statusLoaded else { return }
     update(
       workspaces: workspaces, archived: archived, sheetOpen: false, now: now,
-      viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, machineState: machineState,
-      approvedMachine: snapshot?.record.approvedMachine, removalRefused: removalRefused)
+      viewerEvents: viewerEvents, pairedPhoneCount: pairedPhoneCount, removalRefused: removalRefused)
   }
 
   private func syncFollowers() {

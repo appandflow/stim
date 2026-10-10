@@ -1885,12 +1885,14 @@ agent feed. Both followers run only while the panel is open on a live tutorial
 workspace. The panel reads `stim settings --json` for `archive.enabled`; when
 unavailable it assumes enabled, then permits finish after a ten-second
 disappearance grace period only when a stop was observed. Viewer events and
-paired-phone counts come from the existing Desktop controllers. Machine approval
-comes from BuildMachinesModel checks for the tour checkout. No tutorial
-reader touches `$STIM_HOME` directly. Machine checks poll only while the machine
-step is current and the tour workspace is present.
+paired-phone counts come from the existing Desktop controllers. No tutorial
+reader touches `$STIM_HOME` directly. During Get the Test App the panel also
+checks a few paths in `~/stim-tutorial` (the folder's creation time, `.git/HEAD`,
+`package.json`, `node_modules` and npm's `node_modules/.package-lock.json`) on
+each status refresh, and Delete the Test App checks whether the clone's folder
+still exists.
 
-To render every step, optional phone/machine variants, a waiting timeout, a failure and manual mode in light and dark at 2x:
+To render every step, optional phone variants, a waiting timeout, a failure and manual mode in light and dark at 2x:
 
 ```sh
 STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests
