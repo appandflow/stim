@@ -1,5 +1,6 @@
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
+import { addressPort, parseLsofListeners } from './listening-ports.ts';
 import { readlinkSync, realpathSync } from 'fs';
 import { sep } from 'path';
 import { inspectProcessIdentity } from './process-identity.ts';
@@ -28,11 +29,6 @@ export function parseLsofPids(out: unknown): number[] {
     .split('\n')
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => Number.isFinite(n));
-}
-
-function addressPort(address: string | undefined): number {
-  const colon = String(address ?? '').lastIndexOf(':');
-  return colon < 0 ? Number.NaN : Number(String(address).slice(colon + 1));
 }
 
 // netstat's LISTENING state column is localized, so a listening TCP row is recognized by its
@@ -68,21 +64,6 @@ function lsofOutput(args: string[]): Promise<string | null> {
   return getExecutor()
     .runFileAsync('lsof', args)
     .catch((error: { stdout?: unknown }) => (typeof error?.stdout === 'string' ? error.stdout : null));
-}
-
-export function parseLsofListeners(out: unknown): Map<number, number[]> {
-  const byPort = new Map<number, number[]>();
-  let pid: number | null = null;
-  for (const line of String(out ?? '').split('\n')) {
-    if (line.startsWith('p')) pid = parseInt(line.slice(1), 10);
-    else if (line.startsWith('n') && pid !== null && Number.isFinite(pid)) {
-      const port = addressPort(line.slice(1));
-      const pids = byPort.get(port) ?? [];
-      if (!pids.includes(pid)) pids.push(pid);
-      byPort.set(port, pids);
-    }
-  }
-  return byPort;
 }
 
 /**

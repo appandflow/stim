@@ -55,7 +55,7 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
       return { code: 0, stdout: argv[0] === 'status' ? output.status : output.gc, stderr: '' };
     },
   };
-  const cleanup = createCleanupTracker({ h, platform, processExitTimeoutMs });
+  const cleanup = createCleanupTracker({ h, platform, processExitTimeoutMs, processStart: null });
   return {
     cwd,
     stateFile,
@@ -278,6 +278,66 @@ test('native cleanup refuses empty successful process inspection', async (t) => 
   await assert.rejects(() => f.verify(), /process inspection did not include the live harness/);
 });
 
+test('Darwin cleanup keeps exact process births, including absent and replaced registrations', async (t) => {
+  const f = fixture(t);
+  const births = new Map([
+    [process.pid, 100],
+    [123, 200],
+  ]);
+  const observed = [];
+  const cleanup = createCleanupTracker({
+    h: { env: { STIM_HOME: process.env.STIM_HOME } },
+    platform: 'ios',
+    processExitTimeoutMs: 0,
+    processStart(pid) {
+      observed.push(pid);
+      return births.has(pid) ? { status: 'running', startedAtMicros: births.get(pid) } : { status: 'gone' };
+    },
+  });
+  f.writeState({ collectors: { ios: { pid: 123, startedAt: 'first' }, android: { pid: 456, startedAt: 'absent' } } });
+  cleanup.recordWorkspace(f.cwd);
+  assert.deepEqual(new Set(observed), new Set([123, 456, process.pid]));
+  await assert.rejects(() => cleanup.verifyProcesses(), /a workspace process is still running/);
+  births.set(123, 201);
+  births.set(456, 300);
+  cleanup.recordWorkspace(f.cwd);
+  await cleanup.verifyProcesses();
+  f.writeState({ collectors: { ios: { pid: 123, startedAt: 'replacement' } } });
+  cleanup.recordWorkspace(f.cwd);
+  rmSync(f.stateFile);
+  cleanup.recordWorkspace(f.cwd);
+  await assert.rejects(() => cleanup.verifyProcesses(), /a workspace process is still running/);
+  births.delete(123);
+  await cleanup.verifyProcesses();
+});
+
+test('Darwin cleanup refuses unknown births and missing live harness observations', async (t) => {
+  const f = fixture(t);
+  let childStatus = 'unknown';
+  let witnessStatus = 'running';
+  const cleanup = createCleanupTracker({
+    h: { env: { STIM_HOME: process.env.STIM_HOME } },
+    platform: 'ios',
+    processExitTimeoutMs: 0,
+    processStart(pid) {
+      return { status: pid === process.pid ? witnessStatus : childStatus, startedAtMicros: pid };
+    },
+  });
+  f.writeState({ supervisor: { pid: 123 } });
+  assert.throws(() => cleanup.recordWorkspace(f.cwd), /could not inspect process birth for pid 123/);
+  childStatus = 'running';
+  cleanup.recordWorkspace(f.cwd);
+  childStatus = 'unknown';
+  await assert.rejects(() => cleanup.verifyProcesses(), /could not inspect process birth for pid 123/);
+  childStatus = 'gone';
+  witnessStatus = 'unknown';
+  await assert.rejects(() => cleanup.verifyProcesses(), /could not inspect process birth/);
+  witnessStatus = 'gone';
+  await assert.rejects(() => cleanup.verifyProcesses(), /process inspection did not include the live harness/);
+  witnessStatus = 'running';
+  await cleanup.verifyProcesses();
+});
+
 for (const setting of ['ANDROID_HOME', 'ANDROID_SDK_ROOT']) {
   test(`native cleanup finds the emulator through ${setting} without PATH`, (t) => {
     const home = mkdtempSync(join(tmpdir(), 'stim-native-sdk-'));
@@ -307,7 +367,7 @@ test('missing executables remain inspection failures with allowFail enabled', as
   const result = h.sh('stim-native-cleanup-unavailable-tool', [], { allowFail: true });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /ENOENT/);
-  const cleanup = createCleanupTracker({ h, platform: 'android', processExitTimeoutMs: 0 });
+  const cleanup = createCleanupTracker({ h, platform: 'android', processExitTimeoutMs: 0, processStart: null });
   assert.throws(() => cleanup.remainingDevices(), /could not inspect emulator:.*ENOENT/);
   await assert.rejects(() => cleanup.verifyProcesses(), /could not inspect ps:.*ENOENT/);
 });

@@ -29,6 +29,7 @@ import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
+  deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -39,6 +40,7 @@ import {
   publicUrlSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
+  projectSettingsContext,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
 import type { IosCommandOptions, IosBootLike, FailArgs } from './ios/types.ts';
@@ -185,10 +187,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy.',
+      'Run on eas, proxy, or an approved Mac in remote.machines; named Macs never fall back locally. auto places on an approved Mac when this Mac is full or busy. local runs here, whatever ios.remote says.',
       (value) => {
         if (parseMachine(value)) return value.trim();
-        throw new InvalidArgumentError('expected eas, proxy, auto, or a remote Mac name');
+        throw new InvalidArgumentError('expected eas, proxy, auto, local, or a remote Mac name');
       },
     )
     .option(
@@ -505,13 +507,12 @@ async function runIos(
     return null;
   };
 
-  const settingsRepoRoot = d.repoRoot(root);
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: d.gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsContext = projectSettingsContext(root, d);
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
@@ -585,6 +586,7 @@ async function runIos(
     automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
       deviceWaitRun.policy.onWait?.(ms);
@@ -825,6 +827,7 @@ async function runIos(
           root,
           port: metroPort,
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+          settingsContext,
           remote: Boolean(remoteDevice),
           note,
           resolve: d.resolveProjectMetro,
@@ -841,7 +844,7 @@ async function runIos(
         metroPort = gate.port;
         devServer = gate.devServer;
       } else {
-        const pin = metroPortSetting(root);
+        const pin = metroPortSetting(settings);
         if (pin.error) {
           return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
         }
@@ -1075,6 +1078,7 @@ async function runIos(
           devServer,
           fail,
           note,
+          enterPhase: progress.step,
           selectors,
         });
       if (!localBoot) {

@@ -31,8 +31,7 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
-import { projectDeviceReclaimIdleMinutes } from '../workspace/settings.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
 
@@ -387,6 +386,7 @@ export interface DeviceSlotWaitPolicy {
   signal?: AbortSignal;
   noWait?: boolean;
   displayName?: string;
+  reclaimIdleMinutes?: number;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   onWait?: (ms: number) => void;
   now?: () => number;
@@ -528,6 +528,7 @@ export async function withDeviceBootAdmission<T>(
     noWait = false,
     automatic = false,
     displayName = basename(root),
+    reclaimIdleMinutes = deviceReclaimIdleMinutesSetting({}),
     now = Date.now,
     signal,
     sleep = (ms) => delay(ms, undefined, { signal }),
@@ -645,11 +646,12 @@ export async function withDeviceBootAdmission<T>(
             }),
           );
         }
+        signal?.throwIfAborted();
         if (result.reclaim && now() - lastReclaim >= 15_000) {
           lastReclaim = now();
           try {
-            const minutes = projectDeviceReclaimIdleMinutes(canonicalPath(root));
-            if (minutes > 0) reclaimed += await reclaimIdleDevice(root, minutes * 60_000, out, now, skippedReclaims);
+            if (reclaimIdleMinutes > 0)
+              reclaimed += await reclaimIdleDevice(root, reclaimIdleMinutes * 60_000, out, now, skippedReclaims);
           } catch (error) {
             out(phaseLine('device', `could not reclaim an idle device: ${(error as Error)?.message || error}`));
           }

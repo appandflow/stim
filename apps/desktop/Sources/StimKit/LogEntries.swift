@@ -29,7 +29,7 @@ private let bundleResponseWindowMs = 2000.0
 private func isError(_ record: LogRecord) -> Bool { record.level >= .error }
 
 private func isExpoLine(_ record: LogRecord) -> Bool {
-  record.src == "metro" && record.raw == true && record.event == "expo_stdout"
+  record.src == "metro" && record.raw == true && (record.event == "expo_stdout" || record.event == "command_stdout")
 }
 
 private func regex(_ pattern: String) -> NSRegularExpression { try! NSRegularExpression(pattern: pattern) }

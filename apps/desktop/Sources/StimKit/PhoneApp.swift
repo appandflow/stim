@@ -29,6 +29,13 @@ public enum PhoneApp {
         "Allow this Stim app in the system dialog. After granting access, \(verify); if macOS asks for a relaunch, follow its instructions."
     }
 
+    public static func screenPermissionDone(allowed: Bool, phoneApp: Bool) -> String {
+      let phone = phoneApp ? " Then reconnect the phone viewer." : ""
+      return allowed
+        ? "If the preview stays blank, relaunch Stim so macOS applies the new access.\(phone)"
+        : "Allow the missing access any time from Stim's Native App Viewer menu or System Settings, then relaunch Stim if the preview stays blank.\(phone)"
+    }
+
     public static func viewerAppError(phoneApp: Bool) -> String {
       phoneApp
         ? "This is the viewer app. View its window from another Stim Desktop instance or your phone."

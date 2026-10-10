@@ -91,6 +91,24 @@ test('appProjectProblem names the package.json of a directory that is not an app
   }
 });
 
+test('appProjectProblem accepts a package that declares react-native only as a peer dependency', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
+  try {
+    writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'tester', peerDependencies: { react: '*' } }));
+    expect(appProjectProblem(tmp)?.kind).toBe('not-an-app');
+    writeFileSync(
+      join(tmp, 'package.json'),
+      JSON.stringify({ name: 'tester', peerDependencies: { react: '*', 'react-native': '*' } }),
+    );
+    expect(appProjectProblem(tmp)).toBe(null);
+    mkdirSync(join(tmp, 'android'));
+    writeFileSync(join(tmp, 'android', 'settings.gradle'), '');
+    expect(detectPlatforms(tmp, {})).toEqual(['android']);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('appProjectProblem separates a package.json that does not parse from one with no app dependency', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
   try {
