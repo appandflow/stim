@@ -69,6 +69,12 @@ needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
+Native Xcode apps build on this Mac and run on the host without Metro; the host
+reports live process readiness. That needs a host that advertises
+`hosted-ios-process`. An older host refuses before reservation or upload; update
+stim-server on it, or use `--remote auto`, which skips it. See
+[native Xcode apps](./commands.md) for the build limits.
+
 `--remote` also accepts two backend names: `eas` creates an EAS Simulator
 session; `proxy` uses an existing agent-device daemon configured with
 `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, without

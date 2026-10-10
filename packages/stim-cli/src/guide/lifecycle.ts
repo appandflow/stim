@@ -5,25 +5,9 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
-For a native Xcode app without React Native or Expo, read
-\`stim guide lifecycle native-ios\`. The Metro and JavaScript steps below
-apply to React Native and Expo.
-
-Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
-no Metro, npm install or React Native dependency is required. The directory must
-contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
-one application module and the exact variant (debug by default). Stim installs
-one signed universal or matching-ABI APK on an owned emulator or leased phone.
-Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
-must support native Android process mode. Multiple application modules,
-density/split APK sets and EAS/proxy targets are unsupported. Set
-org.gradle.configureondemand=false; configuration cache remains supported. Stim
-verifies the existing APK signature; it does not sign it.
-Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
-and build offload are unavailable until arbitrary Gradle inputs can be tracked.
-Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
-prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
-\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.
+For a native Xcode or Gradle app without React Native or Expo, read
+\`stim guide lifecycle native-ios\` or \`stim guide lifecycle native-android\`.
+The Metro and JavaScript steps below apply to React Native and Expo.
 
 Two workflows share steps 2 through 6.
 
@@ -304,10 +288,12 @@ The existing owned simulator, device lease, signing, log and teardown services
 still apply. Stim does not change signing accounts or provisioning profiles.
 
 A reusable artifact key includes the selected build configuration, source and
-known dependency inputs, toolchain and build options. Native Release cache
-reuse does not depend on releaseBundleSwap. Xcode compilation uses the shared
-compilation cache when the toolchain and settings support it. --plan predicts
-this same local artifact without preparing dependencies or choosing a device.
+known dependency inputs, toolchain and build options. In a git checkout,
+ignored files the project does not reference are not part of the key. Native
+Release cache reuse does not depend on releaseBundleSwap. Xcode compilation
+uses the shared compilation cache when the toolchain and settings support it.
+--plan predicts this same local artifact without preparing dependencies or
+choosing a device.
 
 Inputs whose complete build closure cannot be established build locally with
 artifact caching skipped. This includes shell build phases, custom build rules,
@@ -319,7 +305,11 @@ A compatible approved build Mac can compile a native Xcode app with
 --remote-build auto or --remote-build <name>. Both peers must support
 native-xcode-build. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
-external inputs refuse source transfer; their bytes are never silently omitted.
+external inputs keep the build here, and placement names the first one; their
+bytes are never silently omitted. The common case is a Finder .DS_Store that a
+global gitignore hides: delete it, or stop ignoring it, to offload. The worker
+compares its own toolchain and compiler environment identity before compiling
+and refuses, naming the differing parameter, so the build falls back here.
 Worker source mirrors remove stale inputs, while Xcode compilation caches remain
 in the worker's private Stim home. Physical builds stay local.
 
@@ -343,6 +333,25 @@ Copyable agent request:
   Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
   --json. Verify its expected screen and interaction on the reported device,
   inspect stim logs --errors, then stop only this workspace with stim stop.`,
+    },
+    'native-android': {
+      summary: 'native Gradle project selection, APK install, process launch and current limits',
+      body: () => `NATIVE GRADLE APPS
+Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
+no Metro, npm install or React Native dependency is required. The directory must
+contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
+one application module and the exact variant (debug by default). Stim installs
+one signed universal or matching-ABI APK on an owned emulator or leased phone.
+Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
+must support native Android process mode. Multiple application modules,
+density/split APK sets and EAS/proxy targets are unsupported. Set
+org.gradle.configureondemand=false; configuration cache remains supported. Stim
+verifies the existing APK signature; it does not sign it.
+Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
+and build offload are unavailable until arbitrary Gradle inputs can be tracked.
+Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },
     ci: {
       summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',

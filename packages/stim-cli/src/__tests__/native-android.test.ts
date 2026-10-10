@@ -46,6 +46,8 @@ test('native discovery requires a wrapper and settings, accepts tooling packages
   expect(projectRegistry.projectProblem(join(rn, 'android'), 'android')?.message).toContain(
     `belongs to the project at ${rn}`,
   );
+  gradle(rn);
+  expect(projectRegistry.projectProblem(rn, 'android')).toBeNull();
   const independent = join(rn, 'apps', 'native');
   gradle(independent);
   expect(projectRegistry.findProjectRoot(independent)).toBe(independent);

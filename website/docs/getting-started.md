@@ -216,8 +216,9 @@ cache entries created by the source checkout or another worktree.
 evidence. The summary includes the exact device, app identifier, cache result,
 Metro state, launch state, and log path.
 
-An OK summary without a launch qualifier confirms a bundle request or a live
-release process. `bundle requested, still building` means Metro is still
+An OK summary without a launch qualifier confirms a bundle request, or a live
+process of an app whose runtime has no Metro (a release build, or a native
+Xcode or Gradle app). `bundle requested, still building` means Metro is still
 working. For `launch UNVERIFIED`, follow the printed remedy before claiming
 success. None of these checks proves that the screen rendered correctly.
 

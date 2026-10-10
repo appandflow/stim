@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
+import { phaseLine } from '../command-output.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -53,7 +54,10 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
-      const writer = tapBuildLog(createNdjsonWriter(join(logs, 'build-macos.ndjson'), { truncate: true }), progress);
+      const writer = tapBuildLog(
+        createNdjsonWriter(join(logs, 'build-artifact-macos.ndjson'), { truncate: true }),
+        progress,
+      );
       const build: MacosBuild = {
         state: 'running',
         startedAt: new Date(started).toISOString(),
@@ -115,8 +119,10 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
             },
-            { preserveRuntime: true },
+            { artifactOnly: true },
           );
+        } catch (error) {
+          note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
         } finally {
           if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
           writer.close();

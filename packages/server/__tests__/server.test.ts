@@ -1413,7 +1413,13 @@ test('native build admission rejects invalid provider identity before toolchain 
   const host = new BuildHost({ worker: 'unused-worker', env: process.env });
   const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
   const session = host.session('client', {} as WebSocket, () => {});
-  const native = { provider: 'xcode', sourceDigest: 'a'.repeat(64), cacheKey: 'artifact-key', arch: 'arm64' };
+  const native = {
+    provider: 'xcode',
+    sourceDigest: 'a'.repeat(64),
+    cacheKey: 'artifact-key',
+    arch: 'arm64',
+    parameters: {},
+  };
   const base = {
     repo: 'app-1',
     project: '',
@@ -1451,6 +1457,7 @@ test('native build admission rejects invalid provider identity before toolchain 
       { sourceDigest: 'unverified' },
       { cacheKey: '' },
       { arch: 'armv7' },
+      { parameters: null },
     ]) {
       const params = { ...base, native: { ...native, ...changed } };
       expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
