@@ -153,7 +153,7 @@ class Timeline:
         global OFF
         OFF = self.t
         self.ip, self.op = self.t, self.t + length - 0.5
-        self.markers.append({'tm': self.t, 'cm': name, 'dr': length})
+        self.markers.append({'tm': self.t, 'cm': name, 'dr': length - 1})
         if '>' not in name:
             self.modes[name] = 'once' if once else 'loop'
         if once:
