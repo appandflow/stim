@@ -1,7 +1,8 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
-import { projectMetroSharedCache } from '../workspace/settings.ts';
+import { resolveMetroSharedCache } from '../optimizations.ts';
+import { resolveProjectSettings } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
@@ -204,7 +205,7 @@ function resolveMetroStoreInjection(
   root: string,
   { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
 ): Record<string, string> | null {
-  const sharedCache = projectMetroSharedCache(root);
+  const sharedCache = resolveMetroSharedCache(resolveProjectSettings(root).settings);
   if (!sharedCache) {
     log.write({
       src: 'metro',

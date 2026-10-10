@@ -31,8 +31,10 @@ import { detectAppIds } from '../workspace/app-id.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
+  deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
+  projectSettingsContext,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   remoteEasFallbackSetting,
@@ -136,7 +138,6 @@ import {
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';
@@ -846,14 +847,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
-  const settingsRepoRoot = repoRoot(root);
   const settingsRoot = root;
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsContext = projectSettingsContext(root);
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
@@ -894,6 +894,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
@@ -1019,6 +1020,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         port: reservedPort,
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+        settingsContext,
         remote: remoteContext !== null,
         note: out,
         resolve: resolveMetro,
@@ -1037,7 +1039,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return { ok: true, prepared: { metroPort } };
     } else {
-      const pin = metroPortSetting(root);
+      const pin = metroPortSetting(settings);
       if (pin.error) {
         return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }

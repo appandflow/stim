@@ -49,6 +49,7 @@ import {
 } from '../engine/remote-cache.ts';
 import {
   iosSimSlimProfileSetting,
+  projectSettingsContext,
   remoteAndroidSetting,
   remoteIosSetting,
   resolveSettings,
@@ -63,7 +64,7 @@ import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
-import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
+import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
 export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
@@ -911,6 +912,7 @@ export function runDoctor(
     now = Date.now,
     platform,
     host = process.platform,
+    machineSettings = readMachineSettings(projectSettingsContext(projectRoot)),
   }: {
     readFile?: typeof readFileSync;
     xcodeMajor?: number | null;
@@ -929,6 +931,7 @@ export function runDoctor(
     now?: () => number;
     platform?: DoctorPlatform;
     host?: NodeJS.Platform;
+    machineSettings?: MachineSettings;
   } = {},
 ): Finding[] {
   // Only macOS has Xcode, CocoaPods and simctl; elsewhere iOS runs through `--remote eas`.
@@ -943,12 +946,6 @@ export function runDoctor(
     }
   };
 
-  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
-  const machineSettings = readMachineSettings({
-    projectPath: projectRoot,
-    gitCommonDir: gitCommonDir(projectRoot),
-    repoRoot: settingsRepoRoot,
-  });
   if (machineSettings.corrupt) return [machineSettings.corrupt];
   const projectSettings = machineSettings.settings;
 

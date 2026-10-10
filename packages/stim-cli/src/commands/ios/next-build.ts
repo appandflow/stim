@@ -7,6 +7,7 @@ import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } f
 import { projectProblem, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {
   cacheProviderSettingError,
+  projectSettingsContext,
   publicUrlSetting,
   remoteEasFallbackSetting,
   remoteIosSetting,
@@ -61,7 +62,7 @@ export async function planIos(
   const problem = projectProblem(root, 'ios');
   if (problem) return refuse({ code: 'STIM_NO_PROJECT', ...problem });
 
-  const settingsContext = { projectPath: root, gitCommonDir: d.gitCommonDir(root), repoRoot: d.repoRoot(root) };
+  const settingsContext = projectSettingsContext(root, d);
   const settings = d.resolveSettings(settingsContext);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError)

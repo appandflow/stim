@@ -36,6 +36,7 @@ import type { CompilationCacheActivity, DevServerStart } from '../engine/build-f
 import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
   cacheProviderSettingError,
+  deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -46,6 +47,7 @@ import {
   publicUrlSetting,
   SETTING_SHAPE_REMEDY,
   metroPortSetting,
+  projectSettingsContext,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
@@ -529,13 +531,12 @@ async function runIos(
     return null;
   };
 
-  const settingsRepoRoot = d.repoRoot(root);
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: d.gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsContext = projectSettingsContext(root, d);
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
@@ -615,6 +616,7 @@ async function runIos(
     automatic: false,
     waitMs: deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
       deviceWaitRun.policy.onWait?.(ms);
@@ -853,6 +855,7 @@ async function runIos(
           root,
           port: metroPort,
           settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+          settingsContext,
           remote: Boolean(remoteDevice),
           note,
           resolve: d.resolveProjectMetro,
@@ -869,7 +872,7 @@ async function runIos(
         metroPort = gate.port;
         devServer = gate.devServer;
       } else {
-        const pin = metroPortSetting(root);
+        const pin = metroPortSetting(settings);
         if (pin.error) {
           return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
         }

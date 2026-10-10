@@ -21,11 +21,10 @@ import { projectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../works
 import {
   publicUrlSetting,
   remoteEasFallbackSetting,
-  resolveSettings,
+  resolveProjectSettings,
   tunnelModeSetting,
 } from '../../workspace/settings.ts';
 import { checkEasFallback } from '../../engine/eas-fallback.ts';
-import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { planCachedBuild, planFlagRefusal, planPayload, printPlan, refusePlan } from '../build-plan.ts';
 import { planHostedDevice } from '../../device-host/plan-placement.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
@@ -143,8 +142,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   if (problem) return refuse({ code: 'STIM_NO_PROJECT', ...problem });
 
   const slot = validateDeviceSlot(opts.slot);
-  const settingsContext = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
-  const settings = resolveSettings(settingsContext);
+  const { context: settingsContext, settings } = resolveProjectSettings(root);
   const planned = resolveAndroidRunPlan(
     {
       settings,
