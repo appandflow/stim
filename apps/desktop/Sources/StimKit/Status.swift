@@ -73,7 +73,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
   public var warmStep: String?
-  /// Where the workspace is, as `stim` decided it; absent from an older `stim`, which leaves it to `stage(now:)`.
+  /// Where the workspace is, as `stim` decided it.
   public var stageFacts: StageFacts?
   public var memoryMb: Int?
   /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
@@ -243,7 +243,7 @@ public struct WorktreeInfo: Decodable, Hashable, Sendable {
   public var merged: Bool?
   public var repository: String?
   public var git: WorktreeGit?
-  /// What the git chip shows, as `stim` decided it; absent from an older `stim` and without `git`.
+  /// What the git chip shows, as `stim` decided it; absent without `git`.
   public var gitChip: GitChipFacts?
   /// The branch's pull request as Stim last asked GitHub; nil when it has none or `stim` did not say.
   public var pullRequest: PullRequestFacts?
@@ -386,7 +386,7 @@ public struct IosDevice: Decodable, Hashable, Sendable {
   public var state: String
   public var activity: DeviceActivity?
   public var app: AppProcess?
-  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  /// `none`, `closed`, or nil, as `stim` decided it.
   public var appPresence: String?
   public var disk: DeviceDisk?
   /// Set only on a device built from `physicalDevices`, never decoded from the `ios` record.
@@ -440,7 +440,7 @@ public struct AndroidDevice: Decodable, Hashable, Sendable {
   public var deviceProfile: String?
   public var activity: DeviceActivity?
   public var app: AppProcess?
-  /// `none`, `closed`, or nil; read only when the workspace carries `stageFacts`, as an older `stim` omits it.
+  /// `none`, `closed`, or nil, as `stim` decided it.
   public var appPresence: String?
   public var disk: DeviceDisk?
   public var model: String?

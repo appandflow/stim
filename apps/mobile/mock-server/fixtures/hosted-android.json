@@ -26,7 +26,8 @@
               "driver": "none",
               "setting": "hosting.agentDriver"
             }
-          }
+          },
+          "appPresence": null
         }
       }
     ],
@@ -49,7 +50,14 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
+    },
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
     }
   },
   {
@@ -76,7 +84,14 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
+    },
+    "stage": {
+      "kind": "stopped",
+      "since": null,
+      "platform": null,
+      "closedApps": []
     }
   },
   {
@@ -103,7 +118,14 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
+    },
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
     }
   }
 ]

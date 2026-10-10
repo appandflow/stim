@@ -188,6 +188,16 @@
           ],
         ]
       }
+      let build = env["build"] as? [String: Any]
+      let lastIos = (env["lastBuilds"] as? [String: Any])?["ios"] as? [String: Any]
+      env["stage"] =
+        if let build {
+          ["kind": "building", "since": build["startedAt"]!, "platform": "ios", "closedApps": []] as [String: Any]
+        } else if let lastIos, lastIos["status"] as? String == "failed" {
+          ["kind": "build-failed", "since": lastIos["finishedAt"]!, "platform": "ios", "closedApps": []]
+        } else {
+          ["kind": "stopped", "since": NSNull(), "platform": NSNull(), "closedApps": []]
+        }
       let plan: BuildPlan = try decode([
         "platform": "ios", "fingerprint": "fixture-fingerprint", "cacheHit": "local", "cacheSkipped": false,
         "basis": 3, "outcome": "hit", "expectedMs": 8400,

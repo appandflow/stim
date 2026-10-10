@@ -883,6 +883,337 @@
         "tone": "success",
         "subtitle": null
       }
+    },
+    {
+      "name": "a running macOS app keeps a workspace without Metro running, up since its build ended",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "ready",
+        "memoryMb": 0,
+        "warnings": [],
+        "phaseSince": "2026-09-27T11:00:00.000Z",
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "running",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z",
+            "finishedAt": "2026-09-27T11:20:00.000Z",
+            "durationMs": 60000
+          }
+        }
+      },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:20:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 40m"
+      }
+    },
+    {
+      "name": "an orphaned macOS app without a build end counts from the build start",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "orphaned",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z"
+          }
+        }
+      },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:19:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 41m"
+      }
+    },
+    {
+      "name": "the Metro supervisor's start outranks the macOS app's",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "supervisor": {
+          "startedAt": "2026-09-27T11:18:00.000Z"
+        },
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "running",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z",
+            "finishedAt": "2026-09-27T11:20:00.000Z",
+            "durationMs": 60000
+          }
+        }
+      },
+      "derived": {
+        "kind": "running",
+        "since": "2026-09-27T11:18:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Running",
+        "tone": "success",
+        "subtitle": "up 42m"
+      }
+    },
+    {
+      "name": "a running iOS build outranks a running macOS app",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:58:48.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        },
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "running",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z",
+            "finishedAt": "2026-09-27T11:20:00.000Z",
+            "durationMs": 60000
+          }
+        }
+      },
+      "derived": {
+        "kind": "building",
+        "since": "2026-09-27T11:58:48.000Z",
+        "platform": "ios",
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Building",
+        "tone": "brand",
+        "subtitle": "iOS · started 1m ago"
+      }
+    },
+    {
+      "name": "a failed iOS build outranks a running macOS app",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "lastBuilds": {
+          "ios": {
+            "platform": "ios",
+            "status": "failed",
+            "cacheHit": "local",
+            "cacheSkipped": false,
+            "durationMs": 33000,
+            "fingerprint": null,
+            "startedAt": "2026-09-27T11:33:00.000Z",
+            "finishedAt": "2026-09-27T11:57:00.000Z"
+          }
+        },
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "running",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z",
+            "finishedAt": "2026-09-27T11:20:00.000Z",
+            "durationMs": 60000
+          }
+        }
+      },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T11:57:00.000Z",
+        "platform": "ios",
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "iOS · 3m ago"
+      }
+    },
+    {
+      "name": "a stopped macOS app leaves the workspace stopped",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "idle",
+        "memoryMb": 0,
+        "warnings": [],
+        "metro": {
+          "port": 8084,
+          "running": false,
+          "lastStop": {
+            "reason": "idle",
+            "at": "2026-09-27T10:00:00.000Z"
+          }
+        },
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "stopped",
+          "build": {
+            "state": "ok",
+            "startedAt": "2026-09-27T11:19:00.000Z",
+            "finishedAt": "2026-09-27T11:20:00.000Z",
+            "durationMs": 60000
+          }
+        }
+      },
+      "derived": {
+        "kind": "stopped",
+        "since": "2026-09-27T10:00:00.000Z",
+        "platform": null,
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Stopped",
+        "tone": "tertiary",
+        "subtitle": "2h ago"
+      }
+    },
+    {
+      "name": "a running macOS build shows macOS",
+      "workspace": {
+        "path": "/w",
+        "live": false,
+        "phase": "ready",
+        "memoryMb": 0,
+        "warnings": [],
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "stopped",
+          "build": {
+            "state": "running",
+            "startedAt": "2026-09-27T11:58:48.000Z"
+          }
+        }
+      },
+      "derived": {
+        "kind": "building",
+        "since": "2026-09-27T11:58:48.000Z",
+        "platform": "macos",
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Building",
+        "tone": "brand",
+        "subtitle": "macOS · started 1m ago"
+      }
+    },
+    {
+      "name": "a failed macOS build outranks a running iOS build",
+      "workspace": {
+        "path": "/w",
+        "live": true,
+        "phase": "live",
+        "memoryMb": 0,
+        "warnings": [],
+        "build": {
+          "platform": "ios",
+          "slot": "default",
+          "state": "running",
+          "phase": "compile",
+          "startedAt": "2026-09-27T11:58:48.000Z",
+          "phaseStartedAt": "2026-09-27T11:59:13.000Z",
+          "outcome": "cold",
+          "expectedMs": 160000,
+          "expectedPhaseMs": 94000,
+          "basis": 3
+        },
+        "macos": {
+          "launchId": "L1",
+          "arguments": [],
+          "product": "Demo",
+          "bundle": "/w/.build/Demo.app",
+          "bundleId": "dev.stim.demo",
+          "executable": "/w/.build/Demo.app/Contents/MacOS/Demo",
+          "state": "stopped",
+          "build": {
+            "state": "failed",
+            "startedAt": "2026-09-27T11:50:00.000Z",
+            "finishedAt": "2026-09-27T11:57:00.000Z"
+          }
+        }
+      },
+      "derived": {
+        "kind": "build-failed",
+        "since": "2026-09-27T11:57:00.000Z",
+        "platform": "macos",
+        "closedApps": []
+      },
+      "stage": {
+        "label": "Build failed",
+        "tone": "error",
+        "subtitle": "macOS · 3m ago"
+      }
     }
   ],
   "gitChip": [

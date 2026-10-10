@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { withDerivedFacts } from '@stim-cli/core/state';
 import { WebSocketServer } from 'ws';
 
 import { loadFixtures } from './fixtures.mjs';
@@ -89,11 +90,9 @@ const overlaid = (payload) => {
   const changes = readOverlay().environments ?? {};
   return {
     ...payload,
-    environments: payload.environments.map((env) => ({
-      ...env,
-      recording: { enabled: recordingEnabled },
-      ...changes[env.path],
-    })),
+    environments: payload.environments.map((env) =>
+      withDerivedFacts({ ...env, recording: { enabled: recordingEnabled }, ...changes[env.path] }),
+    ),
   };
 };
 const status = () => {

@@ -1,3 +1,5 @@
+import { withDerivedFacts } from '@stim-cli/core/phone-protocol';
+
 import { filterRecords, shiftTimestamps, usageHistory } from '../../mobile/mock-server/payloads.mjs';
 
 export interface Frame {
@@ -7,13 +9,7 @@ export interface Frame {
   data: string;
 }
 
-interface Environment {
-  path: string;
-  recording?: { enabled: boolean };
-  ios?: { state?: string };
-  android?: { state?: string };
-  slots?: Environment[];
-}
+type Environment = Parameters<typeof withDerivedFacts>[0];
 
 interface StatusPayload {
   environments: Environment[];
@@ -154,7 +150,9 @@ export class DemoMachine {
 
   status(): StatusPayload {
     const payload = shiftTimestamps(this.fixtures.status, this.shiftMs) as StatusPayload;
-    for (const env of payload.environments) env.recording = { enabled: this.recordingEnabled };
+    payload.environments = payload.environments.map((env) =>
+      withDerivedFacts({ ...env, recording: { enabled: this.recordingEnabled } }),
+    );
     return payload;
   }
 

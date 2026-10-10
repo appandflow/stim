@@ -109,6 +109,7 @@ it('shows a multi-app checkout as one row that opens the checkout and the app wi
           behind: 0,
           mergedInto: null,
         },
+        gitChip: { parts: [{ kind: 'changed', count: 15 }], ci: null },
       },
     },
   });
@@ -190,6 +191,13 @@ it('announces source-only git work without workspace controls and shows last see
         ahead: 2,
         behind: 1,
         mergedInto: null,
+      },
+      gitChip: {
+        parts: [
+          { kind: 'arrows', ahead: 2, behind: 1 },
+          { kind: 'changed', count: 5 },
+        ],
+        ci: null,
       },
       pullRequest: {
         number: 2440,

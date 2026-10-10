@@ -937,6 +937,9 @@ A checkout that installed the app with npm before it joined the workspace has an
 `apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
 `pnpm install` from the root.
 
+The mock server imports `@stim-cli/core/state` from its build, so run
+`pnpm --filter @stim-cli/core run build` before starting it.
+
 `pnpm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
 replays payloads captured from a real Mac in `mock-server/fixtures/`: a
 `stim status --json` payload taken while `stim ios` was installing, records
@@ -1051,7 +1054,9 @@ notifications. The server rereads the JSON file for each status push (every 5
 seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
 maps a workspace path to fields that replace the fixture's, such as a
 `phase` of `warming`, an `ios` device whose `activity` is `driven`, or a
-`builds` history with three failed runs.
+`builds` history with three failed runs. The server then derives each
+workspace's `stage`, `appPresence` and `gitChip` again with core's
+`withDerivedFacts`, so an overlay's changes reach the stage line.
 
 ## Design system
 
