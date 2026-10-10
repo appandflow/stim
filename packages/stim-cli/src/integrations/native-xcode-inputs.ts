@@ -44,6 +44,7 @@ export function nativeXcodeSources(snapshot: NativeInputSnapshot): FingerprintSo
 
 const INPUT_SETTINGS = new Set([
   'INFOPLIST_FILE',
+  'INFOPLIST_PREFIX_HEADER',
   'CODE_SIGN_ENTITLEMENTS',
   'GCC_PREFIX_HEADER',
   'SWIFT_OBJC_BRIDGING_HEADER',
