@@ -53,7 +53,6 @@ struct RootView: View {
   @State private var projectFilter: Project?
   @State private var showingAllWorktrees: Project?
   @State private var focusedDeviceID: String?
-  @State private var arrivals = WorkspaceArrivals()
   @State private var logQuery = LogQuery()
   @State private var archivedLogQuery = LogQuery()
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -716,7 +715,7 @@ struct RootView: View {
   }
 
   private func showNewWorkspaces(in payload: StatusPayload) {
-    for workspace in arrivals.update(payload.environments) {
+    for workspace in notices.arrivals.update(payload.environments) {
       let path = workspace.path
       notices.show(
         Notice(

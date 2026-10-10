@@ -1854,8 +1854,8 @@ linked worktree of the clone and its first iOS build (Make a Change, `tourPath`)
 the next linked worktree created after that step began and its first iOS build,
 which must start after the step began (Change It Again in Parallel,
 `secondPath`). Both steps complete when their build starts running; the stats
-record each build when it succeeds, and a later failure of that build shows as a
-warning under the completed step. The steps continue with optional live view, agent actions and logs steps,
+record each build when it succeeds, and a later failed iOS build of that
+worktree shows as a warning under the completed step. The steps continue with optional live view, agent actions and logs steps,
 optional phone and remote Mac steps, an optional Share Your Finish prompt, then
 removal and Archived of both tracked worktrees (Finish; the clone stays). The
 tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored

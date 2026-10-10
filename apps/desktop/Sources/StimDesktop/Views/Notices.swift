@@ -28,6 +28,7 @@ final class NoticeCenter: ObservableObject {
 
   @Published private(set) var notices: [Notice] = []
   @Published private(set) var index = 0
+  var arrivals = WorkspaceArrivals()
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 

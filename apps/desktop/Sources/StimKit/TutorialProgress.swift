@@ -425,6 +425,7 @@ public struct TutorialProgress: Sendable {
       let notice =
         advancedAtStart ? nil : current == step.id ? failure ?? details[step.id] : details[step.id]
       let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
+      if advancedAtStart, !checkpoint.detail.isEmpty { details[step.id] = shown }
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
         ticks: checkpoint.ticks, link: checkpoint.link, warning: advancedAtStart ? checkpoint.failure : nil)

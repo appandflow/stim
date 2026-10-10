@@ -869,6 +869,10 @@ private func running(_ startedAt: String) throws -> Build {
   #expect(state("build", in: done).detail.contains("no earlier build"))
   #expect(done.record.stats?.firstBuild?.cache == "none")
   #expect(done.record.stats?.secondBuild?.cache == "local")
+
+  let gone = progress.update(TutorialInput(environment: nil, now: afterRebuild.addingTimeInterval(60)))
+  #expect(state("build", in: gone).detail.contains("no earlier build"))
+  #expect(state("parallel", in: gone).detail.contains("Local cache"))
 }
 
 @Test func tutorialBuildThatFailsAfterTheStepAdvancedWarnsOnThatStep() throws {
