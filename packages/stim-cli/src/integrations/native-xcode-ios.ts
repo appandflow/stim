@@ -397,7 +397,7 @@ export function nativeXcodeDoctor(root: string): ProjectDoctor {
       try {
         const selection = selectNativeXcodeProject(
           root,
-          undefined,
+          resolveSchemeSelection({}, settings),
           resolveConfiguration(undefined, settings) ?? 'Debug',
         );
         const podfile = existsSync(join(root, 'Podfile'));

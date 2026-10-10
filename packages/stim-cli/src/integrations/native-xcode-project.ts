@@ -355,7 +355,7 @@ export function selectNativeXcodeProject(root: string, scheme?: string, configur
         ? `Native Xcode application selection is ambiguous${scheme ? ` for scheme ${JSON.stringify(scheme)}` : ''}.`
         : `No runnable native iOS application${scheme ? ` with scheme ${JSON.stringify(scheme)}` : ''} was found.`,
       choices.length
-        ? `Select one shared application scheme with --scheme. Candidates: ${choices.map(({ container, candidate }) => `${relative(root, container.path)}: ${candidate.name}`).join(', ')}. Duplicate container/scheme names must be made unambiguous in Xcode.`
+        ? `Select one shared application scheme with --scheme or ios.scheme. Candidates: ${choices.map(({ container, candidate }) => `${relative(root, container.path)}: ${candidate.name}`).join(', ')}. Duplicate container/scheme names must be made unambiguous in Xcode.`
         : 'Open the intended project in Xcode and add a shared scheme whose Run action selects an iOS application.',
     );
   const { container, candidate } = matching[0]!;
