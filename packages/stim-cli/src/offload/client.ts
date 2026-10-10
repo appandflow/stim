@@ -590,6 +590,16 @@ function sourceManifest(repoRoot: string): ManifestFile[] {
 
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
+/** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
+export function nativeTransferRefusal(repoRoot: string, snapshot: NativeInputSnapshot): string | null {
+  try {
+    nativeTransferManifest(repoRoot, snapshot, sourceManifest(repoRoot));
+    return null;
+  } catch (error) {
+    return (error as Error).message.split('\n')[0]!;
+  }
+}
+
 function blobContent(repoRoot: string, file: ManifestFile): Buffer {
   const absolute = join(repoRoot, file.path);
   return file.kind === 'directory'

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { iosToolchain } from '../offload/toolchain.ts';
+import { nativeTransferRefusal } from '../offload/client.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
@@ -287,7 +288,9 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
                 ? 'the build cache is off'
                 : !runtime
                   ? 'no simulator runtime is available for worker selection'
-                  : null),
+                  : !snapshot
+                    ? 'the native inputs have no verified identity'
+                    : nativeTransferRefusal(repoRoot(root) ?? root, snapshot)),
         };
       },
       target: (runtime) => ({
