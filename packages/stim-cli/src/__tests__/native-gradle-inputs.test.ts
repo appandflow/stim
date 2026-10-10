@@ -144,6 +144,22 @@ test('only declared real output directories reported by AGP become reusable work
   expect(nativeGradleOutputs(root, declaration, [join(root, 'app/build')])).toEqual([]);
 });
 
+test.skipIf(process.platform === 'win32')(
+  'reported build directories match declared outputs across a symlinked worker root in either direction',
+  () => {
+    const link = `${root}-link`;
+    symlinkSync(root, link);
+    try {
+      expect(nativeGradleOutputs(link, declaration, [join(root, 'app/build')])).toEqual(['app/build']);
+      expect(nativeGradleOutputs(root, declaration, [join(link, 'app/build')])).toEqual(['app/build']);
+      rmSync(join(root, 'app/build'), { recursive: true });
+      expect(nativeGradleOutputs(link, declaration, [join(root, 'app/build')])).toEqual([]);
+    } finally {
+      rmSync(link);
+    }
+  },
+);
+
 test('Kotlin persistent state is never uploaded as project input', () => {
   write('.kotlin/private-state', 'not source');
   visible.push('.kotlin/private-state');

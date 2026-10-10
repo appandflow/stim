@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { fingerprintNativeInputs } from './native-inputs.ts';
 import { manifestDigest } from '../offload/manifest.ts';
@@ -141,12 +141,24 @@ export function nativeGradleTransfer(root: string, value: unknown): GradleTransf
   return { repository, project, declaration, files: selected, digest: manifestDigest(selected) };
 }
 
+function canonicalParent(path: string): string {
+  const missing: string[] = [];
+  while (!existsSync(path) && dirname(path) !== path) {
+    missing.unshift(basename(path));
+    path = dirname(path);
+  }
+  return join(realpathSync(path), ...missing);
+}
+
 export function nativeGradleOutputs(repository: string, declaration: GradleOffloadInputs, reported: unknown): string[] {
   if (!Array.isArray(reported) || !reported.every((path) => typeof path === 'string' && isAbsolute(path)))
     throw new Error('AGP did not report the configured native Gradle build directories.');
+  const real = realpathSync(repository);
   const reportedPaths = new Set<string>();
   for (const absolute of reported) {
-    const path = relative(repository, resolve(absolute)).split(sep).join('/');
+    const resolved = resolve(absolute);
+    const canonical = join(canonicalParent(dirname(resolved)), basename(resolved));
+    const path = relative(real, canonical).split(sep).join('/');
     if (!containedPath(path)) throw new Error('A Gradle build directory leaves the transferred repository.');
     requireRealParents(repository, path);
     const stat = lstatSync(join(repository, path), { throwIfNoEntry: false });
