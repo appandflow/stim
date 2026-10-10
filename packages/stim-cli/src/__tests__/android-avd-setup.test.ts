@@ -418,8 +418,8 @@ test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes fr
   let deleteEnv: Record<string, string> | undefined;
   setExecutor({
     ...getExecutor(),
-    run(command, options) {
-      if (command.includes('delete avd')) deleteEnv = options?.env;
+    runFile(_file, args = [], options) {
+      if (args.join(' ').startsWith('delete avd')) deleteEnv = options?.env;
       return '';
     },
   });

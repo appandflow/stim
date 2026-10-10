@@ -46,7 +46,7 @@ export function parseNetstatPids(out: unknown, port: number): number[] {
 }
 
 export function listeningPids(port: number, platform: NodeJS.Platform = process.platform): number[] {
-  const pids = parseLsofPids(getExecutor().runQuiet(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t`));
+  const pids = parseLsofPids(getExecutor().runFileQuiet('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']));
   if (pids.length > 0 || platform !== 'win32') return pids;
   return parseNetstatPids(getExecutor().runQuiet('netstat -ano'), port);
 }
@@ -125,7 +125,7 @@ export function processCwd(pid: number): string | null {
       return readlinkSync(`/proc/${pid}/cwd`);
     } catch {}
   }
-  return parseLsofCwd(getExecutor().runQuiet(`lsof -a -p ${pid} -d cwd -Fn`));
+  return parseLsofCwd(getExecutor().runFileQuiet('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn']));
 }
 
 function canonicalPath(path: string): string {

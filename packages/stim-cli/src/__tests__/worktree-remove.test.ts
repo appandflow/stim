@@ -236,13 +236,13 @@ function makeExecutor({
     run(cmd: string) {
       runCalls.push(cmd);
       if (/simctl list devices --json/.test(cmd)) return simctlList;
-      if (/simctl delete|delete avd/.test(cmd)) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runFile(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runCalls.push(cmd);
       if (/simctl list devices --json/.test(cmd)) return simctlList;
+      if (/simctl delete|delete avd/.test(cmd)) return '';
       if (/worktree remove/.test(cmd)) {
         if (worktreeRemoveError) throw new Error(worktreeRemoveError);
         return '';
@@ -256,16 +256,16 @@ function makeExecutor({
     },
     runQuiet(cmd: string) {
       runQuietCalls.push(cmd);
-      const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
-      if (spawnMatch) {
-        const udid = spawnMatch[1] ?? '';
-        return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
-      }
       return null;
     },
     runFileQuiet(file: string, args: string[] = []) {
       const cmd = [file, ...args].join(' ');
       runQuietCalls.push(cmd);
+      const spawnMatch = cmd.match(/simctl spawn (\S+) launchctl list/);
+      if (spawnMatch) {
+        const udid = spawnMatch[1] ?? '';
+        return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
+      }
       if (args.includes('symbolic-ref') && bare && args[1] === bare.path) {
         return bare.head ? `refs/heads/${bare.head}` : null;
       }
@@ -465,10 +465,10 @@ test('action: a failed device teardown on the source checkout keeps the record a
     worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
     simctlList: simctlJson([{ udid: 'U7', name: 'stim-held', state: 'Shutdown', isAvailable: true }]),
   });
-  const originalRun = exec.run.bind(exec);
-  exec.run = (cmd: string) => {
-    if (/simctl delete U7/.test(cmd)) throw new Error('Unable to delete');
-    return originalRun(cmd);
+  const originalRunFile = exec.runFile.bind(exec);
+  exec.runFile = (file: string, args: string[] = []) => {
+    if (args.join(' ') === 'simctl delete U7') throw new Error('Unable to delete');
+    return originalRunFile(file, args);
   };
   setExecutor(exec);
 

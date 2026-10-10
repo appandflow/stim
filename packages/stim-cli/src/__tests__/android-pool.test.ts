@@ -73,7 +73,7 @@ beforeEach(() => {
     }
     if (cmd.includes('delete avd')) {
       if (failDelete) throw new Error('AVD deletion failed');
-      const name = /-n "([^"]+)"/.exec(cmd)![1]!;
+      const name = /-n (\S+)/.exec(cmd)![1]!;
       avds.delete(name);
       rmSync(join(home, 'avd', `${name}.ini`), { force: true });
       rmSync(join(home, 'avd', `${name}.avd`), { recursive: true, force: true });
@@ -84,9 +84,11 @@ beforeEach(() => {
   setExecutor({
     run,
     runQuiet: run,
-    runFileQuiet: (file) => (file === 'ps' ? '' : null),
+    runFileQuiet: (file, args = []) =>
+      file === 'adb' || file === 'emulator' ? run([file, ...args].join(' ')) : file === 'ps' ? '' : null,
     runFile(file, args = []) {
-      if (args[0] === '-list-avds' || args[0] === 'devices') return run([file, ...args].join(' '));
+      if (args[0] === '-list-avds' || args[0] === 'devices' || file === 'avdmanager')
+        return run([file, ...args].join(' '));
       calls.push([file, ...args].join(' '));
       if (args.includes('list')) return packageOutput;
       if (args.includes('clear') || args.includes('uninstall')) return cleanupResult;
@@ -587,9 +589,9 @@ describe('adoption transport recovery', () => {
     let names = 0;
     setExecutor({
       ...exec,
-      runQuiet(cmd, options) {
-        if (cmd.includes('emu avd name') && names++ === 0) return null;
-        return exec.runQuiet(cmd, options);
+      runFileQuiet(file, args = [], options) {
+        if (args.join(' ').includes('emu avd name') && names++ === 0) return null;
+        return exec.runFileQuiet(file, args, options);
       },
     });
     const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
@@ -650,10 +652,10 @@ test('adoption recovery gives ownership and readiness probes the remaining timeo
         timeouts.push(options!.timeoutMs!);
         return exec.run(cmd, options);
       },
-      runQuiet(cmd, options) {
+      runFileQuiet(file, args, options) {
         expect(options?.timeoutMs).toBeGreaterThan(0);
         timeouts.push(options!.timeoutMs!);
-        return exec.runQuiet(cmd, options);
+        return exec.runFileQuiet(file, args, options);
       },
       runFile(file, args, options) {
         expect(options?.timeoutMs).toBeGreaterThan(0);
@@ -696,7 +698,7 @@ describe('an explicit --system-image against the slot existing AVD', () => {
       project: getProject('/adopter'),
       flags: { systemImage: other, systemImageFlag: other },
     });
-    expect(calls.some((call) => call.includes('delete avd -n "stim-source"'))).toBe(true);
+    expect(calls.some((call) => call === 'avdmanager delete avd -n stim-source')).toBe(true);
     expect(calls.find((call) => call.includes('create avd'))).toContain(`-k ${other}`);
     expect(result).toMatchObject({ created: true, systemImage: other });
     expect(getProject('/adopter')?.platforms?.android).toMatchObject({ avdName: result.avdName });
@@ -719,7 +721,7 @@ describe('an explicit --system-image against the slot existing AVD', () => {
       project: getProject('/adopter'),
       flags: { systemImage: other, systemImageFlag: other },
     });
-    expect(calls.some((call) => call.includes(`delete avd -n "${failed?.avdName}"`))).toBe(true);
+    expect(calls.some((call) => call === `avdmanager delete avd -n ${failed?.avdName}`)).toBe(true);
     expect(calls.find((call) => call.includes('create avd'))).toMatch(new RegExp(`-k ${other} --device pixel_fold$`));
     expect(result).toMatchObject({ created: true, systemImage: other });
   });

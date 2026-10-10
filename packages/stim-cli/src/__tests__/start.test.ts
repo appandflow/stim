@@ -175,8 +175,8 @@ function metroExecutor({
       if (/ps -o pgid=/.test(cmd)) return '777';
       return '';
     },
-    runFileQuiet() {
-      return '';
+    runFileQuiet(file, args = []) {
+      return file === 'lsof' ? this.runQuiet([file, ...args].join(' ')) : '';
     },
     spawn(cmd, args, opts) {
       calls.spawn.push({ cmd, args, opts });
@@ -682,7 +682,12 @@ describe('action: already running', { timeout: 30_000 }, () => {
     async () => {
       const { server, port } = await metroListener();
       const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
-      exec.runFileQuiet = (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
+      exec.runFileQuiet = (file: string, args: readonly string[] = []) =>
+        file === 'osascript'
+          ? '/Applications/Stim.app'
+          : file === 'lsof'
+            ? exec.runQuiet([file, ...args].join(' '))
+            : '';
       setExecutor(exec);
       upsertProject(root, { metroPort: port });
 
@@ -1013,6 +1018,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     };
     const gitLookups: string[] = [];
     exec.runFileQuiet = (file, args = []) => {
+      if (file === 'lsof') return exec.runQuiet([file, ...args].join(' '));
       if (file === 'git' && args.includes('rev-parse')) gitLookups.push(args.at(-1) ?? '');
       return '';
     };

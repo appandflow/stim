@@ -182,7 +182,7 @@ export function occupyingApps(udid: string): string[] | null {
     sim = undefined;
   }
   if (sim && sim.state !== 'Booted') return [];
-  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`, SIMCTL_OPTIONS);
+  const out = getExecutor().runFileQuiet('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], SIMCTL_OPTIONS);
   if (out === null || out === undefined) return null;
   return parseOccupyingApps(out);
 }
@@ -374,7 +374,7 @@ export async function bootIosSim(
 }
 
 export function shutdownIosSim(udid: string): void {
-  getExecutor().runQuiet(`xcrun simctl shutdown ${udid}`, SIMCTL_OPTIONS);
+  getExecutor().runFileQuiet('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
 }
 
 export function listIosDeviceTypes(): IosDeviceType[] {
@@ -517,7 +517,7 @@ export function createOwnedIosSim(
 ): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
   const udid = getExecutor()
-    .run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`, {
+    .runFile('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
       timeoutMs: SIMCTL_CREATE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     })
@@ -636,7 +636,7 @@ export function deleteIosSim(udid: string): void {
       `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim; Stim has no record of creating it.`,
     );
   }
-  getExecutor().run(`xcrun simctl delete ${udid}`, SIMCTL_OPTIONS);
+  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], SIMCTL_OPTIONS);
   forgetCreatedDevice('ios', udid);
 }
 

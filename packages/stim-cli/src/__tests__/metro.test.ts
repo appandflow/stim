@@ -84,14 +84,14 @@ test('isInsideProject accepts the root and descendants, rejects siblings', () =>
 });
 
 test('resolveProjectMetro returns missing when nothing listens', async () => {
-  setExecutor({ run: () => '', runQuiet: () => '', spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => '', runFileQuiet: () => '', spawn: () => {} });
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => true });
   expect(r.missing).toBe(true);
   resetExecutor();
 });
 
 test('resolveProjectMetro refuses a listener that does not answer /status', async () => {
-  setExecutor({ run: () => '', runQuiet: () => '4242', spawn: () => {} });
+  setExecutor({ run: () => '', runFileQuiet: () => '4242', spawn: () => {} });
   const r = await resolveProjectMetro(8082, '/a/b', { probe: async () => false });
   expect(r.notOurs).toMatch(/does not answer/);
   expect(r.metro).toBe(undefined);
@@ -102,9 +102,9 @@ test('resolveProjectMetro refuses a listener that does not answer /status', asyn
 test('resolveProjectMetro refuses a Metro running from another directory', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
-      if (cmd.includes('-sTCP:LISTEN')) return '4242';
-      if (cmd.includes('-d cwd')) return 'p4242\nfcwd\nn/somewhere/else\n';
+    runFileQuiet: (file: string, args: string[]) => {
+      if (file === 'lsof' && args.includes('-sTCP:LISTEN')) return '4242';
+      if (file === 'lsof' && args.join(' ').includes('-p 4242 -d cwd')) return 'p4242\nfcwd\nn/somewhere/else\n';
       return '';
     },
     spawn: () => {},
@@ -118,9 +118,9 @@ test('resolveProjectMetro refuses a Metro running from another directory', async
 test('resolveProjectMetro identifies a workspace Metro without claiming ownership', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => {
-      if (cmd.includes('-sTCP:LISTEN')) return '59914';
-      if (cmd.includes('-d cwd')) return 'p59914\nfcwd\nn/a/b\n';
+    runFileQuiet: (file: string, args: string[]) => {
+      if (file === 'lsof' && args.includes('-sTCP:LISTEN')) return '59914';
+      if (file === 'lsof' && args.join(' ').includes('-p 59914 -d cwd')) return 'p59914\nfcwd\nn/a/b\n';
       return '';
     },
     spawn: () => {},
@@ -150,21 +150,26 @@ test('parseNetstatPids takes the listening row for the port and ignores the rest
 });
 
 test('listeningPids falls back to netstat on Windows, where lsof does not exist', () => {
-  const asked: string[] = [];
+  const asked: string[][] = [];
   setExecutor({
     run: () => '',
     runQuiet: (cmd: string) => {
-      asked.push(cmd);
+      asked.push([cmd]);
       if (cmd !== 'netstat -ano') return null;
       return '  TCP    0.0.0.0:8082           0.0.0.0:0              LISTENING       2212';
     },
+    runFileQuiet: (file: string, args: string[]) => {
+      asked.push([file, ...args]);
+      return null;
+    },
     spawn: () => {},
   });
+  const lsof = ['lsof', '-nP', '-iTCP:8082', '-sTCP:LISTEN', '-t'];
   expect(listeningPids(8082, 'win32')).toEqual([2212]);
-  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t', 'netstat -ano']);
+  expect(asked).toEqual([lsof, ['netstat -ano']]);
   asked.length = 0;
   expect(listeningPids(8082, 'darwin')).toEqual([]);
-  expect(asked).toEqual(['lsof -nP -iTCP:8082 -sTCP:LISTEN -t']);
+  expect(asked).toEqual([lsof]);
 });
 
 test('resolveProjectMetro accepts an unreadable-cwd listener that is this workspace recorded supervisor', async () => {
@@ -174,7 +179,8 @@ test('resolveProjectMetro accepts an unreadable-cwd listener that is this worksp
   writeWorkspaceState(root, { supervisor: { pid: process.pid, port: 8082, processToken: token } });
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? String(process.pid) : null),
+    runFileQuiet: (file: string, args: string[]) =>
+      file === 'lsof' && args.includes('-sTCP:LISTEN') ? String(process.pid) : null,
     spawn: () => {},
   });
   try {
@@ -194,7 +200,7 @@ test('resolveProjectMetro still refuses an unreadable-cwd listener this workspac
   });
   setExecutor({
     run: () => '',
-    runQuiet: (cmd: string) => (cmd.includes('-sTCP:LISTEN') ? '4242' : null),
+    runFileQuiet: (file: string, args: string[]) => (file === 'lsof' && args.includes('-sTCP:LISTEN') ? '4242' : null),
     spawn: () => {},
   });
   try {

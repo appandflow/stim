@@ -200,7 +200,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
     key: 'android.deviceProfile',
-    type: STRING,
+    type: {
+      kind: 'string',
+      pattern: '^[A-Za-z0-9 ._()-]*$',
+      patternHelp: 'an avdmanager device id such as pixel_6 or Nexus 5X (`avdmanager list device -c`)',
+    },
     scopes: EVERY,
     default: 'pixel_6',
     description: 'avdmanager hardware profile id for new owned AVDs',
