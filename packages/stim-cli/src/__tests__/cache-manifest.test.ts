@@ -1,6 +1,15 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  writeFileSync,
+  rmSync,
+} from 'node:fs';
+import { dirname, join, sep } from 'node:path';
 import { tmpdir, homedir } from 'node:os';
 import { register, readManifest, registeredCaches, unregister, manifestPath } from '../cache/cache-manifest.ts';
 import type { CacheEntry } from '../cache/cache-manifest.ts';
@@ -91,6 +100,45 @@ test('prune defaults to entries and only accepts atomic as the alternative', () 
 test('a leading ~ is expanded, so a registration made from any cwd resolves the same', () => {
   register({ dir: '~/.stim-tilde-test' });
   expect(readManifest().caches[0]?.dir).toBe(join(homedir(), '.stim-tilde-test'));
+});
+
+test('a registration refuses a directory that pruning would turn into deleting the home, temp or Stim config directory', () => {
+  const refused = [
+    '~',
+    '.',
+    'relative-cache',
+    homedir(),
+    dirname(homedir()),
+    tmpdir(),
+    dirname(realpathSync(tmpdir())),
+    tmpHome,
+    sep,
+  ];
+  const outcomes = refused.map((dir) => {
+    try {
+      register({ dir });
+      return 'registered';
+    } catch (error) {
+      return (error as Error).message.split(':')[0];
+    }
+  });
+  expect(outcomes).toEqual(refused.map(() => 'cannot register this cache'));
+  expect(readManifest().caches).toEqual([]);
+});
+
+test('registeredCaches ignores a manifest entry for the home directory, so an old registration is never pruned', () => {
+  mkdirSync(tmpHome, { recursive: true });
+  writeFileSync(
+    manifestPath(),
+    JSON.stringify({
+      version: 1,
+      caches: [
+        { dir: homedir(), name: 'home' },
+        { dir: cacheDir, name: 'real' },
+      ],
+    }),
+  );
+  expect(registeredCaches().map((c) => c.name)).toEqual(['real']);
 });
 
 test('registeredCaches hides a directory that is gone but keeps it on file', () => {

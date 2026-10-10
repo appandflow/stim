@@ -1187,5 +1187,9 @@ FileStore shards across 256 directories, a build cache is keyed
 platform instead of one entry. Pass prune: 'atomic' for a cache whose index
 references its own data (an LLVM CAS): it is then left alone by --older-than
 and emptied whole only by 'gc --delete --cache all'.
-Registration is idempotent and keyed on the directory.`,
+Registration is idempotent and keyed on the directory.
+dir must be absolute (a leading ~ is expanded) and dedicated to the cache.
+register throws for a path that is or contains the home directory, the system
+temporary directory, the Stim config directory or a filesystem root, and gc
+never prunes or empties such a directory.`,
 };

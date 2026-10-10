@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { homedir } from 'os';
-import { isAbsolute, join, resolve } from 'path';
-import { readCacheManifest, updateCacheManifest } from '@stim-cli/core';
+import { join, resolve } from 'path';
+import { cacheDirRefusal, readCacheManifest, updateCacheManifest } from '@stim-cli/core';
 import { getConfigDir } from '../workspace/config.ts';
 
 export interface CacheEntry {
@@ -18,8 +18,12 @@ export function manifestPath(): string {
   return join(getConfigDir(), 'caches.json');
 }
 
+function expandHome(dir: string): string {
+  return dir.startsWith('~') ? join(homedir(), dir.slice(1)) : dir;
+}
+
 function expand(dir: string): string {
-  return resolve(dir.startsWith('~') ? join(homedir(), dir.slice(1)) : dir);
+  return resolve(expandHome(dir));
 }
 
 export function readManifest(path: string = manifestPath()): { version: number; caches: CacheEntry[] } {
@@ -32,6 +36,8 @@ function cacheEntries(caches: Array<Record<string, unknown>>): Array<Record<stri
 
 export function register(entry: CacheEntry, path: string = manifestPath()): CacheEntry {
   if (!entry?.dir) throw new Error('a cache registration needs a `dir`');
+  const refusal = cacheDirRefusal(expandHome(entry.dir));
+  if (refusal) throw new Error(`cannot register this cache: ${refusal}`);
   const dir = expand(entry.dir);
   const record: Record<string, unknown> & CacheEntry = {
     dir,
@@ -76,7 +82,7 @@ export function registeredCaches(path: string = manifestPath()): {
   layout: string | undefined;
 }[] {
   return readManifest(path)
-    .caches.filter((c) => isAbsolute(c.dir) && existsSync(c.dir))
+    .caches.filter((c) => !cacheDirRefusal(c.dir) && existsSync(c.dir))
     .map((c) => ({
       name: c.name,
       dir: c.dir,

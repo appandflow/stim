@@ -253,8 +253,27 @@ export function updateCacheManifest(
   );
 }
 
+function realOrResolved(dir: string): string {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return path.resolve(dir);
+  }
+}
+
+export function cacheDirRefusal(dir: string): string | null {
+  if (!path.isAbsolute(dir)) return `${dir} is not an absolute path`;
+  const target = realOrResolved(dir);
+  if (path.dirname(target) === target) return `${dir} is a filesystem root`;
+  const guarded = [os.homedir(), os.tmpdir(), configDir()].find((held) => {
+    const inside = path.relative(target, realOrResolved(held));
+    return inside !== '..' && !inside.startsWith(`..${path.sep}`) && !path.isAbsolute(inside);
+  });
+  return guarded ? `${dir} is or contains ${guarded}` : null;
+}
+
 export function registerCache({ dir, name, prune, note, entriesDepth, layout, replaces = [] }: RegisterOptions): void {
-  if (!path.isAbsolute(dir)) return;
+  if (cacheDirRefusal(dir)) return;
   try {
     updateCacheManifest(path.join(configDir(), 'caches.json'), (caches) => {
       const others = caches.filter(

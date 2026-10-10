@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
-import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
+import { cacheDirRefusal, METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { directorySize } from '../fs-util.ts';
 import { registeredCaches } from './cache-manifest.ts';
 
@@ -257,6 +257,10 @@ export function pruneCache(
 
   if (cache.prune === 'atomic') {
     return { removed: 0, bytes: 0, skipped: 'index-backed; empty it whole or not at all' };
+  }
+
+  if (!cache.files && cacheDirRefusal(cache.dir)) {
+    return { removed: 0, bytes: 0, skipped: `${cache.dir} is not a directory this cache owns` };
   }
 
   const entries = cache.files ?? entriesAtDepth(cache.dir, cache.entriesDepth ?? 1);

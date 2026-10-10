@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CORE_URL = new URL('../index.ts', import.meta.url).href;
@@ -135,12 +135,16 @@ test('concurrent cache registrations preserve every entry', async () => {
   expect(new Set(parsed.caches.map((entry) => entry.dir)).size).toBe(count);
 }, 30_000);
 
-test('a relative cache dir is never registered', async () => {
+test('a relative, home, temp or config dir is never registered', async () => {
   const manifest = join(home, 'caches.json');
-  await registerInChild({ dir: 'relative-cache', name: 'relative', readyFile: join(home, 'ready') });
+  await Promise.all(
+    ['relative-cache', homedir(), tmpdir(), home].map((dir, index) =>
+      registerInChild({ dir, name: `refused-${index}`, readyFile: join(home, `ready-${index}`) }),
+    ),
+  );
 
   const caches = existsSync(manifest)
     ? (JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: unknown[] }).caches
     : [];
   expect(caches).toEqual([]);
-});
+}, 30_000);
