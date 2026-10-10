@@ -12,6 +12,28 @@ export interface NativeTransferFile {
   sha256: string;
 }
 
+function* repositoryInputs(
+  snapshot: NativeInputSnapshot,
+): Generator<{ entry: NativeInputSnapshot['entries'][number]; path: string }> {
+  const links = snapshot.entries.filter((entry) => entry.kind === 'link').map((entry) => `${entry.path}/@target`);
+  for (const entry of snapshot.entries) {
+    if (entry.path === 'repository') continue;
+    if (!entry.path.startsWith('repository/'))
+      throw new Error('Native offload requires every input to be inside the repository.');
+    if (links.some((link) => entry.path === link || entry.path.startsWith(`${link}/`))) continue;
+    yield { entry, path: entry.path.slice('repository/'.length) };
+  }
+}
+
+const absentInput = (path: string): Error =>
+  new Error(`Native input ${path} is ignored or absent from the source transfer; it was not uploaded.`);
+
+/** Throws the same membership refusal as nativeTransferManifest, from the git-visible paths alone. */
+export function checkNativeTransferMembership(snapshot: NativeInputSnapshot, visible: ReadonlySet<string>): void {
+  for (const { entry, path } of repositoryInputs(snapshot))
+    if (entry.kind !== 'directory' && !visible.has(path)) throw absentInput(path);
+}
+
 export function nativeTransferManifest(
   root: string,
   snapshot: NativeInputSnapshot,
@@ -21,20 +43,13 @@ export function nativeTransferManifest(
   root = realpathSync(root);
   const selected: NativeTransferFile[] = [];
   const empty = createHash('sha256').update('').digest('hex');
-  const links = snapshot.entries.filter((entry) => entry.kind === 'link').map((entry) => `${entry.path}/@target`);
-  for (const entry of snapshot.entries) {
-    if (entry.path === 'repository') continue;
-    if (!entry.path.startsWith('repository/'))
-      throw new Error('Native offload requires every input to be inside the repository.');
-    const path = entry.path.slice('repository/'.length);
-    if (links.some((link) => entry.path === link || entry.path.startsWith(`${link}/`))) continue;
+  for (const { entry, path } of repositoryInputs(snapshot)) {
     if (entry.kind === 'directory') {
       selected.push({ path, kind: 'directory', size: 0, sha256: empty });
       continue;
     }
     const file = files.get(path);
-    if (!file)
-      throw new Error(`Native input ${path} is ignored or absent from the source transfer; it was not uploaded.`);
+    if (!file) throw absentInput(path);
     const kind = entry.kind === 'file:0' ? 'file' : entry.kind === 'file:73' ? 'exec' : entry.kind;
     if (kind !== file.kind || entry.sha256 !== file.sha256)
       throw new Error(`Native input ${path} changed or has an unsupported executable mode.`);

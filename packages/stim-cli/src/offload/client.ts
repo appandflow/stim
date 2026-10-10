@@ -35,7 +35,7 @@ import { readRubyVersion } from '../engine/deps.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
-import { nativeTransferManifest, type NativeTransferFile } from './native-source.ts';
+import { checkNativeTransferMembership, nativeTransferManifest, type NativeTransferFile } from './native-source.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
@@ -564,12 +564,8 @@ type ManifestFile = NativeTransferFile;
 
 /** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
 function sourceManifest(repoRoot: string): ManifestFile[] {
-  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
-    untrimmed: true,
-    timeoutMs: 120_000,
-  });
   const files: ManifestFile[] = [];
-  for (const path of new Set(listed.split('\0').filter(Boolean))) {
+  for (const path of gitVisiblePaths(repoRoot)) {
     const absolute = join(repoRoot, path);
     let stat;
     try {
@@ -588,12 +584,20 @@ function sourceManifest(repoRoot: string): ManifestFile[] {
   return files;
 }
 
+function gitVisiblePaths(repoRoot: string): Set<string> {
+  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
+    untrimmed: true,
+    timeoutMs: 120_000,
+  });
+  return new Set(listed.split('\0').filter(Boolean));
+}
+
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
 /** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
 export function nativeTransferRefusal(repoRoot: string, snapshot: NativeInputSnapshot): string | null {
   try {
-    nativeTransferManifest(repoRoot, snapshot, sourceManifest(repoRoot));
+    checkNativeTransferMembership(snapshot, gitVisiblePaths(repoRoot));
     return null;
   } catch (error) {
     return (error as Error).message.split('\n')[0]!;
