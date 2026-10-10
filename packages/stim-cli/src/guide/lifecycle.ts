@@ -1466,7 +1466,9 @@ A RUNNING APP IS RESTARTED, LIKE XCODE'S RUN
     launch      com.example.app restarted running app (was pid 4242) (0.9s)
 
   A stop that fails refuses the launch rather than reusing the old process.
-  When the process list cannot be read, Stim launches without stopping
+  When a simulator's process list cannot be read, Stim launches with
+  \`simctl launch --terminate-running-process\`, which replaces any running
+  copy. When an emulator's cannot be read, Stim launches without stopping
   anything and verification reports what it observes. An iPhone run
   (\`ios --device\`) needs no extra step: its collector launches with
   devicectl's \`--terminate-existing\`. Remote targets launch through
