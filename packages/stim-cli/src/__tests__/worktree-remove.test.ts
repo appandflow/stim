@@ -965,35 +965,6 @@ test('action: a git refusal after the owned sim was deleted keeps a record that 
   expect(getProject(wtDir)?.platforms?.ios).toBeUndefined();
 });
 
-test('action: a named port that cannot be stopped is reported as retained, before any git removal', async () => {
-  upsertProject(wtDir, { metroPort: 8083, ports: { web: 8900 } });
-  upsertProject(mainDir, { metroPort: 8900 });
-  const exec = {
-    ...makeExecutor({
-      worktrees: porcelain([
-        { path: mainDir, branch: 'main' },
-        { path: wtDir, branch: 'feat-x' },
-      ]),
-    }),
-    findExecutable: (name: string) => `/usr/bin/${name}`,
-  };
-  setExecutor(exec);
-  const errs: string[] = [];
-  const originalError = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = originalError;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(errs.join('\n')).toMatch(/Port 8900 is reserved for managed Metro/);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
-  expect(getProject(wtDir)?.ports).toEqual({ web: 8900 });
-});
-
 test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
   const child = liveUnrelatedProcess();
   upsertProject(wtDir, { label: 'feature' });

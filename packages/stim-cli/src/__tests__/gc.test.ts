@@ -4165,7 +4165,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   await cli(['--delete']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-  expect(inspected).toEqual(process.platform === 'win32' ? ['-ano', '-ano'] : ['-iTCP:8900', '-iTCP:8900']);
+  expect(inspected).toEqual([]);
 });
 
 test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {

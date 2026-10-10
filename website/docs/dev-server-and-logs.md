@@ -498,8 +498,8 @@ available, and check that it actually bound the supplied port.
 prints its PID and command. Stopping listeners requires `lsof` on macOS and
 Linux, or `netstat` on Windows. Reserve a port only for a service this workspace
 may stop. Use `ports release` to forget the allocation without killing the
-server. Both leave Metro alone. `worktree remove` and `gc --delete` also stop
-listeners before releasing their named allocations.
+server. Both leave Metro alone. `worktree remove`, `gc --delete` and automatic
+maintenance release named allocations without stopping their listeners.
 
 Allocations belong to the nearest directory with a `package.json`, resolved
 through symlinks. In a monorepo whose web app lives in its own package, a

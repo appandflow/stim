@@ -445,7 +445,7 @@ function namedPortLines(ports: NonNullable<GcReport['orphanedPorts']> = []): str
   return [
     `Orphaned named ports (${ports.length}):`,
     ...ports.map(({ project, label, port }) => `  ${project}: ${label} (${port})`),
-    '              --delete stops TCP listeners and releases these allocations.',
+    '              --delete releases these allocations without stopping listeners.',
   ];
 }
 

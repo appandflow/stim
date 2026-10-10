@@ -250,9 +250,10 @@ or releasing. Failed stops retain the allocation. `release` removes the
 reservation without signalling the server. Omit the label to select all named
 ports. Neither command touches Metro; `stim stop` leaves named ports alone.
 
-`worktree remove` stops and releases named ports. `gc` reports allocations for
-missing workspaces, and `gc --delete` stops and releases them. Unmounted or
-unresolved workspace paths remain registered.
+`worktree remove`, `gc --delete` and automatic maintenance release named ports
+without signalling their listeners. `gc` reports allocations for missing
+workspaces, and `gc --delete` releases them. Unmounted or unresolved workspace
+paths remain registered.
 
 See [server examples and limitations](./dev-server-and-logs.md#named-server-ports).
 
