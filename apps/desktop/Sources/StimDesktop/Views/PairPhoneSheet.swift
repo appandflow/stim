@@ -103,7 +103,7 @@ struct PairPhoneSheet: View {
       case .stopped(true): AddMachineIllustration(scene: .tailscaleSwitch)
       case .stopped(false): AddMachineIllustration(scene: .tailscaleUp)
       case .missing: AddMachineIllustration(scene: .tailnet(connected: false))
-      case .checking, .running: PhoneTailnetArt()
+      case .checking, .unresponsive, .running: PhoneTailnetArt()
       }
       Text("Connect Both to Your Tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
@@ -114,6 +114,12 @@ struct PairPhoneSheet: View {
             ProgressView().controlSize(.small)
             Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
           }
+        case .unresponsive:
+          Label("Tailscale didn't respond", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+          Text("Tailscale did not answer in time. Check that it is not stuck, then try again.")
+            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Button("Try Again", systemImage: "arrow.clockwise") { Task { await model.retryTailscale() } }
+            .buttonStyle(.stim(.primary, .regular))
         case .running(let dns):
           Label("Tailscale is on", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
           if let dns { Text(dns).font(.stim(.caption)).foregroundStyle(Palette.secondary) }

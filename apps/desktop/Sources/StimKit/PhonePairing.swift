@@ -4,6 +4,7 @@ import Foundation
 /// installed app or CLI that does not answer reads as stopped, not missing.
 public enum MacTailscale: Equatable, Sendable {
   case checking
+  case unresponsive
   case missing
   case stopped(hasApp: Bool)
   case running(dnsName: String?)
@@ -20,6 +21,14 @@ public enum MacTailscale: Equatable, Sendable {
     let dns = ((status["Self"] as? [String: Any])?["DNSName"] as? String)?
       .trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
     self = .running(dnsName: dns?.isEmpty == false ? dns : nil)
+  }
+
+  public init(probe: Tailnet.StatusProbe, install: Tailnet.Install) {
+    switch probe {
+    case .answered(let data): self.init(statusJSON: data, install: install)
+    case .timedOut: self = .unresponsive
+    case .unavailable: self.init(statusJSON: nil, install: install)
+    }
   }
 
   public var isRunning: Bool {

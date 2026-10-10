@@ -66,7 +66,7 @@ final class PairPhoneModel {
           let environment = await server.cli().environment
           return await Task.detached {
             MacTailscale(
-              statusJSON: Tailnet.status(environment: environment),
+              probe: Tailnet.probe(environment: environment),
               install: Tailnet.Install.detect(environment: environment))
           }.value
         },
@@ -95,6 +95,13 @@ final class PairPhoneModel {
         stopServing: { UserDefaults.standard.set(false, forKey: AppPreferences.Key.servesPhones) },
         setUpRoute: { await server.setUpConnection() }, pair: { try await server.pairPhone(control: $0) }),
       fixing: fixing)
+  }
+
+  func retryTailscale() async {
+    send(.tailscale(.checking))
+    let tailscale = await dependencies.tailscale()
+    guard !stopped else { return }
+    send(.tailscale(tailscale))
   }
 
   func start() async {
