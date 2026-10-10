@@ -194,6 +194,7 @@ describe('readProjectConfig', () => {
     writeFileSync(join(app, 'app.config.ts'), 'export default {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
+    mkdirSync(join(root, '.git'));
 
     const calls: { file: string; args: string[] }[] = [];
     const read = readProjectConfig(app, {
@@ -1006,6 +1007,7 @@ describe('resolveEasCliBin', () => {
     writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'eas'), '#!/bin/sh\n');
+    mkdirSync(join(root, '.git'));
 
     const found = resolveEasCliBin(app, {
       lookupPath: () => {
