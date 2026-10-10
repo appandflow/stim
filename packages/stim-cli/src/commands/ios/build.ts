@@ -18,9 +18,8 @@ import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizatio
 import { setRemoteLogSink } from '../../remote-log.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
+import { resolveCacheProviderConfig, resolveProjectSettings } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
 import { lastBuildRecord } from './result.ts';
@@ -62,8 +61,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       remedy: selected.problem.remedy,
     });
   const integration = await selected.load();
-  const context = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
-  const settings = resolveSettings(context);
+  const { context, settings } = resolveProjectSettings(root);
   const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
     note(phaseLine(label, message)),
   );
