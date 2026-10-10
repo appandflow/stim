@@ -91,16 +91,10 @@ struct TutorialPanel: View {
   private var stepList: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       if snapshot.isFinished {
-        Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
-          .font(.stim(.headline)).foregroundStyle(Palette.success)
-        Text(
-          snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off"
-            ? "Archived is off. The tutorial workspace has been removed."
-            : "Your workspace, builds, logs and recordings stay in Archived when archiving is enabled."
-        )
-        .foregroundStyle(Palette.secondary)
-        Button("Open Archived", action: openArchived)
-          .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
+        TutorialCompletionCard(
+          snapshot: snapshot, steps: steps,
+          archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
+          openArchived: openArchived)
       }
       ForEach(steps, id: \.id) { step in
         if let state = snapshot.steps.first(where: { $0.id == step.id }) {

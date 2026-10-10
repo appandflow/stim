@@ -116,6 +116,20 @@
       if name == "done", let index = snapshot.steps.firstIndex(where: { $0.id == "phone" }) {
         snapshot.steps[index].state = .skipped
       }
+      if name == "done" {
+        snapshot.record.skipped = ["logs", "phone"]
+        snapshot.record.done.removeAll { snapshot.record.skipped.contains($0) }
+        snapshot.record.secondPath = "/Users/example/stim-tutorial-second"
+        snapshot.record.stepTimes = ["done": now.addingTimeInterval(1120)]
+        snapshot.record.stats = try! JSONDecoder().decode(
+          TutorialStats.self,
+          from: Data(
+            """
+            {"firstBuild":{"durationMs":221000,"cache":"none","startedAt":0,"finishedAt":221},
+             "secondBuild":{"durationMs":22000,"cache":"local","startedAt":120,"finishedAt":142},
+             "agentActions":4,"worktreeBytes":{"/a":600000000,"/b":550000000,"/c":350000000}}
+            """.utf8))
+      }
       return snapshot
     }
   }
