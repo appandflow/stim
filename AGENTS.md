@@ -197,8 +197,7 @@ changes, and wait for the new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved`. The reviewer also adds `review: needs-human` when
-the diff changes one of these, unless `review: human-approved` is present and
-the pushes since then left the approved lines alone:
+the diff has a change no maintainer has approved in one of these:
 
 - authentication, pairing, tokens, secrets, or the capabilities stim-server
   grants (read, control, build, device-host) and what it exposes on the network;
@@ -219,8 +218,8 @@ record this because every agent uses the same account.
 
 The agent that pushes a behavior change after a review removes
 `review: ai-approved` until the next clear review. When the push changes lines
-a maintainer approved, that agent also replaces `review: human-approved` with
-`review: needs-human`. Merge, including with `gh stack merge`, only when every
+a maintainer approved or adds another change in those categories, that agent
+also replaces `review: human-approved` with `review: needs-human`. Merge, including with `gh stack merge`, only when every
 pull request involved has `review: ai-approved` and none has
 `review: needs-human`.
 
