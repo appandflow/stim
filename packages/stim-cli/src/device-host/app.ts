@@ -201,7 +201,7 @@ export async function installHostedApp(
   if (record.mode === 'development') return 'unverified';
   for (let tries = 0; tries < 10; tries++) {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    if (iosAppProcess(device.udid, record.bundleId)) return true;
+    if (iosAppProcess(device.udid, record.bundleId).state === 'running') return true;
   }
   return 'unverified';
 }

@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, test } from 'vitest';
+import type { AppProcessProbe } from '../engine/app-install.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   awaitIosDeviceLaunch,
@@ -420,7 +421,7 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(767);
+    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'running', pid: 767 });
   } finally {
     resetExecutor();
   }
@@ -428,14 +429,14 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
   expect(existsSync(outPath)).toBe(false);
 });
 
-test('iosDeviceProcess reports undefined -- not "gone" -- when the probe itself fails', () => {
+test('iosDeviceProcess reports unknown -- not "gone" -- when the probe itself fails', () => {
   setExecutor({
     runFile() {
       throw new Error('devicectl: device not found');
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toBe(undefined);
+    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'unknown' });
   } finally {
     resetExecutor();
   }
@@ -672,14 +673,14 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
 });
 
 test('awaitIosDeviceLaunch returns the device pid as soon as the phone reports it', async () => {
-  const pids = [null, null, 767];
+  const probes: AppProcessProbe[] = [{ state: 'stopped' }, { state: 'stopped' }, { state: 'running', pid: 767 }];
   const result = await awaitIosDeviceLaunch({
     udid: PHONE,
     bundleId: 'com.example.app',
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => pids.shift() ?? null,
+    probe: () => probes.shift() ?? { state: 'stopped' },
     sleep: async () => {},
     pollMs: 0,
   });
@@ -703,7 +704,7 @@ test('a console that ends before the app appears is a launch failure with its ow
       },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     sleep: async () => {},
   });
   expect(result.failed).toBe(true);
@@ -719,7 +720,7 @@ test('a launch nothing reports at all times out with the generic devicectl remed
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     timeoutMs: 10,
     pollMs: 5,
     now: () => (clock += 5),
@@ -737,7 +738,7 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
     appName: 'Fixture',
     collectorPid: 99,
     readRecords: () => [],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     now: () => (clock += 60_000),
     sleep: async () => {},
@@ -756,7 +757,7 @@ test('a Wi-Fi launch that times out or drops the console maps to the wireless co
       { ts: 2, msg: 'ERROR: The device was disconnected. (com.apple.dt.CoreDeviceError error 4 (0x04))' },
       { ts: 3, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -782,7 +783,7 @@ test('a launch on a locked phone gets the locked remedy, over Wi-Fi too', async 
       ...Array.from({ length: 8 }, (_, i) => ({ ts: 5 + i, msg: `FBSOpenApplicationRequestID = 0x${i}` })),
       { ts: 20, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -802,7 +803,7 @@ test("an app's own log lines about lost connections are not a Wi-Fi drop", async
       { ts: 3, msg: 'peripheral device disconnected' },
       { ts: 4, event: 'collector_failed', msg: 'the devicectl console ended with exit code 1' },
     ],
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     wireless: true,
     sleep: async () => {},
   });
@@ -815,7 +816,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => 767,
+    probe: () => ({ state: 'running', pid: 767 }),
     sleep: async () => {},
   });
   expect(alive.verified).toBe(true);
@@ -825,7 +826,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => null,
+    probe: () => ({ state: 'stopped' }),
     sleep: async () => {},
   });
   expect(gone).toMatchObject({ verified: false, reason: 'exited', pid: null });
@@ -834,7 +835,7 @@ test('verifyIosDeviceReleaseLaunch re-probes the phone rather than a host pid', 
     udid: PHONE,
     appName: 'Fixture',
     waitMs: 0,
-    probe: () => undefined,
+    probe: () => ({ state: 'unknown' }),
     sleep: async () => {},
   });
   expect(blind).toMatchObject({ verified: false, reason: 'probe-failed' });

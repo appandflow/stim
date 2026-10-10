@@ -147,9 +147,9 @@ function processFailure(
   d: ReloadDeps,
   slot = 'default',
 ): ReloadFailure | null {
-  const process =
+  const { state } =
     platform === 'ios' ? d.iosProcess(record.deviceId, record.appId) : d.androidProcess(record.deviceId, record.appId);
-  if (process === undefined) {
+  if (state === 'unknown') {
     const probe =
       platform === 'ios'
         ? `xcrun simctl spawn ${record.deviceId} launchctl list`
@@ -160,7 +160,7 @@ function processFailure(
       `Run \`${probe}\` and retry when the device tool responds.`,
     );
   }
-  if (process === null) {
+  if (state === 'stopped') {
     return failure(
       'STIM_RELOAD_STOPPED',
       `${record.appId} is not running on ${record.deviceId}.`,

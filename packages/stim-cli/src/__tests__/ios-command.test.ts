@@ -450,7 +450,7 @@ function harness(overrides: LooseDeps = {}) {
     },
     iosDeviceProcess: (args) => {
       record('iosDeviceProcess', args);
-      return DEVICE_PID;
+      return { state: 'running', pid: DEVICE_PID };
     },
     verifyIosDeviceReleaseLaunch: async (args) => {
       record('verifyIosDeviceReleaseLaunch', args);
@@ -8976,7 +8976,7 @@ describe('registered iOS project recipes', () => {
           getProject: () => getProject(root),
           readBrowser: () => null,
           resolveIos: () => ({ sim: makeIosSim({ udid: UDID, state: 'Booted' }) }),
-          iosProcess: () => 4242,
+          iosProcess: () => ({ state: 'running', pid: 4242 }),
           resolveMetro: async () => {
             throw new Error('native reload must not probe Metro');
           },
