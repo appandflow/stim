@@ -12,6 +12,28 @@ import {
 } from './hosted-macos.ts';
 export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
 
+/** Deadlines stim-server gives each hosted worker run. Clients derive their waits from these. */
+export interface DeviceHostLimits {
+  prepareMs: number;
+  offerMs: number;
+  stopMs: number;
+  logsMs: number;
+  killGraceMs: number;
+}
+
+export const DEVICE_HOST_LIMITS: Readonly<DeviceHostLimits> = {
+  prepareMs: 5 * 60_000,
+  offerMs: 30_000,
+  stopMs: 90_000,
+  logsMs: 15_000,
+  killGraceMs: 5000,
+};
+
+/** How long a cancelled hosted worker run can take to settle: SIGTERM, SIGKILL after the grace, then it is abandoned. */
+export function hostedWorkerSettleMs(limits: Pick<DeviceHostLimits, 'killGraceMs'> = DEVICE_HOST_LIMITS): number {
+  return limits.killGraceMs * 2;
+}
+
 export interface HostedIosChoice {
   deviceTypeId: string;
   runtimeId: string;
