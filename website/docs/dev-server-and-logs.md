@@ -43,9 +43,9 @@ inside a monorepo whose packages need the repository's Babel setup. Set
 Stim runs it from the app directory without a shell, in its own process group,
 and replaces `{port}` with the workspace's reserved port. Metro must keep
 running from inside the app directory, which is how Stim proves it belongs to
-the app. An app that sets `metro.command` does not need `react-native` or
-`expo` in its dependencies. Set it in the workspace layer or the app's
-`.stim.json`. `stim start --reset-cache` refuses for this server: put the
+the app. Set it in the workspace layer or the app's `.stim.json`. Set in the
+committed `.stim.json`, it also makes a package that does not depend on
+`react-native` or `expo` count as an app, as RNTester needs. `stim start --reset-cache` refuses for this server: put the
 command's own reset flag in `metro.command` instead. Windows is not supported.
 The output is captured as text, with levels inferred from each line, under
 `command_stdout` and `command_stderr` events. Stim adds no reporter to this

@@ -182,7 +182,8 @@ WHAT THE SUPERVISOR IS
 
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
   (default 60; 0 never stops) with no bundle request, no client log record
-  (in-app console logs; for Expo, any stdout line of the Expo CLI) and no Stim
+  (in-app console logs; for Expo or metro.command, any stdout line of the
+  dev server) and no Stim
   command in the workspace (start, ios, android, reload, worktree warm). It
   checks once a minute. It keeps running while a bundle response is in
   flight, while a build in the workspace is in progress, while a stim ios,
