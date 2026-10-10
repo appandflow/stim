@@ -161,7 +161,6 @@ export class ServerUpdates {
     };
   }
 
-  /** The newer of the recorded outcome and how this server's last update child ended, which records none when it is refused. */
   private latest(recorded: UpdateOutcome | null): UpdateOutcome | null {
     if (!this.ended) return recorded;
     if (!recorded) return this.ended;
@@ -332,13 +331,14 @@ export class ServerUpdates {
       const fresh = last && Date.parse(last.at) >= Date.parse(running.startedAt);
       let reason = '';
       try {
-        reason = readFileSync(log, 'utf8').trimEnd().split('\n').filter(Boolean).at(-1) ?? '';
+        reason =
+          readFileSync(log, 'utf8')
+            .split('\n')
+            .findLast((line) => line.trim() !== '') ?? '';
       } catch {}
       settle(
         code === 0,
-        fresh
-          ? last.message
-          : `The update exited with code ${String(code)}${reason ? `: ${reason}` : ''}; see ${log}.`,
+        fresh ? last.message : `The update exited with code ${String(code)}${reason ? `: ${reason}` : ''}; see ${log}.`,
       );
     });
     return null;

@@ -1579,8 +1579,22 @@ describe('offloaded builds', () => {
         result: { capacity: { declined: null } },
       });
       expect(await client.request('server.update.status')).toMatchObject({
-        result: { running: null, last: { ok: false, message: expect.stringContaining(': Another update is running.;') } },
+        result: {
+          running: null,
+          last: { ok: false, message: expect.stringContaining(': Another update is running.;') },
+        },
       });
+      const later = {
+        at: '2999-01-01T00:00:00.000Z',
+        target: 'release 1.15.0',
+        ok: true,
+        message: 'updated by another run',
+      };
+      writeFileSync(
+        join(root, 'Library', 'Application Support', 'Stim', 'services', 'dev.stim.drain', 'last-update.json'),
+        JSON.stringify(later),
+      );
+      expect(await client.request('server.update.status')).toMatchObject({ result: { last: later } });
     } finally {
       if (home === undefined) delete process.env.HOME;
       else process.env.HOME = home;

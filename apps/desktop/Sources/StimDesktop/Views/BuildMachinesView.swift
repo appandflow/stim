@@ -499,8 +499,6 @@ private struct RemoveMachineSheet: View {
   }
 }
 
-/// What ends the hosted sessions a remote machine's update waits for: this Mac's own, after a confirmation that
-/// names them, and a note for the sessions of other Macs, which only that machine can stop.
 private struct WaitingSessions: View {
   var machine: String
   var sessions: Int

@@ -127,13 +127,20 @@ public struct HostedOnMachine: Hashable, Sendable {
   }
 }
 
-/// The hosted devices this Mac's workspaces run on `machine`, a `remote.machines` entry.
+/// The hosted simulators and emulators this Mac's workspaces run on `machine`, a `remote.machines` entry. A hosted
+/// macOS app is left out: its `stim stop` ends the whole workspace.
 public func hostedDevices(on machine: String, in workspaces: [Workspace]) -> [HostedOnMachine] {
-  let label = { (entry: String) in OffloadMachines.name(entry).split(separator: ".").first.map(String.init) }
-  let name = label(machine)
+  let name = OffloadMachines.name(machine)
+  let same = { (host: String) in
+    let other = OffloadMachines.name(host)
+    if other == name { return true }
+    guard !name.contains(".") || !other.contains(".") else { return false }
+    return name.split(separator: ".").first == other.split(separator: ".").first
+  }
   return workspaces.flatMap { workspace in
     workspace.devices.compactMap { device -> HostedOnMachine? in
-      guard let host = device.hostedMachine, label(host) == name else { return nil }
+      if case .macos = device { return nil }
+      guard let host = device.hostedMachine, same(host) else { return nil }
       return HostedOnMachine(
         workspace: workspace.names.title, device: device.label, stop: stopCommand(for: device, cwd: workspace.path))
     }
