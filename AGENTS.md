@@ -546,7 +546,8 @@ Do not store the same artifact under both keys.
 ### 11. Preserve launch status semantics
 
 `launched` can be `true`, `'bundling'`, `'unverified'`, or `false`. Use `true`
-only for a proven bundle request or a live release process. Use `'bundling'`
+only for a proven bundle request, or a live process of a release build or a
+native process-runtime app with no JavaScript runtime. Use `'bundling'`
 only for positive, non-error evidence from this workspace's Metro port. Use
 `'unverified'` when there is no evidence. Only `'unverified'` gets launch
 remedies. `false` is reserved and is not produced today.
