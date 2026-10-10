@@ -64,7 +64,9 @@ struct TipsTests {
     inputs.pairedPhones = 0
     inputs.phoneApp = true
     inputs.rows = 11
-    inputs.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":true}")]
+    inputs.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":2}")]
+    inputs.hasEASProject = true
+    inputs.hasMacosTarget = true
     inputs.archived = [try archive("a")]
     inputs.serverRunning = true
     inputs.now = now
@@ -79,6 +81,16 @@ struct TipsTests {
       case .statusFilter: negative.sidebar.statuses = [.live]
       case .replay: negative.archived = []
       case .hostedSimulators: negative.machines = ["mini"]
+      case .easProfile: negative.hasEASProject = false
+      case .macos:
+        negative.workspaces = [
+          try workspace(
+            fields: """
+              ,"macos":{"launchId":"m","product":"App","bundle":"/A.app","bundleId":"dev.a","executable":"/A.app/A",
+              "state":"running","build":{"state":"ok","startedAt":"2026-10-05T09:00:00.000Z"}}
+              """)
+        ]
+      case .logs: negative.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":0}")]
       }
       #expect(!Tips.applicable(topic, inputs: negative))
     }

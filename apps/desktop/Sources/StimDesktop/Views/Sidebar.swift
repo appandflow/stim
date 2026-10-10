@@ -71,7 +71,7 @@ struct Sidebar: View {
       VStack(spacing: 0) {
         if let topic = tips.topic {
           TipCard(
-            topic: topic, hasNext: tips.hasNext,
+            topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: tips.hasNext,
             perform: {
               if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
               tips.perform()

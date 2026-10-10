@@ -22,6 +22,8 @@ final class TipCoordinator: ObservableObject {
   private var launchTimer: Timer?
   private var pollTimer: Timer?
   private var polling = false
+  private var capabilities: [ProjectCapabilities] = []
+  private var capabilityRoots: [String]?
 
   init(status: StatusStore, machines: BuildMachinesModel, defaults: UserDefaults = .standard) {
     self.status = status
@@ -39,6 +41,7 @@ final class TipCoordinator: ObservableObject {
       var usage = persistence.usage
       usage.observe(payload.environments, now: Date(), calendar: .current)
       if usage != persistence.usage { persistence.usage = usage }
+      detectCapabilities()
       scheduleEvaluation()
     }.store(in: &subscriptions)
     NoticeCenter.shared.objectWillChange.sink { [weak self] _ in self?.scheduleEvaluation() }.store(in: &subscriptions)
@@ -58,6 +61,18 @@ final class TipCoordinator: ObservableObject {
 
   private func scheduleEvaluation() {
     Task { [weak self] in self?.evaluate() }
+  }
+
+  private func detectCapabilities() {
+    let roots = status.projectList.map(\.project.root)
+    guard roots != capabilityRoots else { return }
+    capabilityRoots = roots
+    Task {
+      let detected = await Task.detached { roots.map { ProjectCapabilities.detect(root: $0) } }.value
+      guard capabilityRoots == roots else { return }
+      capabilities = detected
+      evaluate()
+    }
   }
 
   private func trackMachines() {
@@ -98,6 +113,8 @@ final class TipCoordinator: ObservableObject {
     inputs.sidebar = SidebarPreferences().options
     inputs.rows = status.sidebarList(inputs.sidebar).count
     inputs.workspaces = status.payload?.environments ?? []
+    inputs.hasEASProject = capabilities.contains { $0.eas }
+    inputs.hasMacosTarget = capabilities.contains { $0.macos }
     inputs.archived = status.payload?.archived ?? []
     inputs.serverRunning = ServerController.shared.isRunning
     return inputs
@@ -155,7 +172,7 @@ final class TipCoordinator: ObservableObject {
       if let archive = Tips.replayArchive(inputs) {
         OpenRequests.shared.workspaceLink = .workspace(WorkspaceOpenRequest(path: archive.projectRoot, archive: archive.id))
       }
-    case .hideWorkspaces, .statusFilter: break
+    case .hideWorkspaces, .statusFilter, .easProfile, .macos, .logs: break
     }
   }
 }

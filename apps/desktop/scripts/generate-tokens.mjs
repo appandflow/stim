@@ -13,7 +13,7 @@ process.on('warning', (warning) => {
   if (warning.code !== 'MODULE_TYPELESS_PACKAGE_JSON') console.warn(warning);
 });
 const tokens = await import('../../mobile/src/design/tokens.ts');
-const { AGENT_PROMPTS, TRY_THIS_PROMPTS } = await import('../../mobile/src/lib/agent-prompts.ts');
+const { AGENT_PROMPTS, TIP_PROMPTS } = await import('../../mobile/src/lib/agent-prompts.ts');
 const { TUTORIAL_STEPS, TUTORIAL_ASKS } = await import('../../../packages/stim-cli/src/guide/tutorial-data.ts');
 const { TUTORIAL_VERSION } = await import('../../../packages/core/state/status.ts');
 
@@ -114,9 +114,9 @@ ${AGENT_PROMPTS.map((prompt) => `    ${JSON.stringify(prompt)},`).join('\n')}
   ]
 }
 
-enum TryThisPrompts {
-  static let byTip: [String: String] = [
-${Object.entries(TRY_THIS_PROMPTS)
+enum TipPrompts {
+  static let byTopic: [String: String] = [
+${Object.entries(TIP_PROMPTS)
   .map(([tip, prompt]) => `    ${JSON.stringify(tip)}: ${JSON.stringify(prompt)},`)
   .join('\n')}
   ]

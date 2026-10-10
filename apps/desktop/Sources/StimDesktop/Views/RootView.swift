@@ -920,7 +920,7 @@ struct RootView: View {
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .overview:
       OverviewView(
-        store: store, metrics: metrics, machines: buildMachines, sidebarTopic: tips.topic,
+        store: store, metrics: metrics,
         selection: attributed(.click("overview page")),
         openLogs: openErrors,
         openDevice: { path, deviceID in
