@@ -1107,7 +1107,7 @@ function iosExecutor(devices: SimEntry[]) {
       },
       runFile(file: string, args: string[] = []) {
         files.push([file, ...args]);
-        if (file === 'xcrun' && args[0] === 'simctl' && (args[1] === 'list' || args[1] === 'boot'))
+        if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? ''))
           return this.run!([file, ...args].join(' '));
         return '';
       },
@@ -2014,7 +2014,7 @@ describe('ensureOwnedDevice: android', () => {
           run.push(cmd);
           if (cmd === 'emulator -list-avds') return avds.length ? `${avds.join('\n')}\n` : '';
           if (/delete avd/.test(cmd)) {
-            const name = / -n "([^"]+)"/.exec(cmd)?.[1];
+            const name = / -n (\S+)/.exec(cmd)?.[1];
             assert(name);
             avds = avds.filter((entry) => entry !== name);
             rmSync(join(process.env.ANDROID_AVD_HOME!, `${name}.ini`), { force: true });
@@ -2039,10 +2039,11 @@ describe('ensureOwnedDevice: android', () => {
           }
         },
         runFile(file: string, args: string[] = []): string {
-          if (file === 'adb' || file === 'emulator') return this.run([file, ...args].join(' '));
+          if (file === 'adb' || file === 'emulator' || file === 'avdmanager') return this.run([file, ...args].join(' '));
           return '';
         },
-        runFileQuiet(file: string) {
+        runFileQuiet(file: string, args: string[] = []) {
+          if (file === 'adb' || file === 'emulator') return this.runQuiet([file, ...args].join(' '));
           return file === 'ps' ? '' : null;
         },
         spawn(cmd: string, args: readonly string[], opts?: object) {
@@ -2229,7 +2230,7 @@ describe('ensureOwnedDevice: android', () => {
           settings: {},
         }),
       ).rejects.toThrow(/could not configure its AVD settings/i);
-      expect(run.some((cmd) => /delete avd -n "stim-app"/.test(cmd))).toBe(true);
+      expect(run).toContain('avdmanager delete avd -n stim-app');
       expect(spawn).toEqual([]);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
     } finally {
@@ -3235,7 +3236,7 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
   test('a created sim reports the model and runtime it was created with', async () => {
     const root = projectDir();
     try {
-      const { run, exec } = iosExecutor([]);
+      const { files, exec } = iosExecutor([]);
       setExecutor(exec);
 
       const device = await ensureOwnedDevice({
@@ -3249,9 +3250,13 @@ describe('ensureOwnedDevice: the requested model against the sim this workspace 
 
       expect(device.deviceType).toBe('iPhone 16');
       expect(device.runtime).toBe('26.2');
-      expect(run.some((cmd) => cmd.includes(`simctl create "stim-app (iPhone 16 26.2)" "${TYPE_16.identifier}"`))).toBe(
-        true,
-      );
+      expect(files.find((call) => call[2] === 'create')?.slice(0, 5)).toEqual([
+        'xcrun',
+        'simctl',
+        'create',
+        'stim-app (iPhone 16 26.2)',
+        TYPE_16.identifier,
+      ]);
       expect(getProject(root)?.platforms?.ios?.runtime).toBe(undefined);
     } finally {
       rmSync(root, { recursive: true, force: true });
