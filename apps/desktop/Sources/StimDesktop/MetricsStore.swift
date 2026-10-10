@@ -90,9 +90,10 @@ final class MetricsStore {
       return
     }
     let now = Date()
-    // After a pause the delta would span the whole pause, so it only sets a new baseline.
     if let previous = cpuTicks, now.timeIntervalSince(previous.at) < Self.cpuStaleAfter {
-      machineCpuFraction = MachineCpuTicks.fraction(from: previous.ticks, to: ticks) ?? machineCpuFraction
+      machineCpuFraction = MachineCpuTicks.fraction(from: previous.ticks, to: ticks)
+    } else {
+      machineCpuFraction = nil
     }
     cpuTicks = (ticks, now)
   }

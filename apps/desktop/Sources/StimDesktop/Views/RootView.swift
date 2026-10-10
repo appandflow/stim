@@ -1028,7 +1028,7 @@ struct MachineSummary: View {
   }
 
   private var showsCPU: Bool { metrics.machineCpuFraction != nil }
-  private var workspacesCpu: String { metrics.workspacesCpuFraction.map { formatPercent($0 * 100) } ?? "0%" }
+  private var workspacesCpu: String? { metrics.workspacesCpuFraction.map { formatPercent($0 * 100) } }
   private var showsMemory: Bool { store.payload?.capacity != nil && metrics.memory != nil }
 
   var body: some View {
@@ -1105,7 +1105,8 @@ struct MachineSummary: View {
     .accessibilityLabel("CPU details")
     .accessibilityValue(formatPercent(cpu * 100))
     .help(
-      "CPU used on this Mac, as a percent of all its cores. Stim's share: active workspaces' processes, simulators and emulators use \(workspacesCpu)."
+      "CPU used on this Mac, as a percent of all its cores."
+        + (workspacesCpu.map { " Stim's share: active workspaces' processes, simulators and emulators use \($0)." } ?? "")
     )
     .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
     .onHover { hovering in
@@ -1190,11 +1191,13 @@ struct MachineSummary: View {
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
         ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
         Text("CPU used on this Mac. 100% means all of its cores.").foregroundStyle(Palette.secondary)
-        Text(
-          "Stim workspaces: \(workspacesCpu)"
-            + " (\(countLabel(store.payload?.capacity?.liveCount ?? 0, "active workspace")))"
-        )
-        .foregroundStyle(Palette.secondary)
+        if let workspacesCpu {
+          Text(
+            "Stim workspaces: \(workspacesCpu)"
+              + " (\(countLabel(store.payload?.capacity?.liveCount ?? 0, "active workspace")))"
+          )
+          .foregroundStyle(Palette.secondary)
+        }
       }
     }
   }
