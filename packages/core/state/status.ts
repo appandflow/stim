@@ -464,9 +464,10 @@ export const WORKSPACE_STAGE_KINDS = ['building', 'warming', 'ready', 'build-fai
 
 /**
  * Where a workspace is, first match wins: `building` while a build runs, `warming` and `ready` from `phase` when
- * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live or holds
- * a remote device, else `stopped`. `since` is when that began: the build's start, the warm phase's time, the failed
- * run's end (else start), the supervisor's start, or Metro's last stop. `platform` names the build for `building`
+ * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live, its
+ * macOS app is running or orphaned, or it holds a remote device, else `stopped`. `since` is when that began: the
+ * build's start, the warm phase's time, the failed run's end (else start), the supervisor's start (else the running
+ * macOS app's build end, else its start), or Metro's last stop. `platform` names the build for `building`
  * and `build-failed`. `closedApps` lists, for `running`, the devices whose `appPresence` is `closed`.
  */
 export interface WorkspaceStage {

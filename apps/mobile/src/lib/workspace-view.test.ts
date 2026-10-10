@@ -35,8 +35,6 @@ import {
   diskParts,
   diskPartsLabel,
   gitChip,
-  localGitChipFacts,
-  localStageFacts,
   namesPhases,
   metroHealth,
   phaseSteps,
@@ -104,44 +102,18 @@ const last = (patch: Partial<LastBuild> = {}): LastBuild => ({
 const booted = { name: 'stim-w (iPhone 18 27.0)', udid: 'SIM-1', owned: true, state: 'Booted' };
 
 describe('appPresence', () => {
-  const failed = last({ status: 'failed' });
-  const entry = (result: BuildHistoryEntry['result']): BuildHistoryEntry => ({
-    ...last(),
-    result,
-    slot: 'default',
-    configuration: 'Debug',
-    cacheKey: null,
-    phases: {},
-  });
   const stopped = { ...booted, app: { id: 'a', state: 'stopped' as const } };
-  const presence = (patch: Partial<EnvironmentState>) => {
-    const e = env(patch);
-    return appPresence(e, devicesOf(e)[0]!);
-  };
+
+  it('takes the presence stim reports', () => {
+    const reported = env({ ios: { ...stopped, appPresence: 'none' } });
+    expect(appPresence(devicesOf(reported)[0]!)).toBe('none');
+    const cleared = env({ ios: { ...stopped, appPresence: null } });
+    expect(appPresence(devicesOf(cleared)[0]!)).toBeNull();
+  });
 
   it('never reports the app of a leased phone, which Stim does not track', () => {
-    const e = env({ ios: booted, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } });
-    expect(appPresence(e, devicesOf(e)[0]!)).toBe('none');
-    expect(appPresence(e, { ...devicesOf(e)[0]!, physical: true, owned: false })).toBeNull();
-  });
-
-  it('says no app only when the latest build failed and none ever succeeded', () => {
-    expect(presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed')] } })).toBe('none');
-    expect(
-      presence({ ios: stopped, lastBuilds: { ios: failed }, builds: { ios: [entry('failed'), entry('succeeded')] } }),
-    ).toBe('closed');
-  });
-
-  it('takes the presence stim reports once it reports the stage', () => {
-    const stage: StageFacts = { kind: 'running', since: null, platform: null, closedApps: [] };
-    const reported = env({ ios: { ...stopped, appPresence: 'none' }, stage });
-    expect(appPresence(reported, devicesOf(reported)[0]!)).toBe('none');
-    const cleared = env({ ios: { ...stopped, appPresence: null }, stage });
-    expect(appPresence(cleared, devicesOf(cleared)[0]!)).toBeNull();
-  });
-
-  it('does not guess from a missing app, which status leaves out when it does not know the bundle id', () => {
-    expect(presence({ ios: booted, lastBuilds: { ios: failed } })).toBeNull();
+    const e = env({ ios: { ...stopped, appPresence: 'none' } });
+    expect(appPresence({ ...devicesOf(e)[0]!, physical: true, owned: false })).toBeNull();
   });
 });
 
@@ -599,48 +571,29 @@ const expectedSteps = (steps: VectorStep[]) =>
 describe('workspace view vectors', () => {
   it.each(vectors.stage.map((c) => [c.name, c] as const))('stage: %s', (_, c) => {
     const e = c.workspace as unknown as EnvironmentState;
-    const derived = c.derived as StageFacts;
-    expect(localStageFacts(e, devicesOf(e))).toEqual(derived);
-    for (const env of [e, { ...e, stage: derived }]) {
-      const stage = workspaceStage(env, devicesOf(env), vectorNow);
-      expect(stage.kind).toBe(c.derived.kind);
-      expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
-    }
+    const stage = workspaceStage({ ...e, stage: c.derived as StageFacts }, vectorNow);
+    expect(stage.kind).toBe(c.derived.kind);
+    expect({ label: stage.label, tone: stage.tone, subtitle: stage.subtitle }).toEqual(c.stage);
   });
 
   it.each(vectors.gitChip.map((c) => [c.name, c] as const))('git chip: %s', (_, c) => {
     const worktree = c.worktree as unknown as WorktreeFacts;
-    const derived = c.derived as GitChipFacts;
-    expect(localGitChipFacts(worktree.git!, worktree.pullRequest)).toEqual(derived);
     const toneOf = (tone: string) => (tone === 'default' ? 'normal' : tone === 'secondary' ? 'neutral' : tone);
-    for (const facts of [worktree, { ...worktree, gitChip: derived }]) {
-      const chip = gitChip(facts);
-      const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
-      expect({
-        parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
-        pullRequest: pr,
-        label: chip?.label,
-      }).toEqual(c.chip);
-    }
+    const chip = gitChip({ ...worktree, gitChip: c.derived as GitChipFacts });
+    const pr = chip?.pr ? { text: chip.pr.text, tone: chip.pr.tone, checks: chip.pr.ci } : null;
+    expect({
+      parts: chip?.parts.map((p) => ({ text: p.text, tone: toneOf(p.tone) })),
+      pullRequest: pr,
+      label: chip?.label,
+    }).toEqual(c.chip);
   });
 
-  it('shows a neutral stage when stim reports a kind this app does not know', () => {
-    const e = {
-      ...(vectors.stage[0]!.workspace as unknown as EnvironmentState),
-      stage: { kind: 'paused', since: null, platform: null, closedApps: [] } as unknown as StageFacts,
-    };
-    expect(workspaceStage(e, devicesOf(e), vectorNow)).toEqual({
-      kind: 'unknown',
-      label: 'Unknown',
-      tone: 'tertiary',
-      subtitle: null,
-    });
-  });
-
-  it.each(vectors.appPresence.map((c) => [c.name, c] as const))('app presence: %s', (_, c) => {
-    const e = c.workspace as unknown as EnvironmentState;
-    const device = devicesOf(e).find((d) => d.platform === c.platform && d.slot === c.slot)!;
-    expect(appPresence(e, device)).toBe(c.presence);
+  it('shows a neutral stage when stim reports a kind this app does not know, or none', () => {
+    const e = vectors.stage[0]!.workspace as unknown as EnvironmentState;
+    const paused = { kind: 'paused', since: null, platform: null, closedApps: [] } as unknown as StageFacts;
+    const unknown = { kind: 'unknown', label: 'Unknown', tone: 'tertiary', subtitle: null };
+    expect(workspaceStage({ ...e, stage: paused }, vectorNow)).toEqual(unknown);
+    expect(workspaceStage(e, vectorNow)).toEqual(unknown);
   });
 
   it.each(vectors.checksSummary.map((c) => [c.name, c] as const))('checks summary: %s', (_, c) => {
@@ -723,18 +676,18 @@ test.each([
       cpuPercent: 10,
     });
   } else if (field === 'stage.kind') {
-    expect(workspaceStage(workspace, devices, NOW)).toEqual({
+    expect(workspaceStage(workspace, NOW)).toEqual({
       kind: 'unknown',
       label: 'Unknown',
       tone: 'tertiary',
       subtitle: null,
     });
   } else if (field === 'stage.platform') {
-    expect(
-      workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'building' } }, devices, NOW).subtitle,
-    ).toContain('Unknown');
+    expect(workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'building' } }, NOW).subtitle).toContain(
+      'Unknown',
+    );
   } else if (field === 'stage.closedApps.0.platform') {
-    expect(workspaceStage(workspace, devices, NOW)).toMatchObject({ tone: 'success', subtitle: 'up <1m' });
+    expect(workspaceStage(workspace, NOW)).toMatchObject({ tone: 'success', subtitle: 'up <1m' });
   } else if (field.endsWith('.activity.state')) {
     const platform = field.split('.')[0]!;
     expect(activityBadge(device(platform).activity, NOW)).toEqual({ kind: 'unknown', text: 'Activity unknown' });
@@ -748,7 +701,7 @@ test.each([
       tone: 'secondary',
     });
   } else if (field.endsWith('.appPresence')) {
-    expect(appPresence(workspace, device(field.split('.')[0]!))).toBeNull();
+    expect(appPresence(device(field.split('.')[0]!))).toBeNull();
   } else if (field === 'android.state' || field === 'physicalDevices.0.connection') {
     expect(field === 'android.state' ? device('android') : devices.find((entry) => entry.physical)).toMatchObject({
       running: false,
@@ -805,9 +758,9 @@ test.each([
   } else if (field === 'physicalDevices.0.platform') {
     expect(devices.some((entry) => entry.physical)).toBe(false);
   } else if (field === 'warmStep') {
-    expect(
-      workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'warming' } }, devices, NOW).subtitle,
-    ).toContain('Unknown');
+    expect(workspaceStage({ ...workspace, stage: { ...workspace.stage!, kind: 'warming' } }, NOW).subtitle).toContain(
+      'Unknown',
+    );
   } else if (field === 'worktree.pullRequest.reviewDecision') {
     expect(pullRequestReviewName(worktree!.pullRequest!.reviewDecision!)).toBe('Unknown');
   } else if (field === 'macos.build.state') {
@@ -854,7 +807,7 @@ test.each([
   ) {
     expect(device('macos')).toMatchObject({ name: 'App', running: true });
   } else if (field === 'phase') {
-    expect(workspaceStage(workspace, devices, NOW).label).toBe('Running');
+    expect(workspaceStage(workspace, NOW).label).toBe('Running');
   } else {
     expect(workspaceUsage(workspace, payload.machine)).toEqual({ cpuPercent: 10, memoryMb: 100, diskBytes: null });
   }

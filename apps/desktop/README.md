@@ -1547,7 +1547,7 @@ replaces its card. With the main window closed, the link reopens it.
   default runs without a restart. Without a launcher for `stim-server`, it
   tries again at most once a minute.
 
-At launch the app runs `stim --version` and needs 1.11.0 or later. When
+At launch the app runs `stim --version` and needs 1.17.2 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
 offers **Install stim** or **Update stim**, and **Choose stim Executable…**.
 **Update stim** runs the package manager that owns the resolved `stim`: the

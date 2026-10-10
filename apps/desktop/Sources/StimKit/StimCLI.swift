@@ -70,7 +70,7 @@ public struct StimCLI: Sendable {
     StimHome.path(environment: environment)
   }
 
-  public static let minimumVersion = SemanticVersion("1.11.0")!
+  public static let minimumVersion = SemanticVersion("1.17.2")!
 
   /// What `stim --version` printed, or nil when stim is missing, fails to start, or exits non-zero.
   public func versionOutput() async -> String? {
