@@ -1,4 +1,5 @@
 import type { NdjsonWriter } from '../ndjson.ts';
+import type { SettingsObject } from '../workspace/settings.ts';
 
 export interface ServerExitInfo {
   code?: number | null;
@@ -21,4 +22,5 @@ export type ServerStarter = (opts: {
   tunnel?: boolean;
   resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
+  settings?: SettingsObject;
 }) => Promise<ServerHandle>;

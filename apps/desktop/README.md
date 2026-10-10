@@ -1742,7 +1742,7 @@ which reaches the release app, never Stim Dev.
 `bundle.sh --release` builds the release variant, `build/Stim.app` with bundle
 id `dev.stim.desktop`, which `scripts/release.sh` and the release workflow use.
 
-The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
+The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's and the build animation's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
 
 ## Updates
 
@@ -1813,39 +1813,52 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 an inspector-width trailing column. It replaces the inspector until closed;
 Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and manual mode.
+sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
-resets progress when the tracked tour disappears and returns, or its oldest build
-started after Restart. A newer phase timestamp alone does not reset progress.
+resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying manual commands does not start it. Only archives
+and survives relaunch. Copying commands does not start it. Only archives
 removed after this run started can complete the tutorial.
 
-The panel follows workspace creation, the first iOS build, a cached rebuild,
-live view and control, app logs, agent actions and replay, Fast Refresh, optional
-phone and remote Mac steps, then stop/removal and Archived. Both optional
-steps keep Skip available.
+The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
+appearing (Get the Test App; the clone only, which is never the tour), the first
+linked worktree of the clone and its first iOS build (Make a Change, `tourPath`),
+the next linked worktree created after that step began and its first iOS build,
+which must start after the step began and be a cache hit (Change It Again in
+Parallel, `secondPath`), optional live view, agent actions and logs steps,
+optional phone and remote Mac steps, an optional Share Your Finish prompt, then
+removal and Archived of both tracked worktrees (Finish; the clone stays). The
+tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
+version 1 record is dropped and starts over on a version 2 workspace. Restart and
+"take the tutorial" start a fresh record at the current time that forgets the old tour paths even
+while the old worktrees are still registered; only linked worktrees whose creation time is after
+that start count, and the oldest one becomes the tour. Both optional steps
+keep Skip available.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
-followed by "Open Stim on your phone: the tour workspace is there".
+followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Mac opens the existing wizard using the tour workspace as its
 checkout. With no machine configured, Skip is the primary action. Once a machine
-is approved, the step shows "Continue the Stim tutorial: machine" and asks you to
-use the approved machine's name with your agent. Manual commands include that
-name. Approval completes the step and preserves its handoff across status polls;
+is approved, the step shows a prompt that names the approved machine, or asks you to
+name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server, pairs or grants access, or runs a
-build. Mark done appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access. Mark done
+appears after two minutes.
 
-Manual mode copies the generated commands, including app-file heredocs, with the
-tracked paths substituted. Expand First iOS build after the
-base app is created to copy the worktree and build commands. Desktop never runs them.
+Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
+section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
+short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
+`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
+simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
+Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
+Build section's Run, and is disabled while a build or action runs in the workspace.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.
+The Make a Change step shows an agent-device card when status reports `agentDevice.installed: false`.
 Removals started through Desktop's workspace actions can show a refusal in the panel.
 
 All tutorial Stim reads go through the CLI: the panel waits for the first loaded
@@ -1963,10 +1976,12 @@ Data Access permission (Accessibility on macOS 26 and earlier) for normal native
 the captured view is read-only. Background input relay is not included. No permission requests or custom packaging
 script is part of the build flow.
 
-On the first native viewer opening, one **Native App Viewer** setup screen explains
+On the first native viewer opening, the **Native App Viewer** setup sheet walks through
 Screen & System Audio Recording (Screen Recording on macOS 14) and Device Control and
 Data Access (Accessibility on macOS 26 and earlier), named for the Mac's macOS version,
-shows their status and offers **Request Permissions**, **Settings** and **Check Again**.
+one step at a time, then shows a done step. Each step offers a primary request button and
+**Open System Settings**; its status refreshes every two seconds while the sheet is open,
+with no manual check. **Skip** leaves a permission for later.
 You approve normal macOS requests; Stim never resets or automatically grants access.
 Use **Permissions** on the app card to reopen setup. A phone-first native viewer
 asks the running Desktop host to show the same setup on its next local health refresh.

@@ -93,6 +93,7 @@ beforeEach(() => {
   };
   setExecutor({
     run,
+    runFile: (file, args = []) => run([file, ...args].join(' ')),
     spawn(command, args = []) {
       try {
         run([command, ...args].join(' '));

@@ -108,6 +108,11 @@ export function diskUsageCacheDir(): string {
   return join(configDir(), 'disk-usage');
 }
 
+/** The ownership claim root that admits one disk-usage walk at a time on this machine. */
+export function diskUsageWalkClaims(): string {
+  return join(configDir(), 'disk-usage-walk.claims');
+}
+
 /** The remote Macs this Mac paired with, each with its pinned tailnet node and device token. */
 export function buildMachinesFile(): string {
   return join(configDir(), 'build-machines.json');

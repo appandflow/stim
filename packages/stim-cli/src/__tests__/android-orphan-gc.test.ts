@@ -97,7 +97,8 @@ beforeEach(() => {
   setExecutor({
     run,
     runQuiet: () => null,
-    runFile(file, args, options) {
+    runFile(file, args = [], options) {
+      if (file === 'adb' || file === 'emulator') return run([file, ...args].join(' '));
       if (file === 'du') return real.runFile(file, args, options);
       if (file === 'xcrun') return JSON.stringify({ devices: {}, devicetypes: [] });
       throw new Error(`Unexpected command: ${file}`);

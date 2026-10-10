@@ -6,6 +6,7 @@ import { statsProjectKey } from '../engine/stats.ts';
 import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../optimizations.ts';
 import {
   cacheProviderSettingError,
+  projectSettingsContext,
   publicUrlSetting,
   remoteEasFallbackSetting,
   remoteIosSetting,
@@ -46,7 +47,7 @@ export async function planReactNativeIos(
   d: IosDeps,
   schemeProblem: (scheme: string | undefined) => FailArgs | null,
 ): Promise<ProjectPlanResult> {
-  const settingsContext = { projectPath: root, gitCommonDir: d.gitCommonDir(root), repoRoot: d.repoRoot(root) };
+  const settingsContext = projectSettingsContext(root, d);
   const settings = d.resolveSettings(settingsContext);
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError)

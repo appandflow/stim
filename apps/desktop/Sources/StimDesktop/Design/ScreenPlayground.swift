@@ -37,6 +37,7 @@
     case settings = "Settings"
     case addMachine = "Add remote Mac"
     case pairPhone = "Pair a phone"
+    case viewerPermissions = "Viewer permissions"
     case discovery = "Suggestions"
     case tokens = "Design tokens"
     var id: Self { self }
@@ -54,7 +55,7 @@
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .pairPhone, .discovery: return [.ready]
+      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery: return [.ready]
       }
     }
   }
@@ -272,6 +273,8 @@
         AddMachinePlayground()
       case .pairPhone:
         PairPhonePlayground()
+      case .viewerPermissions:
+        ViewerPermissionsPlayground()
       case .tokens:
         EmptyView()
       }

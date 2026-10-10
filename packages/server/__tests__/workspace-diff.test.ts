@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkspaceDiff, WorkspaceFiles } from '../src/protocol.ts';
@@ -25,10 +26,10 @@ beforeEach(() => {
   git('add', '--', 'source.txt');
   git('commit', '-qm', 'base');
 });
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
-  rmSync(root, { recursive: true, force: true });
+  await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 test('refuses partial clones on old or unparseable Git without probing ordinary repositories', async () => {

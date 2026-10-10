@@ -138,7 +138,7 @@ test.each([
 ])('an Android sibling is judged from the running emulators when an AVD name %s', (_case, avdName, siblings) => {
   upsertProject(root, { deviceSlots: { second: { android: { avdName: 'stim-second', owned: true } } } });
   setExecutor({
-    run: () => 'List of devices attached\nemulator-5554\tdevice\n',
+    runFile: () => 'List of devices attached\nemulator-5554\tdevice\n',
     runQuiet: () => avdName,
   });
   try {
