@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -527,13 +527,23 @@ describe('offloadBuild', () => {
 });
 
 describe('macOS artifact transfer', () => {
-  it.each(['valid', 'missing-plist', 'missing-executable', 'bad-digest'])(
+  it.each(['valid', 'missing-plist', 'missing-executable', 'bad-digest', 'symlinked-app', 'symlinked-contents'])(
     'accepts only a complete macOS app with the verified archive digest: %s',
     async (kind) => {
-      const contents = join(repo, 'archive-source', 'Sample.app', 'Contents');
+      const linked = kind.startsWith('symlinked');
+      const app = linked ? join(repo, 'outside', 'Sample.app') : join(repo, 'archive-source', 'Sample.app');
+      const contents = join(app, 'Contents');
       mkdirSync(join(contents, 'MacOS'), { recursive: true });
       if (kind !== 'missing-plist') writeFileSync(join(contents, 'Info.plist'), '{}');
       if (kind !== 'missing-executable') writeFileSync(join(contents, 'MacOS', 'Sample'), 'binary');
+      if (kind === 'symlinked-app') {
+        mkdirSync(join(repo, 'archive-source'), { recursive: true });
+        symlinkSync(app, join(repo, 'archive-source', 'Sample.app'));
+      }
+      if (kind === 'symlinked-contents') {
+        mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
+        symlinkSync(contents, join(repo, 'archive-source', 'Sample.app', 'Contents'));
+      }
       const archivePath = join(repo, 'artifact.tgz');
       execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
       const archive = readFileSync(archivePath);
@@ -597,7 +607,13 @@ describe('macOS artifact transfer', () => {
           }
         : { reason: outcome.reason };
       const failureReason = expect.stringContaining(
-        kind === 'bad-digest' ? 'sha256' : kind === 'missing-plist' ? 'Contents/Info.plist' : 'Contents/MacOS/Sample',
+        kind === 'bad-digest'
+          ? 'sha256'
+          : linked
+            ? 'mini returned Sample.app as or through a symbolic link'
+            : kind === 'missing-plist'
+              ? 'Contents/Info.plist'
+              : 'Contents/MacOS/Sample',
       );
       expect(observed).toEqual(
         kind === 'valid'

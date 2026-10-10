@@ -11,7 +11,7 @@ import {
   rmSync,
   writeSync,
 } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
 import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket, type ClientOptions } from 'ws';
@@ -954,6 +954,14 @@ async function syncSource(
   };
 }
 
+function stagedArtifactEscapes(stagingDir: string, artifactPath: string, hasContents: boolean): boolean {
+  const paths = hasContents ? [artifactPath, join(artifactPath, 'Contents')] : [artifactPath];
+  if (paths.some((path) => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink())) return true;
+  if (!existsSync(artifactPath)) return false;
+  const inside = relative(realpathSync(stagingDir), realpathSync(artifactPath));
+  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+}
+
 /**
  * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
  * sha256 the machine reports. The caller re-fingerprints and stores it.
@@ -1197,6 +1205,9 @@ export async function offloadBuild({
     throwIfCancelled();
     rmSync(archive, { force: true });
     const artifactPath = join(stagingDir, name);
+    if (stagedArtifactEscapes(stagingDir, artifactPath, request.platform === 'macos')) {
+      return fail(`fetch: ${machine} returned ${name} as or through a symbolic link or outside the staging directory`);
+    }
     if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
       return fail(`fetch: ${name} has no Info.plist`);
     }
