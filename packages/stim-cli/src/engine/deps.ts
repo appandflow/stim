@@ -180,6 +180,8 @@ export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
 
 const loginRubyEnvByShell = new Map<string, LoginRubyEnv | null>();
 
+const LOGIN_ENV_OPTIONS = { timeoutMs: 10_000, killSignal: 'SIGKILL', detachedSilent: true } as const;
+
 function readLoginRubyEnv(
   shell: string | undefined = process.env.SHELL,
   platform: NodeJS.Platform = process.platform,
@@ -191,11 +193,29 @@ function readLoginRubyEnv(
   try {
     dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
     const file = join(dir, 'env');
-    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
-      timeoutMs: 10_000,
-      killSignal: 'SIGKILL',
-      detachedSilent: true,
-    });
+    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
+    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
+  } catch {
+    parsed = null;
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+  loginRubyEnvByShell.set(shell, parsed);
+  return parsed;
+}
+
+async function readLoginRubyEnvAsync(
+  shell: string | undefined = process.env.SHELL,
+  platform: NodeJS.Platform = process.platform,
+): Promise<LoginRubyEnv | null> {
+  if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
+  if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
+  let dir: string | null = null;
+  let parsed: LoginRubyEnv | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+    const file = join(dir, 'env');
+    await getExecutor().runFileAsync(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], LOGIN_ENV_OPTIONS);
     parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
   } catch {
     parsed = null;
@@ -276,6 +296,20 @@ export function podEnvForRuby(
   if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
   if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
+}
+
+/** `podEnvForRuby` for callers that must not block the event loop on the login shell it may run. */
+export async function podEnvForRubyAsync(version: string | null): Promise<NodeJS.ProcessEnv> {
+  let loginNeeded = false;
+  const withoutLogin = podEnvForRuby(version, {
+    loginEnv: () => {
+      loginNeeded = true;
+      return null;
+    },
+  });
+  if (!loginNeeded) return withoutLogin;
+  const login = await readLoginRubyEnvAsync();
+  return podEnvForRuby(version, { loginEnv: () => login });
 }
 
 export function readRubyVersion(

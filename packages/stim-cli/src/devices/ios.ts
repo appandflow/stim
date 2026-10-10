@@ -647,11 +647,18 @@ export function deleteParkedIosSim(udid: string): void {
   forgetCreatedDevice('ios', udid);
 }
 
+const LIST_RUNTIMES_ARGS = ['simctl', 'list', 'runtimes', '--json'];
+const LIST_RUNTIMES_OPTIONS = { timeoutMs: 30000, killSignal: 'SIGKILL' } as const;
+
 export function listIosRuntimes(): IosRuntime[] {
-  const out = getExecutor().runFile('xcrun', ['simctl', 'list', 'runtimes', '--json'], {
-    timeoutMs: 30000,
-    killSignal: 'SIGKILL',
-  });
+  return parseIosRuntimes(getExecutor().runFile('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
+}
+
+export async function listIosRuntimesAsync(): Promise<IosRuntime[]> {
+  return parseIosRuntimes(await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, LIST_RUNTIMES_OPTIONS));
+}
+
+function parseIosRuntimes(out: string): IosRuntime[] {
   const data = JSON.parse(out) as {
     runtimes?: Array<{
       identifier: string;

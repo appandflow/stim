@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { podEnv } from '../engine/deps.ts';
-import { iosToolchain, workerToolchain } from '../offload/toolchain.ts';
+import { iosToolchain, iosToolchainAsync, workerToolchain } from '../offload/toolchain.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 
@@ -143,3 +143,24 @@ test('native Xcode discovery preserves required facts without invoking unrelated
     androidSdk: { ndk: ['28'], buildTools: ['37'], platforms: ['android-37'] },
   });
 });
+
+test.skipIf(process.platform !== 'darwin')(
+  'the async probe resolves the same toolchain from the project Ruby and from the login shell gems',
+  async () => {
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({
+      cocoapods: '1.17.0',
+      xcode: 'Xcode 27.0',
+      simulatorSdk: '27.0',
+    });
+    writeFileSync(join(root, '.ruby-version'), 'ruby-3.3.4\n');
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({ cocoapods: '1.16.2', xcode: 'Xcode 27.0' });
+  },
+);
+
+test.skipIf(process.platform !== 'darwin')(
+  'an unreadable login shell keeps the caller environment in the async probe',
+  async () => {
+    vi.stubEnv('SHELL', join(root, 'missing-shell'));
+    await expect(iosToolchainAsync(root)).resolves.toMatchObject({ cocoapods: '1.16.2' });
+  },
+);
