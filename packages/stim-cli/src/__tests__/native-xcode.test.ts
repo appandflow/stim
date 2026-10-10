@@ -624,7 +624,7 @@ test('relocation, shell location and task metadata preserve warm identities whil
   expect(before).not.toHaveProperty('cacheIneligible');
   for (const name of ['PWD', 'OLDPWD', 'TMPDIR', 'SHLVL', '_', 'STIM_QA_TASK_ID']) vi.stubEnv(name, `changed-${name}`);
   expect(fingerprint()).toEqual(before);
-  const relocated = join(home, 'relocated');
+  const relocated = join(realpathSync(home), 'relocated');
   cpSync(root, relocated, { recursive: true });
   expect(
     nativeXcodeInputSnapshot(relocated, selectNativeXcodeProject(relocated), {
