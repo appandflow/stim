@@ -99,7 +99,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       selected,
       {
         sdk: context.target.sdk,
-        architecture: context.target.arch,
+        architecture: context.target.keyArch,
         toolchain: tools,
         optimizations: context.optimizations,
       },
@@ -313,7 +313,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
       selection,
       {
         sdk: 'iphonesimulator',
-        architecture: null,
+        architecture,
         toolchain: toolchain('iphonesimulator'),
         optimizations: optimizations.ios,
       },

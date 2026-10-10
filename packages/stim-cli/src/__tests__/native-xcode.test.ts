@@ -17,6 +17,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts';
 import { nativeXcodeIosProject } from '../integrations/native-xcode-ios.ts';
+import type { IosArtifactContext } from '../integrations/ios-project.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
@@ -663,6 +664,27 @@ test('native planning refuses unresolved source closure without dependency prepa
   expect(commands.some((command) => command.includes('-resolvePackageDependencies') || command.includes('build'))).toBe(
     false,
   );
+});
+
+test('stim ios, the build API and --plan share one native artifact key for the same project', async () => {
+  writeNativeXcodeProject(root);
+  vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  const host = process.arch === 'arm64' ? 'arm64' : 'x86_64';
+  const identity = async (arch: 'arm64' | 'x86_64' | null) => {
+    const recipe = nativeXcodeIosProject(root).artifact({
+      root,
+      configuration: 'Debug',
+      target: { udid: null, destination: null, sdk: 'iphonesimulator', arch, keyArch: host },
+      optimizations: resolveOptimizations({}, {}).ios,
+    } as unknown as IosArtifactContext);
+    return recipe.identity();
+  };
+  const run = await identity(null);
+  expect(run).toHaveProperty('key');
+  expect(await identity(host)).toEqual(run);
+  expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({ cacheKey: (run as { key: string }).key });
 });
 
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {
