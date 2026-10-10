@@ -328,30 +328,28 @@ export function launchIosApp(
   { exec = null }: ExecOpt = {},
 ): IosLaunchResult {
   const e = exec || getExecutor();
+  const runningPid = iosAppProcess(udid, bundleId, { exec: e });
+  const stateUnknown = runningPid === undefined;
   const launchArgs = [
     'simctl',
     'launch',
     ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
+    ...(stateUnknown ? ['--terminate-running-process'] : []),
     udid,
     bundleId,
   ];
-  let runningPid = iosAppProcess(udid, bundleId, { exec: e });
   const restart: { restartedPid?: number } = {};
-  if (runningPid !== null) {
+  if (runningPid) {
     try {
       e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
-      const stderr = String((err as { stderr?: unknown })?.stderr ?? '');
-      if (runningPid !== undefined || !stderr.includes('found nothing to terminate')) {
-        return {
-          failed: true,
-          code: LAUNCH_ERROR,
-          reason: `simctl terminate ${bundleId} failed, so the running app${runningPid ? ` (pid ${runningPid})` : ''} was not restarted: ${describeIosSimulatorFailure(err, e)}`,
-        };
-      }
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${runningPid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+      };
     }
-    if (runningPid) restart.restartedPid = runningPid;
-    runningPid = null;
+    restart.restartedPid = runningPid;
   }
   if (metroPort !== null) {
     try {
@@ -370,7 +368,7 @@ export function launchIosApp(
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
-      const viaInitialUrl = Boolean(consolePaths) && runningPid === null;
+      const viaInitialUrl = Boolean(consolePaths) || stateUnknown;
       if (!viaInitialUrl) {
         // simctl openurl carries no launch arguments, so it needs the
         // dev-menu keys in the persisted defaults instead of DEV_MENU_LAUNCH_ARGS.
@@ -401,7 +399,8 @@ export function launchIosApp(
         e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
-        const pid = launchedWithInitialUrl ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+        const pid =
+          launchedWithInitialUrl && !stateUnknown ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
         if (pid && pid !== restart.restartedPid)
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         return {
@@ -419,7 +418,7 @@ export function launchIosApp(
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
-    const pid = runningPid === null ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+    const pid = stateUnknown ? null : launchedIosAppAfterNoHandle(err, udid, bundleId, e);
     if (pid && pid !== restart.restartedPid) {
       const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
       if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
