@@ -118,6 +118,7 @@ import { NotificationLog, notificationLogFile, publicEntry } from './notificatio
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   authenticateDevice,
+  buildClientsReadable,
   dropPushToken,
   parseLevels,
   parseQuietHours,
@@ -919,7 +920,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
     }
     hostedDevices.revoke();
-    builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
+    builds.abandonDetached(
+      (client) => paired.get(client)?.capabilities.includes('build') ?? false,
+      buildClientsReadable(),
+    );
     void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
       const capabilities = paired.get(controller.device.id)?.capabilities;

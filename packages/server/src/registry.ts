@@ -265,6 +265,11 @@ export function readBuildClients(now: number = Date.now()): PairedDevice[] {
   return readRecords(clientsFile('build')).filter((client) => !lapsed(client, now));
 }
 
+/** Whether the build client registry parses, so an empty `readBuildClients` means no client rather than a read failure. */
+export function buildClientsReadable(): boolean {
+  return Array.isArray(readJsonObject(clientsFile('build'))?.devices);
+}
+
 /** Device-host approvals live apart from read/control pairings and build clients. */
 export function readDeviceHostClients(now: number = Date.now()): PairedDevice[] {
   return readRecords(clientsFile('device-host')).filter((client) => !lapsed(client, now));

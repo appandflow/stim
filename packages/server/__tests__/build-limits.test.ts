@@ -88,6 +88,19 @@ test("deletes a revoked client's area, but not through a symlink or outside the 
   expect(existsSync(root)).toBe(true);
 });
 
+test("deletes a served client's area once it loses build, and only when told the registry was read", async () => {
+  const host = start();
+  host.session('gone', {} as WebSocket, () => {});
+  mkdirSync(join(root, 'gone', 'blobs'), { recursive: true });
+
+  host.abandonDetached(() => false);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(existsSync(join(root, 'gone'))).toBe(true);
+
+  host.abandonDetached(() => false, true);
+  await vi.waitFor(() => expect(existsSync(join(root, 'gone'))).toBe(false));
+});
+
 test('prunes blobs no mirror or open manifest references, and none while a mirror is unreadable', () => {
   const host = start();
   const client = join(root, 'client');

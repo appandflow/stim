@@ -14,6 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -429,9 +430,9 @@ export class BuildHost {
     for (const [session, owner] of this.sessions) {
       if (owner === client) for (const sha256 of session.digests()) keep.add(sha256);
     }
-    const repos = join(this.clientDir(client), 'repos');
-    const blobs = join(this.clientDir(client), 'blobs');
     try {
+      const repos = join(this.clientDir(client), 'repos');
+      const blobs = join(this.clientDir(client), 'blobs');
       for (const repo of readdirSync(repos)) {
         const mirror = join(repos, repo, 'mirror.json');
         if (!existsSync(mirror)) continue;
@@ -456,7 +457,7 @@ export class BuildHost {
     for (const job of jobs) job.cancel();
     await Promise.all(jobs.map((job) => job.done));
     try {
-      rmSync(this.clientDir(client), { recursive: true, force: true });
+      await rm(this.clientDir(client), { recursive: true, force: true, maxRetries: 3 });
     } catch (error) {
       console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
     }
@@ -640,7 +641,6 @@ export class BuildHost {
           releaseClaims();
           entry.settled = true;
           this.jobs.delete(entry);
-          this.pruneBlobs(client);
           if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
@@ -653,6 +653,7 @@ export class BuildHost {
             durationMs: Date.now() - started,
           });
           resolve();
+          this.pruneBlobs(client);
         };
         settle();
       });
@@ -749,15 +750,16 @@ export class BuildHost {
 
   /**
    * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
-   * such as a revoked one. The area of each such client this server process served is deleted once its builds end.
+   * such as a revoked one. With `deleteAreas`, the area of each such client this server process served is deleted
+   * once its builds end.
    */
-  abandonDetached(allowed: (client: string) => boolean): void {
+  abandonDetached(allowed: (client: string) => boolean, deleteAreas = false): void {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
     for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
     for (const client of this.served) {
-      if (allowed(client)) continue;
+      if (!deleteAreas || allowed(client)) continue;
       this.served.delete(client);
       void this.remove(client);
     }
