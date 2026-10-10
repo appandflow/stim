@@ -1,7 +1,7 @@
 import { createRequire } from 'node:module';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
-import { resolveProjectSettings } from '../workspace/settings.ts';
+import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { appendCacheStore, metroStoreRoot, registerMetroStore } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
@@ -287,6 +287,7 @@ export async function startBareServer({
   fileStore = undefined,
   closeTimeoutMs = 5000,
   resetCache = false,
+  settings,
 }: {
   root: string;
   port: number;
@@ -298,6 +299,7 @@ export async function startBareServer({
   fileStore?: (new (options: { root: string }) => { _root?: string }) | null;
   closeTimeoutMs?: number;
   resetCache?: boolean;
+  settings?: SettingsObject;
 }): Promise<BareServerHandle> {
   const { metro, devMiddleware, serverApi } = deps || resolveBareDeps(root);
   const makeReporter = reporterFactory === undefined ? loadNdjsonReporter(root) : reporterFactory;
@@ -307,7 +309,10 @@ export async function startBareServer({
     root,
     config,
     writer,
-    enabled: cacheStore === undefined ? resolveMetroSharedCache(resolveProjectSettings(root).settings) : cacheStore,
+    enabled:
+      cacheStore === undefined
+        ? resolveMetroSharedCache(settings ?? resolveProjectSettings(root).settings)
+        : cacheStore,
     FileStore: fileStore === undefined ? loadFileStore(root) : fileStore,
   });
   if (sharedStoreInstalled && normalizeMetroTransformerPaths(config, root)) {

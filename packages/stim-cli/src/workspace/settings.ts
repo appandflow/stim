@@ -593,8 +593,7 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
   return null;
 }
 
-export function projectMetroCommand(root: string): string[] | null {
-  const settings = settingsForProject(root);
+export function runnableMetroCommand(settings: SettingsObject): string[] | null {
   return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
 }
 

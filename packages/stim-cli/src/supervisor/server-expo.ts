@@ -2,7 +2,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { dirname, join, parse } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
-import { resolveProjectSettings } from '../workspace/settings.ts';
+import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
 import { getExecutor } from '../exec.ts';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import { type NdjsonRecord, type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
@@ -203,9 +203,9 @@ export function parseExpoWaitingOnUrl(line: unknown): string | null {
 
 function resolveMetroStoreInjection(
   root: string,
-  { log, env }: { log: NdjsonWriter; env: NodeJS.ProcessEnv },
+  { log, env, settings }: { log: NdjsonWriter; env: NodeJS.ProcessEnv; settings: SettingsObject },
 ): Record<string, string> | null {
-  const sharedCache = resolveMetroSharedCache(resolveProjectSettings(root).settings);
+  const sharedCache = resolveMetroSharedCache(settings);
   if (!sharedCache) {
     log.write({
       src: 'metro',
@@ -268,6 +268,7 @@ export async function startExpoServer({
   resetCache = false,
   onTunnelUrl = null,
   platform = process.platform,
+  settings,
 }: {
   root: string;
   port: number;
@@ -279,6 +280,7 @@ export async function startExpoServer({
   resetCache?: boolean;
   onTunnelUrl?: ((url: string) => void) | null;
   platform?: NodeJS.Platform;
+  settings?: SettingsObject;
 }): Promise<ChildServerHandle> {
   const resolved = resolveExpoBin(root);
   if (!resolved) {
@@ -291,7 +293,11 @@ export async function startExpoServer({
   const spawn = spawnFn || ((cmd: string, args: string[], opts: SpawnOptions) => getExecutor().spawn(cmd, args, opts));
 
   const args = ['start', '--port', String(port), ...(tunnel ? ['--tunnel'] : []), ...(resetCache ? ['--clear'] : [])];
-  const storeEnv = resolveMetroStoreInjection(root, { log, env: process.env });
+  const storeEnv = resolveMetroStoreInjection(root, {
+    log,
+    env: process.env,
+    settings: settings ?? resolveProjectSettings(root).settings,
+  });
 
   // On Windows the package bin's shebang resolves `node` through PATH, where pnpm
   // and Volta install shims that run the real node as a child. Metro then listens
