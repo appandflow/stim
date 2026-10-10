@@ -317,7 +317,11 @@ A compatible approved build Mac can compile a native Xcode app with
 --remote-build auto or --remote-build <name>. Both peers must support
 native-xcode-build. This first worker path requires a verified artifact identity
 and all inputs contained in the repository and visible to git. Ignored or
-external inputs refuse source transfer; their bytes are never silently omitted.
+external inputs keep the build here, and placement names the first one; their
+bytes are never silently omitted. The common case is a Finder .DS_Store that a
+global gitignore hides: delete it, or stop ignoring it, to offload. The worker
+compares its own toolchain and compiler environment identity before compiling
+and refuses, naming the differing parameter, so the build falls back here.
 Worker source mirrors remove stale inputs, while Xcode compilation caches remain
 in the worker's private Stim home. Physical builds stay local.
 
