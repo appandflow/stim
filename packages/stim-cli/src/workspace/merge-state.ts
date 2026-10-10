@@ -192,7 +192,7 @@ export function mergeState(
     }
     return notMerged(`not merged into ${name}`);
   } catch (error) {
-    const timedOut = (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ? { timedOut: true as const } : {};
+    const timedOut = isTimeoutError(error) ? { timedOut: true as const } : {};
     return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}`, ...timedOut };
   }
 }

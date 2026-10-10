@@ -218,6 +218,7 @@ interface MakeExecutorOptions {
   refSha?: string | null;
   statusAnswers?: (string | null)[];
   staged?: string | null;
+  commonDir?: string | null;
 }
 
 function makeExecutor({
@@ -234,6 +235,7 @@ function makeExecutor({
   refSha = 'abc123',
   statusAnswers = [],
   staged = '',
+  commonDir = null,
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -284,6 +286,7 @@ function makeExecutor({
       }
       if (/status --porcelain/.test(cmd)) return statusAnswers.length ? (statusAnswers.shift() ?? null) : dirty;
       if (/ls-files --stage/.test(cmd)) return staged;
+      if (/--git-common-dir/.test(cmd)) return commonDir;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
       if (/ checkout -- /.test(cmd)) return '';
@@ -720,6 +723,37 @@ test.each([
   expect(getProject(wtDir)).toEqual(before);
   expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
 });
+
+test.each([
+  ['listing worktrees', { worktrees: TIMED_OUT }],
+  ['reading the common git directory', { worktrees: '', commonDir: TIMED_OUT }],
+])(
+  'action: a registered worktree whose git times out on %s is refused, not reclaimed as a plain folder',
+  async (_read, answers) => {
+    upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+    const before = getProject(wtDir);
+    const exec = makeExecutor({
+      ...answers,
+      simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+    });
+    setExecutor(exec);
+    const errs: string[] = [];
+    const original = console.error;
+    console.error = (m) => errs.push(String(m));
+    try {
+      const run = captureAction(registerRemove);
+      await run(wtDir, {});
+    } finally {
+      console.error = original;
+    }
+
+    expect(process.exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/git safety check timed out/);
+    expect(errs.join('\n')).not.toMatch(/not a git repository/);
+    expect(getProject(wtDir)).toEqual(before);
+    expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
+  },
+);
 
 test('action: on success, ownership state stays until removeWorktree succeeds', async () => {
   upsertProject(wtDir, { metroPort: 8083 });

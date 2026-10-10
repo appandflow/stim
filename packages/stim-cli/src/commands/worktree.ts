@@ -821,9 +821,13 @@ function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
     return inspectGit(path, mergedHead);
   } catch (error) {
     if (!isTimeoutError(error)) throw error;
-    const blocker = `a git safety check timed out: ${(error as Error).message}`;
-    return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
+    return timedOutInspection(error);
   }
+}
+
+function timedOutInspection(error: unknown): RemovalInspection {
+  const blocker = `a git safety check timed out: ${(error as Error).message}`;
+  return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
 }
 
 function inspectGit(path: string, mergedHead?: string): RemovalInspection {
@@ -833,7 +837,7 @@ function inspectGit(path: string, mergedHead?: string): RemovalInspection {
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
   const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
-  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;
+  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD', { removal: true }) === mergedHead;
   const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
   const submodules = hasPopulatedSubmodules(path);
   if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
@@ -923,6 +927,15 @@ export async function removeWorktreeTarget(target: string | undefined, opts: Rem
 }
 
 async function runRemove(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
+  try {
+    await removeOrRefuse(target, opts, onRemoved);
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    printRemovalRefusal(removalPath(target), timedOutInspection(error));
+  }
+}
+
+async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.red(poolError));
@@ -948,14 +961,14 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         process.exitCode = 1;
         return;
       }
-      if (!branchExists(mainRoot, branch)) {
+      if (!branchExists(mainRoot, branch, { removal: true })) {
         removeProject(path);
         console.error(
           chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)),
         );
         return;
       }
-      const checkedOutAt = listWorktrees(mainRoot).find(
+      const checkedOutAt = listWorktrees(mainRoot, { removal: true }).find(
         (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
       )?.path;
       if (checkedOutAt) {
@@ -964,7 +977,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         process.exitCode = 1;
         return;
       }
-      const currentSha = resolveFullRef(mainRoot, branch);
+      const currentSha = resolveFullRef(mainRoot, branch, { removal: true });
       if (currentSha !== pending.worktreePendingBranchSha) {
         console.error(
           chalk.red(
@@ -991,10 +1004,10 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     return;
   }
 
-  const worktrees = listWorktrees(path);
+  const worktrees = listWorktrees(path, { removal: true });
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
-    if (!opts.linkedOnly && gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
+    if (!opts.linkedOnly && gitCommonDir(path, { removal: true }) === null && hasRegisteredProjectUnder(path)) {
       await reclaimEnvironment(path, 'it is not a git repository');
       return;
     }
@@ -1076,7 +1089,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   const project = getProject(path);
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
-  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
+  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD', { removal: true }) : null;
   let mergedHead = opts.mergedHead;
   let inspection = inspectRemoval(path, mergedHead);
   if (
@@ -1087,7 +1100,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     inspection.unpushed?.length &&
     !inspection.dirtyLines.length
   ) {
-    const head = resolveFullRef(path, 'HEAD');
+    const head = resolveFullRef(path, 'HEAD', { removal: true });
     const pr = head ? endedPullRequest(pullRequestLookup()(path, branch, head)) : null;
     if (head && pr?.state === 'merged') {
       mergedHead = head;
@@ -1117,7 +1130,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
-      const inspectedHead = resolveFullRef(path, 'HEAD');
+      const inspectedHead = resolveFullRef(path, 'HEAD', { removal: true });
       const current = inspectRemoval(path, mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
@@ -1131,7 +1144,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         reportRetainedResources(path, result);
         return;
       }
-      if (!opts.force && resolveFullRef(path, 'HEAD') !== inspectedHead) {
+      if (!opts.force && resolveFullRef(path, 'HEAD', { removal: true }) !== inspectedHead) {
         console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
         console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);

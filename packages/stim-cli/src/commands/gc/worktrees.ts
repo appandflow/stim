@@ -66,7 +66,7 @@ export interface WorktreeFacts {
   locked: boolean;
   porcelain: string[] | null;
   unpushed: string[] | null;
-  submodules: boolean;
+  submodules: boolean | null;
   inUse: string[];
   idleDays: number | null;
   merge: MergeState | null;
@@ -185,6 +185,7 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (facts.unpushed.length && !merged?.coversUnpushed && ended?.state !== 'merged') {
     return skip('unpushed', `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`);
   }
+  if (facts.submodules === null) return skip('submodules', 'initialized submodules could not be checked');
   if (facts.submodules) return skip('submodules', 'initialized submodules');
   if (merged || ended) return null;
   const notMerged = facts.merge && !facts.merge.merged ? facts.merge : null;
@@ -461,7 +462,7 @@ export async function collectWorktreeSweep({
       locked: Boolean(entry?.locked),
       porcelain: porcelainOf(path, gitAnswered),
       unpushed: linked ? unlessTimedOut(() => unpushedCommits(path), null) : null,
-      submodules: linked && unlessTimedOut(() => hasPopulatedSubmodules(path), null) !== false,
+      submodules: linked ? unlessTimedOut(() => hasPopulatedSubmodules(path), null) : false,
       inUse: [],
       idleDays,
       merge: null,

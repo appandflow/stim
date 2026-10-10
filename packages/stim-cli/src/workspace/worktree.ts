@@ -30,8 +30,17 @@ function nativePath(path: string): string {
   return sep === '/' ? path : path.replaceAll('/', sep);
 }
 
-export function gitCommonDir(cwd: string): string | null {
-  const out = gitQuiet(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+/** `removal` marks a read that gates worktree removal: a 60 s budget, and a timeout throws instead of reading as null. */
+interface ReadOptions {
+  removal?: boolean;
+}
+
+function gitRead(dir: string, args: string[], { removal }: ReadOptions): string | null {
+  return removal ? removalCheck(dir, args) : gitQuiet(dir, args);
+}
+
+export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null {
+  const out = gitRead(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir'], opts);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -523,18 +532,14 @@ export function hasRemote(dir: string): boolean {
   return Boolean(out && out.trim().length > 0);
 }
 
-export function branchExists(cwd: string, branch: string): boolean {
-  const out = gitQuiet(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
+export function branchExists(cwd: string, branch: string, opts: ReadOptions = {}): boolean {
+  const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], opts);
   return Boolean(out);
 }
 
-export function resolveFullRef(cwd: string, ref: string): string | null {
-  try {
-    const out = git(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
-    return out && out.trim() ? out.trim() : null;
-  } catch {
-    return null;
-  }
+export function resolveFullRef(cwd: string, ref: string, opts: ReadOptions = {}): string | null {
+  const out = gitRead(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], opts);
+  return out && out.trim() ? out.trim() : null;
 }
 
 // Windows refuses to delete a directory that is a running process's current
@@ -605,8 +610,8 @@ export function hasPopulatedSubmodules(worktree: string): boolean | null {
     );
 }
 
-export function listWorktrees(cwd: string): WorktreeEntry[] {
-  const out = gitQuiet(cwd, ['worktree', 'list', '--porcelain']);
+export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntry[] {
+  const out = gitRead(cwd, ['worktree', 'list', '--porcelain'], opts);
   return out ? parseWorktrees(out) : [];
 }
 

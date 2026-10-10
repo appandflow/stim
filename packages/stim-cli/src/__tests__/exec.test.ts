@@ -161,6 +161,7 @@ test('an unbounded call runs to completion, and a budget that is not positive is
   for (const timeoutMs of [0, -1, Number.NaN]) {
     expect(() => executor.runFile(process.execPath, script, { timeoutMs })).toThrow(RangeError);
     expect(() => executor.runFileQuiet(process.execPath, script, { timeoutMs })).toThrow(RangeError);
+    expect(() => executor.runQuiet('true', { timeoutMs })).toThrow(RangeError);
     await expect(executor.runFileAsync(process.execPath, script, { timeoutMs })).rejects.toThrow(RangeError);
   }
 });
