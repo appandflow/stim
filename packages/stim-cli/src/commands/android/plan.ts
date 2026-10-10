@@ -1,3 +1,4 @@
+import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
@@ -9,7 +10,6 @@ import {
 } from '../../optimizations.ts';
 import { resolveAndroidCas, resolveAndroidCompilerCache } from '../../engine/android-cas.ts';
 import { parseDeviceWait } from '../../engine/device-lease-run.ts';
-import { productFlavorRefusal, readProductFlavors } from '../../engine/gradle.ts';
 import { detectIsExpo } from '../../workspace/project.ts';
 import {
   DEFAULT_AVD_DEVICE_PROFILE,

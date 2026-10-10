@@ -1,0 +1,47 @@
+{
+  "name": "@stim-cli/ci",
+  "version": "1.19.0",
+  "description": "Run Stim apps and test commands in CI with diagnostics and scoped cleanup.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/ci"
+  },
+  "bin": {
+    "stim-ci": "dist/stim-ci.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    },
+    "./artifacts": {
+      "types": "./dist/artifacts.d.mts",
+      "module-sync": "./dist/artifacts.mjs",
+      "default": "./dist/artifacts.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "cross-spawn": "^7.0.6",
+    "stim": "workspace:^"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

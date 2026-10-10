@@ -1,4 +1,5 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
+import { androidProcessRuntime } from '../commands/android/launch.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
 import { workspaceId } from '@stim-cli/core';
 import * as offloadClient from '../offload/client.ts';
@@ -573,6 +574,7 @@ describe('adopted Android installs', () => {
           },
           runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
           runFile(file, args = []) {
+            if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
             const cmd = [file, ...args].join(' ');
             commands.push(cmd);
             if (args.includes('list')) return 'package:com.example.app\npackage:com.example.other';
@@ -659,6 +661,7 @@ describe('adopted Android storage', () => {
         },
         runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
         runFile(file, args = []) {
+          if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
           if (args.includes('list')) return 'package:com.example.app';
           if (args.includes('clear')) return 'Success';
           if (args.includes('path')) return '';
@@ -4254,6 +4257,55 @@ describe('variant resolution', () => {
   });
 });
 
+test('a runtime preparation refusal returns a structured error before device or artifact work', async () => {
+  const error = {
+    code: 'STIM_BAD_ARG',
+    message: 'The selected runtime cannot prepare this endpoint.',
+    remedy: 'Select an available endpoint.',
+    lines: ['The requested endpoint is unavailable.'],
+  };
+  const h = harness({
+    json: true,
+    runtimePlan: androidProcessRuntime(async () => ({ ok: false, error })),
+  });
+  const result = await h.run();
+  expect(result).toMatchObject({
+    ok: false,
+    error: { code: error.code, message: error.message, remedy: error.remedy },
+  });
+  expect(h.stdout).toHaveLength(1);
+  expect(JSON.parse(h.stdout[0]!)).toMatchObject({ code: error.code, message: error.message, remedy: error.remedy });
+  expect(h.stderr.join('\n')).toContain(error.lines[0]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.booted).toEqual([]);
+  expect(h.calls.fingerprint).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(h.calls.install).toEqual([]);
+  expect(h.calls.launch).toEqual([]);
+  expect(h.calls.launchRelease).toEqual([]);
+});
+
+test('a process runtime preserves Debug compilation, cache identity and signer policy without Metro', async () => {
+  const h = harness({
+    json: true,
+    variant: 'productionDebug',
+    runtimePlan: androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    resolveMetro: never('the Metro probe'),
+    startServer: never('the dev server start'),
+    warmMetro: never('Metro warmup'),
+    verifyLaunched: never('bundle readiness'),
+    launch: never('Metro launch routing'),
+  });
+  const result = await h.run();
+  expect(result.ok).toBe(true);
+  expect(h.calls.build[0]?.variant).toBe('productionDebug');
+  expect(h.calls.resolveCached[0]?.[1]).toBe(`${FINGERPRINT}-productiondebug-sim`);
+  expect(h.calls.install[0]?.allowUninstall).toBe(false);
+  expect(h.calls.launchRelease[0]?.packageName).toBe('com.example.app');
+  expect(h.calls.verifyRelease).toHaveLength(1);
+  expect(result.facts).toMatchObject({ variant: 'productionDebug', metroPort: null, launched: true });
+});
+
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain am start', async () => {
     const h = harness({
@@ -6884,6 +6936,20 @@ describe('strict remote Mac selection', () => {
         machines: [expect.objectContaining({ machine: 'mini', state: 'pending' })],
       }),
     );
+  });
+
+  test('automatic placement with local excluded refuses remote failure and still permits a cache hit', async () => {
+    configureMini();
+    writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: offline');
+    const build = vi.fn<() => never>();
+    const slot = vi.fn<() => never>();
+    const result = await harness({ buildMachine: 'auto', build, acquireSlot: slot }).run();
+    expect(result.error?.code).toBe('STIM_OFFLOAD_REFUSED');
+    expect(build).not.toHaveBeenCalled();
+    expect(slot).not.toHaveBeenCalled();
+    expect((await harness({ buildMachine: 'auto', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
+    expect(build).not.toHaveBeenCalled();
   });
 
   test.each(['sync failed'])('remote %s never falls back to Gradle', async (reason) => {

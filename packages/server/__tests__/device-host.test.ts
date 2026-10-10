@@ -29,6 +29,7 @@ import {
   readHostedSessions,
   readHostedMacosApp,
   readHostedDeviceLedger,
+  readNdjsonGenerations,
   type HostedDeviceSession,
 } from '@stim-cli/core/state';
 import {
@@ -778,7 +779,9 @@ test('reserves once across reconnect and attempt replay, isolates clients, and s
   expect(existsSync(join(deviceHostArea(first.id), 'home', 'stopped'))).toBe(true);
   expect((await reserve()).state).toBe('stopped');
   expect(readClaimSet(join(deviceHostRoot(), `${first.id}.claims`)).live).toEqual([]);
-  expect((await reserve({ attempt: 'new' })).id).not.toBe(first.id);
+  const next = await reserve({ attempt: 'new' });
+  expect(next.id).not.toBe(first.id);
+  await state(next.id, 'ready');
 });
 
 test('rejects malformed client identities and selectors before reserving a worker area', async () => {
@@ -1071,7 +1074,9 @@ test.each(['ios', 'android', 'macos'])(
     expect(installing).toHaveProperty('result.state', 'installing');
     expect(installing).not.toHaveProperty('result.agent');
     expect(host.appAttach('client', params)).not.toHaveProperty('result.agent');
-    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'));
+    await vi.waitFor(() => expect(host.appAttach('client', params)).toHaveProperty('result.state', 'installed'), {
+      timeout: 5000,
+    });
     const installed = host.appAttach('client', params);
     for (const answer of [installed, host.appLaunch('client', params)]) {
       if ('error' in answer) throw new Error(answer.error.message);
@@ -1116,7 +1121,9 @@ async function installApp(platform: string, access?: AgentAccess) {
     data: app.content.toString('base64'),
   });
   host.appLaunch('client', app.params);
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   return { id: first.id, params: app.params };
 }
 
@@ -1603,6 +1610,8 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
   test.each(['revoke', 'close', 'deadline'])('binding capacity probes fail closed and settle on %s', async (ending) => {
     await host.close();
     hostEnv.LOCAL_COUNT = 'hang';
+    hostEnv.STIM_DEBUG = '1';
+    hostEnv.WORKER_TEST_SECRET = 'private-worker-environment';
     host = new DeviceHost({
       worker: join(home, 'worker.mjs'),
       env: hostEnv,
@@ -1621,6 +1630,26 @@ describe.skipIf(process.platform === 'win32')('binding capacity probes', () => {
     expect(await pending).toHaveProperty('error.code', ending === 'deadline' ? 'device-busy' : 'forbidden');
     expect(readHostedSessions()).toEqual([]);
     await groupGone(pid);
+    const debugFile = join(home, 'logs', 'debug', 'server.ndjson');
+    const records = readNdjsonGenerations(debugFile).filter((record) => record.workerPid === pid);
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event: 'device-host.worker.start', mode: 'count' }),
+        expect.objectContaining({
+          event: 'device-host.worker.cancel',
+          reason: ending === 'deadline' ? 'deadline' : 'requested',
+        }),
+        expect.objectContaining({ event: 'device-host.worker.close', code: null, signal: 'SIGKILL' }),
+        expect.objectContaining({
+          event: 'device-host.worker.settled',
+          closed: true,
+          groupAlive: false,
+          settled: true,
+        }),
+      ]),
+    );
+    for (const record of records) expect(record.ms).toEqual(expect.any(Number));
+    expect(readFileSync(debugFile, 'utf8')).not.toContain(hostEnv.WORKER_TEST_SECRET);
   });
 });
 
@@ -1647,12 +1676,21 @@ test('offer capacity counts unresolved sessions and preserves SDK failures as de
 
 test.each(['revoke', 'close'])('does not publish an offer after %s during an actual pending query', async (action) => {
   const pending = host.offer('client', { platform: 'ios', deviceType: 'delayed' });
-  await vi.waitFor(() => expect(existsSync(join(home, 'probe-entered'))).toBe(true));
+  const pid = await vi.waitFor(() => {
+    expect(existsSync(join(home, 'probe-entered'))).toBe(true);
+    const recordedPid = Number(readFileSync(join(home, 'probe-entered'), 'utf8'));
+    expect(Number.isSafeInteger(recordedPid)).toBe(true);
+    expect(recordedPid).toBeGreaterThan(0);
+    return recordedPid;
+  });
   if (action === 'revoke') {
     allowed.delete('client');
     host.revoke();
   } else await host.close();
   expect(await pending).toHaveProperty('error.code', 'forbidden');
+  await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' })), {
+    timeout: 5000,
+  });
   expect(existsSync(deviceHostRoot())).toBe(false);
 });
 
@@ -2298,7 +2336,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   await uploadManifest(app);
   await host.appChunk('client', { ...app.params, sha256: app.sha256, offset: 0, data: app.content.toString('base64') });
   expect(host.appLaunch('client', app.params)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
@@ -2323,7 +2363,9 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     [],
   );
   expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
-  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'));
+  await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'), {
+    timeout: 5000,
+  });
   host.stop('client', query);
   await state(session.id, 'stopped');
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
@@ -3296,21 +3338,34 @@ test('revocation during inspection refuses adoption and retires the parked devic
 });
 
 test('an eviction snapshot cannot retire a device adopted and parked again while an older retirement runs', async () => {
+  await host.close();
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents,
+    allowed: (client) => allowed.has(client),
+    limits: { prepareMs: 5000, logsMs: 1000, killGraceMs: 100 },
+  });
   parkingLimits('1');
   const oldest = seedHosted({ deviceType: 'delayed-stop', parked: { at: '2026-10-01T00:00:00.000Z' } });
   const reused = seedHosted({ parked: { at: '2026-10-02T00:00:00.000Z' } });
   const third = seedHosted({ parked: { at: '2026-10-03T00:00:00.000Z' } });
   const oldHome = join(deviceHostArea(oldest.id), 'home');
   const reconciliation = host.reconcileStopped();
-  await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
-  const adopted = await reserve({ attempt: 'new' });
-  expect(adopted.id).toBe(reused.id);
-  await state(reused.id, 'ready');
-  host.stop('client', { session: reused.id });
-  await state(reused.id, 'stopped');
-  await vi.waitFor(() => expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined());
-  writeFileSync(join(oldHome, 'release-stop'), 'continue');
-  await reconciliation;
+  try {
+    await vi.waitFor(() => expect(existsSync(join(oldHome, 'stopped'))).toBe(true));
+    const adopted = await reserve({ attempt: 'new' });
+    expect(adopted.id).toBe(reused.id);
+    await state(reused.id, 'ready');
+    host.stop('client', { session: reused.id });
+    await state(reused.id, 'stopped');
+    await vi.waitFor(() =>
+      expect(readHostedSessions().find((record) => record.id === third.id)?.parked).toBeUndefined(),
+    );
+  } finally {
+    writeFileSync(join(oldHome, 'release-stop'), 'continue');
+    await reconciliation;
+  }
   expectRetired(oldest.id);
   expectRetired(third.id);
   expect(readHostedSessions().find((record) => record.id === reused.id)?.parked).toBeDefined();

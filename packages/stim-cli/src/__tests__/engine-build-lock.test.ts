@@ -590,7 +590,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
         [
           'const { spawn } = await import("node:child_process");',
           `const { setExecutor } = await import(${JSON.stringify(new URL('../exec.ts', import.meta.url).href)});`,
-          `const { buildIos } = await import(${JSON.stringify(new URL('../engine/xcode.ts', import.meta.url).href)});`,
+          `const { buildIos } = await import(${JSON.stringify(new URL('../integrations/react-native-build.ts', import.meta.url).href)});`,
           `const { acquireBuildSlot } = await import(${JSON.stringify(new URL('../engine/build-slots.ts', import.meta.url).href)});`,
           `const { withWorkspaceProcessLock } = await import(${JSON.stringify(new URL('../engine/workspace-process-lock.ts', import.meta.url).href)});`,
           `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,

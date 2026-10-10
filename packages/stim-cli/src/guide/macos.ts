@@ -56,11 +56,19 @@ executables, including Stim Desktop's sim-fold helper, are not built.
   stim logs --errors
   stim stop               # stop this workspace's owned app and supervisor
 
-Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
+Each invocation validates the project settings, development plist and resource
+entries before stopping its previous owned app, rebuilding and launching. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
+Every process running an app bundle from that directory is the workspace's
+owned app, including copies opened through LaunchServices (open, agent-device
+open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
+of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
+exited. When an app cannot be verified or does not exit, stop reports
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
-Stim Desktop honors. An app that activates itself at launch still takes focus.
+Stim Desktop honors, including for reopen events from open -g. An app that
+activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
 macOS artifacts are not cached. This prototype has no --slot or reload command.
 --plan validates the Swift Package directory, macos settings, development plist
@@ -100,7 +108,10 @@ refuse before stopping the app or changing its build record. See stim guide erro
 
 With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
 auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off always builds here. Configure remote.machines
+machine when one accepts, and off builds here when local remains in the automatic
+build pool. remote.buildPoolDisabled excludes members from automatic placement,
+including its local fallback. Explicit local or named placement bypasses membership.
+Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
 matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a

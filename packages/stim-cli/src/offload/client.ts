@@ -13,8 +13,11 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
+import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket, type ClientOptions } from 'ws';
 import {
+  automaticMachineEnabled,
+  requireAutomaticMachine,
   isJsonObject,
   runId,
   OFFLOAD_MODES,
@@ -30,6 +33,7 @@ import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
 import { readRubyVersion } from '../engine/deps.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -59,15 +63,21 @@ function offloadMode(env: NodeJS.ProcessEnv = process.env): OffloadMode {
   return OFFLOAD_MODES.includes(raw as OffloadMode) ? (raw as OffloadMode) : 'auto';
 }
 
-export function buildPlacementCandidates(selected: string): { mode: OffloadMode; machines: BuildMachineCredential[] } {
+export function buildPlacementCandidates(selected: string): {
+  mode: OffloadMode;
+  machines: BuildMachineCredential[];
+  localEnabled: boolean;
+} {
+  const config = loadConfig();
   return {
+    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local', config),
     mode: selected === 'local' ? 'off' : offloadMode(),
     machines:
       selected === 'local'
         ? []
         : namedBuildMachine(selected)
           ? pairedMachines([selected]).slice(0, 1)
-          : pairedMachines(),
+          : pairedMachines().filter((entry) => automaticMachineEnabled('build', entry.machine, config)),
   };
 }
 
@@ -102,6 +112,7 @@ export function offloadPlacement({
   machines,
   here,
   unsupported,
+  localEnabled = true,
   selected = 'auto',
 }: {
   selected?: string;
@@ -109,6 +120,7 @@ export function offloadPlacement({
   machines: number;
   here: MachineCapacity;
   unsupported: string | null;
+  localEnabled?: boolean;
 }): { offload: boolean; code: string; reason: string } {
   if (namedBuildMachine(selected)) {
     if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote Mac cannot take it`);
@@ -116,6 +128,14 @@ export function offloadPlacement({
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
   if (selected === 'local') return { offload: false, code: 'local-selected', reason: '--remote-build local' };
+  if (!localEnabled) {
+    const reason =
+      mode === 'off'
+        ? 'remote.buildMode is off'
+        : (unsupported ?? (machines === 0 ? 'no enabled remote Mac is paired' : null));
+    if (reason) throw new OffloadRefusal('auto', `${reason}; local is disabled in remote.buildPoolDisabled`);
+    return { offload: true, code: 'local-disabled', reason: 'local is disabled in remote.buildPoolDisabled' };
+  }
   if (mode === 'off') return { offload: false, code: 'mode-off', reason: 'remote.buildMode is off' };
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote Mac is paired' };
   if (unsupported) return { offload: false, code: 'unsupported', reason: unsupported };
@@ -178,11 +198,13 @@ export function pickOffer({
   here,
   offers,
   target,
+  localEnabled = true,
   selected = 'auto',
 }: {
   mode: OffloadMode;
   here: MachineCapacity;
   selected?: string;
+  localEnabled?: boolean;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
 }): { order: number[]; reasons: string[]; candidates: PlacementCandidate[] } {
@@ -207,7 +229,7 @@ export function pickOffer({
       );
     }
     const load = offer.capacity.loadPerCore;
-    if (selected === 'auto' && mode === 'auto' && !slotsFull) {
+    if (selected === 'auto' && localEnabled && mode === 'auto' && !slotsFull) {
       if (typeof load !== 'number') {
         return skip(machine, 'load', 'capacity unknown (older stim-server) while this Mac has a free slot');
       }
@@ -455,6 +477,7 @@ export class BuildConnection {
   }
 
   async sendBinary(frame: Buffer): Promise<void> {
+    if (this.closed) return;
     this.socket.send(frame, { binary: true });
     while (this.socket.bufferedAmount > MAX_BUFFERED && !this.closed) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -501,6 +524,11 @@ export class BuildConnection {
 
   private forget(): void {
     this.ended = true;
+    this.closed ??= 'the connection was closed by this client';
+    for (const resolve of this.pending.values()) resolve({ error: { code: 'closed', message: this.closed } });
+    this.pending.clear();
+    this.progress = null;
+    this.binary = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     openSockets.delete(this.socket);
@@ -626,6 +654,7 @@ export interface OffloadChoice extends OfferingMachine {
   offerMs: number;
   identity: RepoIdentity;
   runnersUp: OfferingMachine[];
+  automatic?: boolean;
 }
 
 /** Closes every connection the choice still holds. */
@@ -696,9 +725,11 @@ export async function chooseBuildMachine({
     return `this app is not in a git checkout (${(error as Error).message.split('\n')[0]})`;
   }
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
+  else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
   const asked = await Promise.all(machines.map((credential) => probeMachine(credential, { ...identity, rubyVersion })));
   const { order, reasons, candidates } = pickOffer({
+    localEnabled: selected !== 'auto' || automaticMachineEnabled('build', 'local'),
     selected,
     mode,
     here,
@@ -730,6 +761,7 @@ export async function chooseBuildMachine({
     offerMs: Date.now() - started,
     identity,
     runnersUp: rest,
+    automatic: selected === 'auto',
   };
 }
 
@@ -773,6 +805,7 @@ async function resumeJob(
   credential: BuildMachineCredential,
   job: string,
   abandoned: () => boolean,
+  signal: AbortSignal | undefined,
 ): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
   const deadline = Date.now() + RESUME_WINDOW_MS;
   let delay = RESUME_DELAY_MS;
@@ -787,9 +820,20 @@ async function resumeJob(
       if (connection.refused) return `the machine turned this Mac away (${connection.failure})`;
       last = connection.failure;
     } else {
+      if (abandoned()) {
+        connection.close();
+        break;
+      }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
+      const cancel = () => connection.close();
+      signal?.addEventListener('abort', cancel, { once: true });
       const reply = await connection.request('build.attach', { job }, OFFER_TIMEOUT_MS);
+      signal?.removeEventListener('abort', cancel);
+      if (abandoned()) {
+        connection.close();
+        break;
+      }
       if ('result' in reply) {
         const outcome = isJsonObject(reply.result) ? reply.result.outcome : null;
         return { connection, outcome: isJsonObject(outcome) ? outcome : null, early };
@@ -801,8 +845,8 @@ async function resumeJob(
       }
       connection.drop();
     }
-    if (Date.now() + delay > deadline) break;
-    await new Promise((resolve) => setTimeout(resolve, delay));
+    if (abandoned() || Date.now() + delay > deadline) break;
+    await wait(delay, undefined, { signal }).catch(() => {});
     delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
   }
   return `no connection to it within ${RESUME_WINDOW_MS / 60_000} min (${last})`;
@@ -890,23 +934,34 @@ export async function offloadBuild({
     closeOffload(choice);
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
+  const signal = runCancellationSignal();
+  const throwIfCancelled = () => {
+    if (signal?.aborted)
+      throw Object.assign(new Error('The offloaded build was cancelled.'), { code: 'STIM_CANCELLED' });
+  };
+  let settle!: (outcome: Record<string, unknown>) => void;
+  let settled = false;
+  const outcome = new Promise<Record<string, unknown>>((resolve) => {
+    settle = (value) => {
+      settled = true;
+      resolve(value);
+    };
+  });
+  const cancel = () => {
+    settle({ ok: false, code: 'cancelled' });
+    closeOffload(choice);
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
+    throwIfCancelled();
     let job: string | null = null;
     let early: ProgressEvent[] = [];
-    let settle!: (outcome: Record<string, unknown>) => void;
-    let settled = false;
-    const outcome = new Promise<Record<string, unknown>>((resolve) => {
-      settle = (value) => {
-        settled = true;
-        resolve(value);
-      };
-    });
     let resuming = false;
     const reattach = async (why: string) => {
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, job!, () => settled);
+      const resumed = await resumeJob(choice.credential, job!, () => settled, signal);
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string') resumed.connection.close();
@@ -944,7 +999,13 @@ export async function offloadBuild({
       return true;
     };
     for (;;) {
+      if (choice.automatic && !automaticMachineEnabled('build', choice.machine)) {
+        const reason = `${choice.machine} is disabled in remote.buildPoolDisabled`;
+        if (moveOn(reason)) continue;
+        return fail(reason);
+      }
       const synced = await syncSource(choice.connection, identity, onEnter);
+      throwIfCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
         return fail(synced.failure);
@@ -957,6 +1018,8 @@ export async function offloadBuild({
       workerStarted = Date.now();
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
+      if (choice.automatic) requireAutomaticMachine('build', choice.machine);
+      throwIfCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
         project: identity.project,
@@ -984,6 +1047,7 @@ export async function offloadBuild({
             }),
         stimBuild: choice.target.local.stimBuild,
       });
+      throwIfCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;
         break;
@@ -1000,6 +1064,7 @@ export async function offloadBuild({
     );
     const result = await outcome;
     clearTimeout(timer);
+    throwIfCancelled();
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
@@ -1011,6 +1076,7 @@ export async function offloadBuild({
     }
 
     onEnter('fetch');
+    throwIfCancelled();
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
@@ -1037,6 +1103,7 @@ export async function offloadBuild({
     const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
     connection.onBinary(null);
     closeSync(fd);
+    throwIfCancelled();
     const fetchFailure = replyError(fetched);
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
@@ -1048,6 +1115,7 @@ export async function offloadBuild({
       );
     }
     await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
+    throwIfCancelled();
     rmSync(archive, { force: true });
     const artifactPath = join(stagingDir, name);
     if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
@@ -1089,7 +1157,11 @@ export async function offloadBuild({
       },
     };
   } catch (error) {
+    closeOffload(choice);
+    throwIfCancelled();
     return fail((error as Error).message.split('\n')[0] ?? String(error));
+  } finally {
+    signal?.removeEventListener('abort', cancel);
   }
 }
 

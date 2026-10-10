@@ -29,9 +29,9 @@ controls placement:
 - `auto` (default) builds here while this Mac has capacity. When it is busy,
   Stim considers accepting workers and their load.
 - `force` prefers a remote Mac when one accepts the build.
-- `off` builds here.
+- `off` builds here when local remains enabled in the automatic build pool.
 
-Automatic selection falls back to a local build when offloading fails.
+Automatic selection considers enabled pool members and falls back locally only when local remains enabled.
 `--remote-build <auto|local|name>` overrides `STIM_REMOTE_BUILD`, which
 also overrides `remote.build`. `STIM_REMOTE_BUILD_MODE` overrides `remote.buildMode`
 for automatic selection. A named worker ignores that mode and local capacity;
@@ -78,6 +78,36 @@ creating a session. Those targets prepare remote Metro exposure, as
 `--remote auto` places iOS or Android on an approved Mac when this Mac is full
 or busy; see [automatic device placement](#automatic-device-placement).
 Android also accepts these backends. The [macOS prototype](./macos.md) also supports named hosts.
+
+## Automatic machine pools
+
+In **Settings > Remote Macs**, **Automatic builds** and **Automatic simulators**
+control this Mac and each configured remote independently. All members start enabled.
+Turning a switch off keeps pairing and active builds or sessions intact. It only
+changes new automatic work requested by this Mac; other requesters keep their own policy.
+
+The same controls are machine settings listing excluded members:
+
+<StimTabs code={`stim settings set remote.buildPoolDisabled '["local"]'
+stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
+stim settings unset remote.buildPoolDisabled`} />
+
+Use `local` for this Mac. Remote entries match `remote.machines` exactly, including
+case and port; whitespace is not normalized. An unmatched entry excludes nothing,
+so copy the configured entry or use Desktop's switches. Both lists default to `[]`.
+Each pool must retain local or at least one configured remote already approved for
+that role. An offline approved member still counts as configured, but must be
+reachable and compatible to take a run. Settings also refuses removing the last
+member from `remote.machines`.
+
+Named placement and `--remote-build local` bypass membership. Devices stay local
+by default unless `--remote auto` or the matching platform setting requests automatic
+placement. Existing local and hosted sessions retain their owner. A cache hit needs
+no compiler; remote build preparation still follows the normal local prebuild and
+Pods flow. If local is excluded and no enabled Mac can take the work, Stim refuses
+instead of compiling or booting here. Disabling local alone never triggers billed
+EAS fallback; an existing `remote.easFallback` opt-in still needs the physical device
+cap or queue condition.
 
 ## Hosted parking and restart
 
@@ -237,7 +267,12 @@ full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
 is installed, using the same UTF-8 locale defaults as `pod install`. Without
-an installed project Ruby, it uses each machine's default Ruby.
+an installed project Ruby, it uses the `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries of each
+machine's login shell, so Desktop, terminal and agent callers agree; `pod install`
+(including the Bundler run) runs in the same environment. A caller that already
+sets `GEM_HOME` keeps it, and if the login shell cannot be read the caller's
+environment is used. stim-server already runs in a login-shell environment, so
+this fallback is usually redundant on the worker.
 
 ## Use the Desktop wizard
 

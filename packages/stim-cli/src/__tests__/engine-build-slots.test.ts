@@ -1,7 +1,7 @@
 import type { BuildWaitingFor } from '@stim-cli/core/state';
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFile, type ChildProcess } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimRemoveCommand } from '../ownership-claim.ts';
@@ -220,42 +220,57 @@ describe('live: 2 slots, 3 processes', { timeout: 30_000 }, () => {
         'const [id, dir] = process.argv.slice(2);',
         'const { writeFileSync, existsSync } = await import("node:fs");',
         'const { join } = await import("node:path");',
-        'const handle = await acquireBuildSlot({ max: 2, root: "/w/" + id, intervalMs: 25, progressMs: 1e9 });',
-        'writeFileSync(join(dir, "acquired-" + id), String(Date.now()));',
+        'const handle = await acquireBuildSlot({',
+        '  max: 2, root: "/w/" + id, intervalMs: 25, progressMs: 1e9,',
+        '  waitingFor: (value) => { if (value) writeFileSync(join(dir, "waiting-" + id), ""); },',
+        '});',
+        'writeFileSync(join(dir, "acquired-" + id), "");',
         'while (!existsSync(join(dir, "release-" + id))) {',
         '  await new Promise(r => setTimeout(r, 20));',
         '}',
         'releaseBuildSlot(handle);',
-        'writeFileSync(join(dir, "released-" + id), String(Date.now()));',
+        'writeFileSync(join(dir, "released-" + id), "");',
       ].join('\n'),
     );
 
     const dir = tmpHome;
-    const spawn = (id: string) =>
-      new Promise<void>((resolve, reject) => {
-        execFile(process.execPath, [script, id, dir], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
-          err ? reject(err) : resolve(),
+    const children: ChildProcess[] = [];
+    const settled: Promise<void>[] = [];
+    const spawn = (id: string) => {
+      const done = new Promise<void>((resolve, reject) => {
+        children.push(
+          execFile(process.execPath, [script, id, dir], { env: { ...process.env, STIM_HOME: tmpHome } }, (err) =>
+            err ? reject(err) : resolve(),
+          ),
         );
       });
+      settled.push(done.catch(() => {}));
+      return done;
+    };
 
-    const a = spawn('A');
-    const b = spawn('B');
-    await waitForFile(join(dir, 'acquired-A'));
-    await waitForFile(join(dir, 'acquired-B'));
+    try {
+      const a = spawn('A');
+      const b = spawn('B');
+      await waitForFile(join(dir, 'acquired-A'));
+      await waitForFile(join(dir, 'acquired-B'));
 
-    const c = spawn('C');
-    await new Promise((r) => setTimeout(r, 400));
-    expect(existsSync(join(dir, 'acquired-C'))).toBe(false);
+      const c = spawn('C');
+      await waitForFile(join(dir, 'waiting-C'));
+      expect(existsSync(join(dir, 'acquired-C'))).toBe(false);
 
-    writeFileSync(join(dir, 'release-A'), '1');
-    await waitForFile(join(dir, 'acquired-C'));
-    const releasedA = Number(readFileSync(join(dir, 'released-A'), 'utf-8'));
-    const acquiredC = Number(readFileSync(join(dir, 'acquired-C'), 'utf-8'));
-    expect(acquiredC >= releasedA).toBeTruthy();
+      writeFileSync(join(dir, 'release-A'), '1');
+      await waitForFile(join(dir, 'acquired-C'));
+      await waitForFile(join(dir, 'released-A'));
 
-    writeFileSync(join(dir, 'release-B'), '1');
-    writeFileSync(join(dir, 'release-C'), '1');
-    await Promise.all([a, b, c]);
+      writeFileSync(join(dir, 'release-B'), '1');
+      writeFileSync(join(dir, 'release-C'), '1');
+      await Promise.all([a, b, c]);
+    } finally {
+      for (const child of children) {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }
+      await Promise.all(settled);
+    }
   });
 });
 
@@ -267,3 +282,22 @@ async function waitForFile(path: string, timeoutMs = 8000) {
     await new Promise((r) => setTimeout(r, 20));
   }
 }
+
+test('automatic build admission rechecks membership after waiting without releasing another build', async () => {
+  const held = tryAcquireBuildSlot({ max: 1 });
+  assert(held);
+  const sleeping = vi.fn<() => Promise<void>>(async () => {
+    writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ remote: { buildPoolDisabled: ['local'] } }));
+  });
+  try {
+    await expect(acquireBuildSlot({ max: 1, automatic: true, sleep: sleeping })).rejects.toMatchObject({
+      code: 'STIM_OFFLOAD_REFUSED',
+    });
+    expect(sleeping).toHaveBeenCalledOnce();
+    expect(listBuildSlots().filter((slot) => slot.alive)).toHaveLength(1);
+    await expect(acquireBuildSlot({ max: 0, automatic: true })).rejects.toMatchObject({ code: 'STIM_OFFLOAD_REFUSED' });
+    await expect(acquireBuildSlot({ max: 0 })).resolves.toMatchObject({ unlimited: true });
+  } finally {
+    releaseBuildSlot(held);
+  }
+});

@@ -28,6 +28,7 @@ import {
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
+import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
@@ -521,13 +522,13 @@ async function reclaimIdleProject(
     failedDevices.push(remote.failed);
   }
 
-  const hosted = readMacosRecord(path)?.host;
-  if (hosted) {
+  if (macosAppPresent(path)) {
+    const hosted = readMacosRecord(path)?.host;
     try {
       await stopMacosApp(path);
     } catch (error) {
       const failed = {
-        name: `hosted macOS session ${hosted.session} on ${hosted.machine}`,
+        name: hosted ? `hosted macOS session ${hosted.session} on ${hosted.machine}` : 'macOS app',
         reason: String((error as Error)?.message ?? error),
       };
       skippedDevices.push(failed);

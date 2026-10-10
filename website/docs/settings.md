@@ -99,7 +99,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.deviceType`              | iOS Simulator device type                                                                                                         |
 | `ios.runtime`                 | iOS Simulator runtime                                                                                                             |
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
-| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |
@@ -112,7 +112,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.variant`             | Gradle build variant                                                                                                              |
 | `android.keystore`            | Release keystore path                                                                                                             |
 | `android.keystorePassword`    | Release keystore password source                                                                                                  |
-| `android.remote`              | `proxy`, `eas`, an approved remote Mac, or `auto` when this Mac is full or busy                                                   |
+| `android.remote`              | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
 | `remote.easFallback`          | `true` lets `auto` use a billed EAS Simulator when this Mac is at its device cap and no remote Mac takes the run; default `false` |
 | `metro.tunnel`                | Remote tunnel mode: `auto`, `off`, `expo`, `cloudflared`, `ngrok`, or `tailscale` (explicit, tailnet-only)                        |
 | `metro.ngrokUrl`              | Existing ngrok URL                                                                                                                |
@@ -348,6 +348,14 @@ excess devices, unusable adoption candidates and a revoked client's devices are
 retired. See [hosted parking](./remote-machines.md#hosted-parking-and-restart)
 and [owned devices](/docs/owned-devices) for adoption cleanup.
 
+`remote.buildPoolDisabled` and `remote.devicePoolDisabled` list members excluded
+from this requester's automatic build and simulator/emulator placement. Both default
+to `[]`; use `local` or exact `remote.machines` entries, including case and port.
+Names are not trimmed; unmatched entries exclude nothing. The settings preserve
+pairing, running work and explicit placement, and refuse disabling or removing the
+last configured, approved member of either pool. Excluding local prevents local
+fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
+
 `remote.machines` names the remote Macs this Mac may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).
 Name each node and port once. Set it with
@@ -401,7 +409,7 @@ is unset. Trimmed `auto`/`local` are case-insensitive; names match configured
 names case-insensitively with port 7443 when omitted. Reports use the configured
 entry:
 
-- `auto` follows `remote.buildMode`, with the existing local fallback on failure.
+- `auto` follows `remote.buildMode` within enabled pool members, with local fallback only while local is enabled.
 - `local` keeps the build on this Mac for this run.
 - A tailnet name requires a matching entry in `remote.machines`, already
   paired and approved. It ignores `remote.buildMode` and this Mac's load and slots.
@@ -446,7 +454,7 @@ compiles a SwiftPM Debug build:
   the load here is high. A remote Mac too old to report its load is used
   only while every slot here is busy.
 - `force` builds on a remote Mac whenever one accepts the build.
-- `off` always builds here.
+- `off` builds here when local remains enabled in the automatic build pool.
 
 Load per core is the 5-minute load average divided by the CPU count.
 `server.maxLoadPerCore` (default 2) is also the busy threshold for automatic
@@ -473,7 +481,7 @@ in that order:
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build. The comparison uses
-  `.ruby-version` when installed and the same UTF-8 locale defaults as `pod install`.
+  `.ruby-version` when installed, otherwise the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS

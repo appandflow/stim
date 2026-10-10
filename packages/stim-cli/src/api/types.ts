@@ -88,6 +88,9 @@ export interface StimDiagnostics {
 
 export interface StimClient {
   readonly projectRoot: string;
+  run<P extends StimPlatform>(
+    options: StimRunOptions & { platform: P },
+  ): Promise<Extract<StimRunResult, { platform: P }>>;
   run(options: StimRunOptions): Promise<StimRunResult>;
   /** Stops this workspace, including resources created before a failed run. Use a fresh signal for cleanup. */
   stop(options?: StimStopOptions): Promise<StimStopResult>;

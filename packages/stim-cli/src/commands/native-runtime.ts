@@ -10,6 +10,16 @@ import { startDevServer, type StartDevServerRequest } from './start.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../engine/launch-verify.ts';
 
+export interface MobileRuntimePreparation {
+  metroPort: number | null;
+}
+
+export interface RuntimeReadiness {
+  state: boolean | string;
+  warning?: string;
+  unattributed?: boolean;
+}
+
 export const sleep = (ms: number): Promise<void> => new Promise<void>((r) => setTimeout(r, ms));
 
 export type DevServerGate =

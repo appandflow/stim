@@ -561,9 +561,32 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
-    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(payload.environments[0].agentDevice?.stateDir).toBe(workspaceAgentDeviceDir(root));
     expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('agentDevice.installed follows the executable on PATH and is cached for a short time', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+    const lookup = vi.fn<(name: string) => string | null>();
+    setExecutor({ ...getExecutor(), findExecutable: lookup });
+    vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+    lookup.mockReturnValue('/usr/local/bin/agent-device');
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    lookup.mockReturnValue(null);
+    vi.setSystemTime(new Date('2031-01-01T00:00:10Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    vi.setSystemTime(new Date('2031-01-01T00:00:31Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(false);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup).toHaveBeenCalledWith('agent-device');
+  } finally {
+    vi.useRealTimers();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -678,6 +701,25 @@ test('status reports detected platforms before a run, including resolved project
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ web: { url: 'http://localhost:5173' } }));
   saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
   expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
+});
+
+test('status reports when doctor last ran per platform, and nothing before it has', async () => {
+  const root = process.cwd();
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].doctorRuns).toBeUndefined();
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [root]: {
+          label: 'fresh',
+          platforms: {},
+          doctorRuns: { ios: { at: '2026-10-09T12:00:00.000Z', version: '1' } },
+        },
+      },
+    }),
+  );
+  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({ ios: { at: '2026-10-09T12:00:00.000Z' } });
 });
 
 test('a running build reports what its build tool is doing only while it compiles', async () => {
@@ -935,6 +977,9 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
             ? 'List of devices attached\nemulator-5556\tdevice\n'
             : 'List of devices attached\n';
         return '';
+      },
+      runFile(file, args = [], options) {
+        return this.run!([file, ...args].join(' '), options);
       },
       runQuiet(cmd) {
         commands.push(cmd);

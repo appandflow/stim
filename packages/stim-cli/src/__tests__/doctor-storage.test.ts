@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkStorageLayout } from '../diagnostics/doctor-storage.ts';
-import { apkOutputsDir } from '../engine/gradle.ts';
+
 import { workspaceDerivedData } from '../workspace/paths.ts';
+import { apkOutputsDir } from '../integrations/react-native-build.ts';
 
 let base: string;
 let project: string;

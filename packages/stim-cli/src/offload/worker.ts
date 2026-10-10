@@ -18,12 +18,13 @@ import {
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
+import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
 import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
-import { assembleTaskFor, buildAndroid, gradlewPath } from '../engine/gradle.ts';
-import { buildIos } from '../engine/xcode.ts';
+import { assembleTaskFor } from '../engine/gradle.ts';
+
 import { getExecutor } from '../exec.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';

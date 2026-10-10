@@ -47,7 +47,7 @@ import { createStim } from 'stim';
 const stim = createStim({ projectRoot: process.cwd() });
 try {
   const result = await stim.run({ platform: 'ios' });
-  console.log(result.facts);
+  console.log(result.facts.udid);
 } finally {
   try {
     console.log(await stim.diagnostics({ errors: true }));

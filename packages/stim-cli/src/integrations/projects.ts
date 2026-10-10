@@ -3,22 +3,26 @@ import { join } from 'node:path';
 import { MODE_BARE, MODE_EXPO } from '../supervisor/state.ts';
 import type { ServerStarter } from '../supervisor/types.ts';
 import {
+  appProjectProblem,
   declaresAppDependency,
+  loadPackageJson,
   detectIsExpo,
   isPackageResolvable,
   readAppConfigText,
   readAppJson,
   readPackageJson,
-} from '../workspace/project.ts';
+} from '../workspace/project-files.ts';
 import { settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
 
-type ProjectPlatform = 'ios' | 'android' | 'macos' | 'web';
+import {
+  createProjectRegistry,
+  type ProjectIntegration,
+  type ProjectPlatform,
+  type ProjectRegistry,
+} from './project-registry.ts';
 
-interface ProjectIntegration {
+interface NativeProjectIntegration {
   platforms(root: string, settings: SettingsObject): ProjectPlatform[];
-}
-
-interface NativeProjectIntegration extends ProjectIntegration {
   mode: typeof MODE_BARE | typeof MODE_EXPO;
   loadDevServer(): Promise<ServerStarter>;
 }
@@ -64,34 +68,60 @@ const reactNative: NativeProjectIntegration = {
   },
 };
 
-const swiftPackage: ProjectIntegration = {
-  platforms(root, settings) {
-    return existsSync(join(root, 'Package.swift')) &&
-      settingValueAt(settings, 'macos.product') &&
-      settingValueAt(settings, 'macos.infoPlist')
-      ? ['macos']
-      : [];
+const reactNativeProject: ProjectIntegration = {
+  id: 'react-native',
+  inspect(root) {
+    const manifest = loadPackageJson(root);
+    const problem = appProjectProblem(root, manifest);
+    return {
+      root: existsSync(join(root, 'package.json')) ? 'explicit' : false,
+      application: problem === null,
+      ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
+      platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
+      validate: (operation) =>
+        operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
+      ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
+    };
   },
 };
 
-const configuredWeb: ProjectIntegration = {
-  platforms(_root, settings) {
-    return webSettings(settings).url !== null ? ['web'] : [];
+const swiftPackage: ProjectIntegration = {
+  id: 'swift-package',
+  inspect(root) {
+    if (!existsSync(join(root, 'Package.swift'))) return null;
+    return {
+      root: 'explicit',
+      application: true,
+      platforms: (settings) =>
+        settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
+      validate: (operation) => (operation === 'macos' ? null : undefined),
+      macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
+    };
   },
 };
+
+const browserWeb: ProjectIntegration = {
+  id: 'browser-web',
+  inspect(root) {
+    return {
+      root: false,
+      application: false,
+      platforms: (settings) => (webSettings(settings).url !== null ? ['web'] : []),
+      validate: (operation) => (operation === 'web' ? null : undefined),
+      web: async () => (await import('./browser-web.ts')).browserWebProject(root),
+    };
+  },
+};
+
+export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
+export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
+export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 
 export function nativeProjectIntegration(
   root: string,
   isExpo: (root: string) => boolean = detectIsExpo,
 ): NativeProjectIntegration {
   return isExpo(root) ? expo : reactNative;
-}
-
-export function detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[] {
-  const integrations = [nativeProjectIntegration(root), swiftPackage, configuredWeb];
-  const platforms = new Set(integrations.flatMap((integration) => integration.platforms(root, settings)));
-  const ordered: ProjectPlatform[] = ['ios', 'android', 'macos', 'web'];
-  return ordered.filter((platform) => platforms.has(platform));
 }
 
 function literalPlatforms(text: string): string[] | null {

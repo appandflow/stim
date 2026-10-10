@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   FIXTURE_COMMANDS,
+  assertVerifiedLaunch,
   assert,
   cleanupTmp,
   createCleanupTracker,
@@ -109,6 +110,7 @@ function runIos(cwd) {
   const facts = JSON.parse(r.stdout.trim().split('\n').findLast(Boolean));
   cleanup.recordBuild(facts);
   cleanup.recordWorkspace(cwd);
+  if (ENV.STIM_E2E_STRICT_QA === '1') assertVerifiedLaunch({ h, facts, label: cwd, cwd });
   const deviceLine = r.stderr.split('\n').find((line) => / {2}device {6}.*(booted|adopted) /.test(line)) ?? '';
   log(`device line: ${deviceLine.trim()}`);
   return { udid: facts.udid, adopted: / adopted /.test(deviceLine), deviceLine };
@@ -194,8 +196,8 @@ main().then(
   (err) => {
     log(`FAIL pool ${FRAMEWORK}-ios: ${err?.message || err}`);
     dumpDiagnostics(h, created);
-    cleanupAfterFailure();
-    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR]);
+    if (!err?.preserveNativeState) cleanupAfterFailure();
+    if (!args.keep) cleanupTmp([WORK_DIR, args.home ? null : HOME_DIR], err);
     process.exit(1);
   },
 );

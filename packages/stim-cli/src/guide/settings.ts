@@ -113,7 +113,8 @@ KEYS STIM READS
   ios.remote            "proxy", "eas", or a named approved Mac from
                         remote.machines, with the same meaning as --remote.
                         "auto" places on an approved Mac when this Mac is full or
-                        busy. Unset runs here. See lifecycle hosted-ios.
+                        busy. Unset runs here; "local" runs here even when a
+                        lower layer says otherwise. See lifecycle hosted-ios.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -255,7 +256,8 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         means the debug keystore's fixed "android".
   android.remote        "proxy", "eas", or a named approved Mac in
                         remote.machines; "auto" places on an approved Mac when
-                        this Mac is full or busy. Unset runs here.
+                        this Mac is full or busy. Unset runs here; "local"
+                        runs here even when a lower layer says otherwise.
                         See lifecycle hosted-android.
   remote.easFallback    true lets "auto" (ios.remote, android.remote or
                         --remote auto) run the simulator or emulator on a
@@ -640,6 +642,32 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
+Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
+use Automatic builds and Automatic simulators for this Mac or a configured remote.
+The equivalent machine settings list the excluded members; both default to []:
+
+  stim settings set remote.buildPoolDisabled '["local"]'
+  stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
+  stim settings unset remote.buildPoolDisabled
+
+Use local for this Mac and exact remote.machines entries for remotes, including
+case and port. Names are not trimmed; unmatched entries exclude nothing. Copy the
+configured name or use Desktop's switches. Each pool
+must retain local or at least one configured remote already approved for that role.
+Offline approved members count as configured members, but placement still requires
+an available compatible host. Settings refuses removing the last member, including
+removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+
+These settings apply only to new automatic work requested by this Mac. They do not
+change which work other requesters send to a host. Named placement and --remote-build
+local bypass membership; the default device placement without --remote auto remains
+local. Existing local and hosted device sessions keep their owner. Cache hits remain
+usable without compiling. If local is excluded, automatic placement cannot fall back
+to a local compile or boot; unavailable hosts and unsupported offloads refuse. Excluding
+local alone does not trigger billed EAS fallback; an existing explicit EAS opt-in still
+requires the physical device cap or queue condition. Restore membership before retrying or choose
+an explicit placement. Build and simulator memberships are independent.
+
 A remote Mac is used for a capability only after it grants that approval. Build
 and device-host approvals are separate: a Mac in the list that never granted
 one is not an error, it is not used for that capability, and doctor reports
@@ -731,7 +759,7 @@ value is unset. Trimmed auto/local are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
-  auto   follows remote.buildMode and keeps its local fallback behavior
+  auto   follows remote.buildMode, considering only enabled automatic pool members
   local  builds only on this Mac for this invocation
   name   requires a matching entry in remote.machines, already paired and
          approved for builds; ignores remote.buildMode and this Mac's load/slot gating
@@ -770,7 +798,7 @@ emulator debug build or a stim macos SwiftPM Debug build compiles:
          Mac's. A Mac too old to report its load counts only while every
          slot here is busy.
   force  on a remote Mac whenever one accepts it
-  off    always here
+  off    here when local remains enabled in the automatic build pool
 
 Load per core is the 5-minute load average divided by the CPU count; a Mac's
 native builds are its Stim runs in prebuild, pods or compile on that Mac, not
@@ -798,7 +826,7 @@ iPhone simulator on the target runtime. Its project-selected CocoaPods must matc
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
-the app's .ruby-version when installed, with pod install's UTF-8 locale defaults.
+the app's .ruby-version when installed, and otherwise the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the Mac's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in

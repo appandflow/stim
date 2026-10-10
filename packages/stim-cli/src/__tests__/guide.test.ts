@@ -24,6 +24,7 @@ import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
 import { OUTPUT_LABELS } from '../command-output.ts';
+import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
 import { STIM_DESKTOP_INSTALLED, workspaceLinkLine } from '../devices/stim-desktop.ts';
@@ -552,44 +553,64 @@ test('the agent guide routes situations to valid sections before listing every t
 
 test('tutorial prompts route to rendered sections', () => {
   for (const step of TUTORIAL_STEPS) {
-    if (!step.prompt) continue;
-    assert(step.section, step.id);
+    if (!step.section) continue;
     expect(renderSection('tutorial', step.section)).toBeTruthy();
   }
 });
 
-test('the printed tutorial app is detected as the supported tutorial version', () => {
-  const app = renderSection('tutorial', 'app');
-  assert(app);
-  const json = app.match(/```json\n([\s\S]*?)\n```/)?.[1];
-  assert(json);
-  expect(detectTutorial(JSON.parse(json))).toEqual({ version: TUTORIAL_VERSION });
+const flat = (topicSection: string) => renderSection('tutorial', topicSection)?.replace(/\s+/g, ' ') ?? '';
+
+test('the run section names the marker version the status payload reports and only clones', () => {
+  const run = flat('run');
+  expect(run).toContain(`expo.extra.stimTutorial equal to ${TUTORIAL_VERSION}`);
+  expect(run).toMatch(/Do not run the app/);
+  expect(run).toMatch(/do not act on them/);
+  expect(run).toMatch(/stim doctor --platform ios there: it registers the clone/);
+  expect(detectTutorial({ expo: { extra: { stimTutorial: TUTORIAL_VERSION } } })).toEqual({
+    version: TUTORIAL_VERSION,
+  });
 });
 
 test('tutorial setup protects existing folders and the user repository', () => {
-  const run = renderSection('tutorial', 'run');
-  assert(run);
-  expect(run).toMatch(/existing non-tutorial[\s\S]*?stop and ask the user for another folder/i);
-  expect(run).toMatch(/Never overwrite or delete it/i);
-  expect(run).toMatch(/inside another repository[\s\S]*?stop and ask the user for another folder/i);
+  const run = flat('run');
+  expect(run).toMatch(/If \{base\} exists, stop and ask the user for another folder; never overwrite or delete it/i);
+  expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
-test('the manual tutorial checks for an enclosing repository before creating or initializing the app', () => {
-  const begin = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.manual;
-  const index = (needle: string) => begin.findIndex((line) => line.includes(needle));
-  expect(index('--is-inside-work-tree')).toBeGreaterThanOrEqual(0);
-  expect(index('--is-inside-work-tree')).toBeLessThan(index('create-expo-app'));
-  expect(index('create-expo-app')).toBeLessThan(index('git init'));
+test('the cloning tutorial step checks the repository before cloning, and its prompt states the rules', () => {
+  const run = renderSection('tutorial', 'run')!;
+  expect(run.indexOf('--is-inside-work-tree')).toBeLessThan(run.indexOf('git clone'));
+  const ask = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.ask!;
+  expect(ask).toMatch(/inside another git repository, stop and ask me/);
+  expect(ask).toMatch(/never git add in my own repo/);
 });
 
-test('tutorial finish removes the tour worktree without forcing removal', () => {
-  const finish = renderSection('tutorial', 'finish');
-  assert(finish);
-  expect(finish).toMatch(/stim worktree remove "\{tour\}"/);
-  expect(finish).toMatch(/authorizes removing this tour worktree only/i);
-  expect(finish).toMatch(/Never use --force/i);
-  expect(finish).not.toMatch(/stim worktree remove[^\n]*--force/);
+test('tutorial finish names the two tracked worktrees as the only --force targets', () => {
+  const finish = flat('finish');
+  expect(finish).toContain('stim worktree remove "{tour}" stim worktree remove "{second}"');
+  expect(finish).toMatch(
+    /consent stim guide agent asks for before worktree remove --force, for exactly those two paths/i,
+  );
+  expect(finish).toMatch(/Never use --force on the clone or on any other worktree/i);
+  expect(finish).toMatch(/Use a plain remove first/i);
+  expect(finish).not.toMatch(/stim worktree remove "[^"]*" --force/);
+  const ask = TUTORIAL_STEPS.find((step) => step.id === 'finish')!.ask!;
+  expect(ask).toContain('{worktrees}');
+});
+
+test('tutorial restart removes nothing, so it cannot contradict the finish force rule', () => {
+  expect(flat('restart')).toMatch(/remove nothing/i);
+});
+
+test('the share step comes before finish and pushes to a fork with the simulator udid', () => {
+  const ids = TUTORIAL_STEPS.map((step) => step.id);
+  expect(ids.indexOf('share')).toBeLessThan(ids.indexOf('finish'));
+  const commands = TUTORIAL_STEPS.find((step) => step.id === 'share')!.commands.join('\n');
+  expect(commands).toContain('{udid}');
+  expect(commands).not.toContain('booted');
+  expect(commands).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
+  expect(flat('share')).toMatch(/never booted/);
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {
@@ -744,6 +765,13 @@ test('the facts topic documents every agent tool status can attribute', () => {
   const body = renderSection('facts', 'status');
   assert(body);
   expect(body).toMatch(new RegExp(`^ +tool +${AGENT_TOOLS.join(' \\| ')}$`, 'm'));
+});
+
+test('the cleanup guide names the nested-worktree watchman finding and that doctor never drops a root', () => {
+  const body = renderSection('cleanup', 'memory');
+  assert(body);
+  expect(body).toContain(WATCHMAN_NESTED_WORKTREES);
+  expect(body).toMatch(/Doctor never runs watch-del or shutdown-server/);
 });
 
 test('the facts topic documents every memory source', () => {

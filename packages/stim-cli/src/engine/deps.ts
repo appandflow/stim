@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -147,13 +147,96 @@ export function podEnv(root: string, options: Parameters<typeof podEnvForRuby>[1
   return podEnvForRuby(readRubyVersion(root), options);
 }
 
+export interface LoginRubyEnv {
+  PATH?: string;
+  GEM_HOME?: string;
+  GEM_PATH?: string;
+}
+
+const LOGIN_ENV_BEGIN = '@@ruby-env-begin@@';
+const LOGIN_ENV_END = '@@ruby-env-end@@';
+const LOGIN_ENV_SCRIPT =
+  `printf '\\n${LOGIN_ENV_BEGIN}\\nPATH=%s\\nGEM_HOME=%s\\nGEM_PATH=%s\\n${LOGIN_ENV_END}\\n' ` +
+  '"$PATH" "$GEM_HOME" "$GEM_PATH" > "$1"';
+
+export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
+  const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
+  const begin = lines.lastIndexOf(LOGIN_ENV_BEGIN);
+  const end = lines.indexOf(LOGIN_ENV_END, begin + 1);
+  if (begin < 0 || end < 0) return null;
+  const out: LoginRubyEnv = {};
+  for (const line of lines.slice(begin + 1, end)) {
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq);
+    const value = line.slice(eq + 1);
+    if (value && (key === 'PATH' || key === 'GEM_HOME' || key === 'GEM_PATH')) out[key] = value;
+  }
+  return out;
+}
+
+const loginRubyEnvByShell = new Map<string, LoginRubyEnv | null>();
+
+function readLoginRubyEnv(
+  shell: string | undefined = process.env.SHELL,
+  platform: NodeJS.Platform = process.platform,
+): LoginRubyEnv | null {
+  if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
+  if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
+  let dir: string | null = null;
+  let parsed: LoginRubyEnv | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+    const file = join(dir, 'env');
+    getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
+      timeoutMs: 10_000,
+      killSignal: 'SIGKILL',
+      detachedSilent: true,
+    });
+    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
+  } catch {
+    parsed = null;
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+  loginRubyEnvByShell.set(shell, parsed);
+  return parsed;
+}
+
+function rubyPathEntries(
+  login: LoginRubyEnv,
+  callerPath: string | undefined,
+  exists: (p: string) => boolean,
+): string[] {
+  const have = new Set((callerPath ?? '').split(delimiter));
+  const gemDirs = [login.GEM_HOME, ...(login.GEM_PATH ?? '').split(delimiter)].filter((dir): dir is string => !!dir);
+  return (login.PATH ?? '').split(delimiter).filter((entry) => {
+    if (!entry || have.has(entry)) return false;
+    if (gemDirs.some((gem) => entry === gem || entry.startsWith(gem + sep))) return true;
+    return exists(join(entry, 'ruby')) || exists(join(entry, 'pod'));
+  });
+}
+
+function prependPath(entries: string[], existing: string | undefined): string {
+  const seen = new Set<string>();
+  return [...entries, ...(existing ?? '').split(delimiter)]
+    .filter((entry) => entry && !seen.has(entry) && seen.add(entry))
+    .join(delimiter);
+}
+
 export function podEnvForRuby(
   version: string | null,
   {
     env = process.env,
     home = homedir(),
     exists = existsSync,
-  }: { env?: NodeJS.ProcessEnv; home?: string; exists?: (p: string) => boolean } = {},
+    loginEnv = readLoginRubyEnv,
+  }: {
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    exists?: (p: string) => boolean;
+    loginEnv?: () => LoginRubyEnv | null;
+  } = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...env,
@@ -162,16 +245,17 @@ export function podEnvForRuby(
     LANG: env.LANG ?? 'en_US.UTF-8',
     LC_ALL: env.LC_ALL ?? env.LANG ?? 'en_US.UTF-8',
   };
-  if (!version) return out;
-  const candidates: Array<{ bin: string; gems?: string }> = [
-    { bin: join(home, '.rbenv', 'versions', version, 'bin') },
-    {
-      bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'),
-      gems: join(home, '.rvm', 'gems', `ruby-${version}`),
-    },
-    { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
-    { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
-  ];
+  const candidates: Array<{ bin: string; gems?: string }> = version
+    ? [
+        { bin: join(home, '.rbenv', 'versions', version, 'bin') },
+        {
+          bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'),
+          gems: join(home, '.rvm', 'gems', `ruby-${version}`),
+        },
+        { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
+        { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
+      ]
+    : [];
   for (const c of candidates) {
     if (!exists(c.bin)) continue;
     out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
@@ -179,8 +263,15 @@ export function podEnvForRuby(
       out.GEM_HOME = c.gems;
       out.GEM_PATH = c.gems;
     }
-    break;
+    return out;
   }
+  if (env.GEM_HOME) return out;
+  const login = loginEnv();
+  if (!login) return out;
+  const rubyPath = rubyPathEntries(login, out.PATH, exists);
+  if (rubyPath.length) out.PATH = prependPath(rubyPath, out.PATH);
+  if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
+  if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
 }
 
