@@ -875,6 +875,11 @@ RULES
                               root, and browser profile paths whose
                               directory is gone; --delete forgets the
                               ledger entry only
+    staleEasLedgerEntries   { id, workspaceRoot }  entries of the machine
+                              EAS session ledger whose id is not a UUID and
+                              whose absolute workspace root is missing on a
+                              mounted volume; --delete forgets the entry
+                              only and contacts no EAS session
     staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
                               file, bytes }  entries of $STIM_HOME/disk-usage
                               and pull-requests whose path is gone from a
