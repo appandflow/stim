@@ -47,6 +47,7 @@ jobs:
   host:
     name: windows debug host
     runs-on: windows-latest
+    environment: debug
     timeout-minutes: 360
     env:
       TEMP: ${{ github.workspace }}\e2e-tmp
