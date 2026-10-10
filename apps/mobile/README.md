@@ -155,7 +155,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   history and recording discovery. Archive log or replay refusals show an update hint.
 - **Filters**: the filter button filters the list by machine, by project, by active
   or idle, and to workspaces with errors or with remote sessions. The filters
-  are saved on the phone; a dot on the button shows that some are on. Active only
+  are saved on the phone; a dot on the button shows that some are on. Active and Idle
   is the default.
 - **Machine Status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and

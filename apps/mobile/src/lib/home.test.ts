@@ -85,6 +85,8 @@ const macs = [
   { id: 'c', name: 'Offline Mac', status: null },
 ];
 
+const LIVE = { ...DEFAULT_FILTERS, statuses: ['live' as const] };
+
 describe('mergeWorkspaces', () => {
   it('lists every Mac in one list by project and name, keeping each item on its Mac', () => {
     const items = mergeWorkspaces(macs);
@@ -424,11 +426,7 @@ describe('warming and ready workspaces', () => {
 
   it('shows them under the live filter', () => {
     const items = mergeWorkspaces(setup);
-    expect(filterWorkspaces(items, DEFAULT_FILTERS, ['a']).shown.map((i) => i.title)).toEqual([
-      'live-one',
-      'ready',
-      'warming',
-    ]);
+    expect(filterWorkspaces(items, LIVE, ['a']).shown.map((i) => i.title)).toEqual(['live-one', 'ready', 'warming']);
     expect(
       filterWorkspaces(items, { ...DEFAULT_FILTERS, statuses: ['idle', 'notSetUp'] }, ['a']).shown.map((i) => i.title),
     ).toEqual(['idle-one', 'killed']);
@@ -439,10 +437,10 @@ describe('filterWorkspaces', () => {
   const items = [...mergeWorkspaces(macs), ...mergeWorktrees(macs)];
   const ids = ['a', 'b', 'c'];
   const titles = (f: Partial<typeof DEFAULT_FILTERS>, known = ids) =>
-    filterWorkspaces(items, { ...DEFAULT_FILTERS, ...f }, known).shown.map((i) => i.title);
+    filterWorkspaces(items, { ...LIVE, ...f }, known).shown.map((i) => i.title);
 
   it('hides idle apps and source-only worktrees under Live and reveals them under Idle and All', () => {
-    expect(filterWorkspaces(items, DEFAULT_FILTERS, ids)).toMatchObject({ hiddenByActivity: 3 });
+    expect(filterWorkspaces(items, LIVE, ids)).toMatchObject({ hiddenByActivity: 3 });
     expect(titles({})).toEqual(['building', 'live-one', 'other']);
     expect(titles({ statuses: ['idle', 'notSetUp'] })).toEqual(['idle-one', 'source-only', 'source']);
     expect(titles({ statuses: [...STATUSES] })).toEqual([
@@ -467,14 +465,14 @@ describe('filterWorkspaces', () => {
         ]),
       },
     ];
-    expect(filterWorkspaces(mergeWorkspaces(multi), DEFAULT_FILTERS, ['a']).hiddenByActivity).toBe(1);
+    expect(filterWorkspaces(mergeWorkspaces(multi), LIVE, ['a']).hiddenByActivity).toBe(1);
   });
 
   it('filters by Mac, project, errors and remote sessions', () => {
     expect(titles({ statuses: [...STATUSES], macs: ['a'] })).toEqual(['idle-one', 'live-one', 'source-only']);
     expect(titles({ statuses: [...STATUSES], projects: ['other'] })).toEqual(['other']);
     expect(titles({ statuses: [...STATUSES], projects: ['review'] })).toEqual(['source']);
-    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, macs: ['b'] }, ids).hiddenByActivity).toBe(1);
+    expect(filterWorkspaces(items, { ...LIVE, macs: ['b'] }, ids).hiddenByActivity).toBe(1);
     expect(titles({ statuses: [...STATUSES], errorsOnly: true })).toEqual(['live-one']);
     expect(titles({ statuses: [...STATUSES], remoteOnly: true })).toEqual(['other']);
   });
@@ -767,8 +765,8 @@ describe('parseFilters', () => {
     expect(
       parseFilters(JSON.stringify({ activity: 'all', statuses: ['archived', 'live', 'bogus', 'live'] })).statuses,
     ).toEqual(['live', 'archived']);
-    expect(parseFilters(JSON.stringify({ statuses: [] })).statuses).toEqual(['live']);
-    expect(parseFilters(JSON.stringify({ statuses: ['bogus'] })).statuses).toEqual(['live']);
+    expect(parseFilters(JSON.stringify({ statuses: [] })).statuses).toEqual(['live', 'idle']);
+    expect(parseFilters(JSON.stringify({ statuses: ['bogus'] })).statuses).toEqual(['live', 'idle']);
   });
 
   it('keeps valid saved filters and falls back to defaults for anything else', () => {
@@ -779,7 +777,7 @@ describe('parseFilters', () => {
       errorsOnly: true,
     });
     expect(parseFilters('{not json')).toEqual(DEFAULT_FILTERS);
-    expect(parseFilters(JSON.stringify({ activity: 'sometimes' })).statuses).toEqual(['live']);
+    expect(parseFilters(JSON.stringify({ activity: 'sometimes' })).statuses).toEqual(['live', 'idle']);
     expect(parseFilters(null)).toEqual(DEFAULT_FILTERS);
   });
 });
@@ -815,8 +813,8 @@ describe('status selection', () => {
   });
 
   it('marks a selection other than the default as an active filter', () => {
-    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live', 'idle'] }, [], [])).toBe(true);
-    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live'] }, [], [])).toBe(false);
+    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live'] }, [], [])).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live', 'idle'] }, [], [])).toBe(false);
   });
 });
 
