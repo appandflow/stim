@@ -744,6 +744,14 @@ test('a native project removed after recipe selection refuses instead of escapin
   await expect(recipe.identity()).rejects.toBeInstanceOf(IosRecipeRefusal);
 });
 
+test('native planning validates the simulator model flags like stim ios does', async () => {
+  writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' })).toMatchObject({
+    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--device-type') },
+  });
+});
+
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {
   const project = writeNativeXcodeProject(root);
   mkdirSync(join(project, 'project.xcworkspace'));

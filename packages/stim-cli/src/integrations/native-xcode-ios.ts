@@ -5,7 +5,13 @@ import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.t
 import { explainBuildMiss, skippedMissReason } from '../cache/miss-reason.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { iosProcessRuntime } from '../commands/ios/launch.ts';
-import { resolveConfiguration, simulatorBuildArch } from '../commands/ios/support.ts';
+import {
+  deviceModelRefusal,
+  resolveConfiguration,
+  resolveDeviceType,
+  resolveRuntime,
+  simulatorBuildArch,
+} from '../commands/ios/support.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
 import { planCachedBuild, planFlagRefusal } from '../commands/build-plan.ts';
 import {
@@ -306,6 +312,20 @@ async function planNativeXcode(root: string, options: IosCommandOptions) {
         'The native Xcode integration does not yet support hosted placement.',
         'Unset ios.remote to build and run on a local owned simulator.',
       );
+    const layers = DEFAULT_DEPS.settingsLayers(context);
+    const modelRefusal = deviceModelRefusal({
+      slot: options.slot ?? 'default',
+      deviceTypeFlag: options.deviceType,
+      runtimeFlag: options.runtime,
+      deviceType: resolveDeviceType(options.deviceType, settings),
+      runtime: resolveRuntime(options.runtime, settings),
+      deviceTypeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.deviceType'),
+      runtimeOrigin: DEFAULT_DEPS.settingOriginScope(layers, 'ios.runtime'),
+      physical: false,
+      remoteBackend: null,
+      listRuntimes: DEFAULT_DEPS.listIosRuntimes,
+    });
+    if (modelRefusal) return { refusal: modelRefusal };
     const configuration = resolveConfiguration(options.configuration, settings) ?? 'Debug';
     const selection = selectNativeXcodeProject(root, options.scheme, configuration);
     const optimizations = resolveOptimizations(settings);
