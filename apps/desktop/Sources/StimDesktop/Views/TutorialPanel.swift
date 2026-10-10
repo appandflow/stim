@@ -18,6 +18,8 @@ struct TutorialPanel: View {
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
   var openBuild: (() -> Void)? = nil
+  var openAgentActions: (() -> Void)? = nil
+  var openLogs: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
@@ -141,7 +143,7 @@ struct TutorialPanel: View {
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
-          if let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
+          if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
           if step.id == "build", current, let openBuild {
             HStack(spacing: Space.sm) {
               Text("Click Show to watch the build.")
@@ -150,6 +152,14 @@ struct TutorialPanel: View {
             }
           }
           if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
+          if current, step.id == "agent", let openAgentActions {
+            Button("Open Agent Actions", action: openAgentActions).buttonStyle(.stim(.primary))
+              .accessibilityLabel("Open Agent Actions for the tutorial simulator")
+          }
+          if current, step.id == "logs", let openLogs {
+            Button("Open Logs", action: openLogs).buttonStyle(.stim(.primary))
+              .accessibilityLabel("Open Logs for the tutorial workspace")
+          }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
           }
@@ -184,9 +194,8 @@ struct TutorialPanel: View {
               .accessibilityLabel("Open pull request \(pull.number)")
           }
           if current {
-            ForEach(issues, id: \.self) { issue in
-              Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
-                .textSelection(.enabled)
+            ForEach(TutorialIssues.shown(issues, step: step.id), id: \.self) { issue in
+              TutorialIssueRow(issue: issue)
             }
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
@@ -262,20 +271,17 @@ struct TutorialPanel: View {
       return
         "While that builds, ask for a second change in a new worktree. Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
     case "device": return "Open a tutorial simulator's live view and tap the app yourself."
-    case "agent": return "See what your agent did on the device, then replay it."
-    case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
+    case "agent": return "Open Agent Actions to see what your agent did, then press Play to replay it."
+    case "logs": return "Open Logs to see your app's output and errors."
     case "phone":
-      return
-        "Optional. Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
+      return "Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
     case "share":
       return
         "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."
     case "finish":
       return
         "Your agent stops the apps and removes the two worktrees and drops their changes. Their builds, logs and agent actions stay under Archived."
-    case "delete":
-      return
-        "Optional. Your agent removes any tutorial worktrees left and then the clone, through Stim so their simulators and dev servers go too, and deletes the folder. Press Next to keep the clone."
+    case "delete": return "Delete the test app's clone, or press Next to keep it."
     default: return ""
     }
   }
@@ -316,6 +322,24 @@ private struct TutorialPromptBox: View {
           }
         }
         .padding(Space.lg)
+      }
+    }
+  }
+}
+
+private struct TutorialIssueRow: View {
+  var issue: StatusIssue
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.xs) {
+      Label(TutorialIssues.sentence(issue.message), systemImage: "exclamationmark.triangle.fill")
+        .foregroundStyle(issue.severity == "error" ? Palette.error : Palette.warning)
+        .textSelection(.enabled)
+      if !issue.remedy.isEmpty {
+        HStack(spacing: Space.sm) {
+          Text(issue.remedy).font(.stim(.footnote, mono: true)).textSelection(.enabled)
+          CopyButton(issue.remedy, accessibilityLabel: "Copy fix: \(issue.remedy)")
+        }
       }
     }
   }

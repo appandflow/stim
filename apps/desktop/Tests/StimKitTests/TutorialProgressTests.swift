@@ -285,6 +285,22 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("agent", in: result).state == .done)
 }
 
+@Test func tutorialAgentTicksTheSecondChangesSimulatorToo() throws {
+  let tour = try environment()
+  var second = tour
+  second.path = secondPath
+  second.ios?.udid = "second-simulator"
+  var record = saved(at: "agent", since: afterRebuild)
+  record.secondPath = second.path
+  var progress = TutorialProgress()
+  let result = progress.update(
+    TutorialInput(
+      environment: tour, siblings: [tour, second],
+      viewerEvents: [.actionsViewed("second-simulator"), .replayPlayed("second-simulator")], now: afterRebuild,
+      record: record))
+  #expect(state("agent", in: result).ticks.map(\.done) == [true, true])
+}
+
 @Test func tutorialLogsCompletesOnlyWhenATutorialWorkspacesLogsAreOpened() throws {
   var progress = TutorialProgress()
   var input = TutorialInput(
@@ -412,12 +428,24 @@ private func disk(_ bytes: Double) throws -> WorkspaceDisk {
   let registered = progress.update(
     TutorialInput(environment: nil, siblings: [clone], cloneFolderExists: false, now: afterRebuild, record: record))
   #expect(registered.currentStep == "delete")
-  #expect(state("delete", in: registered).ticks.map(\.done) == [true, false])
+  #expect(state("delete", in: registered).ticks.map(\.id) == ["clone"])
   let folderLeft = progress.update(TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild))
   #expect(folderLeft.currentStep == "delete")
   let gone = progress.update(TutorialInput(environment: nil, cloneFolderExists: false, now: afterRebuild))
   #expect(gone.isComplete)
   #expect(state("delete", in: gone).state == .done)
+}
+
+@Test func tutorialDeleteTicksTheWorktreesOnlyWhenSomeRemainedAtItsStart() throws {
+  var record = saved(at: "delete")
+  record.clonePath = "/Users/example/stim-tutorial"
+  var progress = TutorialProgress()
+  let left = progress.update(
+    TutorialInput(environment: try environment(), cloneFolderExists: true, now: afterRebuild, record: record))
+  #expect(state("delete", in: left).ticks.map(\.id) == ["worktrees", "clone"])
+  #expect(state("delete", in: left).ticks.map(\.done) == [false, false])
+  let removed = progress.update(TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild))
+  #expect(state("delete", in: removed).ticks.map(\.done) == [true, false])
 }
 
 @Test func tutorialCompletedBeforeTheDeleteStepExistedStaysComplete() throws {

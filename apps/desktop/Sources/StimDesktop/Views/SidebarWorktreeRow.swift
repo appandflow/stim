@@ -20,6 +20,7 @@ struct SidebarWorktreeRow: View {
     if archives.isEmpty {
       WorktreeActions(page: page, openLogs: showLogs) { menu in
         row
+          .tutorialAnchor(.sidebarRow, workspaces: page.apps.map(\.path))
           .sidebarTag(.environment(page.id), selection: selection)
           .contextMenu { menu }
       }

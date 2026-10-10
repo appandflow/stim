@@ -395,7 +395,7 @@ struct RootView: View {
     let selected: String? = if case .environment(let path) = selection { path } else { nil }
     return TutorialHint(
       step: tutorial.snapshot?.currentStep ?? "done", path: tutorial.tourPath,
-      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected,
+      secondPath: tutorial.snapshot?.record.secondPath, selectedPath: selected, logsShown: showsLogs,
       ticks: tutorial.snapshot?.steps.first { $0.id == tutorial.snapshot?.currentStep }?.ticks ?? [],
       showMe: {
         if tutorial.snapshot?.isFinished == true {
@@ -423,6 +423,23 @@ struct RootView: View {
               && (command.cwd == tutorial.tourPath || command.arguments.contains(tutorial.tourPath ?? ""))
           }
       })
+  }
+
+  /// The first change's worktree, or the second's once the first is gone.
+  private var tutorialShortcut: String? {
+    let listed = Set(store.payload?.environments.map(\.path) ?? [])
+    return tutorial.snapshot?.record.trackedPaths.first(where: listed.contains)
+  }
+
+  private func openTutorialAgentActions(_ path: String) {
+    navigate(.environment(path), .click("tutorial Open Agent Actions"))
+    guard
+      let device = store.payload?.environments.first(where: { $0.path == path })?.orderedDevices
+        .first(where: { $0.platform == "ios" })
+    else { return }
+    focusedDeviceID = device.id
+    UserDefaults.standard.set(true, forKey: AppPreferences.Key.viewerShowsActions)
+    openRequests.viewer = ViewedDevice(id: device.id, workspace: path)
   }
 
   private func openTutorialArchive() {
@@ -470,6 +487,14 @@ struct RootView: View {
           {
             navigate(.environment(path), .click("tutorial Open the build"))
             focusedDeviceID = tutorial.workspace?.orderedDevices.first { $0.platform == "ios" }?.id
+          }
+        },
+        openAgentActions: tutorialShortcut.map { path in { openTutorialAgentActions(path) } },
+        openLogs: tutorialShortcut.map { path in
+          {
+            showLogs(path)
+            logQuery.errorsOnly = false
+            TutorialViewerEvents.shared.logsOpened(path)
           }
         },
         pairPhone: { openRequests.pairsPhone = true },
@@ -572,6 +597,7 @@ struct RootView: View {
       }
       showsLogs.toggle()
     }
+    .tutorialGlowInPlace(tutorialHint, .logsToggle)
   }
 
   @ViewBuilder private var inspectorSideControls: some View {
