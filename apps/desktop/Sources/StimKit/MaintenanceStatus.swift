@@ -20,6 +20,26 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
     public var worktree: Double?
   }
 
+  /// A process whose physical footprint the CLI found abnormal while memory pressure was warning or critical.
+  /// `command` safely restarts or stops it; it is nil when the CLI knows no safe restart.
+  public struct MemoryCulprit: Decodable, Hashable, Sendable, Identifiable {
+    public var pid: Int
+    public var name: String
+    public var bytes: Int64
+    public var command: String?
+    public var note: String?
+
+    public var id: Int { pid }
+  }
+
+  public struct Pressure: Decodable, Hashable, Sendable {
+    public struct Memory: Decodable, Hashable, Sendable {
+      public var culprits: [MemoryCulprit]?
+    }
+
+    public var memory: Memory?
+  }
+
   /// How long the CLI's finished-worktree check may go without running before the app removes them itself.
   public static let worktreeCheckStaleAfter: TimeInterval = 60 * 60
 
@@ -28,6 +48,9 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
   public var claim: Claim?
   public var lastPass: Pass?
   public var lastChecks: LastChecks?
+  public var pressure: Pressure?
+
+  public var memoryCulprits: [MemoryCulprit] { pressure?.memory?.culprits ?? [] }
 
   public init(
     mode: String, invalid: String? = nil, claim: Claim? = nil, lastPass: Pass? = nil, lastChecks: LastChecks? = nil

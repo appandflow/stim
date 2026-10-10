@@ -5,7 +5,7 @@ import { workspaceId } from '../workspace/paths.ts';
 import { clearDevice, getConfigDir, loadConfig, saveConfig, setDevice, withConfigLock } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
-import { hostMemoryPressureAdvice, readHostMemoryPressure } from '../host-memory.ts';
+import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -98,7 +98,8 @@ export async function ensureOwnedIosDevice({
   reconcileIosSimulator: typeof reconcileSimSlim;
   simSnapshot?: IosSimSnapshot;
 }): Promise<OwnedDeviceRecord> {
-  const memoryAdvice = hostMemoryPressureAdvice(readHostMemoryPressure());
+  const pressure = readHostMemoryPressure();
+  const memoryAdvice = hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure));
   if (memoryAdvice) out(chalk.yellow(phaseLine('memory', memoryAdvice)));
   const simslimProfile = iosSimSlimProfileSetting(settings, settingsRoot);
   if (record?.deviceUdid) {

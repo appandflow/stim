@@ -90,6 +90,10 @@ directory that is not an app records nothing.
 
 The `offload-candidate` note appears after at least 3 successful local cold builds in 7 days average over 3 minutes, with no `remote.machines` and an online tailnet Mac; it points to Stim Desktop **Settings > Remote Macs > Add**.
 
+On macOS, a `memory-culprit` finding names each process whose physical
+footprint is abnormal, with its restart command when one is known to be safe.
+See [memory pressure](./owned-devices.md#abnormally-large-processes).
+
 Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
 available one.

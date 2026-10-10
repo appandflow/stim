@@ -36,12 +36,26 @@ export interface MaintenanceSize {
   blocked?: string;
 }
 
+/**
+ * A process whose physical footprint, as `top` reports it, is abnormally large. `command` is the one command that
+ * safely restarts or stops it, null when Stim knows none; `note` says what that command does.
+ */
+export interface MemoryCulprit {
+  pid: number;
+  name: string;
+  bytes: number;
+  command: string | null;
+  note: string | null;
+}
+
 export interface MaintenancePressure {
   disk: { volume: string; freeMb: number }[];
   memory: {
     level: 'normal' | 'warning' | 'critical' | null;
     availableBytes: number | null;
     pressured: boolean;
+    /** Read only while the level is warning or critical; absent otherwise. */
+    culprits?: MemoryCulprit[];
   };
   warningSince: number | null;
 }

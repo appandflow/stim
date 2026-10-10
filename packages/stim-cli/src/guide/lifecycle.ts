@@ -2670,6 +2670,19 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.
 
+  Doctor, and boot messages under warning or critical pressure, also name any
+  process whose physical footprint is abnormal, read from macOS top (it counts
+  compressed and swapped memory, which ps RSS leaves out, and reads root-owned
+  daemons). Abnormal is at least a quarter of physical memory and 8 GiB, or
+  2 GiB for fseventsd and Watchman, which are normally far smaller. A known
+  safe-to-restart process comes with its command; Stim never runs it:
+    fseventsd                      sudo killall fseventsd (launchd restarts it;
+                                   file watchers rescan once)
+    Watchman                       stim gc --delete --cache watchman
+    Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
+  Any other process is named with its size only; ask before quitting it.
+  Doctor skips this check when STIM_HOME is set: processes are machine-global.
+
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`
   only in workspaces you own and have finished using; ask before closing other
   agents' simulators or heavy apps. Never quit Device Hub or Simulator.app to

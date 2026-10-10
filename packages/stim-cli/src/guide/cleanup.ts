@@ -35,7 +35,9 @@ Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Memory pressure is recorded only; stopping devices, dev servers
-and helpers is not automatic.
+and helpers is not automatic. While the level is warning or critical, the
+check also names abnormally large processes (guide lifecycle simslim) in
+status's maintenance block and the maintenance log.
 
 In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered

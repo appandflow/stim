@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import { parseAppContainerPath } from '../engine/installed-artifact.ts';
-import { hostMemoryPressureAdvice, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import {
+  hostMemoryPressureAdvice,
+  memoryCulpritsUnder,
+  readHostMemoryPressure,
+  type HostMemoryPressure,
+} from '../host-memory.ts';
+import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from './ios-simulator-viewer.ts';
 
@@ -196,8 +202,9 @@ const BOOTSTATUS_ATTEMPT_FLOOR_MS = 1000;
 const BOOT_STATE_LIST_TIMEOUT_MS = 30000;
 
 export function iosSimulatorFailureAdvice(exec: Executor = getExecutor()): string {
+  const pressure = readHostMemoryPressure(exec);
   return (
-    hostMemoryPressureAdvice(readHostMemoryPressure(exec)) ??
+    hostMemoryPressureAdvice(pressure, memoryCulpritsUnder(pressure, exec)) ??
     'The simulator may be unresponsive. Check Activity Monitor for memory pressure and free host memory before retrying.'
   );
 }
@@ -355,9 +362,9 @@ export async function bootIosSim(
       }
     }
   } catch (error) {
-    sample();
+    const named = memoryCulpritAdvice(memoryCulpritsUnder(sample(), exec));
     throw new Error(
-      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()} ${recovery} These observations do not establish an OOM crash.`,
+      `${(error as Error)?.message || error} Last boot output: ${phase}. Highest observed memory pressure: ${worst ?? 'unknown'}; unavailable samples: ${unknown}.${coverage()}${named ? ` ${named}` : ''} ${recovery} These observations do not establish an OOM crash.`,
       { cause: error },
     );
   } finally {
