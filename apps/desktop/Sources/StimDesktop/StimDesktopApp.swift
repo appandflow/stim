@@ -17,7 +17,6 @@ enum TutorialEntry { case resume, begin }
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
-  /// A device whose live view the workspace page showing it opens.
   @Published var viewer: ViewedDevice?
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
