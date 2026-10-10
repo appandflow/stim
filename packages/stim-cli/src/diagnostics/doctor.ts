@@ -1,6 +1,6 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import {
@@ -14,7 +14,7 @@ import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo, isPackageResolvable } from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
@@ -642,6 +642,15 @@ export function checkEasAuth({
     );
   }
 
+  if (status.code === 'project-cli') {
+    return finding(
+      'note',
+      'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository',
+      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}, which is in the repository, in a node_modules/.bin above it, or in a checkout whose repository root git did not report. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
+      status.remedy ?? null,
+    );
+  }
+
   if (status.code === 'logged-out') {
     return finding(
       'cost',
@@ -690,9 +699,49 @@ export function checkConcurrency({
   );
 }
 
+function easCliOutsideRepository(projectRoot: string): string | null {
+  const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
+  const root = found ? repoRoot(projectRoot) : null;
+  if (!found || !root) return null;
+  try {
+    const repository = realpathSync(root);
+    const directory = realpathSync(dirname(resolve(found)));
+    const within = (path: string) => {
+      const rel = relative(repository, path);
+      return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
+    };
+    if (within(join(directory, basename(found))) || within(realpathSync(found))) return null;
+    for (let dir = realpathSync(projectRoot); ; dir = dirname(dir)) {
+      if (directory === join(dir, 'node_modules', '.bin')) return null;
+      if (dirname(dir) === dir) return found;
+    }
+  } catch {
+    return null;
+  }
+}
+
 function readProjectEasCliVersion(projectRoot: string): string | null {
-  const bin = resolveEasCliBin(projectRoot);
-  return bin ? readInstalledEasCliVersion(bin.file, projectRoot) : null;
+  const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
+  if (packageJson) {
+    const version = readJsonObject(packageJson)?.version;
+    return typeof version === 'string' ? `eas-cli/${version}` : null;
+  }
+  const onPath = easCliOutsideRepository(projectRoot);
+  return onPath ? readInstalledEasCliVersion(onPath, projectRoot) : null;
+}
+
+function doctorEasAuth({ projectRoot, owner }: { projectRoot: string; owner?: string | null }): EasAuthResult {
+  const file = easCliOutsideRepository(projectRoot);
+  if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
+  const unchecked = resolveEasCliBin(projectRoot);
+  if (!unchecked) return probeEasAuth({ projectRoot, owner, resolveBin: () => null });
+  return {
+    failed: true,
+    code: 'project-cli',
+    reason: unchecked.file,
+    remedy:
+      'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
+  };
 }
 
 export function checkRemoteDevice({
@@ -1047,7 +1096,7 @@ export function reactNativeDoctorFindings({
   const {
     readFile = readFileSync,
     xcodeMajor = null,
-    easAuth = probeEasAuth,
+    easAuth = doctorEasAuth,
     remoteEnv = process.env,
     lookupAgentDevice = null,
     lookupEasCli = null,
@@ -1293,6 +1342,20 @@ export function checkFingerprintParity({
   );
 }
 
+function fingerprintConfigSkipped(root: string): Finding | null {
+  const file = ['fingerprint.config.js', 'fingerprint.config.cjs'].find((name) => existsSync(join(root, name)));
+  if (!file) return null;
+  return {
+    ...finding(
+      'note',
+      `Skipped the fingerprint checks: ${file} is code`,
+      `@expo/fingerprint loads ${file} with require(), and doctor does not execute project code, so it did not compare this checkout's fingerprint with a fresh worktree or look for linked libraries that carry Git metadata into it.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    ),
+    code: 'fingerprint-config-skipped',
+  };
+}
+
 function gitMetadataAt(path: string): boolean {
   try {
     const git = lstatSync(join(path, '.git'));
@@ -1353,6 +1416,8 @@ export async function detectLinkedLibraryGitMetadata(
 ): Promise<Finding | null> {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
   if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  const skipped = fingerprintConfigSkipped(mainRoot);
+  if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
     sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
@@ -1402,6 +1467,8 @@ export async function detectFingerprintParity(
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
+  const skipped = fingerprintConfigSkipped(projectRoot);
+  if (skipped) return skipped;
 
   const platform =
     selectedPlatform ??
@@ -1418,15 +1485,19 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
-    timeoutMs: 60000,
-  });
+  const added = exec.runFileQuiet(
+    'git',
+    ['-C', projectRoot, '-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+    { timeoutMs: 60000 },
+  );
   if (added == null) {
     rmSync(base, { recursive: true, force: true });
     return null;
   }
 
   try {
+    const headSkipped = fingerprintConfigSkipped(worktree);
+    if (headSkipped) return headSkipped;
     const project = await fingerprintProject(projectRoot, { platform, iosProjectPath, createFingerprint });
     const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint });
     if (!project || !clean) return null;
