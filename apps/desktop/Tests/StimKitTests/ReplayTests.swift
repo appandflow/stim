@@ -130,21 +130,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
         var start, end, length: Double
         var pieces: [Piece]
       }
-      struct Label: Decodable {
-        var start: Double
-        var text: String
-        var left, width: Double
-      }
-      struct Labels: Decodable {
-        var width: Double
-        var labels: [Label]
-      }
       var name: String
       var input: Input
       var timeline: Timeline
       var positions: [[Double]]
       var times: [[Double]]
-      var labels: [Labels]
     }
     var timelines: [Case]
   }
@@ -179,26 +169,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     for pair in vector.times {
       #expect(close(timeline.time(at: pair[0]), pair[1]), "time at \(pair[0])")
     }
-    for layout in vector.labels {
-      let labels = timeline.gapLabels(width: layout.width)
-      #expect(labels.map(\.text) == layout.labels.map(\.text))
-      for (label, expected) in zip(labels, layout.labels) {
-        #expect(label.start == expected.start && close(label.left, expected.left) && label.width == expected.width)
-      }
-    }
   }
 
   @Test func countsOnlyRecordedFootageAndIsNilWithoutAny() throws {
     let timeline = try #require(ReplayTimeline(spans: spans, liveEnd: 3 * hour))
     #expect(timeline.recordedLength == 10 * minute)
     #expect(ReplayTimeline(spans: []) == nil)
-  }
-
-  @Test func placesLabelsWithTheWidthsItIsGiven() throws {
-    let timeline = try #require(ReplayTimeline(spans: spans))
-    #expect(timeline.gapLabels(width: 600, measure: { _ in 601 }).isEmpty)
-    let label = try #require(timeline.gapLabels(width: 600, measure: { _ in 40.2 }).first)
-    #expect(label.width == 41)
   }
 
   @Test func landsALittleBeforeAMarkerButNotBeforeItsSpan() throws {

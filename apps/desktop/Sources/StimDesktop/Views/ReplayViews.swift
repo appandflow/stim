@@ -337,7 +337,7 @@ struct ReplayBar: View {
   }
 }
 
-/// The scrubber: recorded spans, gaps with "stopped" labels, markers and the playhead, on one linear scale. Hovering
+/// The scrubber: recorded spans, dotted gaps for the time a device was stopped, markers and the playhead, on one linear scale. Hovering
 /// shows the time or the marker under the pointer in a tooltip, at most 30 times a second and without touching the
 /// layout, above a still frame of the recorded segment of about 5 seconds there; dragging shows the frame under the
 /// pointer on the screen, and a click near a marker lands just before it. While the device runs and is recorded, the
@@ -358,7 +358,6 @@ struct ReplayTrack: View {
   private static let tooltipWidth: CGFloat = 280
   private static let accessibilityStepMs = 5000.0
   private static let barHeight: CGFloat = 28
-  private static let labelHeight: CGFloat = 16
   @State private var dragging: CGFloat?
   @State private var hover = ReplayHover()
   @State private var width: CGFloat = 0
@@ -374,7 +373,6 @@ struct ReplayTrack: View {
   var body: some View {
     let track = self.track
     let position = dragging.map { fraction($0) } ?? (isLive ? 1 : shownAt.map(track.position(of:)) ?? 1)
-    let hasGaps = track.pieces.contains(where: \.isGap)
     ZStack(alignment: .topLeading) {
       if let first = track.pieces.first, first.from > 0 {
         Capsule().fill(Palette.border).frame(width: first.from * width, height: 2).offset(y: 13)
@@ -404,15 +402,6 @@ struct ReplayTrack: View {
             .offset(x: x, y: 6)
         }
       }
-      ForEach(track.gapLabels(width: width, measure: Self.labelWidth), id: \.start) { label in
-        Text(label.text)
-          .font(.stim(.caption2))
-          .foregroundStyle(Palette.tertiary)
-          .lineLimit(1)
-          .fixedSize()
-          .frame(width: label.width)
-          .offset(x: label.left, y: Self.barHeight)
-      }
       ForEach(markers, id: \.self) { marker in
         RoundedRectangle(cornerRadius: 1)
           .fill(color(marker))
@@ -428,7 +417,7 @@ struct ReplayTrack: View {
         .frame(width: 10, height: 10)
         .offset(x: position * width - 5, y: 0)
     }
-    .frame(height: Self.barHeight + (hasGaps ? Self.labelHeight : 0), alignment: .top)
+    .frame(height: Self.barHeight, alignment: .top)
     .frame(maxWidth: .infinity, alignment: .leading)
     .contentShape(Rectangle())
     .overlay(alignment: .topLeading) {
@@ -483,6 +472,11 @@ struct ReplayTrack: View {
     .accessibilityElement(children: .ignore)
     .accessibilityLabel("Replay timeline")
     .accessibilityValue(accessibilityValue)
+    .accessibilityChildren {
+      ForEach(track.pieces.filter(\.isGap), id: \.start) { gap in
+        Rectangle().accessibilityLabel(Self.stoppedText(gap))
+      }
+    }
     .accessibilityAdjustableAction { direction in
       let from = isLive ? timeline.end : shownAt ?? timeline.end
       switch direction {
@@ -497,6 +491,10 @@ struct ReplayTrack: View {
     }
   }
 
+  private static func stoppedText(_ gap: ReplayTimeline.Piece) -> String {
+    "Stopped for \(Format.roundedDuration(ms: gap.end - gap.start))"
+  }
+
   private var accessibilityValue: String {
     guard !isLive, let shownAt else { return "Live" }
     let time = Date(timeIntervalSince1970: shownAt / 1000).formatted(date: .omitted, time: .standard)
@@ -505,10 +503,6 @@ struct ReplayTrack: View {
   }
 
   private func fraction(_ x: CGFloat) -> Double { x / max(width, 1) }
-
-  private static func labelWidth(_ text: String) -> Double {
-    NSAttributedString(string: text, attributes: [.font: TextVariant.caption2.nsFont()]).size().width
-  }
 
   private func nearestMarker(x: CGFloat) -> ReplayMarker? {
     let track = self.track
@@ -542,7 +536,7 @@ struct ReplayTrack: View {
       return "\(marker.title)\(marker.command.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(time)\n\(marker.label)"
     }
     let gap = track.pieces.first { $0.isGap && fraction(x) >= $0.from && fraction(x) <= $0.to }
-    return gap.map { "Not recorded for \(Format.roundedDuration(ms: $0.end - $0.start))" } ?? time
+    return gap.map { Self.stoppedText($0) } ?? time
   }
 
 }
