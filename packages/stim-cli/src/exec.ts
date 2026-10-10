@@ -22,7 +22,7 @@ interface ExecOptions {
   rejectStderr?: boolean;
   /** `runFile` and `runFileAsync`: run in its own session with all stdio ignored and return ''; the child reports through a file, so a background process it leaves behind cannot hold a pipe open. */
   detachedSilent?: boolean;
-  /** `runFile` and `runFileAsync`: exact values replaced with `***` in a thrown error's message, stack, stdout and stderr. */
+  /** `runFile` and `runFileAsync`: exact values replaced with `***` in every string field of a thrown error, including message, stack, stdout, stderr and output. */
   redact?: readonly string[];
 }
 
@@ -50,10 +50,13 @@ function nameTimeout(error: unknown, command: string, timeoutMs: number | undefi
 function redactError<T>(error: T, values: readonly string[] | undefined): T {
   const secrets = values?.filter(Boolean) ?? [];
   if (secrets.length === 0 || !error || typeof error !== 'object') return error;
+  const scrub = (text: string) => secrets.reduce((acc, secret) => acc.split(secret).join('***'), text);
   const fields = error as Record<string, unknown>;
-  for (const key of ['message', 'stack', 'stdout', 'stderr']) {
-    const text = fields[key];
-    if (typeof text === 'string') fields[key] = secrets.reduce((acc, secret) => acc.split(secret).join('***'), text);
+  for (const key of Object.getOwnPropertyNames(error)) {
+    const value = fields[key];
+    if (typeof value === 'string') fields[key] = scrub(value);
+    else if (Array.isArray(value))
+      fields[key] = value.map((item: unknown) => (typeof item === 'string' ? scrub(item) : item));
   }
   return error;
 }

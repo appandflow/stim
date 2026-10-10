@@ -73,7 +73,7 @@ test('a non-zero exit throws with status, stdout and stderr, the fields callers 
   expect(failure.message).toMatch(/^Command failed: .*\nerr/);
 });
 
-test('a failure redacts the given values from the message, stack, stdout and stderr', async () => {
+test('a failure redacts the given values from every field of the thrown error', async () => {
   resetExecutor();
   const secret = 'hunter2-secret';
   const args = ['-e', 'console.log(process.argv[1]); console.error(process.argv[1]); process.exit(1)', secret];
@@ -89,10 +89,10 @@ test('a failure redacts the given values from the message, stack, stdout and std
       () => new Error('did not fail'),
       (error: unknown) => error as typeof failure,
     );
-  for (const { message, stack, stdout, stderr } of [failure, asyncFailure]) {
-    expect(message).toMatch(/^Command failed: /);
-    expect(JSON.stringify({ message, stack, stdout, stderr })).not.toContain(secret);
-    expect(stderr).toBe('***\n');
+  for (const error of [failure, asyncFailure]) {
+    expect(error.message).toMatch(/^Command failed: /);
+    expect(JSON.stringify({ ...error, message: error.message, stack: error.stack })).not.toContain(secret);
+    expect(error.stderr).toBe('***\n');
   }
 });
 
