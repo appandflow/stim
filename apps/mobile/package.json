@@ -12,7 +12,7 @@
     "licenses": "node scripts/generate-licenses.mjs",
     "licenses:check": "node scripts/generate-licenses.mjs --check",
     "dev:pair": "node scripts/dev-pair.mjs",
-    "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error && node scripts/check-ascii.mjs",
+    "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity=error && node scripts/check-ascii.mjs && node ../../scripts/type-assertion-ratchet.mjs apps/mobile",
     "typecheck": "tsc --noEmit",
     "test": "node --test mock-server/*.test.mjs && jest",
     "format": "oxfmt .",
