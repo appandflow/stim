@@ -1,5 +1,4 @@
 import { RECENT_LAUNCH_MS } from '../status.ts';
-import { WATCH_BUILDS_PER_PLATFORM } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
@@ -1462,8 +1461,7 @@ RULES
   See stim guide macos for local capture, hosting and cleanup.
 
   An environment with a recorded run also carries builds, each platform's
-  last 10 runs, newest first; \`status --watch --json\` lines carry the newest
-  ${WATCH_BUILDS_PER_PLATFORM}. Its newest entry that is not "interrupted" is
+  last 10 runs, newest first. Its newest entry that is not "interrupted" is
   the run lastBuilds reports, once a run has recorded builds.
 
   builds         { ios?, android?, macos? }, each a list of lastBuilds entries

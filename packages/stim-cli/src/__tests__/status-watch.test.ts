@@ -16,7 +16,7 @@ import {
   watchStatusSources,
   type RefreshKind,
 } from '../status-watch.ts';
-import type { BuildHistoryEntry, MachineOwner, StatusPayload } from '@stim-cli/core/state';
+import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
 
@@ -248,33 +248,6 @@ describe('watchPayload', () => {
     const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
     expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
     expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
-  });
-
-  describe('builds', () => {
-    const run = (n: number): BuildHistoryEntry =>
-      ({
-        platform: 'ios',
-        result: 'succeeded',
-        build: { startedAt: `2026-10-01T00:00:${String(n).padStart(2, '0')}Z` },
-      }) as unknown as BuildHistoryEntry;
-    const history = (count: number) => Array.from({ length: count }, (_, i) => run(count - i));
-
-    test('keeps the newest five runs of each platform and leaves the input alone', () => {
-      const env = makeEnvironmentState({
-        path: '/w/a',
-        builds: { ios: history(10), android: history(3), macos: history(7) },
-      });
-      const input = payload({ environments: [env] });
-      const out = watchPayload(null, input).environments[0]!.builds!;
-      expect(out.ios).toEqual(history(10).slice(0, 5));
-      expect(out.android).toEqual(history(3));
-      expect(out.macos).toEqual(history(7).slice(0, 5));
-      expect(env.builds!.ios).toHaveLength(10);
-    });
-
-    test('adds no builds to an environment without any', () => {
-      expect(watchPayload(null, payload()).environments[0]).not.toHaveProperty('builds');
-    });
   });
 });
 
