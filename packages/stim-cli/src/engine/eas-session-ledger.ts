@@ -55,14 +55,20 @@ export function recordEasSessionClaim(claim: EasSessionClaim, root: string = eas
   );
 }
 
-export function removeEasSessionClaim(sessionId: string, root: string = easMachineStateRoot()): boolean {
+export function removeEasSessionClaim(
+  sessionId: string,
+  root: string = easMachineStateRoot(),
+  when: (claim: EasSessionClaim) => boolean = () => true,
+): boolean {
   const file = easSessionLedgerFile(root);
   if (!existsSync(file)) return false;
   assertEasMachineRootWritable(root);
   return withDirLock(easSessionLedgerLock(root), () => {
     const current = readEasSessionLedger(root);
     if (!current.safe) return false;
-    if (!current.claims.delete(sessionId)) return false;
+    const claim = current.claims.get(sessionId);
+    if (!claim || !when(claim)) return false;
+    current.claims.delete(sessionId);
     writeLedger(root, { version: 1, claims: Object.fromEntries(current.claims) });
     return true;
   });

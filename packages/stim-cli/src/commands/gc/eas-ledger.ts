@@ -54,15 +54,12 @@ export function forgetStaleEasLedgerEntries(
   const remove = deps.removeEasSessionClaim ?? removeEasSessionClaim;
   for (const entry of entries) {
     try {
-      const current = readEasSessionLedger(root).claims.get(entry.id);
-      if (!current || !isStaleEasLedgerEntry(current, mountedVolumes)) {
-        console.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));
-        continue;
-      }
-      if (remove(entry.id, root)) {
+      if (remove(entry.id, root, (claim) => isStaleEasLedgerEntry(claim, mountedVolumes))) {
         console.log(
           chalk.green(`Forgot the EAS ledger entry ${entry.id} (invalid id, ${entry.workspaceRoot} is gone)`),
         );
+      } else {
+        console.log(chalk.dim(`Kept the EAS ledger entry ${entry.id}: it changed since the report.`));
       }
     } catch (error) {
       failures++;
