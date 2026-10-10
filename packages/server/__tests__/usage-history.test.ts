@@ -73,6 +73,32 @@ test('drops a series once its last reading is older than 10 minutes', () => {
     payload([owner({ kind: 'simulator', workspace: '/w/app', id: 'U', cpuPercent: 5, memoryMb: 1 })]),
     T0,
   );
+  recorder.record(payload([]), T0 + 1000);
   expect(recorder.history(T0 + 590_000)?.devices[0]?.cpuPercent[0]).toBe(5);
   expect(recorder.history(T0 + 600_000)).toBeNull();
+});
+
+test('a slot with no payload repeats the reading of a series still in the latest payload, and stops once it leaves', () => {
+  const recorder = new UsageRecorder();
+  const metro = (cpuPercent: number) =>
+    owner({ kind: 'metro', workspace: '/w/app', id: '8081', cpuPercent, memoryMb: 600 });
+  recorder.record(payload([metro(2)]), T0);
+  recorder.record(payload([metro(9)]), T0 + 60_000);
+
+  const steady = recorder.history(T0 + 120_000)!.environments[0]!;
+  expect(steady.cpuPercent.slice(-9)).toEqual([2, 2, 2, 2, 9, 9, 9, 9, 9]);
+
+  recorder.record(payload([]), T0 + 120_000);
+  const gone = recorder.history(T0 + 150_000)!.environments[0]!;
+  expect(gone.cpuPercent.slice(-11)).toEqual([2, 2, 2, 2, 9, null, null, null, null, null, null]);
+});
+
+test('a series still in the latest payload keeps its reading after ten minutes without a new line', () => {
+  const recorder = new UsageRecorder();
+  recorder.record(
+    payload([owner({ kind: 'metro', workspace: '/w/app', id: '8081', cpuPercent: 4, memoryMb: 600 })]),
+    T0,
+  );
+  const history = recorder.history(T0 + 20 * 60_000)!;
+  expect(history.environments[0]!.cpuPercent.every((value) => value === 4)).toBe(true);
 });
