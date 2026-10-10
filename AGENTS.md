@@ -138,12 +138,34 @@ confirm that an existing issue still applies to current
 `origin/main`; close stale issues with the fixing commit and verification
 evidence instead of creating duplicate work.
 
+Label every issue when you create it: exactly one `type:`, exactly one
+`priority:`, and every `area:` it touches. When you work on an unlabeled issue,
+label it first. Pull requests carry `area:` and `review:` labels only; the
+title's prefix gives the type and the linked issue holds the priority.
+Cross-cutting labels such as `security` and the CI `e2e-*` labels apply as
+before.
+
+- `type: bug` breaks documented or expected behavior. `type: feature` adds
+  behavior. `type: chore` changes no user-visible behavior: refactors, tests, CI,
+  tooling, dependency updates. `type: investigation` produces findings rather
+  than a change: diagnose, measure, benchmark, prototype, evaluate.
+- `priority: P0` is broken for users with no workaround, data loss, a security
+  exposure, or a release blocker. `priority: P1` is next up: a user-facing
+  defect or a feature that unblocks other work. `priority: P2` is normal and the
+  default when unsure. `priority: P3` is nice to have.
+- `area: cli` is `packages/stim-cli`. `area: core`, `area: cache` (with
+  `packages/expo-build-cache`), `area: metro`, `area: server` and `area: ci` are
+  the matching `packages/` directories. `area: desktop` and `area: mobile` are
+  the apps. `area: website` and `area: docs` are `website/` and `docs/`.
+  `area: repo` is this repository's own workflows, test harness and release
+  tooling.
+
 Claim an issue before you implement it. Every agent works as the same GitHub
 user, so assignees mean nothing; the claim is a comment plus a branch. Before
 starting, check the issue for an open pull request or a `Claimed: <branch>`
 comment newer than one day (by its `createdAt`) with no later `Released:`
 comment and that branch on `origin`. When either is present the issue is taken;
-pick another. To claim, comment `Claimed: <branch>`, then push the branch to
+pick another. Among free issues, take the highest priority first. To claim, comment `Claimed: <branch>`, then push the branch to
 `origin` before implementing anything. The open pull request replaces the
 claim. If you stop without one, comment `Released:` and delete the branch.
 
@@ -167,6 +189,26 @@ every actionable finding and rerun the affected checks. Mark the pull request
 ready only after that fresh review is clear. Merge only after all required CI
 checks pass; if CI fails, fix the branch, repeat the review when behavior
 changes, and wait for the new checks.
+
+The fresh reviewer records the outcome with labels. When the review is clear, it
+adds `review: ai-approved`. A push after that removes the label until the next
+clear review. Most changes need no human review. The reviewer also adds
+`review: needs-human` when the diff changes one of these:
+
+- authentication, pairing, tokens, secrets, or what stim-server exposes on the
+  network;
+- paths that delete files, stop or kill processes, or reclaim resources: `gc`,
+  reclaim, ownership claims and locks;
+- child-process argument handling in `exec.ts` or its callers' escaping;
+- release, publishing, signing, or secret-bearing CI workflows;
+- the on-disk state format, or a published contract (JSON output, settings,
+  stim-server protocol) in a way that existing users or clients would notice.
+
+With that label, the reviewer posts a comment that starts with `Human review:`
+and lists each `path:lines` to check with one line saying why. A pull request
+labeled `review: needs-human` does not merge. A maintainer reviews it and
+replaces the label with `review: human-approved`. GitHub approvals cannot record
+this because every agent uses the same account.
 
 Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
