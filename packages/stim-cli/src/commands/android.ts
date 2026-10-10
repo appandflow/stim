@@ -1401,6 +1401,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         bootDuration: () => bootDuration,
         apkPath,
         androidPackage,
+        androidPackageProblem: appIds.androidPackageProblem ?? null,
         record,
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,

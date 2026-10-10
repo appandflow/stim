@@ -17,7 +17,7 @@ import {
 } from './asset-manifest.ts';
 import { detectEntryFile, refreshUpdatesManifestFile, UPDATES_MANIFEST_NAME } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
-import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
+import { defaultAndroidLayout, realpathInside, type AndroidLayout } from '../workspace/settings.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
 
@@ -179,16 +179,27 @@ export function resolveKeystore(
   root: string,
   settings: SettingsObject | null | undefined,
   layout: AndroidLayout = defaultAndroidLayout(root),
+  containedIn: string | null = null,
 ): KeystoreConfig {
   const android = settings?.['android'];
   const bag = android && typeof android === 'object' && !Array.isArray(android) ? (android as SettingsObject) : {};
   const configured = bag['keystore'];
-  const path =
+  let path =
     typeof configured === 'string' && configured.trim() !== ''
       ? isAbsolute(configured.trim())
         ? configured.trim()
         : join(root, configured.trim())
       : join(layout.moduleDir, 'debug.keystore');
+  if (containedIn !== null && typeof configured === 'string' && configured.trim() !== '') {
+    try {
+      path = realpathInside(containedIn, path);
+    } catch (error) {
+      throw new Error(
+        `Could not use android.keystore ${configured.trim()} from the committed .stim.json: ${String((error as Error)?.message || error)}`,
+        { cause: error },
+      );
+    }
+  }
   return { path, ...keystorePassArg(bag['keystorePassword']) };
 }
 

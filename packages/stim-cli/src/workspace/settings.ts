@@ -31,6 +31,7 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   for (const layer of layers) {
     if (!isPlainObject(layer)) continue;
     for (const [key, value] of Object.entries(layer)) {
+      if (key === '__proto__') continue;
       if (isPlainObject(value) && isPlainObject(out[key])) {
         out[key] = mergeSettingsLayers([out[key] as SettingsObject, value]);
       } else if (!(key in out)) {
@@ -268,6 +269,13 @@ export function parseAndroidAvdConfigIni(contents: string): Record<string, strin
 function pathEscapesRoot(root: string, path: string): boolean {
   const child = relative(root, path);
   return child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child);
+}
+
+export function realpathInside(root: string, path: string): string {
+  const base = realpathSync(root);
+  const real = realpathSync(resolve(base, path));
+  if (pathEscapesRoot(base, real)) throw new Error(`it resolves outside ${base}`);
+  return real;
 }
 
 export function androidAvdConfigSetting(settings: unknown, settingsRoot: string): Record<string, string> {
