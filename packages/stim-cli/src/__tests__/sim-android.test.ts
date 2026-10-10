@@ -1339,8 +1339,8 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   const cwds: unknown[] = [];
   const args: string[][] = [];
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) =>
-      args[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
+    runFileQuiet: (_file: string, fileArgs: string[]) =>
+      fileArgs[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
       cwds.push(opts.cwd);
       args.push(spawnArgs);

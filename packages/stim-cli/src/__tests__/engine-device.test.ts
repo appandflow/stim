@@ -928,8 +928,8 @@ describe('ensureBooted: android', () => {
     const logFile = join(tmpHome, 'ws', '.stim', 'logs', 'emulator.log');
     const opts: Array<Record<string, unknown>> = [];
     setExecutor({
-      runFileQuiet(file, args = [], opts) {
-        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), opts) : null;
+      runFileQuiet(file, args = [], options) {
+        return file === 'adb' || file === 'emulator' ? this.runQuiet!([file, ...args].join(' '), options) : null;
       },
       run: (cmd) => {
         if (cmd === 'emulator -list-avds') return 'stim-app';
