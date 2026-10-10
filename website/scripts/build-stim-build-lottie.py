@@ -14,6 +14,7 @@ CX, CY = 70, 105
 EASE_OUT = ({'x': [0.2], 'y': [1]}, {'x': [0.4], 'y': [0]})
 EASE = ({'x': [0.55], 'y': [1]}, {'x': [0.45], 'y': [0]})
 DROP = ({'x': [0.3], 'y': [1.4]}, {'x': [0.5], 'y': [0]})
+SMOOTH = ({'x': [0.58], 'y': [1]}, {'x': [0.42], 'y': [0]})
 
 PALETTES = {
     'light': {'stroke': '#5521FF', 'jar': '#FFFFFF', 'side': '#DDD3FF', 'top': '#5521FF'},
@@ -21,8 +22,10 @@ PALETTES = {
 }
 
 DASH_IN = (4, 20)
-RISE = (20, 40)
-DROP_IN = (40, 48)
+DASH_CLOSE = (20, 30)
+FILL_IN = (32, 42)
+DROP_IN = (42, 50)
+GLOBE_LINE = 4
 SCREEN_IN = (46, 58)
 PULSE = (58, 62, 68)
 FADE = (70, 80)
@@ -45,10 +48,10 @@ def static(v):
 
 def animated(frames, ease=EASE):
     keys = []
-    for n, (t, v) in enumerate(frames):
+    for n, (t, v, *own) in enumerate(frames):
         key = {'t': t, 's': v if isinstance(v, list) else [v]}
         if n < len(frames) - 1:
-            key['i'], key['o'] = ease
+            key['i'], key['o'] = own[0] if own else ease
         keys.append(key)
     return {'a': 1, 'k': keys}
 
@@ -77,7 +80,9 @@ def fill(hexc):
 def stroke(hexc, dashed=False):
     st = {'ty': 'st', 'c': static(rgb(hexc)), 'o': static(100), 'w': static(SW), 'lc': 2, 'lj': 2, 'ml': 4}
     if dashed:
-        st['d'] = [{'n': 'd', 'v': static(DASH)}, {'n': 'g', 'v': static(DASH)}, {'n': 'o', 'v': static(0)}]
+        st['d'] = [{'n': 'd', 'v': animated([(DASH_CLOSE[0], DASH), (DASH_CLOSE[1], 2 * DASH)], SMOOTH)},
+                   {'n': 'g', 'v': animated([(DASH_CLOSE[0], DASH), (DASH_CLOSE[1], 0)], SMOOTH)},
+                   {'n': 'o', 'v': static(0)}]
     return st
 
 
@@ -85,31 +90,28 @@ def trim(start, end):
     return {'ty': 'tm', 's': static(0), 'e': animated([(start, 0), (end, 100)], EASE_OUT), 'o': static(0), 'm': 1}
 
 
-def group(items, rotation=0, anchor=(0, 0)):
+def draw_on(start, from_centre=False):
+    end = start + GLOBE_LINE
+    if from_centre:
+        return {'ty': 'tm', 's': animated([(start, 50), (end, 0)]), 'e': animated([(start, 50), (end, 100)]),
+                'o': static(180), 'm': 1}
+    return {'ty': 'tm', 's': static(0), 'e': animated([(start, 0), (end, 100)]), 'o': static(0), 'm': 1}
+
+
+def group(items, rotation=0, anchor=(0, 0), opacity=None):
     t = {'ty': 'tr', 'p': static(list(anchor)), 'a': static(list(anchor)), 's': static([100, 100]),
-         'r': static(rotation), 'o': static(100)}
+         'r': static(rotation), 'o': opacity or static(100)}
     return {'ty': 'gr', 'it': items + [t]}
 
 
-def layer(ind, nm, shapes, opacity=None, position=None, parent=None, mask=None):
+def layer(ind, nm, shapes, opacity=None, position=None, parent=None):
     L = {'ddd': 0, 'ind': ind, 'ty': 4, 'nm': nm, 'sr': 1,
          'ks': {'o': opacity or static(100), 'r': static(0), 'p': position or static([0, 0]), 'a': static([0, 0]),
                 's': static([100, 100])},
          'ao': 0, 'shapes': shapes, 'ip': 0, 'op': OP, 'st': 0, 'bm': 0}
     if parent is not None:
         L['parent'] = parent
-    if mask is not None:
-        L['hasMask'] = True
-        L['masksProperties'] = [mask]
     return L
-
-
-def rising_mask(left, right, top, bottom):
-    def box(y):
-        return {'c': True, 'v': [[left, y], [right, y], [right, bottom], [left, bottom]],
-                'i': [[0, 0]] * 4, 'o': [[0, 0]] * 4}
-    return {'inv': False, 'mode': 'a', 'o': static(100), 'x': static(0),
-            'pt': animated([(RISE[0], [box(bottom)]), (RISE[1], [box(top)])])}
 
 
 def fade_out(span):
@@ -128,14 +130,13 @@ def cube(p):
     faces = [group([path(left), stroke(p['stroke']), fill(p['side'])]),
              group([path(right), stroke(p['stroke']), fill(p['side'])])]
     detail = [path(top), stroke(p['stroke']), fill(p['top'])]
-    return outline, faces, detail, (20, 120, 74, 158)
+    return outline, faces, detail
 
 
 def phone(p, radius, camera):
     w, h = 52, 96
     body = rect(CX, CY, w, h, radius)
-    return [body], [body, stroke(p['stroke']), fill(p['side'])], camera, (CX - w / 2 - 4, CX + w / 2 + 4, CY - h / 2 - 4,
-                                                                       CY + h / 2 + 4)
+    return [body], [body, stroke(p['stroke']), fill(p['side'])], camera
 
 
 def ios(p):
@@ -152,18 +153,21 @@ def macos(p):
     body = rect(CX, CY, w, h, 7)
     bar = path([[CX - w / 2, top + 14], [CX + w / 2, top + 14]], closed=False)
     dots = [ellipse(CX - w / 2 + 9 + 8 * i, top + 7, 5, 5) for i in range(3)]
-    return [body], [bar, body, stroke(p['stroke']), fill(p['side'])], dots + [fill(p['top'])], (
-        CX - w / 2 - 4, CX + w / 2 + 4, top - 4, CY + h / 2 + 4)
+    return [body], [bar, body, stroke(p['stroke']), fill(p['side'])], dots + [fill(p['top'])]
 
 
 def web(p):
     d = 80
     disc = ellipse(CX, CY, d, d)
-    lines = [ellipse(CX, CY, 34, d), path([[CX - d / 2, CY], [CX + d / 2, CY]], closed=False),
-             path([[CX - 34, CY - 20], [CX + 34, CY - 20]], closed=False),
-             path([[CX - 34, CY + 20], [CX + 34, CY + 20]], closed=False), stroke(p['stroke'])]
-    return [disc], [disc, stroke(p['stroke']), fill(p['side'])], lines, (CX - d / 2 - 4, CX + d / 2 + 4, CY - d / 2 - 4,
-                                                                       CY + d / 2 + 4)
+    shapes = [ellipse(CX, CY, 34, d), path([[CX - d / 2, CY], [CX + d / 2, CY]], closed=False),
+              path([[CX - 34, CY - 20], [CX + 34, CY - 20]], closed=False),
+              path([[CX - 34, CY + 20], [CX + 34, CY + 20]], closed=False)]
+    lines = []
+    for n, shape in enumerate(shapes):
+        start = DROP_IN[0] + n * GLOBE_LINE
+        lines.append(group([shape, draw_on(start, from_centre=n == 0), stroke(p['stroke'])],
+                           opacity=animated([(start, 0), (start + 2, 100)])))
+    return [disc], [disc, stroke(p['stroke']), fill(p['side'])], lines
 
 
 def atom(p):
@@ -198,12 +202,12 @@ def build(p):
         add(nm=f'screen-{name}', shapes=draw(p), parent=1,
             opacity=animated([(SCREEN_IN[0], 0), (SCREEN_IN[0] + 4, 100), (FADE[0], 100), (FADE[1], 0)]))
     for name, draw in ITEMS.items():
-        outline, faces, detail, (left, right, top, bottom) = draw(p)
+        outline, faces, detail = draw(p)
         add(nm=f'item-{name}-detail', shapes=[group(detail)], parent=1,
             opacity=animated([(DROP_IN[0], 0), (DROP_IN[0] + 3, 100), (FADE[0], 100), (FADE[1], 0)]),
-            position=animated([(DROP_IN[0], [0, -14]), (DROP_IN[1], [0, 0])], DROP))
-        add(nm=f'item-{name}-fill', shapes=[group(faces)], parent=1, opacity=fade_out(FADE),
-            mask=rising_mask(r2(left), r2(right), r2(top), r2(bottom)))
+            position=None if name == 'web' else animated([(DROP_IN[0], [0, -14]), (DROP_IN[1], [0, 0])], DROP))
+        add(nm=f'item-{name}-fill', shapes=[group(faces)], parent=1,
+            opacity=animated([(FILL_IN[0], 0, SMOOTH), (FILL_IN[1], 100, SMOOTH), (FADE[0], 100), (FADE[1], 0)]))
         add(nm=f'item-{name}-outline', shapes=[group(outline + [trim(*DASH_IN), stroke(p['stroke'], dashed=True)])],
             parent=1, opacity=fade_out(DASH_OUT))
 
