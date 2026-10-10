@@ -109,9 +109,13 @@ struct StatusStoreTests {
 
   @Test func theStoreRunsNoWatcherOfItsOwnWhileTheServerDeliversStatusAndRunsOneAgainWhenItStops() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
-    defer { try? FileManager.default.removeItem(at: directory) }
     let cli = try watchingCLI(in: directory)
     let store = StatusStore(cli: Task { cli }, fetch: { throw Failed() })
+    defer {
+      store.serverDelivering(true)
+      for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }
+      try? FileManager.default.removeItem(at: directory)
+    }
     store.start()
     #expect(await until { watcherPIDs(in: directory).count == 1 && store.watching })
     let first = try #require(watcherPIDs(in: directory).first)
@@ -125,7 +129,5 @@ struct StatusStoreTests {
 
     store.serverDelivering(false)
     #expect(await until { watcherPIDs(in: directory).count == 2 && store.watching })
-    store.serverDelivering(true)
-    for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }
   }
 }

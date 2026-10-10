@@ -51,6 +51,7 @@ import Foundation
 
   private func receive(_ event: ServerEvent) {
     if event.name == "error" {
+      generation += 1
       delivering = false
       return
     }
@@ -68,6 +69,6 @@ import Foundation
     guard generation == self.generation, sequence > shown else { return }
     shown = sequence
     if case .success = result { delivering = true }
-    onPayload(result)
+    if delivering { onPayload(result) }
   }
 }

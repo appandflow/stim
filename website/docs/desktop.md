@@ -166,7 +166,7 @@ anything a `tailscale serve --https` route forwards to it), with no switch. Repl
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
 stops or reconfigures it. Desktop reads workspace status from that server's status
-feed while the server allows reads, so one `stim status --watch` serves both; it runs
+feed while the server allows reads and serves the same Stim home, so one `stim status --watch` serves both; it runs
 its own only while the server is unavailable. When the server cannot start, a warning icon in the
 sidebar footer says why; click it to retry. Serving phones over the tailnet stays
 opt-in (**Serve to phones**, with the Phone app flag on).
