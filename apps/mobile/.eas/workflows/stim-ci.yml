@@ -1,0 +1,46 @@
+name: Stim CI Android smoke
+
+on:
+  workflow_dispatch: {}
+
+defaults:
+  tools:
+    node: '22.18.0'
+    pnpm: '12.0.0'
+
+jobs:
+  android:
+    name: Build and launch Stim Mobile with Stim CI
+    type: custom
+    environment: development
+    runs_on: linux-large-nested-virtualization
+    env:
+      APP_VARIANT: development
+    defaults:
+      run:
+        working_directory: /
+    steps:
+      - uses: eas/checkout
+      - name: Install and build the workspace
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm run build
+      - name: Prepare the job's Android image
+        run: |
+          set-env STIM_HOME "$PWD/.stim-ci-home"
+          export STIM_HOME="$PWD/.stim-ci-home"
+          sdkmanager 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
+          node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
+      - name: Build, launch, probe and stop
+        run: >-
+          node packages/ci/dist/stim-ci.mjs run
+          --platform android --project apps/mobile
+          --artifacts stim-ci-results/android --timeout 2400
+          -- node ../../scripts/ci/app-smoke.mjs
+      - name: Upload diagnostics
+        if: ${{ always() }}
+        uses: eas/upload_artifact
+        with:
+          name: stim-ci-android
+          type: other
+          path: stim-ci-results/android

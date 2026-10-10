@@ -450,7 +450,7 @@ test('deleteAvd propagates an avdmanager failure instead of swallowing it', () =
 
 test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all', () => {
   setExecutor({
-    run: (cmd) => (cmd === 'emulator -list-avds' ? '' : ''),
+    runFile: () => '',
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -459,7 +459,7 @@ test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all',
 
 test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
   setExecutor({
-    run: (cmd) => (cmd === 'emulator -list-avds' ? 'Pixel_6_API_34\n' : ''),
+    runFile: (_file, args = []) => (args[0] === '-list-avds' ? 'Pixel_6_API_34\n' : ''),
     runQuiet: () => null,
     spawn: () => null,
   });
@@ -469,7 +469,8 @@ test('resolveOwnedAvdSerial reports notOwned for a non-Stim AVD name', () => {
 test('listAdbDevices runs the adb client from the home directory on Windows so an auto-started server never holds a worktree open', () => {
   const calls: { cmd: string; cwd: unknown }[] = [];
   setExecutor({
-    run: (cmd, opts) => {
+    runFile: (file, args = [], opts) => {
+      const cmd = [file, ...args].join(' ');
       calls.push({ cmd, cwd: opts?.cwd });
       return 'List of devices attached\nemulator-5554\tdevice\n';
     },
@@ -488,7 +489,8 @@ test('listAdbDevices runs the adb client from the home directory on Windows so a
 
 test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by port', () => {
   setExecutor({
-    run: (cmd) => {
+    runFile: (file, args = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-mine\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
@@ -504,7 +506,8 @@ test('resolveOwnedAvdSerial resolves the live serial by AVD identity, not by por
 
 test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by a foreign emulator', () => {
   setExecutor({
-    run: (cmd) => {
+    runFile: (file, args = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-mine\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\n';
       return '';
@@ -520,7 +523,8 @@ test('resolveOwnedAvdSerial reports notRunning when the recorded port is held by
 
 test('resolveOwnedAvdSerial resolves an offline emulator through its console identity', () => {
   setExecutor({
-    run: (cmd) => {
+    runFile: (file, args = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-mine\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\toffline\n';
       return '';
@@ -535,7 +539,8 @@ test('resolveOwnedAvdSerial resolves an offline emulator through its console ide
 test('resolveOwnedAvdSerial asks healthy emulators first and bounds every console identity query', () => {
   const queried: { serial: string; timeoutMs?: number; killSignal?: string }[] = [];
   setExecutor({
-    run: (cmd) => {
+    runFile: (file, args = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-mine\nstim-stopped\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
       return '';
@@ -565,7 +570,8 @@ test('resolveOwnedAvdSerial floors each console query so a slow earlier call doe
   vi.setSystemTime(0);
   const queried: { cmd: string; at: number; timeoutMs?: number }[] = [];
   setExecutor({
-    run: (cmd: string, opts?: { timeoutMs?: number }) => {
+    runFile: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+      const cmd = [file, ...args].join(' ');
       const at = Date.now();
       queried.push({ cmd, at, timeoutMs: opts?.timeoutMs });
       if (cmd === 'emulator -list-avds') {
@@ -597,7 +603,8 @@ test('resolveOwnedAvdSerial floors each console query so a slow earlier call doe
 test('resolveOwnedAvdSerial caches a failed console query per serial so one resolver does not retry a wedged emulator for every requested AVD', () => {
   const queried: string[] = [];
   setExecutor({
-    run: (cmd: string) => {
+    runFile: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
       if (cmd === 'emulator -list-avds') return 'stim-a\nstim-b\n';
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\n';
       return '';
@@ -1271,20 +1278,20 @@ test('androidToolPath uses the Windows names the SDK installs and keeps the bare
   expect(androidToolPath('emulator', 'win32')).toBe('emulator');
 });
 
-test('listAvds runs the resolved emulator binary, quoted', () => {
+test('listAvds runs the resolved emulator binary with literal arguments', () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
-  const calls: string[] = [];
+  const calls: [string, string[]][] = [];
   setExecutor({
-    run: (cmd: string) => {
-      calls.push(cmd);
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, args]);
       return 'Pixel_6_API_34\n';
     },
     runQuiet: () => null,
     spawn: () => null,
   });
   expect(listAvds()).toEqual(['Pixel_6_API_34']);
-  expect(calls).toEqual([`"${join(sdk, 'emulator', SDK_TOOL_FILES.emulator)}" -list-avds`]);
+  expect(calls).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-list-avds']]]);
 });
 
 test('bootAndroidEmulator spawns the resolved emulator binary', () => {
@@ -1437,8 +1444,8 @@ test('listAvds keeps the bare command when resolution falls back to PATH', () =>
   process.env.ANDROID_HOME = join(tmpHome, 'nowhere');
   const calls: string[] = [];
   setExecutor({
-    run: (cmd: string) => {
-      calls.push(cmd);
+    runFile: (file: string, args: string[] = []) => {
+      calls.push([file, ...args].join(' '));
       return '';
     },
     runQuiet: () => null,

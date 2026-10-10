@@ -27,6 +27,7 @@ import {
   sha256,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
@@ -79,7 +80,8 @@ export async function placeHostedMacos(
   let session: HostedSession | null = null;
   if (recorded) {
     try {
-      session = await settle(host, await attach(host, recorded.session), ['preparing', 'stopping'], SESSION_TIMEOUT_MS);
+      session = await settle(host, await attach(host, recorded.session), ['preparing'], PREPARE_TIMEOUT_MS);
+      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
     } catch (error) {
       if (!heldNoLonger(error)) throw error;
     }
@@ -110,7 +112,7 @@ export async function placeHostedMacos(
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
   reserved(placement);
-  session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS);
+  session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS);
   if (session.state === 'unknown') throw unknownSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);

@@ -11,9 +11,8 @@ import { cdpEndpoint, readWebRecord } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
-import { resolveSettings, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
+import { resolveProjectSettings, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely } from './native-runtime.ts';
 
 export interface WebFacts extends WebBrowserState {
@@ -39,7 +38,7 @@ export async function runWeb({
   const startedAt = Date.now();
   await ensureWorkspaceStorageSafely(root, { note });
   if (!getProject(root)) upsertProject(root, {});
-  const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
+  const { settings } = resolveProjectSettings(root);
   const [shapeError] = settingShapeErrors(settings);
   if (shapeError)
     return { ok: false, error: { code: 'STIM_BAD_ARG', message: shapeError, remedy: SETTING_SHAPE_REMEDY } };

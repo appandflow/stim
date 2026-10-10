@@ -295,7 +295,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   memory and disk; the latest frame the server sends, fitted to the card, with
   **Folded** or **Unfolded** for an iPhone Duo or an Android foldable emulator.
   Tapping the frame opens the [device view](#device-view). A device waiting on
-  a build shows the build's step, a device with a failed build and no app shows
+  a build shows **Waiting for the iOS Build** (or its platform) under Stim's
+  build animation, the same one Stim Desktop plays, in the light or dark
+  version; Reduce Motion holds it on one frame. A device with a failed build and no app shows
   **No App Installed**, and a closed app dims the frame under **App closed**, or
   shows an **App closed** pill while there is no frame. A
   warming workspace shows one card while it warms, and a stopped one says that

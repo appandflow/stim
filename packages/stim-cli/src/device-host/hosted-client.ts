@@ -17,6 +17,7 @@ const CONNECT_TIMEOUT_MS = 10_000;
 export const POLL_MS: number = 500;
 /** Covers 90s stop + 15s final logs + three 10s worker group-settle bounds, with 45s for polling and transport. */
 export const SESSION_TIMEOUT_MS: number = 90_000 + 15_000 + 3 * 10_000 + 45_000;
+export const PREPARE_TIMEOUT_MS: number = 5 * 60_000 + 10_000 + 45_000;
 export const INSTALL_TIMEOUT_MS: number = 5 * 60_000;
 
 interface ManifestFile {

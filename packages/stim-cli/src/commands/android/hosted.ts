@@ -1,13 +1,14 @@
 import { hostedAndroidStatus, type HostedDeviceSelectors } from '@stim-cli/core/state';
 import { placeHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { writeHostedAndroid } from '../../device-host/ios-state.ts';
-import { writeWorkspaceLaunch, MODE_BARE, MODE_EXPO } from '../../supervisor/state.ts';
+import { writeWorkspaceLaunch, workspaceDevServerMode } from '../../supervisor/state.ts';
 import { verifyLaunch } from '../../engine/launch-verify.ts';
 import { launchSlotScope, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import type { PreparedAndroidArtifact } from './artifact.ts';
 import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type ReportAndroidResultArgs } from './result.ts';
 import { androidDevClientScheme } from './support.ts';
 import type { RunAndroidResult, FailExtra } from './types.ts';
+import type { BuildPhase } from '../../engine/build-progress.ts';
 
 export async function finishHostedAndroidRun({
   target,
@@ -30,6 +31,7 @@ export async function finishHostedAndroidRun({
   startedAt,
   fail,
   phase,
+  enterPhase,
   out,
   recordBuild,
   ...report
@@ -67,6 +69,7 @@ export async function finishHostedAndroidRun({
     extra?: FailExtra,
   ) => RunAndroidResult;
   phase: (label: unknown, text: string) => void;
+  enterPhase: (phase: BuildPhase) => void;
   out: (line: string) => void;
   recordBuild?: Parameters<typeof persistLastBuild>[0]['recordBuild'];
 }): Promise<RunAndroidResult> {
@@ -86,6 +89,7 @@ export async function finishHostedAndroidRun({
       ...(!release && isExpo ? { devClientScheme: resolveDevClientScheme(root, artifact.apkPath) ?? undefined } : {}),
       reserved: (placement) => writePlacement(root, slot, placement),
       note: out,
+      enterPhase,
     });
     writePlacement(root, slot, run.placement);
     writeLaunch(root, 'android', {
@@ -103,7 +107,7 @@ export async function finishHostedAndroidRun({
         logsDir: logsDir ?? undefined,
         since: launchedAt,
         metroPort,
-        mode: isExpo ? MODE_EXPO : MODE_BARE,
+        mode: workspaceDevServerMode(root, isExpo),
         slot: launchSlotScope(root, slot),
         platformShared: siblingPlatformSlots(root, 'android', slot).length > 0,
       });

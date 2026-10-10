@@ -10,6 +10,7 @@ import { Card } from '@/components/card';
 import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { StatRow } from '@/components/stat-row';
+import { StimBuildAnimation } from '@/components/stim-build-animation';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
 import { Touch } from '@/components/touch';
@@ -147,7 +148,9 @@ export function DeviceTile({
   const imageHeight = Math.min(SCREEN_HEIGHT - SCREEN_PADDING * 2, (screenWidth - SCREEN_PADDING * 2) / aspect);
   const buildName = build ? platformName(build.platform) : '';
   const placeholder = build ? (
-    <Placeholder title={t`Waiting for the ${buildName} Build`} />
+    <Placeholder title={t`Waiting for the ${buildName} Build`}>
+      <StimBuildAnimation platform={build.platform} />
+    </Placeholder>
   ) : noApp ? (
     <Placeholder title={t`No App Installed`} subtitle={t`Fix the build and run it again`} />
   ) : !streams ? (
@@ -220,6 +223,7 @@ function UsageStats({ usage }: { usage: Usage }) {
 function Placeholder({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
   return (
     <View style={styles.placeholder}>
+      {children}
       <Text variant="callout" tone="secondary" style={styles.center}>
         {title}
       </Text>
@@ -228,7 +232,6 @@ function Placeholder({ title, subtitle, children }: { title: string; subtitle?: 
           {subtitle}
         </Text>
       ) : null}
-      {children}
     </View>
   );
 }
@@ -320,7 +323,8 @@ const styles = StyleSheet.create((theme) => ({
   placeholder: {
     marginHorizontal: theme.space.lg,
     marginBottom: theme.space.lg,
-    height: 120,
+    minHeight: 120,
+    paddingVertical: theme.space.lg,
     borderWidth: 1,
     borderStyle: 'dashed',
     borderColor: theme.colors.border,

@@ -36,7 +36,7 @@ export function browserWebProject(root: string): WebProject {
       async prepare() {
         const web = webSettings(settings);
         const usesMetro = web.url === null || web.url.includes('{port:metro}');
-        const pin = usesMetro ? metroPortSetting(root) : null;
+        const pin = usesMetro ? metroPortSetting(settings) : null;
         if (pin?.error) return failure('STIM_BAD_ARG', pin.error, SETTING_SHAPE_REMEDY);
 
         const chrome = findChrome();
@@ -60,7 +60,7 @@ export function browserWebProject(root: string): WebProject {
 
         let metroPort = getProject(root)?.metroPort ?? null;
         if (usesMetro && (pin?.port !== null || metroPort === null)) {
-          const result = await resolveWorkspaceMetroPort(root, note, 'web');
+          const result = await resolveWorkspaceMetroPort(root, settings, note, 'web');
           if (typeof result !== 'number') return failure(result.code, result.message, result.remedy);
           metroPort = result;
         }
