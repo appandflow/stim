@@ -278,6 +278,7 @@ struct TutorialPanel: View {
     case "worktrees": return "Tutorial worktrees removed"
     case "clone": return "Clone removed and deleted"
     case "pr": return "Pull request opened"
+    case "logs": return "Logs opened"
     default: return PhaseStep.name(id)
     }
   }

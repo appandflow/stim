@@ -426,6 +426,7 @@ struct RootView: View {
         } else if let path = tutorial.tourPath {
           navigate(.environment(path), .click("tutorial Show me"))
           if ["logs", "refresh", "agent"].contains(tutorial.snapshot?.currentStep ?? "") { showsLogs = true }
+          if tutorial.snapshot?.currentStep == "logs" { TutorialViewerEvents.shared.logsOpened(path) }
         }
       })
   }

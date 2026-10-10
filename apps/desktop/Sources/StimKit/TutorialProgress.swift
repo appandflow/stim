@@ -15,6 +15,7 @@ public struct TutorialEnvironment: Sendable {
   public var agentStateDir: String?
   public var pullRequest: PullRequestFacts?
   public var iosDoctorRanAt: Date?
+  public var disk: WorkspaceDisk?
 
   public init?(_ workspace: Workspace) {
     guard let tutorial = workspace.tutorial else { return nil }
@@ -28,6 +29,7 @@ public struct TutorialEnvironment: Sendable {
     lastBuild = workspace.lastBuilds?.ios
     ios = workspace.ios
     repository = workspace.worktree?.repository ?? workspace.path
+    disk = workspace.disk
     recording = workspace.recording
     agentStateDir = workspace.agentDevice?.stateDir
     pullRequest = workspace.worktree?.pullRequest
@@ -80,6 +82,51 @@ public enum TutorialViewerEvent: Equatable, Sendable {
   case input(String)
   case actionsViewed(String)
   case replayPlayed(String)
+  case logsOpened(String)
+}
+
+/// What the tutorial measured while its workspaces existed, kept after Finish and Delete remove them.
+public struct TutorialStats: Codable, Equatable, Sendable {
+  public struct Build: Codable, Equatable, Sendable {
+    public var durationMs: Double?
+    /// `local`, `remote`, or `none` when it compiled.
+    public var cache: String
+    public var startedAt: Date?
+    public var finishedAt: Date?
+
+    init(_ build: LastBuild) {
+      durationMs = build.durationMs
+      switch build.cacheHit {
+      case .local: cache = "local"
+      case .remote: cache = "remote"
+      case .none: cache = "none"
+      }
+      startedAt = parseTimestamp(build.startedAt)
+      finishedAt = build.finishedAt.flatMap(parseTimestamp)
+    }
+  }
+
+  public var firstBuild: Build?
+  public var secondBuild: Build?
+  public var agentActions: Int?
+  /// The largest measured size of each tutorial folder, keyed by path: both worktrees and the clone.
+  public var worktreeBytes: [String: Double]?
+
+  public init() {}
+
+  /// How much faster the second build finished than the first.
+  public var savedMs: Double? {
+    guard let first = firstBuild?.durationMs, let second = secondBuild?.durationMs, first > second else { return nil }
+    return first - second
+  }
+
+  /// Whether the second build started before the first one finished.
+  public var buildsOverlapped: Bool? {
+    guard let firstEnd = firstBuild?.finishedAt, let secondStart = secondBuild?.startedAt else { return nil }
+    return secondStart < firstEnd
+  }
+
+  public var measuredBytes: Double? { worktreeBytes.map { $0.values.reduce(0, +) } }
 }
 
 public struct TutorialRecord: Codable, Equatable, Sendable {
@@ -97,6 +144,7 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stopped: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
+  public var stats: TutorialStats?
 
   public init(
     version: Int, tourPath: String? = nil, startedAt: Date, step: String = "begin",
@@ -245,6 +293,7 @@ public struct TutorialProgress: Sendable {
   private var viewerInput = false
   private var actionsViewed = false
   private var replayPlayed = false
+  private var logsOpened = false
   private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
   private var finished: Set<String> = []
@@ -323,6 +372,7 @@ public struct TutorialProgress: Sendable {
       case .input(let udid) where devices.contains(udid) && viewerOpened: viewerInput = true
       case .actionsViewed(let udid) where udid == tracked?.ios?.udid: actionsViewed = true
       case .replayPlayed(let udid) where udid == tracked?.ios?.udid: replayPlayed = true
+      case .logsOpened(let path) where record?.trackedPaths.contains(path) == true: logsOpened = true
       default: break
       }
     }
@@ -356,6 +406,7 @@ public struct TutorialProgress: Sendable {
         complete(at: completed)
       }
     }
+    recordStats(tracked: tracked, second: second, logs: logs, siblings: input.siblings)
     let current = record!.step == "done" ? nil : record!.step
     let steps = TutorialSteps.steps(phoneApp: input.phoneApp).map { step in
       let state: TutorialStepState =
@@ -417,6 +468,38 @@ public struct TutorialProgress: Sendable {
   private var firstUnfinished: String {
     TutorialSteps.steps(phoneApp: phoneApp).first { !record!.done.contains($0.id) && !record!.skipped.contains($0.id) }?.id
       ?? "done"
+  }
+
+  private mutating func recordStats(
+    tracked: TutorialEnvironment?, second: TutorialEnvironment?, logs: [LogRecord], siblings: [TutorialEnvironment]
+  ) {
+    guard var record else { return }
+    var stats = record.stats ?? TutorialStats()
+    let since = record.stepTimes?["build"] ?? record.startedAt
+    func ok(_ build: LastBuild) -> Bool {
+      build.status == "ok" && parseTimestamp(build.startedAt).map { $0 >= since } == true
+    }
+    if stats.firstBuild == nil, record.done.contains("build"), let tracked {
+      let first = tracked.builds.reversed().first { ok($0.build) }?.build ?? tracked.lastBuild.flatMap { ok($0) ? $0 : nil }
+      stats.firstBuild = first.map(TutorialStats.Build.init)
+    }
+    if stats.secondBuild == nil, record.done.contains("parallel"), let last = second?.lastBuild, ok(last) {
+      stats.secondBuild = TutorialStats.Build(last)
+    }
+    if let udid = tracked?.ios?.udid {
+      let count = logs.filter { $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid }.count
+      if count > (stats.agentActions ?? 0) { stats.agentActions = count }
+    }
+    let folders = [tracked, second, siblings.first { $0.path == record.clonePath }].compactMap { $0 }
+    for folder in folders {
+      if let bytes = folder.disk?.worktreeBytes {
+        stats.worktreeBytes = (stats.worktreeBytes ?? [:]).merging([folder.path: bytes]) { max($0, $1) }
+      }
+    }
+    if stats != (record.stats ?? TutorialStats()) {
+      record.stats = stats
+      self.record = record
+    }
   }
 
   private mutating func complete(at date: Date) {
@@ -521,7 +604,9 @@ public struct TutorialProgress: Sendable {
       return Checkpoint(
         completed: viewerOpened && viewerInput ? now : nil,
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
-    case "logs": return Checkpoint(detail: "Find the app output in Logs")
+    case "logs":
+      return Checkpoint(
+        completed: logsOpened ? now : nil, detail: "Find the app output in Logs", ticks: [tick("logs", logsOpened)])
     case "agent":
       let recorded = logs.contains {
         udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid

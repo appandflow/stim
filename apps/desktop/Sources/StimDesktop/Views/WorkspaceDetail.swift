@@ -290,6 +290,11 @@ struct WorkspaceDetail: View {
                 page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
               )
               .tutorialAnchor(.logsTab, workspace: workspace.path)
+              .task(id: archive == nil ? (page.isUnified ? logsApp : workspace).path : nil) {
+                if archive == nil, tutorialHint?.step == "logs" {
+                  TutorialViewerEvents.shared.logsOpened((page.isUnified ? logsApp : workspace).path)
+                }
+              }
               .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
             }
           }

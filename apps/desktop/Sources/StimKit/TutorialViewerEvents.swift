@@ -17,6 +17,7 @@ public final class TutorialViewerEvents: ObservableObject {
   public func input(_ udid: String) { append(.input(udid)) }
   public func actionsViewed(_ udid: String) { append(.actionsViewed(udid)) }
   public func replayPlayed(_ udid: String) { append(.replayPlayed(udid)) }
+  public func logsOpened(_ path: String) { append(.logsOpened(path)) }
 
   private func append(_ event: TutorialViewerEvent) {
     sequence += 1

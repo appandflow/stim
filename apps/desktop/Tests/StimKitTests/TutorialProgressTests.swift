@@ -285,13 +285,58 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("agent", in: result).state == .done)
 }
 
-@Test func tutorialLogsStepWaitsForTheUserToMarkItDone() throws {
+@Test func tutorialLogsCompletesOnlyWhenATutorialWorkspacesLogsAreOpened() throws {
   var progress = TutorialProgress()
-  let result = progress.update(
+  var input = TutorialInput(
+    environment: try environment(), logRecords: [try log("anything", at: afterRebuild)],
+    viewerEvents: [.logsOpened("/Users/example/elsewhere")], now: afterRebuild,
+    record: saved(at: "logs", since: afterRebuild))
+  #expect(progress.update(input).currentStep == "logs")
+  input.viewerEvents = [.logsOpened(tourPath)]
+  let result = progress.update(input)
+  #expect(result.currentStep == "phone")
+  #expect(state("logs", in: result).state == .done)
+  #expect(state("logs", in: result).ticks.map(\.done) == [true])
+}
+
+private func disk(_ bytes: Double) throws -> WorkspaceDisk {
+  try JSONDecoder().decode(WorkspaceDisk.self, from: Data(#"{"worktreeBytes":\#(bytes)}"#.utf8))
+}
+
+@Test func tutorialStatsOutliveTheWorkspacesThatProducedThem() throws {
+  var base = try environment()
+  base.repository = "/Users/example/stim-tutorial"
+  base.disk = try disk(300)
+  var hit = try sibling()
+  hit.disk = try disk(200)
+  var clone = try sibling(path: "/Users/example/stim-tutorial")
+  clone.disk = try disk(500)
+  let action = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
+  var record = saved(at: "build", since: tourStart)
+  record.clonePath = "/Users/example/stim-tutorial"
+  var progress = TutorialProgress()
+  let live = progress.update(
     TutorialInput(
-      environment: try environment(), logRecords: [try log("anything", at: afterRebuild)], now: afterRebuild,
-      record: saved(at: "logs", since: afterRebuild)))
-  #expect(result.currentStep == "logs")
+      environment: base, siblings: [hit, clone], logRecords: [action, action], now: afterRebuild, record: record))
+  #expect(live.currentStep == "device")
+  let stats = try #require(live.record.stats)
+  #expect(stats.firstBuild?.durationMs == 264_197)
+  #expect(stats.firstBuild?.cache == "none")
+  #expect(stats.secondBuild?.durationMs == 7_665)
+  #expect(stats.secondBuild?.cache == "local")
+  #expect(stats.savedMs == 256_532)
+  #expect(stats.buildsOverlapped == false)
+  #expect(stats.agentActions == 2)
+  #expect(stats.measuredBytes == 1000)
+
+  base.disk = try disk(100)
+  let later = progress.update(
+    TutorialInput(
+      environment: base, siblings: [hit, clone], logRecords: [action], now: afterRebuild.addingTimeInterval(30)))
+  #expect(later.record.stats == stats)
+
+  let gone = progress.update(TutorialInput(environment: nil, siblings: [], now: afterRebuild.addingTimeInterval(60)))
+  #expect(gone.record.stats == stats)
 }
 
 @Test func tutorialFinishCompletesWithArchiveWithoutIntermediateStopSnapshot() throws {
