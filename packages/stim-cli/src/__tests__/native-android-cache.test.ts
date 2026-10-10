@@ -252,13 +252,30 @@ test('inputs changed during compilation never publish a cache entry', async () =
 });
 
 test('cache-off runs compile twice without artifact lookup, publication or shared-build waiting', async () => {
+  const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
+  config.optimizations.buildCache = false;
+  write(join(root, '.stim.json'), JSON.stringify(config));
   const lookup = vi.spyOn(cache, 'resolveBuild');
   const wait = vi.spyOn(locks, 'waitForSharedBuild');
-  for (const result of [await build(false), await build(false)])
+  for (const result of [await build(), await build()])
     expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true });
   expect(lookup).not.toHaveBeenCalled();
   expect(wait).not.toHaveBeenCalled();
   expect(existsSync(join(directory, 'cache'))).toBe(false);
+  expect(generations).toBe(2);
+});
+
+test('the build-cache bypass flag refreshes the native APK without reading or waiting for the old entry', async () => {
+  const first = await build();
+  const lookup = vi.spyOn(cache, 'resolveBuild');
+  const wait = vi.spyOn(locks, 'waitForSharedBuild');
+  const refreshed = await build(false);
+  expect(refreshed).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: first.cacheKey });
+  expect(lookup).not.toHaveBeenCalled();
+  expect(wait).not.toHaveBeenCalled();
+  const stored = cache.artifactIn(cache.entryDir('android', first.cacheKey!))!;
+  expect(JSON.parse(readFileSync(stored, 'utf8'))).toHaveProperty('generation', 2);
+  expect(await build()).toMatchObject({ cacheHit: 'local', cacheKey: first.cacheKey });
   expect(generations).toBe(2);
 });
 

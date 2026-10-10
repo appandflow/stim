@@ -71,8 +71,9 @@ signing locations explicitly. For publication, AGP's SDK must match
 `ANDROID_HOME`. Changed inputs during compilation prevent storage. Native
 Release hits reuse the original signed APK; signature, package, ABI and receipt
 bytes are checked before reuse. Cache providers and worker-built APKs remain
-outside this local identity contract. `--no-build-cache` skips artifact reads,
-writes and shared-build waits. `--plan` performs the same read-only local check.
+outside this local identity contract. `optimizations.buildCache=false` skips
+artifact reads and writes. `--no-build-cache` skips reads and shared-build waits
+but stores the fresh build. `--plan` performs the same read-only local check.
 
 ### React Native and Expo inputs
 

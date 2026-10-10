@@ -36,8 +36,9 @@ Cached APKs must retain their verified bytes, package, signature and target ABI.
 Local input values are hashed; they are not uploaded or logged. Local cache
 identities do not enable cache providers or authorize build-worker transfer.
 Without a valid declaration the app still builds without Stim artifact caching;
-Gradle incremental and task-cache reuse continue. --no-build-cache skips artifact
-reads, writes and shared-build waits. Native Release APKs are reused unchanged.
+Gradle incremental and task-cache reuse continue. optimizations.buildCache=false
+skips artifact reads and writes. --no-build-cache skips reads and shared-build
+waits but stores the fresh build. Native Release APKs are reused unchanged.
 
 Build workers require a separate project-scoped \`android.offloadInputs\` declaration:
 \`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
