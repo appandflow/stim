@@ -46,7 +46,10 @@ public final class StatusStore: ObservableObject {
   init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
     self.cli = cli
     self.fetch = fetch
-    Task { stimHome = await cli.value.stimHome }
+    Task {
+      stimHome = await cli.value.stimHome
+      LaunchMilestones.reach("cli-ready")
+    }
   }
 
   public convenience init(cli: Task<StimCLI, Never>) {
@@ -107,6 +110,7 @@ public final class StatusStore: ObservableObject {
               MainActor.assumeIsolated {
                 guard let self, generation == self.watchGeneration else { return }
                 if let decoded {
+                  LaunchMilestones.reach("first-watch-payload")
                   self.accept(decoded)
                 } else {
                   self.watchStderr.append(line.text)
@@ -123,6 +127,7 @@ public final class StatusStore: ObservableObject {
             }
           })
         self.watching = true
+        LaunchMilestones.reach("watch-spawned")
       } catch {
         self.error = error.localizedDescription
         self.restartWatch(ranFor: 0)
@@ -144,6 +149,7 @@ public final class StatusStore: ObservableObject {
 
   private func restartWatch(ranFor duration: TimeInterval) {
     let delay = backoff.delay(afterRunning: duration)
+    DebugLog.info(.cli, "status watch restarts in \(delay)s after running \(Int(duration))s")
     restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated { self?.startWatch() }
     }
@@ -207,6 +213,10 @@ public final class StatusStore: ObservableObject {
     Task.detached {
       let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
       await MainActor.run {
+        DebugLog.debug(
+          .cli,
+          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
+        )
         self.projects.merge(reported) { old, _ in old }
         self.projects.merge(resolved) { old, _ in old }
         guard sequence > self.shown else { return }
@@ -218,6 +228,8 @@ public final class StatusStore: ObservableObject {
         self.payload = payload
         self.error = nil
         self.updatedAt = Date()
+        LaunchMilestones.reach(
+          "first-payload-shown", "environments=\(payload.environments.count) archived=\(payload.archived?.count ?? 0)")
         self.checkDoctor()
       }
     }
