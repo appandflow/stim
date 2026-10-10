@@ -267,9 +267,10 @@ import Testing
     )
     #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
     let build = try status(
-      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build a there, b here"},{"code":"other","reason":"odd"}]}"#
+      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
     #expect(build.problemLines.map(\.fix) == [.advice("Update the remote Mac."), nil])
+    #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(

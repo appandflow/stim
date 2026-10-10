@@ -146,7 +146,8 @@ struct BuildMachinesView: View {
     guard statuses?.first(where: { $0.machine == entry })?.state == .nodeChanged else {
       return "Removes it from remote.machines. Builds and hosted simulators stop going to it."
     }
-    return "Builds stop going to it, and this Mac forgets the old node and asks again any listed machine that has not approved it."
+    return
+      "Builds stop going to it, and this Mac forgets the old node and asks again any listed machine that has not approved it."
   }
 
   private var statuses: [BuildMachineStatus]? {
@@ -364,12 +365,13 @@ private struct BuildMachineRow: View {
           }
           ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
             VStack(alignment: .leading, spacing: Space.xxs) {
-              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).textSelection(.enabled)
+              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).lineLimit(1)
+                .textSelection(.enabled)
               switch line.fix {
               case .command(let command)?: CopyableCommand(command: command)
-              case .advice(let advice)?:
+              case .advice(let advice)? where update?.isDone ?? true:
                 Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-              case nil: EmptyView()
+              default: EmptyView()
               }
             }
           }

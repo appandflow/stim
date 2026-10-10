@@ -332,9 +332,16 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       if problem.code == "cocoapods", let command = Self.cocoapodsFix(problem.reason) {
         return ProblemLine(reason: problem.reason, fix: .command(command))
       }
+      let reason = problem.code == "stim-build" ? Self.shortStimBuild(problem.reason) : problem.reason
       let advice = MachineReadiness.problems[problem.code]?.1
-      return ProblemLine(reason: problem.reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
+      return ProblemLine(reason: reason, fix: advice.map { .advice($0.prefix(1).uppercased() + $0.dropFirst() + ".") })
     }
+  }
+
+  /// "Stim build 5773060 there, d9b8bdb here" from doctor's full 16-digit build digests.
+  static func shortStimBuild(_ reason: String) -> String {
+    guard let match = reason.wholeMatch(of: /Stim build (\S+) there, (\S+) here/) else { return reason }
+    return "Stim build \(match.1.prefix(7)) there, \(match.2.prefix(7)) here"
   }
 
   /// The command that gives the remote Mac this Mac's CocoaPods, from "CocoaPods 1.17.0 there, 1.16.2 here".
