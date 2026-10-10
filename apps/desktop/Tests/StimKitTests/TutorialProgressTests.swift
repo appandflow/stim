@@ -8,7 +8,7 @@ private let tourStart = parseTimestamp("2026-10-07T04:56:00.000Z")!
 private let afterBuild = parseTimestamp("2026-10-07T05:02:00.000Z")!
 private let afterRebuild = parseTimestamp("2026-10-07T05:06:00.000Z")!
 private let stepIDs = [
-  "begin", "build", "parallel", "device", "agent", "logs", "phone", "machine", "share", "finish",
+  "begin", "build", "parallel", "device", "agent", "logs", "phone", "share", "finish",
 ]
 
 private func fixture(_ name: String) throws -> StatusPayload {
@@ -174,7 +174,6 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   let store = TutorialRecordStore(defaults)
   var record = saved(at: "build")
   record.step = "parallel"
-  record.approvedMachine = "Studio"
   store.record = record
   let relaunchedStore = TutorialRecordStore(defaults)
   var progress = TutorialProgress()
@@ -182,7 +181,6 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(result.currentStep == "parallel")
   #expect(state("build", in: result).state == .done)
   #expect(result.shouldReopen)
-  #expect(result.record.approvedMachine == "Studio")
 }
 
 @Test func tutorialTracksSavedPathOtherwiseTheOldestWorktree() throws {
@@ -339,26 +337,40 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var relaunched = TutorialProgress()
   let result = relaunched.update(
     TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(122), record: progress.record))
-  #expect(result.currentStep == "share")
+  #expect(result.currentStep == "finish")
   #expect(state("phone", in: result).state == .done)
-  #expect(state("machine", in: result).state == .skipped)
+  #expect(state("share", in: result).state == .skipped)
 }
 
-@Test func tutorialOptionalStepsAcceptExistingPairingAndOnlyFreshOffload() throws {
+@Test func tutorialPhoneStepAcceptsAnExistingPairing() throws {
   var progress = TutorialProgress()
   let result = progress.update(
     TutorialInput(
-      environment: try environment(), pairedPhoneCount: 1, machineApproved: true,
+      environment: try environment(), pairedPhoneCount: 1,
       now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
   #expect(result.currentStep == "share")
   #expect(result.record.phonePairedAtStart == true)
   #expect(state("phone", in: result).detail.contains("Open Stim on your phone"))
-  #expect(state("machine", in: result).ticks.first { $0.id == "offloaded" }?.done == false)
-  var env = try environment()
-  env.lastBuild?.offloadedTo = "example-worker"
-  env.lastBuild?.startedAt = "2026-10-07T05:07:00.000Z"
-  let offloaded = progress.update(TutorialInput(environment: env, now: afterRebuild.addingTimeInterval(120)))
-  #expect(state("machine", in: offloaded).ticks.first { $0.id == "offloaded" }?.done == true)
+}
+
+@Test func tutorialRecordsFromTheRemovedMachineStepResumeAtTheNextStep() throws {
+  let atMachine = try JSONDecoder().decode(
+    TutorialRecord.self,
+    from: Data(
+      #"""
+      {"version":2,"tourPath":"\#(tourPath)","startedAt":0,"step":"machine","approvedMachine":"Studio",
+       "done":["begin","build","parallel","device","agent","logs","phone"],"skipped":[]}
+      """#.utf8))
+  var progress = TutorialProgress()
+  let resumed = progress.update(TutorialInput(environment: try environment(), now: afterRebuild, record: atMachine))
+  #expect(resumed.currentStep == "share")
+  #expect(!resumed.steps.contains { $0.id == "machine" })
+  var pastMachine = atMachine
+  pastMachine.step = "share"
+  pastMachine.skipped = ["machine"]
+  var relaunched = TutorialProgress()
+  let later = relaunched.update(TutorialInput(environment: try environment(), now: afterRebuild, record: pastMachine))
+  #expect(later.currentStep == "share")
 }
 
 @Test func tutorialPhonePairingDuringStepDoesNotBecomeAnExistingPairingAfterRelaunch() throws {
@@ -392,20 +404,6 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
     TutorialInput(environment: nil, archiveEnabled: false, now: afterRebuild, record: saved(at: "finish")))
   #expect(result.isComplete)
   #expect(state("finish", in: result).detail == "Archived is off")
-}
-
-@Test func tutorialCompletedMachineTickStillRejectsOlderOffloadAfterRelaunch() throws {
-  var progress = TutorialProgress()
-  let completed = progress.update(
-    TutorialInput(
-      environment: try environment(), machineApproved: true,
-      now: afterRebuild, record: saved(at: "machine", since: afterRebuild)))
-  var env = try environment()
-  env.lastBuild?.offloadedTo = "example-worker"
-  var relaunched = TutorialProgress()
-  let result = relaunched.update(TutorialInput(environment: env, now: afterRebuild, record: completed.record))
-  #expect(state("machine", in: result).state == .done)
-  #expect(state("machine", in: result).ticks.first { $0.id == "offloaded" }?.done == false)
 }
 
 @Test func tutorialPanelOpenedMidFirstBuildUsesBuildStart() throws {
@@ -465,7 +463,7 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   let result = progress.update(
     TutorialInput(
       environment: try environment(), phoneApp: false, now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
-  #expect(result.currentStep == "machine")
+  #expect(result.currentStep == "share")
   #expect(result.steps.map(\.id) == stepIDs.filter { $0 != "phone" })
   #expect(!result.record.skipped.contains("phone"))
 }

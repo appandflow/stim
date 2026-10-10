@@ -98,7 +98,6 @@ a tiny Expo app, and shows:
 - **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
-- **Build on Another Mac (optional):** **Add Remote Machine** opens the wizard for the tutorial workspace. With no machine configured, **Skip** is the primary action. Approval completes the step and reveals a prompt that names the machine. It is the one step that uses another Mac: the device stays here and only the build goes there. An iOS build offloaded after this step started ticks **Build ran on another Mac**.
 - **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 
@@ -106,8 +105,7 @@ When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.
 
-Completed optional steps stay expanded so you can follow the phone handoff or
-copy the machine prompt. The tutorial does not start the server, pair phones or
+Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
 grant access. Its only build is the **Run iOS** button.
 
 Accent rings and short callouts point to existing controls without covering the
@@ -130,12 +128,10 @@ will run** section lists the same work as a short set of commands you can type
 yourself, with the agent-device state directory and simulator filled in when
 known. Create the Tutorial has only the prompt. Desktop remembers whether the
 section is open. Copying a command does not start the three-minute workspace
-warning. The default base is `~/stim-tutorial`, and the machine step needs the
-name of an approved Mac.
+warning. The default base is `~/stim-tutorial`.
 **Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
 for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way, and only the
-optional machine step builds on another Mac. To
+`remote.build` say. The agent keeps the tutorial's own runs local the same way. To
 read the complete manual:
 
 <StimTabs code={`stim guide tutorial manual`} />

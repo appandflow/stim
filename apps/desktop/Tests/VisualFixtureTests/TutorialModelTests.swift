@@ -71,31 +71,6 @@
       XCTAssertEqual(model.snapshot?.record.skipped, ["device"])
     }
 
-    @MainActor func testMachineApprovalAdvancesAndSurvivesLocalRefresh() throws {
-      let defaults = isolatedDefaults()
-      TutorialRecordStore(defaults).record = TutorialRecord(
-        version: 2, tourPath: "/tmp/tutorial-tour", startedAt: Date(), step: "machine",
-        done: TutorialSteps.all.prefix { $0.id != "machine" }.map(\.id))
-      let model = TutorialModel(defaults: defaults)
-      let env = try workspace()
-      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .awaitingApproval)
-      XCTAssertEqual(model.snapshot?.currentStep, "machine")
-      XCTAssertFalse(model.machineState.showsPrompt)
-      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .approved, approvedMachine: "Studio")
-      XCTAssertEqual(model.snapshot?.currentStep, "share")
-      XCTAssertTrue(model.machineState.showsPrompt)
-      XCTAssertEqual(model.machineState, .approved)
-      let step = try XCTUnwrap(TutorialSteps.all.first { $0.id == "machine" })
-      XCTAssertTrue(model.commands(for: step).contains("--remote-build \"Studio\""))
-      model.update(workspaces: [env], archived: [], sheetOpen: false, machineState: .awaitingApproval)
-      XCTAssertTrue(model.machineState.showsPrompt)
-      XCTAssertTrue(model.commands(for: step).contains("--remote-build \"Studio\""))
-      let relaunched = TutorialModel(defaults: defaults)
-      relaunched.update(workspaces: [env], archived: [], sheetOpen: false)
-      XCTAssertTrue(relaunched.machineState.showsPrompt)
-      XCTAssertTrue(relaunched.commands(for: step).contains("--remote-build \"Studio\""))
-    }
-
     @MainActor func testResumeArchivedTourShowsDone() throws {
       let defaults = isolatedDefaults()
       TutorialRecordStore(defaults).record = TutorialRecord(

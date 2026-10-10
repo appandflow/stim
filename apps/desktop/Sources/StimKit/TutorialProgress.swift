@@ -93,7 +93,6 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stopped: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
-  public var approvedMachine: String?
 
   public init(
     version: Int, tourPath: String? = nil, startedAt: Date, step: String = "begin",
@@ -155,8 +154,6 @@ public struct TutorialInput: Sendable {
   public var pairedPhoneCount: Int?
   /// Without the phone app the phone step is skipped.
   public var phoneApp: Bool
-  public var machineApproved: Bool
-  public var approvedMachine: String?
   public var replayOff: Bool
   public var archiveEnabled: Bool
   public var now: Date
@@ -166,7 +163,7 @@ public struct TutorialInput: Sendable {
     environment: TutorialEnvironment?, siblings: [TutorialEnvironment] = [], archivedProjectRoots: [String] = [],
     logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
-    machineApproved: Bool = false, approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true,
+    replayOff: Bool = false, archiveEnabled: Bool = true,
     now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
@@ -176,8 +173,6 @@ public struct TutorialInput: Sendable {
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     self.phoneApp = phoneApp
-    self.machineApproved = machineApproved
-    self.approvedMachine = approvedMachine
     self.replayOff = replayOff
     self.archiveEnabled = archiveEnabled
     self.now = now
@@ -340,11 +335,6 @@ public struct TutorialProgress: Sendable {
         guard let completed = checkpoint.completed else { break }
         complete(at: completed)
       }
-    }
-    if input.machineApproved, let machine = input.approvedMachine,
-      record?.step == "machine" || record?.done.contains("machine") == true
-    {
-      record?.approvedMachine = machine
     }
     let current = record!.step == "done" ? nil : record!.step
     let steps = TutorialSteps.steps(phoneApp: input.phoneApp).map { step in
@@ -515,14 +505,6 @@ public struct TutorialProgress: Sendable {
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
           : "Pair your phone")
-    case "machine":
-      let offloaded = last?.offloadedTo != nil && last.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true
-      return Checkpoint(
-        completed: input.machineApproved ? now : nil, detail: "Choose an approved remote Mac",
-        ticks: [
-          tick("approved", input.machineApproved || record?.done.contains("machine") == true),
-          tick("offloaded", offloaded, optional: true),
-        ])
     case "finish":
       if record?.step == "finish", environment?.live == false { record?.stopped = true }
       let absent = environment == nil && second == nil && record?.tourPath != nil

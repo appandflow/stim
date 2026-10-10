@@ -64,13 +64,6 @@ public enum TutorialSteps {
 
       ]),
     TutorialStep(
-      id: "machine", title: "Build on Another Mac", who: "both", optional: true,
-      ask: "Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.", section: nil,
-      commands: [
-        "cd \"{tour}\"",
-        "stim ios --remote local --remote-build \"{machine}\" --no-build-cache",
-      ]),
-    TutorialStep(
       id: "share", title: "Share Your Finish", who: "you", optional: true,
       ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
       commands: [

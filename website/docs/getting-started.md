@@ -89,7 +89,7 @@ in its own worktree with its own simulator and dev server, each checking its own
 work on the device. The first build can take a few minutes on a cold cache; the
 parallel one reuses it. Uncached dependencies need network access. Both
 changes build and run on this Mac even when `ios.remote` or `remote.build` would
-pick another one; only the optional machine step builds elsewhere.
+pick another one.
 
 <PromptBox
 title="Run the Stim tutorial"
@@ -107,7 +107,7 @@ To type the commands yourself:
 
 Finishing stops the apps and removes only the two experiment worktrees, keeping
 the base repository. With archiving enabled, the tour appears under Archived.
-Phone viewing and a build on an approved machine are optional.
+Phone viewing is optional.
 
 ## Common prompts
 

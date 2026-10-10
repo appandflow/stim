@@ -5,13 +5,12 @@ const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
 /**
- * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour}, {worktrees} and
- * {machine} are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
+ * The requests Stim Desktop offers to copy, written the way a developer would ask. {base}, {tour} and {worktrees}
+ * are filled in by Desktop. Only the first and last name a guide section, which holds the folder and cleanup safety rules.
  */
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.`,
   agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
-  machine: 'Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
@@ -96,15 +95,6 @@ export const TUTORIAL_STEPS: {
     ask: null,
     section: null,
     commands: [],
-  },
-  {
-    id: 'machine',
-    title: 'Build on Another Mac',
-    who: 'both',
-    optional: true,
-    ask: TUTORIAL_ASKS.machine,
-    section: null,
-    commands: ['cd "{tour}"', 'stim ios --remote local --remote-build "{machine}" --no-build-cache'],
   },
   {
     id: 'share',

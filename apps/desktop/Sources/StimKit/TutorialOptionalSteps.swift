@@ -16,18 +16,3 @@ public enum TutorialPhoneState: Equatable, Sendable {
     }
   }
 }
-
-public enum TutorialMachineState: Equatable, Sendable {
-  case none, awaitingApproval, approved
-
-  public init(configured: Bool, approved: Bool) {
-    self = approved ? .approved : configured ? .awaitingApproval : .none
-  }
-
-  public var buttonTitle: String {
-    self == .awaitingApproval ? "Open Add Remote Machine" : "Add Remote Machine"
-  }
-
-  public var skipIsPrimary: Bool { self == .none }
-  public var showsPrompt: Bool { self == .approved }
-}

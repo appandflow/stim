@@ -19,7 +19,6 @@
         "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout",
         "phone-not-paired", "phone-server-off",
         "phone-already-paired", "phone-paired-during-step",
-        "machine-none", "machine-approved", "machine-offloaded", "machine-approved-commands",
       ]
       for name in TutorialSteps.all.map(\.id) + variants {
         for dark in [false, true] {
@@ -45,12 +44,6 @@
       return ["phone-already-paired", "phone-paired-during-step"].contains(name) ? 1 : 0
     }
 
-    private var machineState: TutorialMachineState {
-      TutorialMachineState(
-        configured: name.hasPrefix("machine-approved") || name == "machine-offloaded",
-        approved: name.hasPrefix("machine-approved") || name == "machine-offloaded")
-    }
-
     private var storage: UserDefaults {
       let defaults = UserDefaults(suiteName: "TutorialFixture")!
       defaults.set(name.hasSuffix("-commands"), forKey: "tutorial.commandsExpanded")
@@ -62,40 +55,38 @@
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true,
         message: name == "begin" ? TutorialNotice("Waiting for the tutorial workspace...") : nil,
-        phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
+        phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount),
         canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
         asks: { step in
           step.ask.map {
             tutorialAsk(
               $0, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
-              machine: "Studio", second: snapshot.record.secondPath)
+              second: snapshot.record.secondPath)
           }
         },
         commands: { step in
           tutorialCommands(
             step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
-            stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device", machine: "Studio",
+            stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device",
             udid: "tutorial-simulator", second: "/Users/example/stim-tutorial-second")
         }
       )
       .defaultAppStorage(storage)
       .frame(
         width: 320,
-        height: name.hasSuffix("-commands") || name == "build-no-agent-device" ? 1500 : machineState.showsPrompt ? 1120 : 960)
+        height: name.hasSuffix("-commands") || name == "build-no-agent-device" ? 1500 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
       let id =
         name.hasPrefix("phone-")
         ? "phone"
-        : name.hasPrefix("machine-")
-          ? "machine"
-          : name == "failure"
-            ? "build"
-            : name == "agent-commands"
-              ? "agent"
-              : name == "finish-commands"
-                ? "finish" : name == "build-no-agent-device" ? "build" : name == "begin-timeout" ? "begin" : name
+        : name == "failure"
+          ? "build"
+          : name == "agent-commands"
+            ? "agent"
+            : name == "finish-commands"
+              ? "finish" : name == "build-no-agent-device" ? "build" : name == "begin-timeout" ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
@@ -120,22 +111,12 @@
            "agentDevice":{"stateDir":"/Users/example/.stim/agent-device","installed":\(name != "build-no-agent-device")},
            "ios":{"udid":"tutorial-simulator","state":"Booted","owned":true,"app":{"id":"dev.stim.tutorial","state":"running"}}}
           """.utf8))
-      var workspace = deviceWorkspace
-      if name == "machine-offloaded" {
-        workspace.lastBuilds = try! JSONDecoder().decode(
-          LastBuilds.self,
-          from: Data(
-            """
-            {"ios":{"platform":"ios","status":"ok","cacheHit":false,
-            "startedAt":"\(ISO8601DateFormatter().string(from: now))","offloadedTo":"Studio"}}
-            """.utf8))
-      }
+      let workspace = deviceWorkspace
       var snapshot = engine.update(
         TutorialInput(
-          environment: ["device", "machine", "agent"].contains(id) ? TutorialEnvironment(workspace) : nil,
-          pairedPhoneCount: phoneCount, machineApproved: machineState.showsPrompt,
-          approvedMachine: machineState.showsPrompt ? "Studio" : nil, now: now, record: record))
-      if let index = snapshot.steps.firstIndex(where: { $0.id == id }), !["phone", "machine"].contains(id) {
+          environment: ["device", "agent"].contains(id) ? TutorialEnvironment(workspace) : nil,
+          pairedPhoneCount: phoneCount, now: now, record: record))
+      if let index = snapshot.steps.firstIndex(where: { $0.id == id }), id != "phone" {
         snapshot.steps[index].state = name == "failure" ? .failed("compile-failed: App.js: Unexpected token") : .current
         snapshot.steps[index].detail =
           name == "failure" ? "compile-failed: App.js: Unexpected token" : snapshot.steps[index].detail

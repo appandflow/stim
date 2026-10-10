@@ -1885,12 +1885,10 @@ agent feed. Both followers run only while the panel is open on a live tutorial
 workspace. The panel reads `stim settings --json` for `archive.enabled`; when
 unavailable it assumes enabled, then permits finish after a ten-second
 disappearance grace period only when a stop was observed. Viewer events and
-paired-phone counts come from the existing Desktop controllers. Machine approval
-comes from BuildMachinesModel checks for the tour checkout. No tutorial
-reader touches `$STIM_HOME` directly. Machine checks poll only while the machine
-step is current and the tour workspace is present.
+paired-phone counts come from the existing Desktop controllers. No tutorial
+reader touches `$STIM_HOME` directly.
 
-To render every step, optional phone/machine variants, a waiting timeout, a failure and manual mode in light and dark at 2x:
+To render every step, optional phone variants, a waiting timeout, a failure and manual mode in light and dark at 2x:
 
 ```sh
 STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests

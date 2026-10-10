@@ -161,8 +161,7 @@ ${paths}
 Replace {base}, {tour} and {second} with absolute paths: {base} is the clone,
 {tour} the first worktree and {second} the second. For Agent Actions, replace
 {stateDir} with agentDevice.stateDir from stim ios or stim status --json and
-{udid} with the workspace's ios.udid. For the optional machine step, replace
-{machine} with a machine you have already approved, or skip it. Clone with git
+{udid} with the workspace's ios.udid. Clone with git
 clone https://github.com/${TUTORIAL_REPO}.git into a fresh folder outside any
 repository. Each change runs in its own worktree of that clone (stim guide
 agent); the clone itself is never run. Run each worktree on iOS with
