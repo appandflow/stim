@@ -125,20 +125,10 @@ struct RootView: View {
           TutorialPanel(
             snapshot: snapshot, message: tutorial.notice,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
-            canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask,
             copied: { tutorial.copiedPrompt() }, next: tutorial.next,
-            restart: { tutorial.open(beginning: true) },
-            runIOS: {
-              if let workspace = tutorial.workspace {
-                actions.run(
-                  "Run \(workspace.names.title) on iOS",
-                  steps: [
-                    StimCommand(["ios", "--remote", "local", "--remote-build", "local"], cwd: workspace.path)
-                  ], present: false)
-              }
-            },
+            restart: tutorial.restart,
             close: tutorial.close,
             openArchived: openTutorialArchive,
             openBuild: tutorial.tourPath.map { path in
@@ -296,6 +286,7 @@ struct RootView: View {
       NativeViewerPermissionsView(
         permissions: nativePermissions, relaunch: onboarding.canRelaunch ? { onboarding.relaunch() } : nil)
     }
+    .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show
@@ -1035,7 +1026,8 @@ struct MachineSummary: View {
     "\(store.error != nil)\(showsCPU)\(showsMemory)\(metrics.hasVolumes)\(!store.watching && store.updatedAt != nil)"
   }
 
-  private var showsCPU: Bool { store.payload?.capacity != nil && metrics.totalCpuFraction != nil }
+  private var showsCPU: Bool { metrics.machineCpuFraction != nil }
+  private var workspacesCpu: String? { metrics.workspacesCpuFraction.map { formatPercent($0 * 100) } }
   private var showsMemory: Bool { store.payload?.capacity != nil && metrics.memory != nil }
 
   var body: some View {
@@ -1068,7 +1060,7 @@ struct MachineSummary: View {
           .help(abbreviatingHome(error))
       }
       let cap = store.payload?.capacity
-      let cpu = cap == nil || !includesCPU ? nil : metrics.totalCpuFraction
+      let cpu = includesCPU ? metrics.machineCpuFraction : nil
       let memory = cap == nil || !showsMemory ? nil : metrics.memory
       let lowest = metrics.volumes.min(by: { $0.freeBytes < $1.freeBytes })
       ForEach(
@@ -1111,7 +1103,10 @@ struct MachineSummary: View {
     .buttonStyle(.hoverRow(radius: Radius.round))
     .accessibilityLabel("CPU details")
     .accessibilityValue(formatPercent(cpu * 100))
-    .help("CPU of every active workspace's processes, simulators and emulators, as a percent of this Mac's cores")
+    .help(
+      "CPU used on this Mac, as a percent of all its cores."
+        + (workspacesCpu.map { " Stim's share: active workspaces' processes, simulators and emulators use \($0)." } ?? "")
+    )
     .popover(isPresented: shows(.cpu), arrowEdge: .bottom) { popover(.cpu) }
     .onHover { hovering in
       if hovering, expandedResource != nil {
@@ -1191,13 +1186,16 @@ struct MachineSummary: View {
 
   private var cpuPopover: some View {
     MachineResourcePopover(title: "CPU", icon: "speedometer", openMachine: openMachine) {
-      if let cpu = metrics.totalCpuFraction {
+      if let cpu = metrics.machineCpuFraction {
         Text(formatPercent(cpu * 100)).font(.stim(.title)).monospacedDigit()
         ProgressView(value: min(1, cpu)).tint(Color(UsageThresholds.cpu(fraction: cpu)))
-        Text("Used by active workspaces' processes, simulators and emulators. 100% means all of this Mac's cores.")
+        Text("CPU used on this Mac. 100% means all of its cores.").foregroundStyle(Palette.secondary)
+        if let workspacesCpu {
+          Text(
+            "Stim workspaces: \(workspacesCpu)"
+              + " (\(countLabel(store.payload?.capacity?.liveCount ?? 0, "active workspace")))"
+          )
           .foregroundStyle(Palette.secondary)
-        if let cap = store.payload?.capacity {
-          Text(countLabel(cap.liveCount, "active workspace")).foregroundStyle(Palette.tertiary)
         }
       }
     }

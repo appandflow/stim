@@ -8,6 +8,7 @@ import {
   activeBuildState,
   buildReport,
   buildStatusLine,
+  bundlingActivity,
   completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
@@ -213,6 +214,37 @@ describe('active build record', () => {
     progress.waitingOn('/w/app-a');
     progress.step('device');
     expect(report().waitingOn).toBeUndefined();
+    progress.clear();
+    releaseClaim(claim);
+  });
+
+  test('the launch activity takes Metro percent only for its own request and ends with the phase', () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    progress.step('launch');
+    now += 4_000;
+    progress.activity('bundling', T0 + 3_000);
+    const startedAt = new Date(T0 + 3_000).toISOString();
+    expect(report().activity).toEqual({ name: 'bundling', startedAt });
+
+    const own = { bundling: true, platform: 'ios' as const, startedAt, percent: 45 };
+    expect(bundlingActivity(report().activity, 'ios', own)).toEqual({ name: 'bundling', startedAt, percent: 45 });
+    const prefetch = { ...own, startedAt: new Date(T0 + 1_000).toISOString() };
+    expect(bundlingActivity(report().activity, 'ios', prefetch)).toEqual({ name: 'bundling', startedAt });
+    expect(bundlingActivity(report().activity, 'ios', { ...own, platform: 'android' })?.percent).toBeUndefined();
+    expect(
+      buildStatusLine({ ...report(), activity: bundlingActivity(report().activity, 'ios', own) }, now + 2_000),
+    ).toBe('build: ios launch (bundling JS 45%, 3s), 6s elapsed');
+
+    progress.activity('waiting-ready');
+    expect(buildStatusLine(report(), now)).toBe('build: ios launch (waiting for app ready, 0s), 4s elapsed');
+    progress.activity(null);
+    expect(report().activity).toBeUndefined();
+    progress.activity('bundling');
+    progress.step('device');
+    expect(report().activity).toBeUndefined();
     progress.clear();
     releaseClaim(claim);
   });

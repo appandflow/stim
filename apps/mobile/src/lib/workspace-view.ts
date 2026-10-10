@@ -755,7 +755,27 @@ export function remoteBuild(build: BuildReport, now: number): RemoteBuild | null
   };
 }
 
+/** What the current phase waits on, named, with Metro's percent while bundling; null without one. */
+function activityLabel(build: BuildReport): { phase: string; counts: string | null } | null {
+  const activity = build.phase === 'device' || build.phase === 'launch' ? build.activity : undefined;
+  switch (activity?.name) {
+    case 'booting':
+      return { phase: build.platform === 'android' ? t`Booting emulator` : t`Booting simulator`, counts: null };
+    case 'bundling':
+      return {
+        phase: t`Bundling JS`,
+        counts: typeof activity.percent === 'number' ? `${Math.round(activity.percent)}%` : null,
+      };
+    case 'waiting-ready':
+      return { phase: t`Waiting for app ready`, counts: null };
+    default:
+      return null;
+  }
+}
+
 export function currentPhaseLabel(build: BuildReport): { phase: string; counts: string | null } {
+  const activity = activityLabel(build);
+  if (activity) return activity;
   const detail = compileDetail(build);
   const remote = remoteBuild(build, 0);
   const phase = detail?.step ? stepName(detail.step) : (remote?.phase ?? phaseName(build.phase));

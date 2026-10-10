@@ -93,8 +93,8 @@ clone with its own simulator and dev server, and each checks its own work on the
 device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
 a tiny Expo app, and shows:
 
-- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
-- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
+- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step and **Restart Tutorial** remove it. An existing `~/stim-tutorial` that is a clean clone of the tutorial repository is reused; any other existing folder makes your agent ask for another one. **Restart Tutorial** asks before it deletes the folder and its tutorial worktrees through `stim worktree remove`, then moves the folder to the Trash; a folder without the tutorial marker is left alone. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
+- **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes.
 - **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
 - **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow points at the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
 - **App Logs (optional):** read the app's output and any errors in Logs.
@@ -114,7 +114,7 @@ When agent-device is not installed, **Make a Change** shows a card with
 either way; without it your agent can only check the build and logs.
 
 Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
-grant access. Its only build is the **Run iOS** button.
+grant access, and it runs no builds itself.
 
 A soft glow with a short label points at the control a step needs, without
 covering the app with a dimming layer, and fades after a few seconds; it shows
@@ -136,9 +136,8 @@ and offers only **Restart Tutorial**.
 
 A step that needs your agent shows a plain request to copy, with the paths
 filled in from the tour's repository. The default base is `~/stim-tutorial`.
-**Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
-for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way.
+The agent keeps the tutorial's own runs local, whatever `ios.remote` or
+`remote.build` say.
 
 Desktop reads the archive setting through `stim settings --json`. If that
 setting cannot be read, finish waits ten seconds after a previously stopped
@@ -220,7 +219,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. Checks run automatically while visible, reusing a completed build or check
+  plan. While a run boots its simulator or emulator, builds the app's first JS
+  bundle in Metro, or waits for the app to report ready, the progress and the
+  current phase say so with that step's own elapsed time: **Booting
+  simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports
+  one) or **Waiting for app ready**. A step with no percentage draws its bar
+  segment as indeterminate. Checks run automatically while visible, reusing a completed build or check
   for 60 seconds and skipping running builds; there is no manual Check button. The header's running-build progress opens the current
   run in the same sheet. **Open in Logs Panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run

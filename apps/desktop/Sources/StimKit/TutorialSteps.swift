@@ -19,7 +19,7 @@ public enum TutorialSteps {
       ask: "Clone appandflow/stim-tutorial into {base} and follow stim guide tutorial run.", section: "run"),
     TutorialStep(
       id: "build", title: "Make a Change", who: "you", optional: false,
-      ask: nil, section: nil),
+      ask: "Make the title purple in the Stim tutorial app and check it on the simulator.", section: nil),
     TutorialStep(
       id: "parallel", title: "Change It Again in Parallel", who: "you", optional: false,
       ask: "While that builds, make the Tap me button green in a new worktree and check it on the simulator.", section: nil),

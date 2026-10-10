@@ -784,7 +784,7 @@ describe('androidLayoutSetting', () => {
   test('resolves a Gradle root above the app and maps the module to its directory', () => {
     expect(androidLayoutSetting(tester, app, repo)).toEqual({
       gradleRoot: repo,
-      gradleRootRelative: join('..', '..'),
+      gradleRootRelative: '../..',
       module: ':packages:tester:android:app',
       moduleDir: join(app, 'android', 'app'),
       custom: true,

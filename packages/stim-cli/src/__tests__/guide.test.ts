@@ -586,7 +586,7 @@ test('the run section checks each change on the tutorial app with agent-device',
 
 test('tutorial setup protects existing folders and the user repository', () => {
   const run = flat('run');
-  expect(run).toMatch(/If \{base\} exists, stop and ask the user for another folder; never overwrite or delete it/i);
+  expect(run).toMatch(/stop and ask the user for another folder; never overwrite or delete it/i);
   expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
 });

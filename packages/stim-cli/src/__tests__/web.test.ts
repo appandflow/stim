@@ -29,7 +29,7 @@ import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } 
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
 import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
 import { resolveWebUrl, webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
-import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
+import { NOT_OURS_FOREIGN_CWD, pidExists } from '../metro.ts';
 import {
   latestPageLoad,
   readWebPage,
@@ -765,6 +765,26 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
       return false;
     }
   };
+
+  test('stop does not read a Chrome leader that was just killed and not yet reaped as a profile holder', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    const script = `const l = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); console.log(l.pid); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);`;
+    const reaper = spawn(process.execPath, ['-e', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(reaper);
+    const leader = await new Promise<number>((resolve) =>
+      reaper.stdout!.once('data', (chunk) => resolve(Number(String(chunk).trim()))),
+    );
+    const chromeProcess = { pid: leader, processToken: captureProcessToken(leader)! };
+    process.kill(leader, 'SIGKILL');
+    await vi.waitFor(() => expect(inspectProcessIdentity(chromeProcess)).toBe('gone'));
+    expect(pidExists(leader)).toBe(true);
+    rmSync(join(record.profile, 'SingletonLock'), { force: true });
+    symlinkSync(`${hostname()}-${leader}`, join(record.profile, 'SingletonLock'));
+    writeWebRecord(workspace, { ...record, chromeProcess });
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(readWebRecord(workspace)).toBeNull();
+  });
 
   test('stop signals a lingering Chrome group whose member still runs on the profile', async () => {
     const workspace = realpathSync(root);

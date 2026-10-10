@@ -10,6 +10,7 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
  */
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and follow stim guide tutorial run.`,
+  build: 'Make the title purple in the Stim tutorial app and check it on the simulator.',
   parallel: 'While that builds, make the Tap me button green in a new worktree and check it on the simulator.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
@@ -40,7 +41,7 @@ export const TUTORIAL_STEPS: {
     title: 'Make a Change',
     who: 'you',
     optional: false,
-    ask: null,
+    ask: TUTORIAL_ASKS.build,
     section: null,
   },
   {

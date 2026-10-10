@@ -2,7 +2,7 @@ import type { PreparedIosArtifact } from './artifact.ts';
 import { launchSlotScope, nativeRunCommand, siblingPlatformSlots } from '../../engine/slot-launch.ts';
 import { basename } from 'node:path';
 import chalk from 'chalk';
-import type { BuildPhase } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import {
   DEFAULT_METRO_PORT,
   IOS_DEV_MENU_OFF_DEFAULTS_PLIST,
@@ -72,6 +72,7 @@ interface VerifyIosRunArgs {
   lanOrigin: string | null;
   remoteDevice: boolean;
   metroOrigin: string | null;
+  enterActivity?: BuildProgress['activity'];
 }
 
 interface IosRuntimeRoute {
@@ -246,6 +247,7 @@ async function verifyIosMetroRun({
   lanOrigin,
   remoteDevice,
   metroOrigin,
+  enterActivity,
 }: VerifyIosRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('ios', slot, { physical, deviceId: udid });
   const readNativeCrashes = () =>
@@ -268,6 +270,7 @@ async function verifyIosMetroRun({
         appPid: physical || remoteDevice ? null : launched?.pid,
         platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+        onActivity: enterActivity,
         logsDir,
         since: launchedAt,
         metroPort,
@@ -541,6 +544,8 @@ interface FinishIosRunArgs {
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
+  /** Whether the run's own simulator or emulator boot is still running. */
+  bootPending: () => boolean;
   fail: (args: FailArgs) => null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
@@ -554,6 +559,7 @@ interface FinishIosRunArgs {
   reclaimed: ReportIosResultArgs['reclaimed'];
   devServer: ReportIosResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
+  enterActivity: BuildProgress['activity'];
 }
 
 function cleanAdoptedIosApps({
@@ -706,6 +712,7 @@ export async function finishIosRun({
   remoteDevice,
   bootPromise,
   bootDuration,
+  bootPending,
   fail,
   phase,
   note,
@@ -719,6 +726,7 @@ export async function finishIosRun({
   reclaimed,
   devServer,
   enterPhase,
+  enterActivity,
 }: FinishIosRunArgs): Promise<IosRunCompletion | null> {
   const { path: appPath, bundleId: initialBundleId, failureFields: buildFailure, cache } = artifact;
   const {
@@ -765,7 +773,9 @@ export async function finishIosRun({
   if (bundleId) d.upsertProject(root, { bundleId });
 
   enterPhase('device');
+  if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
+  enterActivity(null);
   if (!booted?.ok) {
     return fail({
       code: booted?.code || 'STIM_NO_DEVICE',
@@ -1071,6 +1081,7 @@ export async function finishIosRun({
     lanOrigin: lanOriginUrl,
     remoteDevice: Boolean(remoteDevice),
     metroOrigin: typeof launched?.jsLocation === 'string' ? launched.jsLocation : null,
+    enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
     return fail({

@@ -49,7 +49,7 @@
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount),
-        canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
+        agentDeviceMissing: name == "build-no-agent-device",
         asks: { step in
           step.ask.map {
             tutorialAsk(
