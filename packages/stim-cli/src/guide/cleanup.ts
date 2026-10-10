@@ -553,6 +553,14 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   runs still counts as this home's; run \`gc\` after deleting a Stim AVD by
   hand.
 
+  The machine EAS session ledger (~/.stim/machine/eas/sessions.json) can hold
+  entries that no EAS session ever had, such as ids written by a test
+  fixture. \`gc\` reports an entry under "Stale EAS ledger entries" only when
+  its id is not a UUID AND its workspace root is an absolute path that is
+  missing on a mounted volume. A valid id, an existing root, or a root on an
+  unmounted volume keeps the entry. \`gc --delete\` re-checks each entry and
+  removes it under the ledger lock; it never contacts EAS.
+
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.stim, or a throwaway
   STIM_HOME), gc cannot tell your stale devices from another config's LIVE

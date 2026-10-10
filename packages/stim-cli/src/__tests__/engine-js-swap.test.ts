@@ -14,7 +14,7 @@ import {
   readHermesEnabled,
   swapJsBundle,
 } from '../engine/js-swap.ts';
-import { getExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
 describe('hermescPath', () => {
@@ -296,9 +296,9 @@ describe('swapJsBundle', () => {
       const real = getExecutor();
       const exec = {
         ...real,
-        runFile: (file: string, args: string[] = []) => {
+        runFile: (file: string, args: string[], opts: ExecOptions) => {
           if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
-          return real.runFile(file, args);
+          return real.runFile(file, args, opts);
         },
       };
       try {

@@ -72,7 +72,7 @@ import {
 import { formatBytes, volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
-import { resolveSettings } from '../workspace/settings.ts';
+import { resolveSettings, workspaceHiddenSetting } from '../workspace/settings.ts';
 import { formatDuration, plural } from '../command-output.ts';
 import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
@@ -500,6 +500,7 @@ async function readStatusFacts(
         })(),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
+      if (workspaceHiddenSetting(proj.settings)) state.hidden = true;
       const tutorial = detectTutorial(readAppJson(path));
       if (tutorial) state.tutorial = tutorial;
       const doctorRuns = doctorRunTimes(proj);

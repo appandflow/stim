@@ -2,11 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
 import { gitMergeCacheDir, type WorktreeFacts, type WorktreeGit } from '@stim-cli/core/state';
-import { getExecutor } from '../exec.ts';
+import { gitAsync } from './git.ts';
 import { mergeState, type DefaultBranch } from './merge-state.ts';
 
 const GIT_TIMEOUT_MS = 3000;
-const GIT_CONCURRENCY = 6;
 const MERGE_BUDGET_MS = 250;
 const MERGE_TIMEOUT_BACKOFF_MS = 5 * 60_000;
 const ORIGIN_PREFIX = 'refs/remotes/origin/';
@@ -50,23 +49,8 @@ export function inPrivacyProtectedFolder(path: string, home: string): boolean {
   return [...guarded, '/Volumes'].some((dir) => path === dir || path.startsWith(`${dir}/`));
 }
 
-const gitQueue: (() => void)[] = [];
-let gitRunning = 0;
-
-async function git(path: string, args: string[]): Promise<string | null> {
-  if (gitRunning < GIT_CONCURRENCY) gitRunning++;
-  else await new Promise<void>((proceed) => gitQueue.push(proceed));
-  try {
-    return await getExecutor().runFileAsync('git', ['--no-optional-locks', '-C', path, ...args], {
-      timeoutMs: GIT_TIMEOUT_MS,
-    });
-  } catch {
-    return null;
-  } finally {
-    const next = gitQueue.shift();
-    if (next) next();
-    else gitRunning--;
-  }
+function git(path: string, args: string[]): Promise<string | null> {
+  return gitAsync(path, args, { timeoutMs: GIT_TIMEOUT_MS }).catch(() => null);
 }
 
 async function defaultBranchOf(repository: string): Promise<(DefaultBranch & { sha: string }) | null> {

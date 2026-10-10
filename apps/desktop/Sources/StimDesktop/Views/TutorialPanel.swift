@@ -94,7 +94,7 @@ struct TutorialPanel: View {
         TutorialCompletionCard(
           snapshot: snapshot, steps: steps,
           archiveOff: snapshot.steps.first(where: { $0.id == "finish" })?.detail == "Archived is off",
-          openArchived: openArchived)
+          openArchived: openArchived, restart: restart)
       }
       ForEach(steps, id: \.id) { step in
         if let state = snapshot.steps.first(where: { $0.id == step.id }) {
@@ -206,7 +206,7 @@ struct TutorialPanel: View {
     HStack {
       Spacer()
       if rendersStatic {
-        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options")
+        Image(systemName: "ellipsis").accessibilityLabel("Tutorial options: Restart, Close")
       } else {
         Menu {
           Button("Restart Tutorial", action: restart)
@@ -214,7 +214,9 @@ struct TutorialPanel: View {
         } label: {
           Image(systemName: "ellipsis")
         }
-        .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Tutorial options")
+        .menuStyle(.borderlessButton).fixedSize()
+        .help("Tutorial options: Restart, Close")
+        .accessibilityLabel("Tutorial options: Restart, Close")
       }
     }
   }

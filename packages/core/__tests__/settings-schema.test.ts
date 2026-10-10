@@ -8,7 +8,7 @@ test('the editor schema accepts the tailnet-only Metro mode and refuses an unkno
   expect(validate({ metro: { tunnel: 'funnel' } })).toBe(false);
 });
 
-test('the published schema covers every setting once, at the scope files it may live in', () => {
+test('the published schema covers every committed or machine setting once, at the scope files it may live in', () => {
   const schema = settingsJsonSchema();
   const keys: Record<string, string[]> = {};
   const walk = (node: Record<string, unknown>, where: string) => {
@@ -21,10 +21,13 @@ test('the published schema covers every setting once, at the scope files it may 
   walk(schema, 'committed');
   walk((schema.$defs as Record<string, Record<string, unknown>>).machine!, 'machine');
 
-  expect(Object.keys(keys).toSorted()).toEqual(SETTINGS.map((setting) => setting.key).toSorted());
+  const inFiles = SETTINGS.filter((setting) =>
+    setting.scopes.some((scope) => scope === 'committed' || scope === 'machine'),
+  );
+  expect(Object.keys(keys).toSorted()).toEqual(inFiles.map((setting) => setting.key).toSorted());
   expect(keys).toEqual(
     Object.fromEntries(
-      SETTINGS.map((setting) => [
+      inFiles.map((setting) => [
         setting.key,
         (['committed', 'machine'] as const).filter((scope) => setting.scopes.includes(scope)),
       ]),

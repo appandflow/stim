@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs';
-import { getExecutor } from '../exec.ts';
+import { isTimeoutError } from '../exec.ts';
+import { git as runGit, gitQuiet } from './git.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_FRESH_MS = 10 * 60_000;
@@ -25,9 +26,7 @@ function failure(error: unknown): string {
 }
 
 function fetchedRecently(repo: string, now: number): boolean {
-  const path = getExecutor()
-    .runFileQuiet('git', ['-C', repo, 'rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])
-    ?.trim();
+  const path = gitQuiet(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])?.trim();
   try {
     return Boolean(path) && now - statSync(path!).mtimeMs < FETCH_FRESH_MS;
   } catch {
@@ -40,27 +39,17 @@ function fetchedRecently(repo: string, now: number): boolean {
  * prompting for credentials. It skips the fetch when the checkout fetched anything in the last 10 minutes.
  */
 export function fetchDefaultBranch(repo: string, now: number = Date.now()): DefaultBranch | { error: string } {
-  const exec = getExecutor();
-  const ref = exec.runFileQuiet('git', ['-C', repo, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
+  const ref = gitQuiet(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
   if (!ref?.startsWith(REMOTE_PREFIX)) {
     return { error: `origin/HEAD is not set; run \`git -C ${repo} remote set-head origin --auto\`` };
   }
   const branch = ref.slice(REMOTE_PREFIX.length);
   if (fetchedRecently(repo, now)) return { ref, name: `origin/${branch}` };
   try {
-    exec.runFile(
-      'git',
-      [
-        '-C',
-        repo,
-        'fetch',
-        '--quiet',
-        '--no-tags',
-        '--no-recurse-submodules',
-        'origin',
-        `+refs/heads/${branch}:${ref}`,
-      ],
-      { timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
+    runGit(
+      repo,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${ref}`],
+      { write: true, timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
     );
   } catch (error) {
     return { error: `git fetch origin ${branch} failed: ${failure(error)}` };
@@ -72,33 +61,28 @@ function notMerged(detail: string): MergeState {
   return { merged: false, unknown: false, detail };
 }
 
-function currentBranch(path: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', path, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+type Probe = (args: string[]) => string | null;
+
+function currentBranch(probe: Probe): string | null {
+  const ref = probe(['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref : null;
 }
 
-function upstreamGone(path: string, branch: string | null): boolean {
+function upstreamGone(probe: Probe, branch: string | null): boolean {
   if (!branch) return false;
-  const track = getExecutor().runFileQuiet('git', [
-    '-C',
-    path,
-    'for-each-ref',
-    '--format=%(upstream)%00%(upstream:track)',
-    branch,
-  ]);
+  const track = probe(['for-each-ref', '--format=%(upstream)%00%(upstream:track)', branch]);
   const [upstream, state] = (track ?? '').trim().split('\0');
   return Boolean(upstream) && state === '[gone]';
 }
 
-function committedOn(path: string, branch: string | null, head: string): boolean {
+function committedOn(probe: Probe, branch: string | null, head: string): boolean {
   if (!branch) return false;
-  const exec = getExecutor();
-  const entries = exec.runFileQuiet('git', ['-C', path, 'reflog', 'show', '--format=%H %gs', branch]) ?? '';
+  const entries = probe(['reflog', 'show', '--format=%H %gs', branch]) ?? '';
   return entries.split('\n').some((entry) => {
     const [sha = '', ...subject] = entry.split(' ');
     return (
       /^(commit|cherry-pick|rebase|revert)\b/.test(subject.join(' ')) &&
-      exec.runFileQuiet('git', ['-C', path, 'merge-base', '--is-ancestor', sha, head]) !== null
+      probe(['merge-base', '--is-ancestor', sha, head]) !== null
     );
   });
 }
@@ -126,9 +110,17 @@ export function mergeState(
   }: { timeoutMs?: number; maxCommits?: number } = {},
 ): MergeState {
   const git = (args: string[], input?: string): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
+    runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input });
   const patch = (args: string[], input?: string): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input, untrimmed: true });
+    runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input, untrimmed: true });
+  const probe: Probe = (args) => {
+    try {
+      return runGit(path, args, { timeoutMs });
+    } catch (error) {
+      if (isTimeoutError(error)) throw error;
+      return null;
+    }
+  };
   const patchIdCommits = (text: string): Map<string, string> =>
     new Map(
       text
@@ -153,14 +145,14 @@ export function mergeState(
   try {
     const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
     const base = git(['merge-base', head, ref]);
-    const branch = currentBranch(path);
+    const branch = currentBranch(probe);
     if (base === head) {
       const mainline =
         git(['rev-parse', ref]) === head ||
         git(['rev-list', '--first-parent', '--parents', `${head}..${ref}`])
           .split('\n')
           .some((line) => line.split(' ')[1] === head);
-      if (mainline || !committedOn(path, branch, head)) return noOwnCommits;
+      if (mainline || !committedOn(probe, branch, head)) return noOwnCommits;
       const descendants = new Set(git(['rev-list', '--ancestry-path', `${head}..${ref}`]).split('\n'));
       const landed = git(['rev-list', '--first-parent', '--reverse', `${head}..${ref}`])
         .split('\n')
@@ -189,7 +181,7 @@ export function mergeState(
       merged: true,
       into: name,
       head,
-      coversUnpushed: upstreamGone(path, branch),
+      coversUnpushed: upstreamGone(probe, branch),
       mergedAt: committedAt(ids.map((id) => upstream.get(id)!)),
     });
     const squash = patchIds(patch(['diff', ...diffOptions, base, head]));
@@ -200,7 +192,7 @@ export function mergeState(
     }
     return notMerged(`not merged into ${name}`);
   } catch (error) {
-    const timedOut = (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' ? { timedOut: true as const } : {};
+    const timedOut = isTimeoutError(error) ? { timedOut: true as const } : {};
     return { merged: false, unknown: true, detail: `merge state unknown: ${failure(error)}`, ...timedOut };
   }
 }

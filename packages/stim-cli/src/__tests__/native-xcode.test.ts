@@ -515,19 +515,23 @@ test('a git checkout ignores ignored content and nested worktrees but keeps igno
       ),
   );
   const git = (...args: string[]) =>
-    getExecutor().runFile('git', [
-      '-C',
-      root,
-      '-c',
-      'user.name=Stim',
-      '-c',
-      'user.email=stim@example.com',
-      '-c',
-      'commit.gpgsign=false',
-      '-c',
-      'core.hooksPath=/dev/null',
-      ...args,
-    ]);
+    getExecutor().runFile(
+      'git',
+      [
+        '-C',
+        root,
+        '-c',
+        'user.name=Stim',
+        '-c',
+        'user.email=stim@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        ...args,
+      ],
+      { timeoutMs: 60_000 },
+    );
   git('init', '-q');
   git('add', '-A');
   git('commit', '-qm', 'fixture');
@@ -550,19 +554,23 @@ test('a git checkout keeps files whose on-disk names differ from the index in ca
   const decomposed = 'Cafe\u0301';
   write(join(root, decomposed, 'Menu.swift'), 'struct Menu {}');
   const git = (...args: string[]) =>
-    getExecutor().runFile('git', [
-      '-C',
-      root,
-      '-c',
-      'user.name=Stim',
-      '-c',
-      'user.email=stim@example.com',
-      '-c',
-      'commit.gpgsign=false',
-      '-c',
-      'core.hooksPath=/dev/null',
-      ...args,
-    ]);
+    getExecutor().runFile(
+      'git',
+      [
+        '-C',
+        root,
+        '-c',
+        'user.name=Stim',
+        '-c',
+        'user.email=stim@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        '-c',
+        'core.hooksPath=/dev/null',
+        ...args,
+      ],
+      { timeoutMs: 60_000 },
+    );
   git('init', '-q');
   git('config', 'core.ignorecase', 'true');
   git('config', 'core.precomposeunicode', 'true');
@@ -934,7 +942,7 @@ test('native run and worker build-only recipes share the selected architecture i
 
 test('an ignored native input keeps placement here instead of failing during the source transfer', async () => {
   const real = getExecutor();
-  real.runFile('git', ['init', '--quiet', root]);
+  real.runFile('git', ['init', '--quiet', root], { timeoutMs: 60_000 });
   writeNativeXcodeProject(root);
   write(join(root, '.gitignore'), '.DS_Store\n');
   write(join(root, '.DS_Store'), 'Finder metadata');

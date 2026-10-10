@@ -92,8 +92,8 @@ ${screenshots}
 
 Check each change on the device with agent-device in that same session, after
 the after screenshot, so Stim Desktop records your actions and the user can
-replay them: tap tap-button, toggle dark-accent-switch, type a name in
-name-input, then take a screenshot (agent-device screenshot
+replay them: tap tap-button, toggle dark-accent-switch, pick a size
+(size-s, size-m or size-l), then take a screenshot (agent-device screenshot
 .expo/screenshots/checked.png) and confirm the change. Refs expire after each
 action: run agent-device snapshot -i before every action and use the ref it
 reports for that testID. When agentDevice.installed is false in stim status

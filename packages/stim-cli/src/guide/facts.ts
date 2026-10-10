@@ -875,6 +875,11 @@ RULES
                               root, and browser profile paths whose
                               directory is gone; --delete forgets the
                               ledger entry only
+    staleEasLedgerEntries   { id, workspaceRoot }  entries of the machine
+                              EAS session ledger whose id is not a UUID and
+                              whose absolute workspace root is missing on a
+                              mounted volume; --delete forgets the entry
+                              only and contacts no EAS session
     staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
                               file, bytes }  entries of $STIM_HOME/disk-usage
                               and pull-requests whose path is gone from a
@@ -1022,6 +1027,8 @@ RULES
               absent until it has run.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
+  hidden      true when workspace.hidden is set; absent otherwise. The next
+              command that uses the workspace clears it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.

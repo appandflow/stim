@@ -85,6 +85,7 @@ struct RootView: View {
     onboarding: Onboarding, gc: GcReportStore, buildMachines: BuildMachinesModel, metrics: MetricsStore,
     storage: StorageStore, planChecks: BuildPlanChecks, statsReader: StatsReader, tips: TipCoordinator
   ) {
+    SidebarWidthGuard.prime()
     self.tips = tips
     self.buildMachines = buildMachines
     self.cli = cli
@@ -111,7 +112,8 @@ struct RootView: View {
       .toolbar {
         if columnVisibility != .detailOnly { sidebarToggleToolbar }
       }
-      .navigationSplitViewColumnWidth(min: 220, ideal: 272, max: 360)
+      .navigationSplitViewColumnWidth(min: SidebarWidthGuard.minimum, ideal: SidebarWidthGuard.ideal, max: 360)
+      .background(SidebarWidthGuard())
       .onGeometryChange(for: CGFloat.self) {
         $0.size.width
       } action: {

@@ -416,7 +416,10 @@ describe('the read and destroy argv', () => {
 describe('the executor seam', () => {
   test('every eas call runs through runFile, in the project directory', () => {
     const exec = recordingExec();
-    exec.runFile('/bin/eas', createSessionArgs({ label: 'wt', platform: 'ios' }), { cwd: '/work/app' });
+    exec.runFile('/bin/eas', createSessionArgs({ label: 'wt', platform: 'ios' }), {
+      cwd: '/work/app',
+      timeoutMs: 60_000,
+    });
     expect(exec.calls[0]?.[0]).toBe('/bin/eas');
     expect(exec.calls[0]?.[1]).toBe('sim');
   });
