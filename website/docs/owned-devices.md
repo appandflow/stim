@@ -247,7 +247,7 @@ Stim never changes Apple preferences. The commands below are optional, you run
 them yourself, and Stim does not check or depend on them.
 
 **Device Hub quit.** Siniulator's setup notes document this private,
-machine-wide Xcode preference, tested with Xcode 27.0. Apple does not document
+machine-wide Xcode preference, and report testing it with Xcode 27.0. Apple does not document
 it, and its effect can change between Xcode releases.
 
 ```sh
@@ -257,8 +257,9 @@ defaults write com.apple.dt.Devices shutdownStartedDevicesOnQuit -bool false
 It is meant to stop Device Hub from shutting down the simulators it started when
 you quit it. Whether it covers simulators Device Hub never displayed, and
 whether it holds on every Xcode build, is not confirmed. On one Mac running
-macOS 27 with Xcode 27.1 beta the write failed with `Could not write domain`,
-so the command may not work everywhere. Keep treating a Device Hub quit as
+macOS 27 with Xcode 27.1 beta the write failed with `Could not write domain`.
+On a Mac with Xcode 27.0 the write and readback succeeded, but no Device Hub
+quit was tested, so the command may not work everywhere. Keep treating a Device Hub quit as
 unsafe, and stop only your own workspaces with `stim stop`.
 
 To undo it, delete the key:
