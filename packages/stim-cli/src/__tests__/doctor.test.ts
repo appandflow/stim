@@ -1847,7 +1847,8 @@ test('detectFingerprintParity skips a cold comparison when dependencies are inst
 });
 
 test('detectFingerprintParity never fingerprints or adds a worktree when an app without node_modules resolves Expo from the repository root', async () => {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
+  const base = join(outside, 'repo');
   const commands: string[][] = [];
   setExecutor({
     runQuiet: () => null,
@@ -1872,11 +1873,14 @@ test('detectFingerprintParity never fingerprints or adds a worktree when an app 
     const finding = await detectFingerprintParity(app, { createFingerprint });
     expect(finding?.code).toBe('fingerprint-parity-skipped');
     expect(finding?.fix).toBeTruthy();
+    const link = join(outside, 'linked-app');
+    symlinkSync(app, link);
+    expect((await detectFingerprintParity(link, { createFingerprint }))?.code).toBe('fingerprint-parity-skipped');
     expect(called).toBe(false);
     expect(commands.filter((command) => command.includes('worktree'))).toEqual([]);
   } finally {
     resetExecutor();
-    rmSync(base, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
   }
 });
 

@@ -34,8 +34,9 @@ stim stop
 
 `stim doctor` never loads `fingerprint.config.js` or runs an `eas` from the
 project tree. On a checkout without its own dependencies, it skips the
-fingerprint parity check when Expo packages resolve from above the app or when
-the check would need `npx react-native config`. Its linked-library check can
+fingerprint parity check when Expo packages resolve from outside the app or when
+the check would need `npx react-native config`, as it does for Android or a
+project without an `ios` directory. Its linked-library check can
 still run installed Expo packages on the main checkout, as a build does.
 `worktree warm`, `start`, `ios`, and `android` run project code.
 

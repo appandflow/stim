@@ -1,5 +1,6 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
@@ -1360,18 +1361,30 @@ function fingerprintParitySkipped(title: string, detail: string, fix: string): F
   return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
 }
 
+// @expo/fingerprint resolves through resolve-from, which follows the real path, NODE_PATH and global module folders.
+function fingerprintResolves(root: string, request: string): boolean {
+  try {
+    createRequire(join(realpathSync(root), 'package.json')).resolve(request);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
-  const resolved = ['expo', 'expo-modules-autolinking'].find((name) => isPackageResolvable(root, name));
+  const resolved = ['expo/package.json', 'expo/config', 'expo-modules-autolinking/package.json']
+    .find((request) => fingerprintResolves(root, request))
+    ?.replace(/\/.*$/, '');
   if (resolved) {
     return fingerprintParitySkipped(
-      'Skipped the fingerprint parity check: dependencies resolve from above the app',
-      `This app has no node_modules of its own, but ${resolved} resolves from a directory above it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
+      'Skipped the fingerprint parity check: dependencies resolve from outside the app',
+      `This app has no node_modules of its own, but ${resolved} resolves from outside it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
       'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
     );
   }
   if (platform !== 'ios') {
     return fingerprintParitySkipped(
-      'Skipped the fingerprint parity check for Android on a checkout without dependencies',
+      'Skipped the fingerprint parity check for Android or a project without an iOS directory on a checkout without dependencies',
       'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
       'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
     );
