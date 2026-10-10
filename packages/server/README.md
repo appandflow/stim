@@ -280,6 +280,10 @@ loopback port: a forwarder that omits that header, such as `tailscale serve
 
 A connection must send `hello` within 5 seconds. Five failed attempts from the
 same peer within a minute block new connections from it for up to a minute.
+The server answers 403 to a WebSocket upgrade that carries `Sec-Fetch-Site`, or
+an `Origin` other than the requested host (`http:` on loopback, `https:`
+through the route), and counts no failed attempt, so a web page can neither
+connect nor block this Mac's clients.
 
 Paired devices live in `$STIM_HOME/server/devices.json`. Revoking a device
 closes its open connections. The server checks registrations on file changes
@@ -1335,7 +1339,7 @@ Events are `{ "event", "subscription", ... }`.
   (none without `control`), the paired device, and the new `deviceToken` when
   the hello paired. `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
-  `~/...`.
+  `~/...`. A pending approval result omits it.
 - `status.subscribe` returns a subscription id. Each `status` event carries a
   full payload as `stim status --watch --json` prints it, including each
   environment's `physicalDevices`, the phones it leases, and its `agents`, the
