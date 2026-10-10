@@ -34,17 +34,36 @@ public enum Tailnet {
     .sorted { $0.dnsName < $1.dnsName }
   }
 
-  /// `tailscale status --json`, from the CLI on `PATH` or the Mac app's; nil when neither answers.
-  public static func status(environment: [String: String]) -> Data? {
+  public enum StatusProbe: Equatable, Sendable {
+    case answered(Data)
+    case timedOut
+    case unavailable
+  }
+
+  /// `tailscale status --json`, from the CLI on `PATH` or the Mac app's. A binary that has not answered after
+  /// `timeout` seconds is killed, and the result is `.timedOut` when no other binary answered.
+  public static func probe(
+    environment: [String: String], timeout: TimeInterval = 5, appBinary: String? = nil
+  ) -> StatusProbe {
     var environment = environment
-    let candidates = [resolveExecutable("tailscale", override: nil, environment: &environment), appBinary]
+    let candidates = [resolveExecutable("tailscale", override: nil, environment: &environment), appBinary ?? Self.appBinary]
+    var timedOut = false
     for binary in candidates.compactMap({ $0 }) where FileManager.default.isExecutableFile(atPath: binary) {
-      if let result = try? ProcessRequest(binary, ["status", "--json"], environment: environment).runBlocking(),
-        result.status == 0
-      {
-        return result.stdout
+      var request = ProcessRequest(binary, ["status", "--json"], environment: environment, timeout: timeout)
+      request.timeoutSignal = SIGKILL
+      guard let result = try? request.runBlocking() else { continue }
+      if result.timedOut {
+        timedOut = true
+      } else if result.status == 0 {
+        return .answered(result.stdout)
       }
     }
+    return timedOut ? .timedOut : .unavailable
+  }
+
+  /// The output of `probe`, or nil when Tailscale did not answer.
+  public static func status(environment: [String: String]) -> Data? {
+    if case .answered(let data) = probe(environment: environment) { return data }
     return nil
   }
 
