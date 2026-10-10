@@ -505,6 +505,12 @@ it only when you press **Run**. The project check lists each `stim doctor`
 finding with its fix, and offers **Fix** for the findings `stim doctor --fix`
 repairs. Reopen the guide from **Help > Setup Guide…**.
 
+Desktop shows owned simulators itself, so Device Hub is not needed to see them. If
+you open it and quit it by accident, Xcode 27 can shut down booted simulators.
+[Owned devices](./owned-devices#keep-simulators-running-when-device-hub-quits)
+lists optional `defaults write` preferences you can set yourself, with their
+limits and how to undo them. Stim never sets them.
+
 In a project, warm a worktree and run the app:
 
 <StimTabs
