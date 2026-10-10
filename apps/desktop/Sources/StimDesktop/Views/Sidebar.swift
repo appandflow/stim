@@ -97,6 +97,9 @@ struct Sidebar: View {
     }
     .onAppear { forgetStaleHidden() }
     .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: store.payload == nil, initial: true) { _, missing in
+      if !missing { LaunchMilestones.reach("sidebar-rows") }
+    }
   }
 
   private func reconciledHidden() -> HiddenWorkspaces? {
