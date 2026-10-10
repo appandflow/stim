@@ -34,7 +34,13 @@ struct TutorialPanel: View {
         Text("\(position) of \(steps.count)")
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
       }
-      .padding(Space.xl)
+      .padding([.horizontal, .top], Space.xl)
+      TutorialTrack(steps: steps, progress: snapshot.steps)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.md)
+      illustration
+        .padding(.horizontal, Space.lg)
+        .padding(.bottom, Space.md)
       Divider()
       panelContent
       Divider()
@@ -45,6 +51,20 @@ struct TutorialPanel: View {
     .background(Palette.sidebar)
     .tint(Palette.primary)
     .accessibilityLabel("Stim tutorial")
+  }
+
+  @ViewBuilder private var illustration: some View {
+    let step = snapshot.currentStep ?? (snapshot.record.done.contains("delete") ? "delete" : "finish")
+    let state = snapshot.steps.first { $0.id == step }?.state
+    let failed: Bool = {
+      if case .failed = state { return true }
+      return false
+    }()
+    #if DEBUG
+      TutorialIllustration(step: step, failed: failed, fixtureRendering: fixtureRendering)
+    #else
+      TutorialIllustration(step: step, failed: failed)
+    #endif
   }
 
   private var rendersStatic: Bool {
