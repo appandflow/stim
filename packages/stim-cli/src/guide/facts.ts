@@ -1576,7 +1576,9 @@ RULES
   builds included, when machine.memorySource is footprint. Otherwise it is
   the estimate, with memorySource estimate.
 
-  capacity.committedMb sums memoryMb. The memory budget plans before a boot
+  capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
+  figure is held on its own (see \`guide lifecycle\`), so the sum can differ
+  from committedMb. The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
