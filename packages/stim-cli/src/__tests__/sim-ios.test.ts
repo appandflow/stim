@@ -530,17 +530,16 @@ test('deleteIosSim propagates a simctl failure instead of swallowing it', () => 
 });
 
 test('deleteIosSim no-ops quietly when the udid is already gone', () => {
-  let ranQuiet = false;
+  let deleted = false;
   setExecutor({
-    runFile: () => JSON.stringify({ devices: {} }),
-    runQuiet: () => {
-      ranQuiet = true;
-      return null;
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') deleted = true;
+      return JSON.stringify({ devices: {} });
     },
     spawn: () => null,
   });
   expect(() => deleteIosSim('UDID-GONE')).not.toThrow();
-  expect(ranQuiet).toBe(false);
+  expect(deleted).toBe(false);
 });
 
 test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {

@@ -412,10 +412,7 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
 
 test('deleteAvd refuses to delete an AVD not owned by Stim', () => {
   setExecutor({
-    run: () => {
-      throw new Error('should not be called');
-    },
-    runQuiet: () => {
+    runFile: () => {
       throw new Error('should not be called');
     },
     spawn: () => null,
