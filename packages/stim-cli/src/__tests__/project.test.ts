@@ -101,6 +101,9 @@ test('appProjectProblem accepts a package that declares react-native only as a p
       JSON.stringify({ name: 'tester', peerDependencies: { react: '*', 'react-native': '*' } }),
     );
     expect(appProjectProblem(tmp)).toBe(null);
+    mkdirSync(join(tmp, 'android'));
+    writeFileSync(join(tmp, 'android', 'settings.gradle'), '');
+    expect(detectPlatforms(tmp, {})).toEqual(['android']);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
