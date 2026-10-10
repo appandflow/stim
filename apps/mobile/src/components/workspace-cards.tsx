@@ -451,7 +451,7 @@ export function BuildInProgressCard({
         <Text variant="body" weight="semibold" numberOfLines={1} style={remote ? styles.shrink : undefined}>
           {title}
         </Text>
-        {host ? <HostLabel host={host} color={theme.colors.secondary} building /> : null}
+        {host ? <HostLabel host={host} color={theme.colors.secondary} mode="building" /> : null}
         {target && !remote ? (
           <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
             {target}

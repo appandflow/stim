@@ -5,11 +5,25 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/icon';
 import { Text } from '@/components/text';
 
-export function HostLabel({ host, color, building }: { host: string; color?: string; building?: boolean }) {
+export function HostLabel({
+  host,
+  color,
+  mode = 'running',
+}: {
+  host: string;
+  color?: string;
+  mode?: 'running' | 'building' | 'placed';
+}) {
   const { theme } = useUnistyles();
   const foreground = color ?? theme.colors.tertiary;
   return (
-    <View style={styles.row} accessible accessibilityLabel={building ? t`Building on ${host}` : t`Running on ${host}`}>
+    <View
+      style={styles.row}
+      accessible
+      accessibilityLabel={
+        mode === 'building' ? t`Building on ${host}` : mode === 'placed' ? t`On ${host}` : t`Running on ${host}`
+      }
+    >
       <Icon name="desktopcomputer" size={11} color={foreground} />
       <Text variant="caption" style={[styles.text, { color: foreground }]} numberOfLines={1}>
         {host}

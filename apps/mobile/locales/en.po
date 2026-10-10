@@ -2904,6 +2904,10 @@ msgstr "OK"
 msgid "on {host}"
 msgstr "on {host}"
 
+#: src/components/host-label.tsx
+msgid "On {host}"
+msgstr "On {host}"
+
 #: src/lib/workspace-view.ts
 #: src/lib/worktree-row.ts
 msgid "on {machine}"
