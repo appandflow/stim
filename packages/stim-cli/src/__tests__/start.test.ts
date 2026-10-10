@@ -26,7 +26,7 @@ import {
   workspaceLogsDir,
   workspaceMetadataFile,
 } from '../workspace/paths.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -1651,11 +1651,21 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
   });
 
   test.each([
-    { identity: 'recycled', owner: recycledClaimOwner, terminated: false },
-    { identity: 'live', owner: liveClaimOwner, terminated: true },
+    {
+      identity: 'recycled',
+      owner: recycledClaimOwner,
+      terminated: false,
+      remedy: `Unmanaged supervisor pid ${process.pid} may still be running. Stop it with \`stim stop\`, or \`taskkill /PID ${process.pid} /T /F\` before retrying.`,
+    },
+    {
+      identity: 'live',
+      owner: liveClaimOwner,
+      terminated: true,
+      remedy: 'The supervisor process was stopped.',
+    },
   ])(
     'win32 handoff failure with a $identity recorded supervisor terminates it: $terminated',
-    async ({ owner, terminated }) => {
+    async ({ owner, terminated, remedy }) => {
       const recorded = owner();
       let handoff: unknown;
       const { server, port } = await metroListener();
@@ -1690,7 +1700,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
           isTunnelAlive: () => true,
           writeSupervisorRecord: (_root, patch) => {
             handoff = patch.supervisor;
-            writeWorkspaceState(root, { supervisor: null });
+            clearWorkspaceStateKeys(root, ['supervisor']);
             throw new Error('disk full');
           },
           terminateSupervisorChild: terminate,
@@ -1702,13 +1712,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
       expect(handoff).toMatchObject({ pid: recorded.pid, processToken: recorded.processToken });
       expect(terminate).toHaveBeenCalledTimes(terminated ? 1 : 0);
-      if (terminated) {
-        expect(failure.remedy).toMatch(/was stopped/);
-      } else {
-        expect(failure.remedy).toContain(
-          `Unmanaged supervisor pid ${process.pid} may still be running. Stop it with \`stim stop\`, or \`taskkill /PID ${process.pid} /T /F\` before retrying.`,
-        );
-      }
+      expect(failure.remedy).toContain(remedy);
     },
     30_000,
   );
