@@ -388,11 +388,16 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const selected = projectRegistry.selectIos(root);
     if ('problem' in selected || selected.id !== 'native-xcode')
       return failed('provider-mismatch', 'The transferred project did not select the native Xcode integration.');
-    const metadataDirectories = nativeXcodeMetadataDirectories(
-      selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
-    );
-    if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
-      return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
+    let metadataDirectories: string[];
+    try {
+      metadataDirectories = nativeXcodeMetadataDirectories(
+        selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
+      );
+      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
+        return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
+    } catch (error) {
+      return failed('source-mismatch', (error as Error).message);
+    }
     const refused = await time('fingerprintMs', () => nativeIdentityRefusal(job, root, selected.load));
     if (refused) return failed('identity-mismatch', refused);
     compiled = await compileNativeIos(job, root, log, time);
