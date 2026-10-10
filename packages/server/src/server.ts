@@ -401,8 +401,8 @@ const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
  * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
- * React Native derives `Origin` from the ws URL, so an app's names the requested host: over `http:` on loopback, and
- * `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
+ * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback,
+ * and `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
  * `ws://[::1]` is refused.
  */
 export function upgradeFromWebPage(headers: IncomingHttpHeaders, local: boolean): boolean {

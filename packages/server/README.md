@@ -266,9 +266,8 @@ the server is on a port with Funnel on, `pair` refuses and exits 1 without
 creating a token.
 
 The pairing token works once and expires after 5 minutes. A client spends it in
-`hello` with a `deviceName` of at most 64 UTF-16 code units with no control or
-format characters, and receives a random device token, which it presents on
-every later connection. The server stores only the SHA-256 hash of each token.
+`hello` and receives a random device token, which it presents on every later
+connection. The server stores only the SHA-256 hash of each token.
 
 At pairing, the server records the peer's tailnet node and user from
 `tailscale whois`. A device token presented from any other node is refused, so
