@@ -11,11 +11,11 @@ const frame = (digest: string, bytes: string) => Buffer.concat([Buffer.from(dige
 
 let home: string;
 let root: string;
-let host: BuildHost | null = null;
+let running: BuildHost | null = null;
 
 const start = (limits: Partial<BuildLimits> = {}) => {
-  host = new BuildHost({ worker: 'unused', env: process.env, limits });
-  return host;
+  running = new BuildHost({ worker: 'unused', env: process.env, limits });
+  return running;
 };
 
 beforeEach(() => {
@@ -26,8 +26,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await host?.close();
-  host = null;
+  await running?.close();
+  running = null;
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
