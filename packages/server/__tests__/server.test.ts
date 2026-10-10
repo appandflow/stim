@@ -2276,7 +2276,7 @@ describe('offloaded builds', () => {
   );
 
   test.each([false, true])(
-    'stops a revoked build and frees its claim with watch events dropped: %s',
+    'stops a revoked build, frees its claim and deletes its area with watch events dropped: %s',
     { skip: !fakeTailscale },
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
@@ -2299,6 +2299,7 @@ describe('offloaded builds', () => {
       expect(await client.closed).toBe(4401);
       await eventually(() => !alive(pid));
       await eventually(() => readClaimSet(`${area}.claims`).live.length === 0);
+      await eventually(() => !existsSync(join(process.env.STIM_HOME!, 'build-worker', id)));
     },
   );
 

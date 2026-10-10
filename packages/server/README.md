@@ -1173,7 +1173,9 @@ A client with `build` runs its iOS simulator builds and Android emulator
 debug builds and macOS SwiftPM Debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
-closes its connections and cancels its builds.
+closes its connections and cancels its builds. Once those builds end, it
+deletes the client's directory under the worker root. A client that has not
+connected since stim-server started keeps its directory when revoked.
 
 - `build.offer` takes `repo` (the client's name for its repository: letters,
   digits, `.`, `_` and `-`, at most 80), an optional `lockfile` sha256, and an
@@ -1216,7 +1218,13 @@ closes its connections and cancels its builds.
   the sha256, then the next bytes of that blob, one blob after another. A frame
   for a blob that was not asked for, one that overruns its size, or bytes that
   do not match the digest close the connection with 4400. Blobs are kept per
-  client and shared by all its repositories.
+  client and shared by all its repositories. `build.sync` fails with
+  `build-busy` while the worker root's volume has less than 10 GiB free, and
+  with `limit-exceeded` once the sizes in one manifest add up to more than
+  20 GiB. A blob whose size would leave that volume under 10 GiB free also
+  closes the connection with 4400. When a client's build ends and no other
+  build of that client runs, the server deletes the client's blobs that no
+  repository checkout and no open connection's manifest uses.
 - `build.start` takes `repo`, `project` (the app directory in the repository),
   `platform` (`ios`, `android` or `macos`), `configuration`, `scheme`, `runtime` (a
   simulator runtime identifier, required for `ios`, null for `android`),
