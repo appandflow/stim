@@ -659,7 +659,11 @@ describe('action: already running', { timeout: 30_000 }, () => {
       const { server, port } = await metroListener();
       const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
       exec.runFileQuiet = (file: string, args: readonly string[] = []) =>
-        file === 'osascript' ? '/Applications/Stim.app' : file === 'lsof' ? exec.runQuiet([file, ...args].join(' ')) : '';
+        file === 'osascript'
+          ? '/Applications/Stim.app'
+          : file === 'lsof'
+            ? exec.runQuiet([file, ...args].join(' '))
+            : '';
       setExecutor(exec);
       upsertProject(root, { metroPort: port });
 

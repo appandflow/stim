@@ -2039,7 +2039,8 @@ describe('ensureOwnedDevice: android', () => {
           }
         },
         runFile(file: string, args: string[] = []): string {
-          if (file === 'adb' || file === 'emulator' || file === 'avdmanager') return this.run([file, ...args].join(' '));
+          if (file === 'adb' || file === 'emulator' || file === 'avdmanager')
+            return this.run([file, ...args].join(' '));
           return '';
         },
         runFileQuiet(file: string, args: string[] = []) {
