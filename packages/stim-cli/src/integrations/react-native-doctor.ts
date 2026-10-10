@@ -23,9 +23,7 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
         iosProjectPath: resolveIosProjectDir(settings, root).relative,
       });
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
-      return [parity, parity?.code === 'fingerprint-config-skipped' ? null : linkedGit].filter(
-        (finding) => finding !== null,
-      );
+      return [parity, linkedGit?.code === parity?.code ? null : linkedGit].filter((finding) => finding !== null);
     },
     offloadTargets({ options: { platform, host = process.platform }, settings, repoRoot }, iosRuntime) {
       const checksIos = platform !== 'android' && host === 'darwin';
