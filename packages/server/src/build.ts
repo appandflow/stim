@@ -859,10 +859,10 @@ export class BuildSession {
       if (!validFile(file)) {
         return refusal('bad-request', `Invalid manifest entry ${JSON.stringify(file).slice(0, 200)}.`);
       }
-      this.bytes += file.size;
-      if (this.bytes > this.host.limits.maxManifestBytes) {
+      if (this.bytes + file.size > this.host.limits.maxManifestBytes) {
         return refusal('limit-exceeded', `A manifest holds at most ${gb(this.host.limits.maxManifestBytes)} GB.`);
       }
+      this.bytes += file.size;
       this.files.set(file.path, file);
       if (this.expected.has(file.sha256) || existsSync(this.blobPath(file.sha256))) continue;
       this.expected.set(file.sha256, file.size);
