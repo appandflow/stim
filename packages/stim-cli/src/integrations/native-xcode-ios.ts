@@ -291,17 +291,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
 }
 
 async function planNativeXcode(root: string, options: IosCommandOptions) {
-  const flag =
-    options.device !== undefined
-      ? '--device'
-      : options.remote
-        ? '--remote'
-        : options.easProfile !== undefined
-          ? '--eas-profile'
-          : options.wait !== undefined
-            ? '--wait'
-            : null;
-  if (flag) return { refusal: planFlagRefusal(flag) };
+  if (options.easProfile !== undefined) return { refusal: planFlagRefusal('--eas-profile') };
   try {
     const context = settingsContext(root);
     const settings = resolveSettings(context);
