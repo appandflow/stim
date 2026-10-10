@@ -692,6 +692,13 @@ describe('iosProjectDirSetting', () => {
 
   test('defaults to ios/ without requiring it to exist yet', () => {
     expect(iosProjectDirSetting({}, app)).toEqual({ dir: join(app, 'ios'), relative: 'ios', custom: false });
+    for (const projectPath of ['ios', 'ios/', './ios']) {
+      expect(iosProjectDirSetting({ ios: { projectPath } }, app)).toEqual({
+        dir: join(app, 'ios'),
+        relative: 'ios',
+        custom: false,
+      });
+    }
   });
 
   test('resolves the app directory itself when it holds the Xcode project', () => {

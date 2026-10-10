@@ -18,7 +18,7 @@ import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizatio
 import { setRemoteLogSink } from '../../remote-log.ts';
 import { getConcurrencyLimits, getProject, upsertProject } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import { resolveCacheProviderConfig, resolveProjectSettings } from '../../workspace/settings.ts';
+import { resolveCacheProviderConfig, resolveProjectSettings, SETTING_SHAPE_REMEDY } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
@@ -69,7 +69,8 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
     });
   const { context, settings } = resolveProjectSettings(root);
   const projectPathError = iosProjectPathError(settings, root, () => detectIsExpo(root));
-  if (projectPathError) throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG' });
+  if (projectPathError)
+    throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
   const integration = await selected.load(settings);
   const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
     note(phaseLine(label, message)),

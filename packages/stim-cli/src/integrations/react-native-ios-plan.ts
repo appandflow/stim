@@ -22,6 +22,7 @@ import type { IosDeps } from '../commands/ios/dependencies.ts';
 import {
   resolveSchemeSelection,
   deviceModelRefusal,
+  iosProjectPathError,
   isReleaseConfiguration,
   PLATFORM,
   resolveConfiguration,
@@ -54,6 +55,9 @@ export async function planReactNativeIos(
   const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
   if (shapeError)
     return refuse({ code: 'STIM_BAD_ARG', message: shapeError, remedy: SETTING_SHAPE_REMEDY }, moreShapeErrors);
+  const projectPathError = iosProjectPathError(settings, root, () => d.detectIsExpo(root));
+  if (projectPathError)
+    return refuse({ code: 'STIM_BAD_ARG', message: projectPathError, remedy: SETTING_SHAPE_REMEDY });
   let optimizations;
   try {
     optimizations = resolveOptimizations(settings);

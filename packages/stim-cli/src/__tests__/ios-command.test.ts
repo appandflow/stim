@@ -5033,6 +5033,16 @@ test('a first miss lists untracked files under the native dirs and points at .fi
   expect(line).toMatch(/\.fingerprintignore/);
 });
 
+test('ios.projectPath on an Expo app refuses the run and the plan', async () => {
+  mkdirSync(join(root, 'Fixture.xcworkspace'));
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ ios: { projectPath: '.' } }));
+  const deps = { detectIsExpo: () => true };
+  const ran = await run({ metroCheck: false, json: true }, deps);
+  expect([...ran.logs, ...ran.errs].join('\n')).toContain('bare React Native apps only');
+  const planned = await run({ plan: true, json: true }, deps);
+  expect([...planned.logs, ...planned.errs].join('\n')).toContain('bare React Native apps only');
+});
+
 test('ios.projectPath set to the app directory reaches pods, the Xcode build, fingerprinting and untracked files', async () => {
   mkdirSync(join(root, 'Fixture.xcworkspace'));
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ ios: { projectPath: '.' } }));

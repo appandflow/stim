@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
@@ -334,7 +334,10 @@ export interface IosProjectDir {
 
 export function iosProjectDirSetting(settings: unknown, appRoot: string): IosProjectDir {
   const value = iosString(settings, 'projectPath');
-  if (value === undefined || value === DEFAULT_IOS_PROJECT_PATH) {
+  if (
+    value === undefined ||
+    (typeof value === 'string' && normalize(value).replace(/[\\/]+$/, '') === DEFAULT_IOS_PROJECT_PATH)
+  ) {
     return { dir: join(appRoot, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
   }
   if (
