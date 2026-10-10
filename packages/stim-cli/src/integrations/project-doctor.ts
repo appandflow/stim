@@ -14,6 +14,7 @@ export interface ProjectDoctor {
   repair?(
     platform: DoctorPlatform | undefined,
     settings: SettingsObject | null,
+    repoRoot: string | null,
   ): { removed: string[]; refused: { path: string; reason: string }[] };
   successLines?(platform: DoctorPlatform | undefined): string[];
 }

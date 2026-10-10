@@ -17,6 +17,7 @@ import {
 } from './asset-manifest.ts';
 import { detectEntryFile, refreshUpdatesManifestFile, UPDATES_MANIFEST_NAME } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
+import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
 
@@ -34,12 +35,20 @@ export function hermesEnabledFromGradleProperties(text: unknown): boolean {
   return value === null || value.toLowerCase() !== 'false';
 }
 
-export function readAndroidHermesEnabled(root: string): boolean {
-  try {
-    return hermesEnabledFromGradleProperties(readFileSync(join(root, 'android', 'gradle.properties'), 'utf-8'));
-  } catch {
-    return true;
+export function readAndroidHermesEnabled(
+  root: string,
+  { gradleRoot, moduleDir, custom }: AndroidLayout = defaultAndroidLayout(root),
+): boolean {
+  for (const dir of custom ? [moduleDir, gradleRoot] : [gradleRoot]) {
+    let text: string;
+    try {
+      text = readFileSync(join(dir, 'gradle.properties'), 'utf-8');
+    } catch {
+      continue;
+    }
+    if (/^\s*hermesEnabled\s*[=:]/m.test(text)) return hermesEnabledFromGradleProperties(text);
   }
+  return true;
 }
 
 export function hermescBinDir(platform: string = process.platform): string {
@@ -163,7 +172,11 @@ export function keystorePassArg(value: unknown): string {
   return `pass:${text}`;
 }
 
-export function resolveKeystore(root: string, settings: SettingsObject | null | undefined): KeystoreConfig {
+export function resolveKeystore(
+  root: string,
+  settings: SettingsObject | null | undefined,
+  layout: AndroidLayout = defaultAndroidLayout(root),
+): KeystoreConfig {
   const android = settings?.['android'];
   const bag = android && typeof android === 'object' && !Array.isArray(android) ? (android as SettingsObject) : {};
   const configured = bag['keystore'];
@@ -172,7 +185,7 @@ export function resolveKeystore(root: string, settings: SettingsObject | null | 
       ? isAbsolute(configured.trim())
         ? configured.trim()
         : join(root, configured.trim())
-      : join(root, 'android', 'app', 'debug.keystore');
+      : join(layout.moduleDir, 'debug.keystore');
   return { path, pass: keystorePassArg(bag['keystorePassword']) };
 }
 
@@ -208,6 +221,7 @@ export async function swapApkBundle({
   mkdtemp = () => makeTemporaryDirectory(cachedApkPath, 'stim-apk-swap-'),
   exists = existsSync,
   hermesEnabled = null,
+  layout = defaultAndroidLayout(root),
   buildTools = null,
   findTool = findBuildTool,
   storedAssets = null,
@@ -227,6 +241,7 @@ export async function swapApkBundle({
   mkdtemp?: () => string;
   exists?: (p: string) => boolean;
   hermesEnabled?: boolean | null;
+  layout?: AndroidLayout;
   buildTools?: BuildToolsEntry | null;
   findTool?: typeof findBuildTool;
   storedAssets?: AssetManifest | null;
@@ -336,7 +351,7 @@ export async function swapApkBundle({
 
   let hermes = false;
   let note: string | undefined;
-  const wantsHermes = hermesEnabled ?? readAndroidHermesEnabled(root);
+  const wantsHermes = hermesEnabled ?? readAndroidHermesEnabled(root, layout);
   if (wantsHermes) {
     const hermesc = androidHermescPath(root);
     if (!exists(hermesc)) {

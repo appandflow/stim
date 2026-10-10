@@ -489,14 +489,14 @@ async function readStatusFacts(
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
       Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
-        platforms: detectPlatforms(
-          path,
-          resolveSettings({
+        platforms: (() => {
+          const context = {
             projectPath: path,
             gitCommonDir: gitCommonDirOnDisk(path),
             repoRoot: state.worktree?.path ?? path,
-          }),
-        ),
+          };
+          return detectPlatforms(path, { context, settings: resolveSettings(context) });
+        })(),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
       const tutorial = detectTutorial(readAppJson(path));

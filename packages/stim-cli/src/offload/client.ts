@@ -800,6 +800,8 @@ export interface AndroidBuildOptions {
   gradleBuildCache: boolean;
   pch: 'auto' | 'on' | 'off';
   compilerCache: 'ccache' | 'none';
+  gradleRoot?: string | null;
+  module?: string | null;
 }
 
 /** What `build.start` builds besides the synced checkout. */

@@ -6,13 +6,14 @@ import { sharedBuildCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { filesystemDevice, temporaryRoot } from '../temporary.ts';
 import { repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
 import { apkOutputsDir } from '../integrations/react-native-build.ts';
-import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
+import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
 export function checkStorageLayout(
   projectRoot: string,
   {
     platform,
     iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = defaultAndroidLayout(projectRoot),
     host = process.platform,
     device = filesystemDevice,
     stagingRoot = temporaryRoot,
@@ -20,6 +21,7 @@ export function checkStorageLayout(
   }: {
     platform?: DoctorPlatform;
     iosProjectPath?: string;
+    androidLayout?: AndroidLayout;
     host?: NodeJS.Platform;
     device?: typeof filesystemDevice;
     stagingRoot?: typeof temporaryRoot;
@@ -64,9 +66,9 @@ export function checkStorageLayout(
     }
     if (
       scope !== 'shared' &&
-      (platform === 'android' || (platform !== 'ios' && existsSync(join(projectRoot, 'android'))))
+      (platform === 'android' || (platform !== 'ios' && existsSync(androidLayout.gradleRoot)))
     ) {
-      check('Android build-cache storage', [apkOutputsDir(projectRoot), cache], cacheFix);
+      check('Android build-cache storage', [apkOutputsDir(androidLayout), cache], cacheFix);
     }
   } catch (error) {
     findings.push({

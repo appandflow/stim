@@ -144,7 +144,12 @@ test.each([
     }),
   );
   expect(projectRegistry.findProjectRoot(root)).toBe(root);
-  expect(projectRegistry.detectPlatforms(root, {})).toEqual(['ios']);
+  expect(
+    projectRegistry.detectPlatforms(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual(['ios']);
   for (const configuration of ['Debug', 'Release', 'Staging']) {
     expect(selectNativeXcodeProject(root, undefined, configuration).platform).toBe('ios');
   }
@@ -160,7 +165,12 @@ test.each([
   'platform selection follows project config, project inline, target config and target inline precedence (%s / %s / %s / %s)',
   (projectBase, projectInline, targetBase, targetInline, ios) => {
     configuredProject(projectBase, projectInline, targetBase, targetInline);
-    expect(projectRegistry.detectPlatforms(root, {})).toEqual(ios ? ['ios'] : []);
+    expect(
+      projectRegistry.detectPlatforms(root, {
+        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+        settings: {},
+      }),
+    ).toEqual(ios ? ['ios'] : []);
   },
 );
 
@@ -404,7 +414,12 @@ test('production discovery selects a native application without Node or Metro an
     }),
   );
   expect(projectRegistry.findProjectRoot(root)).toBe(root);
-  expect(projectRegistry.detectPlatforms(root, {})).toEqual(['ios']);
+  expect(
+    projectRegistry.detectPlatforms(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual(['ios']);
   expect(projectRegistry.projectProblem(root, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(root, 'dev-server')?.kind).toBe('not-an-app');
   for (const configuration of ['Debug', 'Release', 'Staging']) {
@@ -449,7 +464,12 @@ test('macOS applications and libraries do not become runnable iOS projects', () 
   writeNativeXcodeProject(root, 'Desktop', 'macosx');
   writeNativeXcodeProject(root, 'Library', 'iphoneos', 'framework');
   expect(projectRegistry.projectProblem(root, 'ios')?.kind).toBe('not-an-app');
-  expect(projectRegistry.detectPlatforms(root, {})).toEqual([]);
+  expect(
+    projectRegistry.detectPlatforms(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual([]);
 });
 
 test('an unreadable native project refuses and a valid RN app retains ownership of its generated child', () => {

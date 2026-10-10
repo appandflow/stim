@@ -20,14 +20,21 @@ import { getProject } from '../workspace/config.ts';
 import {
   publicUrlSetting,
   remoteEasFallbackSetting,
-  resolveProjectSettings,
+  type AndroidLayout,
+  type ResolvedProjectSettings,
   tunnelModeSetting,
 } from '../workspace/settings.ts';
 import { checkEasFallback } from '../engine/eas-fallback.ts';
 import { planCachedBuild, planFlagRefusal, planPayload } from '../commands/build-plan.ts';
 import { planHostedDevice } from '../device-host/plan-placement.ts';
 import { resolveAndroidRunPlan } from '../commands/android/plan.ts';
-import { androidBuildOptions, NO_DEVICE, NO_FINGERPRINT, PLATFORM } from '../commands/android/support.ts';
+import {
+  androidBuildOptions,
+  androidGradleProject,
+  NO_DEVICE,
+  NO_FINGERPRINT,
+  PLATFORM,
+} from '../commands/android/support.ts';
 
 import type { AndroidProject } from './android-project.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
@@ -116,11 +123,13 @@ export async function planReactNativeAndroid(
   root: string,
   opts: AndroidPlanOptions,
   runtimeKind: AndroidProject['runtimeKind'],
+  { context: settingsContext, settings }: ResolvedProjectSettings,
+  layout: AndroidLayout,
+  variantProblem: AndroidProject['variantProblem'],
   overrides: Partial<AndroidPlanDeps> = {},
 ): Promise<ProjectPlanResult> {
   const deps = { ...DEFAULT_PLAN_DEPS, ...overrides };
   const slot = validateDeviceSlot(opts.slot);
-  const { context: settingsContext, settings } = resolveProjectSettings(root);
   const planned = resolveAndroidRunPlan(
     {
       settings,
@@ -137,6 +146,7 @@ export async function planReactNativeAndroid(
     },
     {
       runtimeKind,
+      variantProblem,
       warn: (label, message) => note(phaseLine(label, chalk.yellow(message))),
       resolveCompilerCache: ({ optimizations }) => ({ cas: null, optimizations, warning: null }),
       listSystemImages: deps.listSystemImages,
@@ -249,6 +259,7 @@ export async function planReactNativeAndroid(
     device: { systemImage: image.systemImage },
     variant: build.variant,
     deviceAbi: () => null,
+    gradleProject: androidGradleProject(layout),
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,
     hostedAbi,
@@ -256,7 +267,7 @@ export async function planReactNativeAndroid(
 
   let fingerprint;
   try {
-    fingerprint = await deps.fingerprint(root, { platform: PLATFORM });
+    fingerprint = await deps.fingerprint(root, { platform: PLATFORM, androidLayout: layout });
   } catch (error) {
     return refuse({
       code: NO_FINGERPRINT,

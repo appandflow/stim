@@ -35,7 +35,12 @@ test('native discovery requires a wrapper and settings, accepts tooling packages
   gradle(root);
   write(join(root, 'package.json'), JSON.stringify({ name: 'tooling' }));
   expect(projectRegistry.projectProblem(root, 'android')).toBeNull();
-  expect(projectRegistry.detectPlatforms(root, {})).toEqual(['android']);
+  expect(
+    projectRegistry.detectPlatforms(root, {
+      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual(['android']);
   expect(projectRegistry.selectAndroid(root)).toHaveProperty('load');
   expect(projectRegistry.projectProblem(root, 'ios')).not.toBeNull();
   expect(projectRegistry.projectProblem(root, 'dev-server')).not.toBeNull();
@@ -117,12 +122,16 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
     }),
   );
   const project = nativeAndroidProject(root);
-  const result = await project.plan!({ variant: 'freeDebug' });
+  const result = await project.plan!(
+    { variant: 'freeDebug' },
+    { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} },
+  );
   expect(result).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
   const findings = nativeAndroidDoctor(root).inspect({
     root,
     options: {},
     settings: {},
+    repoRoot: null,
     optimizations: null,
     platforms: ['android'],
   });

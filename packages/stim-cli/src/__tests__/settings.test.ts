@@ -11,6 +11,8 @@ import {
   androidDataPartitionSizeGbSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
+  androidLayoutSetting,
+  androidLayoutSettingError,
   iosProjectDirSetting,
   iosProjectDirSettingError,
   iosSigningIdentitySetting,
@@ -433,6 +435,12 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a number' },
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
+  'android.gradleRoot': { valid: '../..', invalid: {}, expected: 'a string path' },
+  'android.module': {
+    valid: ':packages:rn-tester:android:app',
+    invalid: {},
+    expected: 'a string',
+  },
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
@@ -713,6 +721,55 @@ describe('iosProjectDirSetting', () => {
     expect(iosProjectDirSettingError({ ios: { projectPath: 'apple' } }, app)).toMatch(
       /no \.xcworkspace or \.xcodeproj/,
     );
+  });
+});
+
+describe('androidLayoutSetting', () => {
+  let repo: string;
+  let app: string;
+  beforeEach(() => {
+    repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-layout-')));
+    app = join(repo, 'packages', 'tester');
+    mkdirSync(join(app, 'android', 'app'), { recursive: true });
+    writeFileSync(join(repo, 'settings.gradle.kts'), '');
+    writeFileSync(join(app, 'android', 'app', 'build.gradle.kts'), '');
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+  const tester = { android: { gradleRoot: '../..', module: ':packages:tester:android:app' } };
+
+  test('defaults to android/ and :app without requiring them to exist yet', () => {
+    expect(androidLayoutSetting({}, app, repo)).toMatchObject({
+      gradleRoot: join(app, 'android'),
+      module: ':app',
+      moduleDir: join(app, 'android', 'app'),
+      custom: false,
+    });
+  });
+
+  test('resolves a Gradle root above the app and maps the module to its directory', () => {
+    expect(androidLayoutSetting(tester, app, repo)).toEqual({
+      gradleRoot: repo,
+      gradleRootRelative: join('..', '..'),
+      module: ':packages:tester:android:app',
+      moduleDir: join(app, 'android', 'app'),
+      custom: true,
+    });
+  });
+
+  test('refuses a root outside the repository, a root without settings, a module without a build script, and a malformed module', () => {
+    expect(androidLayoutSettingError(tester, app, app)).toMatch(/resolves outside/);
+    rmSync(join(repo, 'settings.gradle.kts'));
+    expect(androidLayoutSettingError(tester, app, repo)).toMatch(/no settings\.gradle/);
+    writeFileSync(join(repo, 'settings.gradle'), '');
+    expect(androidLayoutSettingError({ android: { gradleRoot: '../..', module: ':missing' } }, app, repo)).toMatch(
+      /has no build\.gradle/,
+    );
+    expect(androidLayoutSettingError({ android: { module: 'app' } }, app, repo)).toMatch(/Gradle project path/);
+    expect(
+      androidLayoutSettingError({ android: { gradleRoot: '../..', module: ':..:..:outside' } }, app, repo),
+    ).toMatch(/Gradle project path/);
   });
 });
 
