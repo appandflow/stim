@@ -67,16 +67,18 @@ describe('podsAreStale', () => {
 });
 
 describe('readPodState', () => {
-  test('reports the two files and the Podfile, with absent files as null', () => {
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    expect(readPodState(root)).toEqual({ hasPodfile: false, lockText: null, manifestText: null });
+  test.each(['ios', '.'])('reports the Podfile and locks in %s with absent files as null', (relative) => {
+    const directory = join(root, relative);
+    mkdirSync(directory, { recursive: true });
+    const selected = relative === '.' ? directory : undefined;
+    expect(readPodState(root, selected)).toEqual({ hasPodfile: false, lockText: null, manifestText: null });
 
-    writeFileSync(join(root, 'ios', 'Podfile'), "platform :ios, '15.1'\n");
-    writeFileSync(join(root, 'ios', 'Podfile.lock'), LOCK);
-    mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
-    writeFileSync(join(root, 'ios', 'Pods', 'Manifest.lock'), LOCK);
+    writeFileSync(join(directory, 'Podfile'), "platform :ios, '15.1'\n");
+    writeFileSync(join(directory, 'Podfile.lock'), LOCK);
+    mkdirSync(join(directory, 'Pods'), { recursive: true });
+    writeFileSync(join(directory, 'Pods', 'Manifest.lock'), LOCK);
 
-    const state = readPodState(root);
+    const state = readPodState(root, selected);
     expect(state.hasPodfile).toBe(true);
     expect(podsAreStale(state.lockText, state.manifestText)).toEqual({ stale: false });
   });
@@ -228,31 +230,36 @@ describe('runPodInstall', () => {
     }
   });
 
-  test('runs `pod install` with cwd ios/ and streams the transcript as build/debug records', async () => {
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    const writer = collectingWriter();
-    const spawnCalls: SpawnCall[] = [];
-    const result = await runPodInstall(root, writer, {
-      spawnFn: (cmd, args, opts) => {
-        spawnCalls.push({ cmd, args, opts });
-        return fakePodChild({ lines: ['Analyzing dependencies', 'Pod installation complete!'] });
-      },
-      now: (() => {
-        let t = 1000;
-        return () => (t += 500);
-      })(),
-    });
-    expect(result.ok).toBe(true);
-    const spawned = spawnCalls[0];
-    assert(spawned);
-    expect(spawned.cmd).toBe('pod');
-    expect(spawned.args).toEqual(['install']);
-    expect(spawned.opts.cwd).toBe(join(root, 'ios'));
-    expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
-      ['build', 'debug', 'Analyzing dependencies'],
-      ['build', 'debug', 'Pod installation complete!'],
-    ]);
-  });
+  test.each(['ios', '.'])(
+    'runs pod install from %s and streams the transcript as build/debug records',
+    async (relative) => {
+      const directory = join(root, relative);
+      mkdirSync(directory, { recursive: true });
+      const writer = collectingWriter();
+      const spawnCalls: SpawnCall[] = [];
+      const result = await runPodInstall(root, writer, {
+        ...(relative === '.' ? { directory } : {}),
+        spawnFn: (cmd, args, opts) => {
+          spawnCalls.push({ cmd, args, opts });
+          return fakePodChild({ lines: ['Analyzing dependencies', 'Pod installation complete!'] });
+        },
+        now: (() => {
+          let t = 1000;
+          return () => (t += 500);
+        })(),
+      });
+      expect(result.ok).toBe(true);
+      const spawned = spawnCalls[0];
+      assert(spawned);
+      expect(spawned.cmd).toBe('pod');
+      expect(spawned.args).toEqual(['install']);
+      expect(spawned.opts.cwd).toBe(directory);
+      expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
+        ['build', 'debug', 'Analyzing dependencies'],
+        ['build', 'debug', 'Pod installation complete!'],
+      ]);
+    },
+  );
 
   test('a slow pod install emits `pods` heartbeats while the child runs', async () => {
     mkdirSync(join(root, 'ios'), { recursive: true });

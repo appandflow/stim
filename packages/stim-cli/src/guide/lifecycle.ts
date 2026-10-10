@@ -5,6 +5,10 @@ const lifecycle: GuideTopic = {
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
 
+For a native Xcode or Gradle app without React Native or Expo, read
+\`stim guide lifecycle native-ios\` or \`stim guide lifecycle native-android\`.
+The Metro and JavaScript steps below apply to React Native and Expo.
+
 Two workflows share steps 2 through 6.
 
 SINGLE CHECKOUT: work in place, on a branch, in one directory. There is no
@@ -80,7 +84,7 @@ a seed belongs to this workflow.
   #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
   stim worktree remove
 
-A Debug \`ios\` or \`android\` run checks the reserved port before the device
+A React Native or Expo Debug \`ios\` or \`android\` run checks the reserved port before the device
 or the build. When no healthy dev server of this workspace answers there, it
 runs the same start as step 2: a dev server started outside Stim is reused, a
 reservation held by a foreign process moves to a free port, and the budgets
@@ -255,6 +259,74 @@ WAITING FOR A CHANGE
   still running, which it notices at the next change.
   Without --json it reprints the human view on change.`,
   sections: {
+    'native-ios': {
+      summary: 'native Xcode project selection, process launch, cache behavior and current limits',
+      body: () => `NATIVE XCODE APPS
+Run from the directory containing the .xcodeproj or .xcworkspace. A Node
+package.json is not required. React Native and Expo apps keep their existing
+integration.
+
+  stim doctor --platform ios
+  stim ios --scheme MyApp --configuration Debug --json
+  stim ios --scheme MyApp --configuration Release --json
+  stim logs --errors
+  stim stop
+
+Use the project's actual scheme and configuration names. Shared Run schemes
+select application targets; a unique application target can also use its
+automatic scheme. A workspace owns its referenced projects. --scheme selects
+an exact name; duplicate container/scheme matches refuse instead of guessing.
+--configuration overrides ios.configuration in .stim.json, then defaults to
+Debug. Custom configurations such as Staging use the same path.
+
+Native Debug, Release and custom configurations do not start or require Metro,
+embed JavaScript, or swap a JavaScript bundle. The app is launched as a native
+process and reports metroPort: null. launched: true establishes a live process;
+verify the expected screen and interaction on the reported device separately.
+After a native source edit, rerun stim ios. stim reload is for JavaScript.
+The existing owned simulator, device lease, signing, log and teardown services
+still apply. Stim does not change signing accounts or provisioning profiles.
+
+A reusable artifact key includes the selected build configuration, source and
+known dependency inputs, toolchain and build options. In a git checkout,
+ignored files the project does not reference are not part of the key. Native
+Release cache reuse does not depend on releaseBundleSwap. Xcode compilation
+uses the shared compilation cache when the toolchain and settings support it.
+--plan predicts this same local artifact without preparing dependencies or
+choosing a device.
+
+Inputs whose complete build closure cannot be established build locally with
+artifact caching skipped. This includes shell build phases, custom build rules,
+C-family header graphs, Swift package graphs and unresolved external input
+paths or compiler overrides. The miss reason explains the exclusion. --plan
+refuses such a prediction; omit --plan to prepare and build the app.
+
+Native Xcode builds currently run locally. Build offload, hosted/remote devices
+and EAS artifact profiles are not supported by this integration. These limits
+do not change the React Native and Expo paths.
+
+Copyable agent request:
+  Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
+  --json. Verify its expected screen and interaction on the reported device,
+  inspect stim logs --errors, then stop only this workspace with stim stop.`,
+    },
+    'native-android': {
+      summary: 'native Gradle project selection, APK install, process launch and current limits',
+      body: () => `NATIVE GRADLE APPS
+Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
+no Metro, npm install or React Native dependency is required. The directory must
+contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
+one application module and the exact variant (debug by default). Stim installs
+one signed universal or matching-ABI APK on an owned emulator or leased phone.
+Multiple application modules, density/split APK sets, EAS and remote targets
+are unsupported. Set org.gradle.configureondemand=false; configuration cache
+remains supported. Stim verifies the existing APK signature; it does not sign it.
+Gradle incremental/build-cache reuse remains enabled, but Stim artifact caching
+and build offload are unavailable until arbitrary Gradle inputs can be tracked.
+Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
+    },
     ci: {
       summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
       body: () => `CONTINUOUS INTEGRATION
@@ -1217,6 +1289,11 @@ PREDICTING THE NEXT BUILD (--plan)
   be a cache hit, and how long will it take?" without building, booting,
   installing, or starting Metro. They take no workspace lock and write no
   Stim state, cache entry or statistic, so they run beside a build.
+
+  The selected project integration supplies the read-only plan and uses its
+  build recipe's identity and cache policy. If it has no planner, --plan
+  refuses with STIM_BAD_ARG; run the command without --plan. The refusal
+  reports no cache hit. React Native and Expo planning behaves as follows.
 
     stim ios --plan
       plan        ios 1b625d.. -> local cache hit
@@ -2246,7 +2323,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   MUTATE: the cache entry stays the pristine, shareable artifact, and the
   per-run address lives only in the copy that is installed and then deleted.
 
-  A RELEASE device run builds fresh every time for now. A cached Release app
+  A React Native or Expo RELEASE device run builds fresh every time for now. A cached Release app
   carries its BUILDER's JS, and the device JS swap (which has to re-seal what
   it injects) lands with phase 6 of appandflow/stim#178, so the cache hit is
   refused rather than installed with someone else's JavaScript.
@@ -2461,8 +2538,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   distribution stay out of scope.
 
   \`ios --configuration <name>\` selects the Xcode configuration --
-  \`--configuration Release\` builds a SIMULATOR Release app with the JS
-  bundle embedded. It overrides the ios.configuration setting (the app-level
+  for React Native and Expo, \`--configuration Release\` builds a SIMULATOR
+  Release app with the JS bundle embedded. It overrides the ios.configuration setting (the app-level
   default); unset, the Debug flow is unchanged. A non-Debug configuration
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --

@@ -52,10 +52,10 @@ import {
   projectSettingsContext,
   remoteAndroidSetting,
   remoteIosSetting,
+  webSettings,
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
-  webSettings,
 } from '../workspace/settings.ts';
 import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
@@ -488,21 +488,6 @@ function checkChrome({
   );
 }
 
-function projectUsesWeb(
-  projectRoot: string,
-  settings: SettingsObject,
-  appConfig: AnyJson | null,
-  platform: DoctorPlatform | undefined,
-): boolean {
-  if (platform) return false;
-  const platforms = ((appConfig?.expo ?? appConfig) as AnyJson | null)?.platforms;
-  return (
-    webSettings(settings).url !== null ||
-    (Array.isArray(platforms) && platforms.includes('web')) ||
-    isPackageResolvable(projectRoot, 'react-native-web')
-  );
-}
-
 export function checkCcacheInstalled(onPath: boolean): Finding | null {
   if (onPath) return null;
   return finding(
@@ -892,84 +877,64 @@ function configuredRemoteBackends(
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
 }
 
+export interface DoctorInspectionOptions {
+  readFile?: typeof readFileSync;
+  xcodeMajor?: number | null;
+  easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult;
+  concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
+  liveDevices?: (() => number) | null;
+  activeBuilds?: (() => number) | null;
+  remoteEnv?: NodeJS.ProcessEnv;
+  lookupAgentDevice?: (() => boolean) | null;
+  lookupEasCli?: (() => boolean) | null;
+  lookupSimSlim?: (() => boolean) | null;
+  memoryPressure?: () => HostMemoryPressure | null;
+  lookupCcache?: (() => boolean) | null;
+  lookupChrome?: () => string | null;
+  tailnetStatus?: () => unknown;
+  now?: () => number;
+  platform?: DoctorPlatform;
+  host?: NodeJS.Platform;
+  platforms?: readonly DoctorPlatform[];
+  machineSettings?: MachineSettings;
+}
+
+export interface DoctorContext {
+  root: string;
+  options: DoctorInspectionOptions;
+  settings: SettingsObject;
+  optimizations: Optimizations | null;
+  platforms: readonly DoctorPlatform[];
+}
+
 export function runDoctor(
   projectRoot: string,
-  {
-    readFile = readFileSync,
-    xcodeMajor = null,
-    easAuth = probeEasAuth,
+  options: DoctorInspectionOptions = {},
+  inspectors: readonly ((context: DoctorContext) => Finding[])[] = [],
+): { findings: Finding[]; context: DoctorContext } {
+  const {
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
-    remoteEnv = process.env,
-    lookupAgentDevice = null,
-    lookupEasCli = null,
     lookupSimSlim = null,
     memoryPressure = readHostMemoryPressure,
-    lookupCcache = null,
     lookupChrome,
-    tailnetStatus = realIo.status,
-    now = Date.now,
     platform,
     host = process.platform,
+    platforms = ['ios', 'android'],
     machineSettings = readMachineSettings(projectSettingsContext(projectRoot)),
-  }: {
-    readFile?: typeof readFileSync;
-    xcodeMajor?: number | null;
-    easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult;
-    concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
-    liveDevices?: (() => number) | null;
-    activeBuilds?: (() => number) | null;
-    remoteEnv?: NodeJS.ProcessEnv;
-    lookupAgentDevice?: (() => boolean) | null;
-    lookupEasCli?: (() => boolean) | null;
-    lookupSimSlim?: (() => boolean) | null;
-    memoryPressure?: () => HostMemoryPressure | null;
-    lookupCcache?: (() => boolean) | null;
-    lookupChrome?: () => string | null;
-    tailnetStatus?: () => unknown;
-    now?: () => number;
-    platform?: DoctorPlatform;
-    host?: NodeJS.Platform;
-    machineSettings?: MachineSettings;
-  } = {},
-): Finding[] {
-  // Only macOS has Xcode, CocoaPods and simctl; elsewhere iOS runs through `--remote eas`.
-  const localIos = platform !== 'android' && host === 'darwin';
-  const read = (rel: string): string | null => {
-    const p = join(projectRoot, rel);
-    if (!existsSync(p)) return null;
-    try {
-      return readFile(p, 'utf-8') as string;
-    } catch {
-      return null;
-    }
-  };
+  } = options;
+  const localIos = platforms.includes('ios') && platform !== 'android' && host === 'darwin';
 
-  if (machineSettings.corrupt) return [machineSettings.corrupt];
   const projectSettings = machineSettings.settings;
-
-  const pkg = readJsonObject(join(projectRoot, 'package.json'));
-  const appConfig = readJsonObject(join(projectRoot, 'app.json'));
-  const dynamicConfig = appConfig
-    ? null
-    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
-  const podfileProperties = readJsonObject(join(projectRoot, 'ios', 'Podfile.properties.json'));
-  const podfile = read(join('ios', 'Podfile'));
-  const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
-
-  const isExpo = detectIsExpo(projectRoot);
-  const expoRange = (pkg?.dependencies as AnyJson | undefined)?.expo || '';
-  const sdkMajor =
-    parseInt(
-      String(expoRange)
-        .replace(/[^\d.]/g, '')
-        .split('.')[0] ?? '',
-      10,
-    ) || null;
-
-  const provider = appConfig ? providerFromConfig(appConfig) : null;
-  const owner = appConfig ? ownerFromConfig(appConfig) : null;
+  const context: DoctorContext = {
+    root: projectRoot,
+    options,
+    settings: projectSettings,
+    optimizations: null,
+    platforms,
+  };
+  if (machineSettings.corrupt) return { findings: [machineSettings.corrupt], context };
 
   const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
@@ -992,13 +957,9 @@ export function runDoctor(
       use: readAndroidCasToolchain,
     }).optimizations;
   } catch {}
-  const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
-  const easFinding =
-    remoteBuildCache && provider === 'eas'
-      ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
-      : null;
+  context.optimizations = optimizations;
   for (const poolPlatform of ['ios', 'android'] as const) {
-    if (platform && platform !== poolPlatform) continue;
+    if (!platforms.includes(poolPlatform) || (platform && platform !== poolPlatform)) continue;
     const poolSettingError = parkedMaxSetting(poolPlatform).error;
     if (poolSettingError) {
       settingShapeFindings.push(
@@ -1028,6 +989,94 @@ export function runDoctor(
           profileError: simslimProfileError,
           onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
+  const memoryAdvice =
+    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
+
+  const shared = [
+    ...checkStorageLayout(projectRoot, { platform, host, scope: 'shared' }),
+    checkChrome({
+      usesWeb: () => !platform && webSettings(projectSettings).url !== null,
+      chrome: lookupChrome,
+    }),
+    concurrencyFinding,
+    memoryAdvice
+      ? finding(
+          'cost',
+          'Host memory pressure can stall the iOS simulator',
+          memoryAdvice,
+          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
+        )
+      : null,
+    simslimFinding,
+    ...settingShapeFindings,
+    ...checkMachineSettings({
+      settings: projectSettings,
+      layers: machineSettings.layers,
+      projectRoot,
+      optimizations,
+      reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
+    }),
+  ].filter((f): f is Finding => Boolean(f));
+  return { findings: [...shared, ...inspectors.flatMap((inspect) => inspect(context))], context };
+}
+
+export function reactNativeDoctorFindings({
+  root: projectRoot,
+  settings: projectSettings,
+  optimizations,
+  options,
+}: DoctorContext): Finding[] {
+  const {
+    readFile = readFileSync,
+    xcodeMajor = null,
+    easAuth = probeEasAuth,
+    remoteEnv = process.env,
+    lookupAgentDevice = null,
+    lookupEasCli = null,
+    lookupCcache = null,
+    tailnetStatus = realIo.status,
+    now = Date.now,
+    platform,
+    host = process.platform,
+  } = options;
+  const localIos = platform !== 'android' && host === 'darwin';
+  const read = (rel: string): string | null => {
+    const p = join(projectRoot, rel);
+    if (!existsSync(p)) return null;
+    try {
+      return readFile(p, 'utf-8') as string;
+    } catch {
+      return null;
+    }
+  };
+
+  const pkg = readJsonObject(join(projectRoot, 'package.json'));
+  const appConfig = readJsonObject(join(projectRoot, 'app.json'));
+  const dynamicConfig = appConfig
+    ? null
+    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
+  const podfileProperties = readJsonObject(join(projectRoot, 'ios', 'Podfile.properties.json'));
+  const podfile = read(join('ios', 'Podfile'));
+  const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
+
+  const isExpo = detectIsExpo(projectRoot);
+  const expoRange = (pkg?.dependencies as AnyJson | undefined)?.expo || '';
+  const sdkMajor =
+    parseInt(
+      String(expoRange)
+        .replace(/[^\d.]/g, '')
+        .split('.')[0] ?? '',
+      10,
+    ) || null;
+
+  const provider = appConfig ? providerFromConfig(appConfig) : null;
+  const owner = appConfig ? ownerFromConfig(appConfig) : null;
+
+  const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
+  const easFinding =
+    remoteBuildCache && provider === 'eas'
+      ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
+      : null;
   const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
     remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
@@ -1055,16 +1104,13 @@ export function runDoctor(
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
   const easBuildDownloadFinding = projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
 
-  const memoryAdvice =
-    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
-
   return [
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkMainCheckout(projectRoot, { platform, localIos }),
     ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
-    ...checkStorageLayout(projectRoot, { platform, host }),
+    ...checkStorageLayout(projectRoot, { platform, host, scope: 'native' }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
@@ -1074,33 +1120,20 @@ export function runDoctor(
     checkAndroidPathRoom(projectRoot, platform, host),
     checkAndroidSdk(projectRoot, platform),
     checkChrome({
-      usesWeb: () => projectUsesWeb(projectRoot, projectSettings, appConfig, platform),
-      chrome: lookupChrome,
+      usesWeb: () =>
+        !platform &&
+        webSettings(projectSettings).url === null &&
+        ((Array.isArray(((appConfig?.expo ?? appConfig) as AnyJson | null)?.platforms) &&
+          (((appConfig?.expo ?? appConfig) as AnyJson).platforms as unknown[]).includes('web')) ||
+          isPackageResolvable(projectRoot, 'react-native-web')),
+      chrome: options.lookupChrome,
     }),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,
-    concurrencyFinding,
     readOffloadCandidate(tailnetStatus, now(), host),
-    memoryAdvice
-      ? finding(
-          'cost',
-          'Host memory pressure can stall the iOS simulator',
-          memoryAdvice,
-          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
-        )
-      : null,
-    simslimFinding,
     ...remoteFindings,
-    ...settingShapeFindings,
-    ...checkMachineSettings({
-      settings: projectSettings,
-      layers: machineSettings.layers,
-      projectRoot,
-      optimizations,
-      reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
-    }),
-  ].filter((f): f is Finding => Boolean(f));
+  ].filter((value): value is Finding => Boolean(value));
 }
 
 export function checkAndroidPathRoom(

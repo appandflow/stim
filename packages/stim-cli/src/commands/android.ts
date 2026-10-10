@@ -180,7 +180,7 @@ export function registerAndroid(program: Command): void {
     .command('android')
     .description(
       "Build (or install from the shared cache), install and launch this workspace's Android app on its owned " +
-        'emulator, wired to the reserved Metro port. A Debug run starts the dev server when it is not running.',
+        'emulator. React Native and Expo Debug runs start the dev server when it is not running.',
     )
     .option(
       '--eas-profile <name>',
@@ -852,9 +852,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   };
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
-  const { variant, release, cache: cachePolicy } = buildPlan;
+  const { variant, release } = buildPlan;
   record.configuration = variant ?? 'debug';
-  const useBuildCache = cachePolicy.read;
   const hosting = await selectAndroidPlacement({
     root,
     slot,
@@ -1004,6 +1003,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   }
 
   const runtime = options.runtimePlan ?? integration.runtime({ build: buildPlan, prepareMetro, phase });
+  const useBuildCache = buildPlan.cache.read;
   const preparation = await runtime.prepare();
   if (!preparation.ok) {
     const { code, message, remedy, lines } = preparation.error;

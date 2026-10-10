@@ -299,8 +299,11 @@ leased until <time>" for each one.`,
                   the bundle would cost more than installing it
   launched        true, "bundling", or "unverified". THE THREE ARE DIFFERENT
                   FACTS and only the last one is a problem.
-                    true         Metro finished the bundle response, then the app stayed
-                                 alive through a three-second stability window.
+                    true         Metro finished the bundle response, or an app
+                                 without Metro (a release build, or a native
+                                 Xcode or Gradle app) has a live process; then
+                                 the app stayed alive through a three-second
+                                 stability window.
                                  The command checks process liveness when the
                                  platform exposes it. Errors from that window
                                  are printed even when the app stays alive,

@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { MODE_BARE, MODE_EXPO } from '../supervisor/state.ts';
 import type { ServerStarter } from '../supervisor/types.ts';
+import { nativeAndroidIntegration } from './native-android-discovery.ts';
 import {
   appProjectProblem,
   declaresAppDependency,
@@ -13,6 +14,7 @@ import {
   readPackageJson,
 } from '../workspace/project-files.ts';
 import { settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
 
 import {
   createProjectRegistry,
@@ -82,6 +84,7 @@ const reactNativeProject: ProjectIntegration = {
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
       ios: async () => (await import('./react-native-ios.ts')).reactNativeIosProject(root),
       android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
+      doctor: async () => (await import('./react-native-doctor.ts')).reactNativeProjectDoctor(root),
     };
   },
 };
@@ -97,6 +100,14 @@ const swiftPackage: ProjectIntegration = {
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
+      doctor: async () => {
+        const { macosToolchain } = await import('../offload/toolchain.ts');
+        return {
+          inspect: () => [],
+          offloadTargets: ({ options: { host = process.platform, platform } }) =>
+            host === 'darwin' && platform === undefined ? () => [{ platform: 'macos', local: macosToolchain() }] : null,
+        };
+      },
     };
   },
 };
@@ -114,7 +125,13 @@ const browserWeb: ProjectIntegration = {
   },
 };
 
-export const projectIntegrations: readonly ProjectIntegration[] = [reactNativeProject, swiftPackage, browserWeb];
+export const projectIntegrations: readonly ProjectIntegration[] = [
+  reactNativeProject,
+  nativeAndroidIntegration,
+  swiftPackage,
+  browserWeb,
+  nativeXcodeProjectIntegration,
+];
 export const projectRegistry: ProjectRegistry = createProjectRegistry(projectIntegrations);
 export const detectPlatforms: ProjectRegistry['detectPlatforms'] = projectRegistry.detectPlatforms;
 

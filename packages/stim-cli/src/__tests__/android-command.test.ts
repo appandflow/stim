@@ -26,6 +26,7 @@ import { AvdBootError, AvdRecoveryError } from '../engine/device-android.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
+import type { acquireBuildSlot } from '../engine/build-slots.ts';
 import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
@@ -7576,7 +7577,7 @@ describe('registered Android project recipes', () => {
           child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
           child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
           setImmediate(() => {
-            const dir = join(root, 'products', 'apk', 'debug');
+            const dir = join(root, 'products', 'apk', args[0]?.endsWith('Release') ? 'release' : 'debug');
             mkdirSync(dir, { recursive: true });
             writeFileSync(join(dir, 'mobile.apk'), 'native APK');
             writeFileSync(
@@ -7594,67 +7595,277 @@ describe('registered Android project recipes', () => {
     return requests;
   }
 
-  test('an added native recipe compiles Debug, reuses its APK, installs and verifies the process without RN or Metro', async () => {
-    const registry = nativeProject();
-    const requests = compiler();
-    const h = harness({ projectRegistry: registry, variant: 'debug', json: true });
-    const first = await run(h);
-    expect(first.ok).toBe(true);
-    expect(first.facts).toMatchObject({
-      variant: 'debug',
-      metroPort: null,
-      bundleId: 'org.example.native',
-      launched: true,
-      cacheHit: false,
-    });
-    expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({ file: join(root, 'gradlew'), cwd: root });
-    expect(requests[0]!.args[0]).toBe(':mobile:assembleDebug');
-    expect(requests[0]!.args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
-    expect(h.calls.install[0]).toMatchObject({
-      serial: 'emulator-5584',
-      packageName: 'org.example.native',
-      allowUninstall: false,
-    });
-    expect(h.calls.launchRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
-    expect(h.calls.verifyRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
-    for (const calls of [
-      h.calls.metro,
-      h.calls.fingerprint,
-      h.calls.prebuild,
-      h.calls.build,
-      h.calls.swapApk,
-      h.calls.loadProvider,
-      h.calls.launch,
-    ])
-      expect(calls).toEqual([]);
-    const launch = readWorkspaceLaunches(root).android;
-    expect(launch).toMatchObject({ appId: 'org.example.native', metroPort: null, release: false, runtime: 'process' });
-    const second = await run(h);
-    expect(second.facts).toMatchObject({ variant: 'debug', metroPort: null, cacheHit: 'local', launched: true });
-    expect(requests).toHaveLength(1);
-    expect(readFileSync(second.facts!.appPath!, 'utf8')).toBe('native APK');
-    const reload = await runReload({
-      root,
-      platform: 'android',
-      deps: {
-        findWorkspace: () => root,
-        getProject: () => getProject(root),
-        resolveAndroid: () => ({ serial: 'emulator-5584' }),
-        androidProcess: () => 4242,
-        readBrowser: () => null,
-        resolveMetro: never('a native reload Metro probe'),
-        reloadMetro: never('a native reload Metro command'),
-        ensureReverse: never('a native reload reverse'),
+  test.each([
+    { variant: 'freeDebug', badSignature: false },
+    { variant: 'freeRelease', badSignature: false },
+    { variant: 'freeRelease', badSignature: true },
+  ])(
+    'production native provider verifies signing before install ($variant, bad signature: $badSignature)',
+    async ({ variant, badSignature }) => {
+      nativeProject();
+      writeFileSync(join(root, 'settings.gradle.kts'), 'include(":mobile")');
+      const sdk = join(root, 'native-sdk');
+      const tools = join(sdk, 'build-tools', '36.0.0');
+      mkdirSync(tools, { recursive: true });
+      const signer = join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
+      writeFileSync(signer, 'fixture signer');
+      const requests: string[][] = [];
+      const signatures: string[][] = [];
+      setExecutor(
+        makeExecutor({
+          async runFileAsync(file, args = []) {
+            expect(file).toBe(signer);
+            signatures.push([...args]);
+            if (badSignature) throw new Error('DOES NOT VERIFY');
+            return '';
+          },
+          spawn(file, args = [], options = {}) {
+            expect(file).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
+            expect(options.cwd).toBe(root);
+            requests.push([...args]);
+            const child = new EventEmitter() as EventEmitter & { stdout: EventEmitter; stderr: EventEmitter };
+            child.stdout = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            child.stderr = Object.assign(new EventEmitter(), { setEncoding: () => {} });
+            setImmediate(() => {
+              const modelFile = args
+                .find((arg) => arg.startsWith('-Pstim.native.model='))!
+                .slice('-Pstim.native.model='.length);
+              mkdirSync(join(workspaceDir(root), 'gradle-build'), { recursive: true });
+              const apk = join(root, 'native.apk');
+              writeFileSync(apk, 'signed APK');
+              writeFileSync(
+                modelFile,
+                JSON.stringify({
+                  schema: 1,
+                  module: ':mobile',
+                  variant,
+                  applicationId: 'org.example.variant',
+                  sdkDirectory: sdk,
+                  elements: [{ path: apk, filters: [] }],
+                }),
+              );
+              child.stdout.emit('data', 'BUILD SUCCESSFUL\n');
+              child.emit('exit', 0, null);
+            });
+            return child as unknown as ChildProcess;
+          },
+        }),
+      );
+      const h = harness({
+        variant,
+        json: true,
+        resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'none' } } }),
+      });
+      const installed = expect.objectContaining({ packageName: 'org.example.variant' });
+      const launched = expect.objectContaining({
+        appId: 'org.example.variant',
+        runtime: 'process',
+        release: variant.endsWith('Release'),
+      });
+      for (let attempt = 1; attempt <= (badSignature ? 1 : 2); attempt++) {
+        const result = await run(h);
+        expect(requests).toHaveLength(attempt);
+        expect(requests.at(-1)![0]).toBe(':stimExportAndroidApk');
+        expect(requests.at(-1)).toContain(`-Pstim.native.variant=${variant}`);
+        expect(requests.at(-1)).toContain('--build-cache');
+        expect(requests.at(-1)!.some((arg) => /reactNative/.test(arg))).toBe(false);
+        expect(signatures.at(-1)).toEqual(['verify', join(root, 'native.apk')]);
+        expect(result).toMatchObject(
+          badSignature
+            ? { ok: false, error: { code: 'STIM_BUILD_FAILED' } }
+            : {
+                ok: true,
+                facts: {
+                  bundleId: 'org.example.variant',
+                  variant,
+                  metroPort: null,
+                  launched: true,
+                  cacheSkipped: true,
+                  cacheKey: null,
+                  fingerprint: null,
+                },
+              },
+        );
+        expect(result.error?.message?.includes('DOES NOT VERIFY')).toBe(badSignature ? true : undefined);
+        expect(h.calls.install).toHaveLength(badSignature ? 0 : attempt);
+        expect(h.calls.launchRelease).toHaveLength(badSignature ? 0 : attempt);
+        expect(h.calls.install.at(-1)).toEqual(badSignature ? undefined : installed);
+        expect(readWorkspaceLaunches(root).android).toEqual(badSignature ? undefined : launched);
+      }
+      for (const calls of [
+        h.calls.metro,
+        h.calls.fingerprint,
+        h.calls.prebuild,
+        h.calls.build,
+        h.calls.swapApk,
+        h.calls.loadProvider,
+        h.calls.launch,
+      ])
+        expect(calls).toEqual([]);
+    },
+  );
+
+  test.each(['debug', 'release'])(
+    'a native %s recipe reuses its APK with release bundle swaps disabled',
+    async (variant) => {
+      const registry = nativeProject();
+      const requests = compiler();
+      const h = harness({
+        projectRegistry: registry,
+        variant,
+        json: true,
+        resolveSettingsFor: () => ({ optimizations: { releaseBundleSwap: false } }),
+      });
+      const first = await run(h);
+      expect(first.ok).toBe(true);
+      expect(first.facts).toMatchObject({
+        variant,
+        metroPort: null,
+        bundleId: 'org.example.native',
+        launched: true,
+        cacheHit: false,
+      });
+      expect(requests).toHaveLength(1);
+      expect(requests[0]).toMatchObject({ file: join(root, 'gradlew'), cwd: root });
+      expect(requests[0]!.args[0]).toBe(variant === 'release' ? ':mobile:assembleRelease' : ':mobile:assembleDebug');
+      expect(requests[0]!.args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
+      expect(h.calls.install[0]).toMatchObject({
+        serial: 'emulator-5584',
+        packageName: 'org.example.native',
+        allowUninstall: variant === 'release',
+      });
+      expect(h.calls.launchRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+      expect(h.calls.verifyRelease).toEqual([{ serial: 'emulator-5584', packageName: 'org.example.native' }]);
+      for (const calls of [
+        h.calls.metro,
+        h.calls.fingerprint,
+        h.calls.prebuild,
+        h.calls.build,
+        h.calls.swapApk,
+        h.calls.loadProvider,
+        h.calls.launch,
+      ])
+        expect(calls).toEqual([]);
+      const launch = readWorkspaceLaunches(root).android;
+      expect(launch).toMatchObject({
+        appId: 'org.example.native',
+        metroPort: null,
+        release: variant === 'release',
+        runtime: 'process',
+      });
+      const second = await run(h);
+      expect(second.facts).toMatchObject({
+        variant,
+        metroPort: null,
+        cacheHit: 'local',
+        cacheSkipped: false,
+        launched: true,
+      });
+      expect(requests).toHaveLength(1);
+      expect(readFileSync(second.facts!.appPath!, 'utf8')).toBe('native APK');
+      const reload = await runReload({
+        root,
+        platform: 'android',
+        deps: {
+          findWorkspace: () => root,
+          getProject: () => getProject(root),
+          resolveAndroid: () => ({ serial: 'emulator-5584' }),
+          androidProcess: () => 4242,
+          readBrowser: () => null,
+          resolveMetro: never('a native reload Metro probe'),
+          reloadMetro: never('a native reload Metro command'),
+          ensureReverse: never('a native reload reverse'),
+        },
+      });
+      expect(reload).toMatchObject({ ok: false, error: { code: 'STIM_NO_METRO' } });
+      assert(!reload.ok);
+      expect(reload.error.message).toContain('native process without Metro');
+      const log = readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8');
+      expect(log).toContain('native process');
+      expect(log).not.toContain('fetched a bundle');
+      expect(log).not.toContain('embedded JS');
+    },
+  );
+
+  test('a cache-ineligible native recipe compiles every run without cache access or shared-build waits', async () => {
+    nativeProject();
+    const cache = vi.fn<() => never>(never('cache access without an identity'));
+    const loadProvider = vi.fn<() => never>(never('provider access without an identity'));
+    const projectRegistry = createProjectRegistry([
+      ...projectIntegrations,
+      {
+        ...nativeAndroidFixture,
+        inspect(path) {
+          const match = nativeAndroidFixture.inspect(path);
+          return match
+            ? {
+                ...match,
+                android: async () => {
+                  const project = await match.android!();
+                  return {
+                    ...project,
+                    artifact(context) {
+                      return {
+                        ...project.artifact(context),
+                        identity: async () => ({
+                          cacheIneligible: 'native inputs include an undeclared external file',
+                        }),
+                        reconcile: async () => ({ identity: null, rekeyedBy: [], cacheRefusal: null }),
+                        cache,
+                        legacyCache: { load: loadProvider, runOptions: null },
+                      };
+                    },
+                  };
+                },
+              }
+            : null;
+        },
       },
+    ]);
+    let slotHeld = false;
+    const requests = compiler(() => expect(slotHeld).toBe(true));
+    const acquireSlot = vi.fn<typeof acquireBuildSlot>(async () => {
+      expect(slotHeld).toBe(false);
+      slotHeld = true;
+      return { acquired: true, path: '/slot', index: 0 };
     });
-    expect(reload).toMatchObject({ ok: false, error: { code: 'STIM_NO_METRO' } });
-    assert(!reload.ok);
-    expect(reload.error.message).toContain('native process without Metro');
-    const log = readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8');
-    expect(log).toContain('native process');
-    expect(log).not.toContain('fetched a bundle');
-    expect(log).not.toContain('embedded JS');
+    const releaseSlot = vi.fn<() => boolean>(() => {
+      expect(slotHeld).toBe(true);
+      slotHeld = false;
+      return true;
+    });
+    const h = harness({
+      projectRegistry,
+      json: true,
+      getLimits: () => ({ maxBuilds: 1, maxDevices: 0 }),
+      acquireSlot,
+      releaseSlot,
+      resolveCacheProvider: () => ({ provider: 'fixture', options: {} }),
+      loadCacheProviderModule: loadProvider,
+    });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const result = await run(h);
+      expect(result.ok).toBe(true);
+      expect(result.facts).toMatchObject({
+        fingerprint: null,
+        cacheKey: null,
+        cacheHit: false,
+        cacheSkipped: true,
+        waitedForBuild: null,
+        launched: true,
+      });
+      expect(requests).toHaveLength(attempt);
+      expect(acquireSlot).toHaveBeenCalledTimes(attempt);
+      expect(releaseSlot).toHaveBeenCalledTimes(attempt);
+      expect(slotHeld).toBe(false);
+      expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
+    }
+    expect(cache).not.toHaveBeenCalled();
+    expect(loadProvider).not.toHaveBeenCalled();
+    expect(h.calls.acquireLock).toEqual([]);
+    expect(h.calls.waitForBuild).toEqual([]);
+    expect(h.calls.releaseLock).toEqual([]);
+    expect(h.calls.install).toHaveLength(2);
   });
 
   test('a native source edit during compilation prevents publication and the next run recompiles', async () => {

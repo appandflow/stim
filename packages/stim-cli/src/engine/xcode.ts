@@ -1,6 +1,6 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
@@ -553,6 +553,7 @@ export async function buildXcode({
   project,
   scheme = null,
   configuration = 'Debug',
+  applicationTarget,
   sdk = 'iphonesimulator',
   destination = null,
   arch = null,
@@ -572,6 +573,7 @@ export async function buildXcode({
   project: XcodeProject;
   scheme?: string | null;
   configuration?: string;
+  applicationTarget?: { name: string; projectPath: string };
   sdk?: string;
   destination?: string | null;
   arch?: string | null;
@@ -809,6 +811,13 @@ export async function buildXcode({
       for (const item of Array.isArray(targets) ? targets : []) {
         const settings = item?.buildSettings;
         if (settings?.PRODUCT_TYPE !== 'com.apple.product-type.application' || settings.PLATFORM_NAME !== sdk) continue;
+        if (
+          applicationTarget &&
+          (settings.TARGET_NAME !== applicationTarget.name ||
+            typeof settings.PROJECT_FILE_PATH !== 'string' ||
+            realpathSync(settings.PROJECT_FILE_PATH) !== realpathSync(applicationTarget.projectPath))
+        )
+          continue;
         const dir = settings.TARGET_BUILD_DIR;
         const name = settings.FULL_PRODUCT_NAME;
         if (

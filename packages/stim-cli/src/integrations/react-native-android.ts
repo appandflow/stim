@@ -36,7 +36,10 @@ import {
   type AndroidProject,
 } from './android-project.ts';
 
+import { planReactNativeAndroid, type AndroidPlanDeps } from './react-native-android-plan.ts';
+
 export interface ReactNativeAndroidDependencies {
+  plan?: Partial<AndroidPlanDeps>;
   fingerprint?: typeof fingerprintProject;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
@@ -60,6 +63,7 @@ export function reactNativeAndroidProject(
 ): AndroidProject {
   const isExpo = detectIsExpo(root);
   return {
+    plan: (options) => planReactNativeAndroid(root, options, runtimeKind, dependencies.plan),
     isExpo,
     appIds: () => detectAppIds(root),
     packageRemedy:

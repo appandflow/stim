@@ -962,6 +962,14 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(renderTopic('agent')).toContain('--remote-config');
 });
 
+test('native Xcode and Gradle apps route to their lifecycle sections', () => {
+  expect(sectionNames('lifecycle')).toEqual(expect.arrayContaining(['native-ios', 'native-android']));
+  for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
+    expect(guide).toContain('lifecycle native-ios');
+    expect(guide).toContain('lifecycle native-android');
+  }
+});
+
 test('hosted Android command and safety routing render through the guides', () => {
   expect(sectionNames('lifecycle')).toContain('hosted-android');
   expect(renderTopic('agent')).toContain('guide lifecycle hosted-android');
