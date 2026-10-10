@@ -1,6 +1,6 @@
 export const TUTORIAL_REPO = 'appandflow/stim-tutorial';
 
-const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
+export const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 
@@ -15,7 +15,7 @@ export const TUTORIAL_ASKS = {
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   delete:
     'Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.',
-  share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.`,
+  share: `Open a pull request to ${TUTORIAL_REPO} with my title color change, with before and after screenshots from the simulator. See stim guide tutorial share.`,
   retry: 'The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again.',
 };
 
@@ -107,11 +107,16 @@ export const TUTORIAL_STEPS: {
     section: 'share',
     commands: [
       'cd "{tour}"',
-      'git commit -am "Tutorial change" -m "Build <time>, second build cache <hit or miss>"',
-      'xcrun simctl io {udid} screenshot finish.png',
+      'git commit -am "<one-line summary>"',
+      'mkdir -p .expo/screenshots',
+      'git checkout origin/main -- theme.js',
+      'xcrun simctl io {udid} screenshot .expo/screenshots/before.png',
+      'git checkout HEAD -- theme.js',
+      'xcrun simctl io {udid} screenshot .expo/screenshots/after.png',
+      'cp .github/pull_request_template.md .expo/screenshots/body.md',
       `gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork`,
       'git push -u fork HEAD',
-      `gh pr create --repo ${TUTORIAL_REPO} --fill --attach "finish.png#The change running in the simulator"`,
+      `gh pr create --repo ${TUTORIAL_REPO} --title "<one-line summary>" --body-file .expo/screenshots/body.md --attach ".expo/screenshots/before.png#Before" --attach ".expo/screenshots/after.png#After"`,
     ],
   },
   {
