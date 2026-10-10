@@ -100,7 +100,8 @@ window for and ones other workspaces or agents are using. Never quit Device
 Hub to free memory or clean up; use `stim stop` on workspaces you own
 instead. [Siniulator's setup notes](https://github.com/kmagiera/Siniulator#working-with-device-hub)
 describe a macOS preference that stops this; it is undocumented whether that
-preference also covers simulators Device Hub never displayed.
+preference also covers simulators Device Hub never displayed. See
+[Keep simulators running when Device Hub quits](#keep-simulators-running-when-device-hub-quits).
 To display owned simulators in Siniulator, set `"iosSimulatorApp": "siniulator"`
 at the top level of `~/.stim/config.json` after installing it. For one launch,
 use `stim ios --simulator-app siniulator` (or `--simulator-app xcode` to use
@@ -239,6 +240,51 @@ models share each platform's pool limit: an infrequently reused iPad can be
 evicted as the oldest parked simulator when that pool fills. Upgrades preserve
 existing ownership state; do not erase it. Use a slot-aware CLI consistently
 while named assignments exist, because older versions cannot manage them.
+
+### Keep simulators running when Device Hub quits
+
+Stim never changes Apple preferences. The commands below are optional, you run
+them yourself, and Stim does not check or depend on them.
+
+**Device Hub quit.** Siniulator's setup notes document this private,
+machine-wide Xcode preference, tested with Xcode 27.0. Apple does not document
+it, and its effect can change between Xcode releases.
+
+```sh
+defaults write com.apple.dt.Devices shutdownStartedDevicesOnQuit -bool false
+```
+
+It is meant to stop Device Hub from shutting down the simulators it started when
+you quit it. Whether it covers simulators Device Hub never displayed, and
+whether it holds on every Xcode build, is not confirmed. On one Mac running
+macOS 27 with Xcode 27.1 beta the write failed with `Could not write domain`,
+so the command may not work everywhere. Keep treating a Device Hub quit as
+unsafe, and stop only your own workspaces with `stim stop`.
+
+To undo it, delete the key:
+
+```sh
+defaults delete com.apple.dt.Devices shutdownStartedDevicesOnQuit
+```
+
+**Xcode Run and Stop for native iOS development.** Xcode may shut down an
+unbooted simulator target when you press Stop. This Xcode preference may help;
+its effect has not been verified with Stim:
+
+```sh
+defaults write com.apple.dt.Xcode DVTiPhoneSimulatorAlwaysLaunchInCoreSimulatorSession -bool true
+```
+
+Quit Xcode before you set it, and boot the exact target with Stim before you
+press Run in Xcode. It applies to iOS simulators only, not to native macOS
+development. To undo it, quit Xcode and delete the key:
+
+```sh
+defaults delete com.apple.dt.Xcode DVTiPhoneSimulatorAlwaysLaunchInCoreSimulatorSession
+```
+
+Neither preference changes which devices Stim owns or stops. `stim stop` still
+shuts down only the owned devices of the workspace you stop.
 
 ## Local devices
 
