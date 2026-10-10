@@ -32,7 +32,7 @@
         ], updates: updates,
         working: nil, progress: nil, refreshing: false, failure: failure, tailscaleRunning: tailscale, canAsk: true,
         addDisabled: false,
-        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in }, showDetails: { _ in },
+        updatesAutomatically: .constant(false), add: {}, ask: { _ in }, update: { _ in },
         remove: { _ in }, poolDisabled: poolDisabled, thisMacName: "MacBook Pro", thisMac: EmptyView()
       )
       .font(.stim(.body))

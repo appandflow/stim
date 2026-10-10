@@ -122,6 +122,15 @@ import Testing
     #expect(old.line == "load 1.5/core")
   }
 
+  @Test func namesWhatOnlyTheCardsIdentityLineShows() throws {
+    let full = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: Data(
+        #"{"machine":"mini","state":"approved","dnsName":"mini.tail1.ts.net","capacity":{"cpus":10,"running":0,"max":1}}"#.utf8))
+    #expect(full.identityLine == "mini.tail1.ts.net \u{00B7} 10 cores \u{00B7} 0 of 1 offloaded builds")
+    #expect(BuildMachineStatus(machine: "mini", state: .notAsked).identityLine == nil)
+  }
+
   @Test func readsEachMachineStateFromDoctorAndToleratesNewOnes() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,

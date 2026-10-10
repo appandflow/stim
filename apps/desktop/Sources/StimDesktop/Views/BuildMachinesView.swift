@@ -11,7 +11,6 @@ struct BuildMachinesView: View {
   var workspace: String?
 
   @State private var removing: String?
-  @State private var detailed: String?
   @State private var adding: AddMachineModel?
   @AppStorage(AppPreferences.Key.updatesBuildMachines) private var updatesAutomatically = false
   @ObservedObject private var server = ServerController.shared
@@ -36,7 +35,7 @@ struct BuildMachinesView: View {
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
       update: { entry in Task { await model.update(entry, checkout: checkout) } },
-      showDetails: { entry in detailed = entry }, remove: { entry in removing = entry },
+      remove: { entry in removing = entry },
       poolDisabled: model.poolDisabled,
       setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
       showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
@@ -110,16 +109,6 @@ struct BuildMachinesView: View {
     ) {
       if let adding { AddMachineSheet(model: adding) }
     }
-    .sheet(
-      isPresented: .init(get: { detailed != nil }, set: { if !$0 { detailed = nil } })
-    ) {
-      if let entry = detailed {
-        BuildMachineDetails(
-          entry: entry, status: statuses?.first { $0.machine == entry },
-          capabilities: buildMachineCapabilities(entry, hosts: model.check(in: checkout)?.hosts)
-        ) { detailed = nil }
-      }
-    }
     .onQuitRequested {
       adding?.stop()
       adding = nil
@@ -189,7 +178,6 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var add: () -> Void
   var ask: (String) -> Void
   var update: (String) -> Void
-  var showDetails: (String) -> Void
   var remove: (String) -> Void
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
@@ -300,7 +288,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             progress: working == entry ? progress : nil,
             canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
-            showDetails: { showDetails(entry) }, remove: { remove(entry) }, toggles: poolToggles(entry))
+            remove: { remove(entry) }, toggles: poolToggles(entry))
         }
       } header: {
         HStack {
@@ -340,7 +328,6 @@ private struct BuildMachineRow<Toggles: View>: View {
   var update: MachineUpdatePhase?
   var ask: () -> Void
   var startUpdate: () -> Void
-  var showDetails: () -> Void
   var remove: () -> Void
   var toggles: Toggles
 
@@ -364,6 +351,10 @@ private struct BuildMachineRow<Toggles: View>: View {
           }
         }
         VStack(alignment: .leading, spacing: Space.md) {
+          if let identity = status?.identityLine {
+            Text(verbatim: identity).font(.stim(.footnote)).foregroundStyle(Palette.tertiary).lineLimit(1)
+              .textSelection(.enabled)
+          }
           if let status, !status.rowDetail.isEmpty {
             Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               .fixedSize(horizontal: false, vertical: true)
@@ -414,17 +405,11 @@ private struct BuildMachineRow<Toggles: View>: View {
       if let status, status.state.canAsk(requested: status.deviceId != nil) {
         Button(status.state == .notAsked ? "Ask" : "Ask Again", action: ask).disabled(working || !canAsk)
       }
-      Menu {
-        Button("Details\u{2026}", action: showDetails)
-        Button("Remove", role: .destructive, action: remove)
-          .disabled(working || (status?.state == .nodeChanged && !canAsk))
-      } label: {
-        Image(systemName: "ellipsis.circle")
-      }
-      .menuStyle(.borderlessButton)
-      .menuIndicator(.hidden)
-      .fixedSize()
-      .accessibilityLabel("More actions for \(entry)")
+      Button("Remove\u{2026}", action: remove)
+        .buttonStyle(.stim(.secondary))
+        .fixedSize()
+        .disabled(working || (status?.state == .nodeChanged && !canAsk))
+        .accessibilityLabel("Remove \(entry)")
     }
     .padding(.vertical, Space.sm)
   }
@@ -495,43 +480,5 @@ private struct RemoveMachineSheet: View {
     }
     .padding(Space.xxl)
     .frame(width: 460)
-  }
-}
-
-private struct BuildMachineDetails: View {
-  var entry: String
-  var status: BuildMachineStatus?
-  var capabilities: [String]
-  var done: () -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: Space.lg) {
-      MachineHeading(icon: "desktopcomputer", title: entry, subtitle: status?.dnsName) {
-        if let status {
-          let listed = status.listStatus
-          Pill(listed.title, tone: listed.tone, size: .small)
-        }
-      }
-      if let status {
-        Text(verbatim: status.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        if let reasons = status.readiness.reasons {
-          Text(verbatim: reasons).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
-        }
-        if let capacity = status.capacity?.line, !capacity.isEmpty {
-          Text(verbatim: capacity).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
-        }
-      } else {
-        Text("Checking\u{2026}").foregroundStyle(Palette.secondary)
-      }
-      HStack(spacing: Space.xs) {
-        ForEach(capabilities, id: \.self) { name in Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) } }
-      }
-      HStack {
-        Spacer()
-        Button("Done", action: done).buttonStyle(.stim(.primary)).keyboardShortcut(.defaultAction)
-      }
-    }
-    .padding(Space.xxl)
-    .frame(width: 440)
   }
 }

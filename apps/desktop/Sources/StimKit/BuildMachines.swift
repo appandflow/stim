@@ -364,6 +364,14 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return problemLines.isEmpty ? detail : ""
   }
 
+  /// Its MagicDNS name, cores and offloaded builds, which the resource summary leaves out; nil when none is known.
+  public var identityLine: String? {
+    var parts = [dnsName].compactMap { $0 }
+    if let cpus = capacity?.cpus { parts.append("\(cpus) cores") }
+    if let running = capacity?.running, let max = capacity?.max { parts.append("\(running) of \(max) offloaded builds") }
+    return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+  }
+
   /// For a request waiting for approval: the command a person runs on that Mac to approve this one, when doctor
   /// reported the request's id.
   public var approvalCommand: String? {
