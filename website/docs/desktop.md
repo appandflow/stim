@@ -102,6 +102,11 @@ a tiny Expo app, and shows:
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
 - **Delete the Test App (optional):** a prompt to remove the tutorial for good. Your agent removes any worktrees of the clone and then the clone itself with a plain `stim worktree remove`, stopping to ask if one holds changes, so their simulators, Metro ports and Stim records are torn down, and then deletes the clone's folder. The step completes when Stim no longer lists the clone and its folder is gone. Press **Next** to keep the clone.
 
+Your agent checks each change on its simulator with agent-device, following
+`stim guide tutorial run`: it taps **Tap me**, toggles **Dark accent**, types a
+name and takes a screenshot, so Desktop records its actions for the Agent
+Actions and Replay step.
+
 When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.

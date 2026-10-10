@@ -1,6 +1,6 @@
 export const TUTORIAL_REPO = 'appandflow/stim-tutorial';
 
-const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
+export const TUTORIAL_BUNDLE_ID = 'dev.stim.tutorial';
 
 export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 

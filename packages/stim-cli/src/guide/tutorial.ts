@@ -1,5 +1,5 @@
 import { TUTORIAL_VERSION } from '@stim-cli/core/state';
-import { TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT, TUTORIAL_STEPS } from './tutorial-data.ts';
+import { TUTORIAL_BUNDLE_ID, TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT, TUTORIAL_STEPS } from './tutorial-data.ts';
 import type { GuideTopic } from './types.ts';
 
 const paths = `Use {base} = ~/stim-tutorial unless the user named another folder. Expand ~
@@ -68,6 +68,21 @@ Report the findings of stim doctor and do not act on them: no SimSlim install, n
 and stop.
 
 ${local}
+
+Check each change the user asks for on its worktree's simulator with
+agent-device, so Stim Desktop records your actions and the user can replay
+them. From that worktree, with AGENT_DEVICE_STATE_DIR set to
+agentDevice.stateDir and <ios.udid> taken from stim status --json, run:
+
+  agent-device open ${TUTORIAL_BUNDLE_ID} --platform ios --udid <ios.udid>
+
+Then tap tap-button, toggle dark-accent-switch, type a name in name-input and
+take a screenshot (agent-device screenshot). Refs expire after each action:
+run agent-device snapshot -i before every action and use the ref it reports
+for that testID. Confirm the change in the snapshot and the screenshot. When
+agentDevice.installed is false, do not install agent-device unasked: check
+the change with the build result and stim logs --errors, and tell the user
+that agent-device would let you tap through the app.
 
 PAUSE: end the turn. Tell the user to ask for a visual change next, such as
 making the title purple, in their own words. It runs in a new linked worktree
