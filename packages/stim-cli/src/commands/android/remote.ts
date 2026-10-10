@@ -2,7 +2,7 @@ import { automaticDevicePlacement, devicePlacementLine } from '../../device-host
 import { budgetGate } from '../../budget.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
-import type { DevicePlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
+import type { DevicePlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
 import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
@@ -15,6 +15,7 @@ export async function connectAndroidHosting({
   slot,
   machine,
   release,
+  appMode = release ? 'release' : 'development',
   metroCheck,
   selectors,
   read = readHostedAndroid,
@@ -25,6 +26,7 @@ export async function connectAndroidHosting({
   slot: string;
   machine: string | null;
   release: boolean;
+  appMode?: HostedAppOffer['mode'];
   metroCheck: boolean;
   selectors: HostedDeviceSelectors;
   read?: typeof readHostedAndroid;
@@ -51,7 +53,7 @@ export async function connectAndroidHosting({
       },
     };
   if (!machine) return { target: null };
-  if (!release && !metroCheck)
+  if (appMode === 'development' && !metroCheck)
     return {
       failure: {
         code: 'STIM_BAD_ARG',
@@ -75,7 +77,7 @@ export async function connectAndroidHosting({
       };
   }
   try {
-    return { target: await prepare(machine, selectors, recorded) };
+    return { target: await prepare(machine, selectors, recorded, appMode === 'process' ? appMode : undefined) };
   } catch (error) {
     return {
       failure: {
@@ -127,6 +129,7 @@ export async function selectAndroidPlacement({
     }
   | { failure: { code: string; message: string; remedy?: string } }
 > {
+  const appMode = args.appMode ?? (args.release ? 'release' : 'development');
   const selectors =
     selected.kind === 'hosted'
       ? {
@@ -155,6 +158,7 @@ export async function selectAndroidPlacement({
       root: args.root,
       slot: args.slot,
       platform: 'android',
+      ...(appMode === 'process' ? { appMode } : {}),
       selectors,
       buildMachine,
       noWait,
@@ -175,7 +179,7 @@ export async function selectAndroidPlacement({
         budget: await checkBudget({ root: args.root, note }),
         devicePlacement: placed.placement,
       };
-    if (placed.target && !args.release && !args.metroCheck)
+    if (placed.target && appMode === 'development' && !args.metroCheck)
       return {
         failure: {
           code: 'STIM_BAD_ARG',

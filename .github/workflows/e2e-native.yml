@@ -69,6 +69,10 @@ on:
     - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
+      hosted_native_android:
+        description: Run only hosted native Android acceptance
+        type: boolean
+        default: false
       native_ios_only:
         description: 'Run only the native Xcode acceptance fixture'
         type: boolean
@@ -115,8 +119,8 @@ on:
 concurrency:
   # The event name keeps a push to main from cancelling the nightly loop, which
   # runs on the same ref.
-  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}
-  cancel-in-progress: true
+  group: e2e-native-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}${{ inputs.native_gradle && '-gradle' || '' }}${{ inputs.hosted_native_android && '-hosted-android' || '' }}
+  cancel-in-progress: ${{ !inputs.hosted_native_android }}
 
 permissions:
   contents: read
@@ -127,7 +131,7 @@ env:
 jobs:
   plan:
     name: plan
-    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle)
+    if: github.event_name != 'workflow_dispatch' || (!inputs.native_ios_only && !inputs.native_gradle && !inputs.hosted_native_android)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -618,7 +622,7 @@ jobs:
 
   native-xcode:
     name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
-    if: github.event_name == 'workflow_dispatch' && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
     runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
     timeout-minutes: 45
     env:
@@ -668,7 +672,7 @@ jobs:
 
   native-gradle:
     name: native Gradle Android
-    if: github.event_name == 'workflow_dispatch' && inputs.native_gradle
+    if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && inputs.native_gradle
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -726,3 +730,54 @@ jobs:
             ${{ runner.temp }}/native-gradle/project/mobile/src
             ${{ runner.temp }}/native-gradle/project/build/reports
             ${{ runner.temp }}/native-gradle/gradle-home/daemon
+
+  hosted-native-android:
+    if: github.event_name == 'workflow_dispatch' && inputs.hosted_native_android
+    runs-on: macos-15-intel
+    timeout-minutes: 65
+    env:
+      STIM_QA_ANDROID_SYSTEM_IMAGE: system-images;android-30;aosp_atd;x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Verify accelerated emulator support before building
+        run: |
+          mkdir -p "$RUNNER_TEMP/hosted-native-android/evidence"
+          sdkmanager 'emulator' 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' "$STIM_QA_ANDROID_SYSTEM_IMAGE"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | tee "$RUNNER_TEMP/hosted-native-android/evidence/acceleration.txt"
+      - uses: ./.github/actions/setup-stim
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+          cache-disabled: true
+      - name: Install pinned remote UI driver
+        run: |
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Prepare native fixture and record source
+        run: |
+          git rev-parse HEAD > "$RUNNER_TEMP/hosted-native-android/evidence/source.txt"
+          node test/e2e/native/run-gradle-e2e.mjs prepare "$RUNNER_TEMP/hosted-native-android"
+      - name: Hosted native build, UI, reuse, failure recovery and scoped stop
+        run: node --experimental-transform-types test/e2e/native/run-hosted-native-android-e2e.mjs "$RUNNER_TEMP/hosted-native-android"
+      - name: Upload hosted acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-native-android-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosted-native-android/evidence
+          if-no-files-found: error
+          retention-days: 14

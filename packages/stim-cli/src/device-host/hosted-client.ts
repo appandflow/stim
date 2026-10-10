@@ -124,10 +124,10 @@ export function requireHostedAppMode(
   mode?: HostedAppOffer['mode'],
 ): void {
   if (mode !== 'process') return;
-  if (platform !== 'ios' || !host.connection.supports('hosted-ios-process'))
+  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-process' : 'hosted-android-process'))
     throw credentialRefusal(
       `${host.machine} does not support hosted ${platform} process apps.`,
-      `Update stim-server on ${host.machine} to a version supporting hosted iOS process apps, then retry.`,
+      `Update stim-server on ${host.machine} to a version supporting hosted ${platform} process apps, then retry.`,
     );
 }
 

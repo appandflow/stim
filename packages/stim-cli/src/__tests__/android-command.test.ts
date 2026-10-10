@@ -7664,12 +7664,15 @@ describe('registered Android project recipes', () => {
   }
 
   test.each([
-    { variant: 'freeDebug', badSignature: false },
-    { variant: 'freeRelease', badSignature: false },
-    { variant: 'freeRelease', badSignature: true },
+    { variant: 'freeDebug', badSignature: false, hosted: false },
+    { variant: 'freeDebug', badSignature: false, hosted: true },
+    { variant: 'freeRelease', badSignature: false, hosted: false },
+    { variant: 'freeRelease', badSignature: false, hosted: true },
+    { variant: 'freeRelease', badSignature: true, hosted: false },
+    { variant: 'freeRelease', badSignature: true, hosted: true },
   ])(
-    'production native provider verifies signing before install ($variant, bad signature: $badSignature)',
-    async ({ variant, badSignature }) => {
+    'production native provider verifies signing before install ($variant, hosted: $hosted, bad signature: $badSignature)',
+    async ({ variant, badSignature, hosted }) => {
       nativeProject();
       writeFileSync(join(root, 'settings.gradle.kts'), 'include(":mobile")');
       const sdk = join(root, 'native-sdk');
@@ -7719,9 +7722,53 @@ describe('registered Android project recipes', () => {
           },
         }),
       );
+      const device = {
+        avdName: 'stim-host-native',
+        serial: 'emulator-5590',
+        consolePort: 5590,
+        systemImage: 'system-images;android-36;google_apis;arm64-v8a',
+        deviceProfile: 'pixel_6',
+        architecture: 'arm64-v8a' as const,
+      };
+      const placement = {
+        machine: 'mini',
+        selected: 'mini',
+        session: '12345678-1234-1234-1234-123456789abc',
+        appAttempt: 'native',
+        device,
+        agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+      };
+      const modes: unknown[] = [];
+      const delivered: unknown[] = [];
       const h = harness({
         variant,
         json: true,
+        ...(hosted ? { remoteDevice: 'mini', slot: 'tablet', metroCheck: false } : {}),
+        prepareHostedAndroid: async (_machine: string, _selectors: unknown, _recorded: unknown, mode: unknown) => {
+          modes.push(mode);
+          return { host: { machine: 'mini', connection: { close() {} } }, choice: device, session: null };
+        },
+        placeHostedAndroid: async (
+          _target: unknown,
+          options: {
+            mode?: string;
+            release: boolean;
+            bundle: string;
+            bundleId: string;
+            devClientScheme?: string;
+            reserved: (value: typeof placement) => void;
+          },
+        ) => {
+          expect(readFileSync(options.bundle, 'utf8')).toBe('signed APK');
+          expect(options.bundleId).toBe('org.example.variant');
+          delivered.push({
+            mode: options.mode,
+            release: options.release,
+            devClientScheme: options.devClientScheme,
+          });
+          options.reserved(placement);
+          return { placement, launched: true };
+        },
         resolveSettingsFor: () => ({ optimizations: { android: { compilerCache: 'none' } } }),
       });
       const installed = expect.objectContaining({ packageName: 'org.example.variant' });
@@ -7755,10 +7802,25 @@ describe('registered Android project recipes', () => {
               },
         );
         expect(result.error?.message?.includes('DOES NOT VERIFY')).toBe(badSignature ? true : undefined);
-        expect(h.calls.install).toHaveLength(badSignature ? 0 : attempt);
-        expect(h.calls.launchRelease).toHaveLength(badSignature ? 0 : attempt);
-        expect(h.calls.install.at(-1)).toEqual(badSignature ? undefined : installed);
-        expect(readWorkspaceLaunches(root).android).toEqual(badSignature ? undefined : launched);
+        expect(h.calls.install).toHaveLength(badSignature || hosted ? 0 : attempt);
+        expect(h.calls.launchRelease).toHaveLength(badSignature || hosted ? 0 : attempt);
+        expect(h.calls.install.at(-1)).toEqual(badSignature || hosted ? undefined : installed);
+        expect(readWorkspaceLaunches(root)).toEqual(
+          badSignature ? {} : { [hosted ? 'android:tablet' : 'android']: launched },
+        );
+        expect(result.facts?.host?.machine).toBe(hosted && !badSignature ? 'mini' : undefined);
+        expect(h.calls.ensureDevice).toHaveLength(hosted ? 0 : attempt);
+        expect(h.calls.booted).toHaveLength(hosted ? 0 : attempt);
+        expect(modes).toEqual(hosted ? Array(attempt).fill('process') : []);
+        expect(delivered).toEqual(
+          hosted && !badSignature
+            ? Array.from({ length: attempt }, () => ({
+                mode: 'process',
+                release: variant.endsWith('Release'),
+                devClientScheme: undefined,
+              }))
+            : [],
+        );
       }
       for (const calls of [
         h.calls.metro,
@@ -7768,6 +7830,7 @@ describe('registered Android project recipes', () => {
         h.calls.swapApk,
         h.calls.loadProvider,
         h.calls.launch,
+        h.calls.verify,
       ])
         expect(calls).toEqual([]);
     },
