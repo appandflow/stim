@@ -399,6 +399,14 @@ worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
 incremental, task-cache and configuration-cache reuse; transfer digests never
 become reusable APK cache keys. Older hosts refuse before source upload.
 
+outputs must list every build directory of this build's projects that the build
+creates: the root build directory and each module's, library modules included.
+A remote build that creates an undeclared one fails with its name, and Stim
+builds locally; add it to outputs. A buildSrc directory refuses before upload.
+Included builds (includeBuild, such as a build-logic plugin build) and
+externalNativeBuild staging (.cxx) are not reported by AGP and cannot be
+declared, so a remote build that creates them fails and Stim builds locally.
+
 Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
 prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,

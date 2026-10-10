@@ -530,6 +530,14 @@ directory links, submodules and custom `local.properties` refuse. SDK-only
 `local.properties` stays local. Custom project-state locations must be removed
 or made explicit source; only default `.gradle`/`.kotlin` state is retained.
 
+List every build directory of the build's projects that the build creates in
+`outputs`: the root `build` and each module's, library modules included. A
+remote build that creates an undeclared one fails with the directory's name and
+Stim builds locally; add it to `outputs`. A `buildSrc` directory refuses before
+upload. Included builds (`includeBuild`, such as a `build-logic` plugin build)
+and `externalNativeBuild` staging (`.cxx`) are not reported by AGP and cannot be
+declared, so remote builds of those projects fail and Stim builds locally.
+
 Only declared output directories reported by AGP and recorded after a successful
 worker build survive the next sync. Gradle incremental, task-cache and
 configuration-cache reuse remain available; the transfer digest is never an APK
