@@ -682,7 +682,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (json) emit(JSON.stringify({ code: 'STIM_NO_PROJECT', message, remedy }));
     return { ok: false, error: { code: 'STIM_NO_PROJECT', message, remedy } };
   }
-  const integration = await selectedProject.load();
   try {
     await ensureStorage(root, { note: out });
   } catch (error) {
@@ -793,6 +792,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   let estimatesRead: RunEstimates | null = null;
   const estimates = (): RunEstimates => (estimatesRead ??= readEstimates({ projectKey, platform: PLATFORM }));
   const settings = resolveSettingsFor(settingsContext);
+  const integration = await selectedProject.load({ context: settingsContext, settings });
   const placement = resolveBuildPlacement(options.buildMachine);
   record.buildMachine = placement.selected;
   if (placement.failure) {

@@ -8,6 +8,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Collapsible, DisclosureChevron } from '@/components/collapsible';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { ListRow, ListSection, SectionHeader } from '@/components/list';
 import { PlatformGlyph } from '@/components/platform-glyph';
@@ -134,6 +135,38 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
   );
 }
 
+function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string | null }) {
+  const { theme } = useUnistyles();
+  const [device, started] = parts;
+  const items = [
+    device ? (
+      <Text key="device" variant="footnote" tone="secondary">
+        {device}
+      </Text>
+    ) : null,
+    host ? <HostLabel key="host" host={host} color={theme.colors.secondary} mode="building" /> : null,
+    started ? (
+      <Text key="started" variant="footnote" tone="secondary">
+        {started}
+      </Text>
+    ) : null,
+  ].filter(Boolean);
+  return (
+    <View style={styles.subtitle}>
+      {items.map((item, i) => (
+        <View key={i} style={styles.subtitle}>
+          {i > 0 ? (
+            <Text variant="footnote" tone="secondary">
+              {'\u00B7'}
+            </Text>
+          ) : null}
+          {item}
+        </View>
+      ))}
+    </View>
+  );
+}
+
 function LiveBuildDetails({ path, platform }: { path: string; platform: Platform | 'macos' }) {
   const status = useStatus();
   const apps = worktreeApps(path, status?.environments ?? []);
@@ -182,15 +215,12 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
     <SheetScreen
       title={t`Build`}
       subtitle={
-        running
-          ? [
-              target ? deviceTitle(target).name : null,
-              remote ? t`on ${remoteHost}` : null,
-              t`started ${startedAge} ago`,
-            ]
-              .filter(Boolean)
-              .join(' \u00B7 ')
-          : undefined
+        running ? (
+          <BuildSubtitle
+            parts={[target ? deviceTitle(target).name : null, t`started ${startedAge} ago`]}
+            host={remote ? remoteHost : null}
+          />
+        ) : undefined
       }
     >
       {switcher}
@@ -276,15 +306,15 @@ function NativeBuildDetails({
       embedded={embedded}
       title={t`Build`}
       subtitle={
-        running
-          ? [
+        running ? (
+          <BuildSubtitle
+            parts={[
               target ? deviceTitle(target).name : null,
-              remote ? t`on ${remoteHost}` : null,
               Number.isFinite(started) ? t`started ${startedAge} ago` : null,
-            ]
-              .filter(Boolean)
-              .join(' \u00B7 ')
-          : undefined
+            ]}
+            host={remote ? remoteHost : null}
+          />
+        ) : undefined
       }
     >
       {embedded ? null : (
@@ -911,6 +941,7 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  subtitle: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.xs },
   fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',

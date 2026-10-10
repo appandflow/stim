@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { phaseLine } from '../command-output.ts';
 import {
   detectFingerprintParity,
@@ -9,9 +8,10 @@ import {
 } from '../diagnostics/doctor.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { androidRequirements, androidToolchain, iosToolchain } from '../offload/toolchain.ts';
+import type { BuildTarget } from '../offload/toolchain.ts';
+import { androidRequirements, androidToolchain, iosToolchainAsync } from '../offload/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
-import { resolveIosProjectDir } from '../workspace/settings.ts';
+import { resolveAndroidLayout, resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
@@ -25,35 +25,28 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
       return [parity, linkedGit].filter((finding) => finding !== null);
     },
-    offloadTargets({ options: { platform, host = process.platform } }, iosRuntime) {
+    offloadTargets({ options: { platform, host = process.platform }, settings, repoRoot }, iosRuntime) {
       const checksIos = platform !== 'android' && host === 'darwin';
+      const androidDir = resolveAndroidLayout(settings, root, repoRoot ?? root).gradleRoot;
       const checksAndroid =
-        platform === 'android' || (platform === undefined && (existsSync(join(root, 'android')) || detectIsExpo(root)));
+        platform === 'android' || (platform === undefined && (existsSync(androidDir) || detectIsExpo(root)));
       if (!checksIos && !checksAndroid) return null;
-      return () => [
-        ...(checksIos
-          ? [
-              {
-                platform: 'ios' as const,
-                local: iosToolchain(root),
-                runtime: iosRuntime(),
-                cocoapodsPinned: bundlerPin(root) !== null,
-              },
-            ]
-          : []),
-        ...(checksAndroid
-          ? [
-              {
-                platform: 'android' as const,
-                local: androidToolchain(),
-                requires: androidRequirements(root),
-              },
-            ]
-          : []),
-      ];
+      return async () => {
+        const targets: BuildTarget[] = [];
+        if (checksIos) {
+          const [local, runtime] = await Promise.all([iosToolchainAsync(root), iosRuntime()]);
+          targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root) !== null });
+        }
+        if (checksAndroid) {
+          targets.push({ platform: 'android', local: androidToolchain(), requires: androidRequirements(root) });
+        }
+        return targets;
+      };
     },
-    repair: (platform, settings) =>
-      platform === 'ios' ? { removed: [], refused: [] } : repairCxxLauncherState(root, settings),
+    repair: (platform, settings, repoRoot) =>
+      platform === 'ios'
+        ? { removed: [], refused: [] }
+        : repairCxxLauncherState(root, settings, resolveAndroidLayout(settings, root, repoRoot ?? root)),
     successLines: reactNativeDoctorSuccessLines,
   };
 }

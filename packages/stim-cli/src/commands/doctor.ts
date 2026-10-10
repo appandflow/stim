@@ -9,7 +9,7 @@ import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import { projectSettingsContext, type SettingsObject } from '../workspace/settings.ts';
 import { readMachineSettings } from '../diagnostics/doctor-config.ts';
-import { iosRuntimeMatches, listIosRuntimes, pickDefaultIosCreation } from '../devices/ios.ts';
+import { iosRuntimeMatches, listIosRuntimesAsync, pickDefaultIosCreation } from '../devices/ios.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
 import {
@@ -52,10 +52,10 @@ export function parseDoctorPlatform(value: string): DoctorPlatform {
  * The simulator runtime `stim ios` would build for here: the one `ios.runtime` names, else the workspace's own
  * simulator's, else the one it would create a simulator on.
  */
-function iosTargetRuntime(root: string, settings: SettingsObject | null): string | null {
+async function iosTargetRuntime(root: string, settings: SettingsObject | null): Promise<string | null> {
   if (!settings) return null;
   try {
-    const runtimes = listIosRuntimes();
+    const runtimes = await listIosRuntimesAsync();
     const runtime = resolveRuntime(null, settings);
     if (runtime) return runtimes.find((each) => iosRuntimeMatches(each, runtime))?.identifier ?? null;
     const udid = getProject(root)?.platforms?.ios?.deviceUdid;
@@ -66,6 +66,11 @@ function iosTargetRuntime(root: string, settings: SettingsObject | null): string
   } catch {
     return null;
   }
+}
+
+function withoutUnhandledRejection<T>(started: Promise<T>): Promise<T> {
+  started.catch(() => {});
+  return started;
 }
 
 function doctorTarget(platform?: DoctorPlatform): string {
@@ -204,7 +209,8 @@ export default function doctorCommand(
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const machineSettings = readMachineSettings(projectSettingsContext(root));
+      const settingsContext = projectSettingsContext(root);
+      const machineSettings = readMachineSettings(settingsContext);
       const settings = machineSettings.corrupt ? null : machineSettings.settings;
 
       const selected = registry.selectDoctor(root, opts.platform);
@@ -215,7 +221,7 @@ export default function doctorCommand(
         for (const doctor of doctors) {
           if (!doctor.repair) continue;
           try {
-            const repair = doctor.repair(opts.platform, settings);
+            const repair = doctor.repair(opts.platform, settings, settingsContext.repoRoot);
             for (const path of repair.removed)
               console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
             for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
@@ -267,6 +273,7 @@ export default function doctorCommand(
           platforms: selected.platforms,
           host,
           machineSettings,
+          repoRoot: settingsContext.repoRoot,
         },
         doctors.map((doctor) => doctor.inspect),
       );
@@ -295,25 +302,33 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
-      const watchman = await inspectWatchmanMemory();
-      if (watchman) findings.push(watchman);
+      const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
+      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
       const nestedWorktrees = inspectNestedWorktrees(root);
-      const watched = await watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout));
-      for (const entry of nestedWorktrees) findings.push(nestedWorktreeFinding(entry, watched.has(entry.checkout)));
+      const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
       const targetInspectors = doctors.flatMap((doctor) => {
         const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));
         return inspect ? [inspect] : [];
       });
-      const remoteMachines = await inspectBuildMachines({
-        fix: opts.fix === true,
-        check: targetInspectors.length
-          ? offloadCheck(root, () => targetInspectors.flatMap((inspect) => inspect()))
-          : null,
-      });
+      const remoteMachinesInspection = withoutUnhandledRejection(
+        inspectBuildMachines({
+          fix: opts.fix === true,
+          check: targetInspectors.length
+            ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
+            : null,
+        }),
+      );
+
+      const watchman = await watchmanMemory;
+      if (watchman) findings.push(watchman);
+      const watchedRoots = await watched;
+      for (const entry of nestedWorktrees)
+        findings.push(nestedWorktreeFinding(entry, watchedRoots.has(entry.checkout)));
+      const remoteMachines = await remoteMachinesInspection;
       findings.push(...remoteMachines.findings);
-      const deviceHosts = await inspectDeviceHostMachines({ fix: opts.fix === true });
+      const deviceHostMachines = await deviceHosts;
       const reported = new Set(remoteMachines.findings.map((each) => each.title));
-      findings.push(...deviceHosts.findings.filter((each) => !reported.has(each.title)));
+      findings.push(...deviceHostMachines.findings.filter((each) => !reported.has(each.title)));
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
@@ -332,7 +347,7 @@ export default function doctorCommand(
             budget: budget.report,
             maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
             remoteMachines: remoteMachines.machines,
-            deviceHosts: deviceHosts.machines,
+            deviceHosts: deviceHostMachines.machines,
             findings,
           }),
         );

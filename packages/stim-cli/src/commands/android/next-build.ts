@@ -1,4 +1,5 @@
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
+import { resolveProjectSettings } from '../../workspace/settings.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import { unsupportedPlan } from '../../integrations/project-plan.ts';
@@ -41,9 +42,10 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
   if (!root) return refusePlan(NO_PROJECT_REFUSAL, json);
   const selected = deps.projectRegistry.selectAndroid(root);
   if ('problem' in selected) return refusePlan({ code: 'STIM_NO_PROJECT', ...selected.problem }, json);
-  const project = await selected.load();
+  const resolved = resolveProjectSettings(root);
+  const project = await selected.load(resolved);
   if (!project.plan) return refusePlan(unsupportedPlan('android'), json);
-  const result = await project.plan(opts);
+  const result = await project.plan(opts, resolved);
   if ('platform' in result) printPlan(result, json);
   else refusePlan(result.refusal, json, result.lines);
 }

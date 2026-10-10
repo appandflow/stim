@@ -7,6 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { PhaseBar } from '@/components/build-progress';
 import { Card } from '@/components/card';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { StatusDot } from '@/components/pill';
 import { PlatformGlyph } from '@/components/platform-glyph';
@@ -429,13 +430,14 @@ export function BuildInProgressCard({
   const detail = remote?.phaseElapsedMs != null ? formatDuration(remote.phaseElapsedMs, { seconds: true }) : counts;
   const name = platformName(build.platform);
   const host = remote?.host;
-  const title = host ? t`Building ${name} on ${host}` : t`Building ${name}`;
+  const title = t`Building ${name}`;
+  const spokenTitle = host ? t`Building ${name} on ${host}` : title;
   const phaseText = detail ? `${phase} ${detail}` : phase;
   const timing = timingText(elapsed, estimate);
   return (
     <Card
       onPress={onPress}
-      accessibilityLabel={t`${title}, ${phaseText}, ${timing}`}
+      accessibilityLabel={t`${spokenTitle}, ${phaseText}, ${timing}`}
       accessibilityHint={t`Shows the build`}
       style={styles.building}
     >
@@ -449,7 +451,7 @@ export function BuildInProgressCard({
         <Text variant="body" weight="semibold" numberOfLines={1} style={remote ? styles.shrink : undefined}>
           {title}
         </Text>
-        {remote ? <Icon name="desktopcomputer" size={14} color={theme.colors.secondary} /> : null}
+        {host ? <HostLabel host={host} color={theme.colors.secondary} mode="building" /> : null}
         {target && !remote ? (
           <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.shrink}>
             {target}

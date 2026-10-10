@@ -8150,7 +8150,7 @@ describe('iOS placement on a hosting Mac', () => {
         }),
       );
       writeHostedIos(root, 'default', { ...placement, device: { ...hostedDevice, runtime } });
-      const endpoint = vi.spyOn(tailnet, 'pinnedEndpoint').mockReturnValue({
+      const endpoint = vi.spyOn(tailnet, 'pinnedEndpoint').mockResolvedValue({
         url: 'ws://127.0.0.1:1',
         host: 'mini',
         servername: 'mini',

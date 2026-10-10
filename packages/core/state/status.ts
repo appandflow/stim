@@ -339,7 +339,7 @@ export interface WorktreeFacts {
   path: string;
   branch?: string;
   repository?: string;
-  /** Null when git could not be read in time, or the worktree is in a folder status does not open. */
+  /** Null when git could not be read in time, the worktree is in a folder status does not open, or one-shot status skipped an idle environment or an unprovisioned worktree. */
   git?: WorktreeGit | null;
   /** Null when GitHub has no pull request for the branch; absent when unknown, such as without `gh`. */
   pullRequest?: WorktreePullRequest | null;

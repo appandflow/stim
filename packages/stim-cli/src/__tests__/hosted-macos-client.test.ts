@@ -43,12 +43,12 @@ vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../offload/tailnet.ts')>();
   return {
     ...actual,
-    pinnedEndpoint: (credential: { machine: string; nodeId: string }) => {
+    pinnedEndpoint: async (credential: { machine: string; nodeId: string }) => {
       const status = {
         BackendState: 'Running',
         Peer: { mini: { ID: tailnet.nodeId, DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
       };
-      const target = actual.pinnedEndpoint(credential, () => status);
+      const target = await actual.pinnedEndpoint(credential, () => status);
       return typeof target === 'string'
         ? target
         : { url: `ws://127.0.0.1:${tailnet.port}`, servername: target.servername, host: target.host };

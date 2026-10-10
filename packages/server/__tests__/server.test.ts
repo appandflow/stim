@@ -1787,12 +1787,16 @@ describe('offloaded builds', () => {
       expect(await client.request('build.start', { ...base, android: { ...android, abi: '../x' } })).toMatchObject({
         error: { code: 'bad-request' },
       });
-      expect(await client.request('build.start', { ...base, android })).toMatchObject({
+      expect(await client.request('build.start', { ...base, android: { ...android, module: 'app' } })).toMatchObject({
+        error: { code: 'bad-request' },
+      });
+      const layout = { gradleRoot: '../..', module: ':packages:rn-tester:android:app' };
+      expect(await client.request('build.start', { ...base, android: { ...android, ...layout } })).toMatchObject({
         result: { job: expect.any(String) },
       });
       await progress(client);
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
-      expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android });
+      expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android: { ...android, ...layout } });
       expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
     },
   );

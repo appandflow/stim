@@ -679,7 +679,7 @@ async function probeMachine(
   identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' | 'gradle' },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
-  const target = pinnedEndpoint(credential);
+  const target = await pinnedEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
   const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
@@ -794,6 +794,8 @@ export interface AndroidBuildOptions {
   gradleBuildCache: boolean;
   pch: 'auto' | 'on' | 'off';
   compilerCache: 'ccache' | 'none';
+  gradleRoot?: string | null;
+  module?: string | null;
 }
 
 /** What `build.start` builds besides the synced checkout. */
@@ -848,7 +850,7 @@ async function resumeJob(
   let delay = RESUME_DELAY_MS;
   let last = 'no attempt';
   while (!abandoned()) {
-    const target = pinnedEndpoint(credential);
+    const target = await pinnedEndpoint(credential);
     const connection =
       typeof target === 'string'
         ? { failure: target, refused: false }
@@ -1302,7 +1304,7 @@ const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-buil
  */
 export function offloadCheck(
   projectRoot: string,
-  targets: () => BuildTarget[],
+  targets: () => Promise<BuildTarget[]>,
 ): (
   credential: BuildMachineCredential,
 ) => Promise<{ capacity: BuildOffer['capacity'] | null; problems: OffloadProblem[] }> {
@@ -1312,7 +1314,7 @@ export function offloadCheck(
   } catch (error) {
     identity = (error as Error).message.split('\n')[0] ?? 'git failed';
   }
-  let resolved: BuildTarget[] | null = null;
+  let resolved: Promise<BuildTarget[]> | null = null;
   return async (credential) => {
     if (typeof identity === 'string') {
       return {
@@ -1328,11 +1330,12 @@ export function offloadCheck(
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();
+    const resolvedTargets = await resolved;
     const problems: OffloadProblem[] = [];
-    for (const target of resolved) {
+    for (const target of resolvedTargets) {
       for (const problem of offerProblems(probe.offer, target)) {
         const labeled =
-          resolved.length > 1 && !SHARED_PROBLEMS.has(problem.code)
+          resolvedTargets.length > 1 && !SHARED_PROBLEMS.has(problem.code)
             ? { ...problem, reason: `${PLATFORM_LABEL[target.platform]}: ${problem.reason}` }
             : problem;
         if (!problems.some((each) => each.code === labeled.code && each.reason === labeled.reason)) {

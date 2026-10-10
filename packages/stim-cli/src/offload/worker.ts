@@ -54,7 +54,12 @@ import {
 } from '../integrations/native-gradle-inputs.ts';
 import { writeConfigSetting } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { iosProjectDirSetting, type IosProjectDir } from '../workspace/settings.ts';
+import {
+  androidLayoutSetting,
+  iosProjectDirSetting,
+  type AndroidLayout,
+  type IosProjectDir,
+} from '../workspace/settings.ts';
 
 /** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
 export interface ManifestEntry {
@@ -516,8 +521,18 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     } catch (error) {
       return failed('bad-request', (error as Error).message);
     }
+    let androidLayout: AndroidLayout;
+    try {
+      androidLayout = androidLayoutSetting(
+        { android: { gradleRoot: job.android?.gradleRoot ?? undefined, module: job.android?.module ?? undefined } },
+        root,
+        realSrc,
+      );
+    } catch (error) {
+      return failed('bad-request', (error as Error).message);
+    }
     const initial = await time('fingerprintMs', () =>
-      fingerprintProject(root, { platform, iosProjectPath: iosProject.relative }),
+      fingerprintProject(root, { platform, iosProjectPath: iosProject.relative, androidLayout }),
     );
     if (!initial) return failed('no-fingerprint', 'The remote Mac could not fingerprint the project.');
     const plan = planPrebuild(root, platform, {
@@ -556,6 +571,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           platform,
           previousHash: initial.hash,
           iosProjectPath: iosProject.relative,
+          androidLayout,
         }),
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
@@ -570,7 +586,9 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
 
     compiled =
-      platform === 'android' ? await compileAndroid(job, root, log, time) : await compileIos(job, root, log, time);
+      platform === 'android'
+        ? await compileAndroid(job, root, log, time, androidLayout)
+        : await compileIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     const builtFingerprint = fingerprint;
     const settled = await time('fingerprintMs', () =>
@@ -579,6 +597,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         platform,
         previousHash: builtFingerprint,
         iosProjectPath: iosProject.relative,
+        androidLayout,
       }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
@@ -733,8 +752,9 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
   const idleMs = job.gradleDaemonIdleMs ?? 0;
   limitDaemonIdle(idleMs > 0 ? idleMs : 60_000);
+  const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
   const stop = () => {
-    stopGradleDaemons(root, 4000, true);
+    stopGradleDaemons(gradlew, 4000);
     process.exit(143);
   };
   process.once('SIGTERM', stop);
@@ -768,7 +788,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     return { ok: false, code: 'native-build-failed', message: (error as Error).message };
   } finally {
     process.off('SIGTERM', stop);
-    if (idleMs <= 0) stopGradleDaemons(root, 60_000, true);
+    if (idleMs <= 0) stopGradleDaemons(gradlew, 60_000);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -865,8 +885,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
  * Stops the Gradle daemons of this client's Gradle home. A daemon calls setsid, so it leaves the build's
  * process group and would outlive the job and its claim.
  */
-function stopGradleDaemons(root: string, timeoutMs: number, native = false): void {
-  const gradlew = native ? join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew') : gradlewPath(root);
+function stopGradleDaemons(gradlew: string, timeoutMs: number): void {
   if (!existsSync(gradlew)) return;
   getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs });
 }
@@ -887,7 +906,13 @@ function limitDaemonIdle(idleMs: number): void {
   writeFileSync(file, wanted);
 }
 
-async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
+async function compileAndroid(
+  job: WorkerJob,
+  root: string,
+  log: NdjsonWriter,
+  time: Timer,
+  layout: AndroidLayout,
+): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
   const idleMs = job.gradleDaemonIdleMs ?? 0;
@@ -895,20 +920,23 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
   limitDaemonIdle(keepDaemon ? idleMs : 60_000);
   const onNote = (line: string) => note('build', line);
   const stop = () => {
-    stopGradleDaemons(root, 4000);
+    stopGradleDaemons(gradlewPath(layout), 4000);
     process.exit(143);
   };
   process.once('SIGTERM', stop);
-  note('build', `gradle ${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`);
+  note(
+    'build',
+    `gradle ${layout.custom ? `${layout.module}:` : ''}${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`,
+  );
   try {
     const built = await time('buildMs', () =>
       buildAndroid(
-        { root, logWriter: log, variant: options.variant, abi: options.abi },
+        { root, logWriter: log, variant: options.variant, abi: options.abi, layout },
         {
           buildCache: options.gradleBuildCache,
           pch: options.pch,
           compilerCacheDisabled: options.compilerCache === 'none',
-          ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, onNote }) : null,
+          ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
           onHeartbeat: onNote,
           onNote,
         },
@@ -921,7 +949,7 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
     return { ok: true, path: built.apkPath, cache: built.ccache ?? CCACHE_UNAVAILABLE };
   } finally {
     process.off('SIGTERM', stop);
-    if (!keepDaemon) stopGradleDaemons(root, 60_000);
+    if (!keepDaemon) stopGradleDaemons(gradlewPath(layout), 60_000);
   }
 }
 
