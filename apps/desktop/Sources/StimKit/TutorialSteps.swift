@@ -65,14 +65,19 @@ public enum TutorialSteps {
       ]),
     TutorialStep(
       id: "share", title: "Share Your Finish", who: "you", optional: true,
-      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
+      ask: "Open a pull request to appandflow/stim-tutorial with my title color change, with before and after screenshots from the simulator. See stim guide tutorial share.", section: "share",
       commands: [
         "cd \"{tour}\"",
-        "git commit -am \"Tutorial change\" -m \"Build <time>, second build cache <hit or miss>\"",
-        "xcrun simctl io {udid} screenshot finish.png",
+        "git commit -am \"<one-line summary>\"",
+        "mkdir -p .expo/screenshots",
+        "git checkout origin/main -- theme.js",
+        "xcrun simctl io {udid} screenshot .expo/screenshots/before.png",
+        "git checkout HEAD -- theme.js",
+        "xcrun simctl io {udid} screenshot .expo/screenshots/after.png",
+        "cp .github/pull_request_template.md .expo/screenshots/body.md",
         "gh repo fork appandflow/stim-tutorial --remote --remote-name fork",
         "git push -u fork HEAD",
-        "gh pr create --repo appandflow/stim-tutorial --fill --attach \"finish.png#The change running in the simulator\"",
+        "gh pr create --repo appandflow/stim-tutorial --title \"<one-line summary>\" --body-file .expo/screenshots/body.md --attach \".expo/screenshots/before.png#Before\" --attach \".expo/screenshots/after.png#After\"",
       ]),
     TutorialStep(
       id: "finish", title: "Finish and Archive", who: "agent", optional: false,
