@@ -11,6 +11,7 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -146,11 +147,13 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   expect(readWorkspaceState(root)).not.toHaveProperty('ios');
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
   const existing = { udid: 'existing', devicePlacement: { machine: 'mini' } };
-  writeWorkspaceState(root, { ios: existing });
+  const running = { platform: 'ios', status: 'ok', appPath: '/runtime/Native.app', cacheKey: 'runtime-key' };
+  writeWorkspaceState(root, { ios: existing, lastBuild: running, lastIosBuild: running });
+  const runningLog = join(workspaceLogsDir(root), 'build-ios.ndjson');
+  writeFileSync(runningLog, '{"msg":"running app build"}\n');
   projectBundleId = null;
   const warm = await buildIosOperation(root, options);
   expect(warm).toMatchObject({ bundleId: 'org.example.native', cacheKey: cold.cacheKey, cacheHit: 'local' });
-  expect(readWorkspaceState(root)?.lastIosBuild).toMatchObject({ bundleId: 'org.example.native' });
   expect(compilations).toBe(1);
   expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(copies.length).toBeGreaterThan(0);
@@ -163,7 +166,8 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   const edited = await buildIosOperation(root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
-  expect(readWorkspaceState(root)?.ios).toEqual(existing);
+  expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
+  expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
 });
 
 test.each(['failure', 'cancellation'])(

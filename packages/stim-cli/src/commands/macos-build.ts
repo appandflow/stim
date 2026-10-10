@@ -53,7 +53,10 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
       const started = Date.now();
       const progress = startBuildProgress({ root, platform: 'macos', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
-      const writer = tapBuildLog(createNdjsonWriter(join(logs, 'build-macos.ndjson'), { truncate: true }), progress);
+      const writer = tapBuildLog(
+        createNdjsonWriter(join(logs, 'build-artifact-macos.ndjson'), { truncate: true }),
+        progress,
+      );
       const build: MacosBuild = {
         state: 'running',
         startedAt: new Date(started).toISOString(),
@@ -115,7 +118,7 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
               offloadFallback: build.offloadFallback,
               compileSteps: progress.steps(),
             },
-            { preserveRuntime: true },
+            { artifactOnly: true },
           );
         } finally {
           if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });

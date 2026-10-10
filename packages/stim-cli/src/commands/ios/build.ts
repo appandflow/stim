@@ -98,7 +98,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       const startedAt = new Date(started).toISOString();
       const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
-      const logFile = join(logs, 'build-ios.ndjson');
+      const logFile = join(logs, 'build-artifact-ios.ndjson');
       const writer = tapBuildLog(
         createNdjsonWriter(logFile, { truncate: true, fields: { platform: 'ios' } }),
         progress,
@@ -138,7 +138,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
             offloadedTo: artifact?.cache.offloadedTo,
             offloadFallback: artifact?.cache.offloadFallback,
           }),
-          { preserveRuntime: true },
+          { artifactOnly: true },
         );
       try {
         const acquired = await acquireIosArtifact(

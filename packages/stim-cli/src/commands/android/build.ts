@@ -87,7 +87,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
       const startedAt = new Date(started).toISOString();
       const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
-      const buildLog = join(logs, 'build-android.ndjson');
+      const buildLog = join(logs, 'build-artifact-android.ndjson');
       const writer = tapBuildLog(
         createNdjsonWriter(buildLog, { truncate: true, fields: { platform: 'android' } }),
         progress,
@@ -121,7 +121,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           status,
           errorCode,
           out: note,
-          recordBuild: (at, entry) => recordFinishedBuild(at, entry, { preserveRuntime: true }),
+          recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
         });
       try {
         const acquired = await acquireAndroidArtifact(
