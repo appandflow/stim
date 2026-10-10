@@ -1874,7 +1874,7 @@ comes from BuildMachinesModel checks for the tour checkout. No tutorial
 reader touches `$STIM_HOME` directly. Machine checks poll only while the machine
 step is current and the tour workspace is present.
 
-To render every step, optional phone/machine variants, a waiting timeout, a restart, a failure and manual mode in light and dark at 2x:
+To render every step, optional phone/machine variants, a waiting timeout, a failure and manual mode in light and dark at 2x:
 
 ```sh
 STIM_TUTORIAL_SHOTS=/tmp/stim-tutorial-shots swift test --filter TutorialScreenshotTests
