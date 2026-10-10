@@ -129,7 +129,7 @@ struct RootView: View {
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
-            restart: { tutorial.open(beginning: true) },
+            restart: tutorial.restart,
             runIOS: {
               if let workspace = tutorial.workspace {
                 actions.run(
@@ -290,6 +290,7 @@ struct RootView: View {
       NativeViewerPermissionsView(
         permissions: nativePermissions, relaunch: onboarding.canRelaunch ? { onboarding.relaunch() } : nil)
     }
+    .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show

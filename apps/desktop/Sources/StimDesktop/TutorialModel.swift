@@ -32,6 +32,12 @@ final class TutorialModel: ObservableObject {
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
 
+  enum RestartDialog: Equatable {
+    case confirm(base: String, worktrees: [String])
+    case blocked(String)
+  }
+  @Published var restartDialog: RestartDialog?
+
   private let cloneBase: String
 
   init(defaults: UserDefaults = .standard, cloneBase: String = NSHomeDirectory() + "/stim-tutorial") {
@@ -176,6 +182,32 @@ final class TutorialModel: ObservableObject {
     refresh(now: now)
     syncFollowers()
     checkCLI()
+  }
+
+  func restart() {
+    guard let cli else { return open(beginning: true) }
+    let base = records.record?.clonePath ?? cloneBase
+    Task {
+      let cleanup = TutorialCleanup(cli: await cli.value)
+      do {
+        guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
+        switch plan {
+        case .remove(let worktrees): restartDialog = .confirm(base: base, worktrees: worktrees)
+        case .refuse(let reason): restartDialog = .blocked(reason)
+        }
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
+  func confirmRestart(base: String, worktrees: [String]) {
+    guard let cli else { return }
+    restartDialog = nil
+    Task {
+      do {
+        try await TutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
+        open(beginning: true)
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
   }
 
   func close() {
