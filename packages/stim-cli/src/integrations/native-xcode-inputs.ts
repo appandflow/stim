@@ -271,7 +271,6 @@ export function nativeXcodeInputSnapshot(
           if (base) visit(base, project.directory);
           const settings = entry.buildSettings;
           for (const [rawKey, setting] of Object.entries(settings && typeof settings === 'object' ? settings : {})) {
-            if (rawKey.endsWith('_comment')) continue;
             const key = pbxString(rawKey)!;
             const values = Array.isArray(setting) ? pbxReferences(setting) : [setting];
             for (const [valueIndex, value] of values.entries()) {

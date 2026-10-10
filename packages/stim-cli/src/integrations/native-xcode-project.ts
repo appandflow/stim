@@ -73,15 +73,14 @@ function object(value: unknown): PbxObject | null {
 export function pbxReferences(value: unknown): string[] {
   return Array.isArray(value)
     ? value.flatMap((entry) => {
-        const name = pbxString(object(entry)?.value ?? entry);
+        const name = pbxString(entry);
         return name === null ? [] : [name];
       })
     : [];
 }
 
 function readNativeXcodeModel(path: string): NativeXcodeModel {
-  const parsed = object(parseNativeXcodeSyntax(readFileSync(join(path, 'project.pbxproj'), 'utf8')));
-  const project = object(parsed?.project);
+  const project = object(parseNativeXcodeSyntax(readFileSync(join(path, 'project.pbxproj'), 'utf8')));
   const objects = new Map<string, PbxObject>();
   const collect = (value: unknown) => {
     for (const [id, entry] of Object.entries(object(value) ?? {})) {
@@ -238,7 +237,6 @@ function applicationPlatform(
       Object.assign(settings, path ? configurationPlatforms(path) : UNKNOWN_PLATFORM_SETTINGS);
     }
     for (const [rawKey, value] of Object.entries(object(config?.buildSettings) ?? {})) {
-      if (rawKey.endsWith('_comment')) continue;
       const key = pbxString(rawKey)!;
       const name = PLATFORM_KEYS.find((candidate) => key === candidate || key.startsWith(`${candidate}[`));
       if (!name) continue;

@@ -399,7 +399,7 @@ test('native discovery accepts compact OpenStep arrays and preserves quoted and 
   expect(selection.settings).toMatchObject({
     OTHER_SWIFT_FLAGS: ['$(inherited)', '"-D(SAFE)"'],
     PRODUCT_NAME: '$(PRODUCT_$(CONFIGURATION))',
-    COMMENTED: [{ value: 'one', comment: ')' }, 'two'],
+    COMMENTED: ['one', 'two'],
   });
   expect(readFileSync(file, 'utf8')).toBe(source);
 });
