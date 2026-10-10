@@ -69,7 +69,7 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   expect(lifecycle.stop).not.toHaveBeenCalled();
 });
 
-test('export failure reports an artifact failure, removes the partial export and keeps the reports', async () => {
+test('export failure reports an artifact failure and keeps the reports', async () => {
   lifecycle.build.mockResolvedValue({
     platform: 'android',
     facts: { apkPath: join(root, 'missing.apk') },
@@ -79,11 +79,20 @@ test('export failure reports an artifact failure, removes the partial export and
   expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
   expect(result.failure?.message).toContain('ENOENT');
   expect(result.artifactPath).toBeNull();
-  expect(readdirSync(options.artifactsDir!).filter((name) => name.startsWith('app.'))).toEqual([]);
   expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).failure).toEqual(result.failure);
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(existsSync(active)).toBe(true);
   expect(lifecycle.stop).not.toHaveBeenCalled();
+});
+
+test.skipIf(process.platform === 'win32')('a failed archive export removes the partial archive', async () => {
+  lifecycle.build.mockResolvedValue({
+    platform: 'ios',
+    facts: { appPath: join(root, 'Missing.app') },
+  } as StimBuildResult);
+  const result = await buildCI(options);
+  expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
+  expect(readdirSync(options.artifactsDir!).filter((name) => name.startsWith('app.'))).toEqual([]);
 });
 
 test('cancellation during diagnostics keeps a completed export', async () => {
