@@ -11,6 +11,7 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
+import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let scratch: string;
@@ -183,3 +184,12 @@ test.each(['failure', 'cancellation'])(
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
   },
 );
+
+test('an unusable optimizations setting is refused as a setting error before the build', async () => {
+  writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { buildCache: 'yes' } }));
+  await expect(buildIosOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+    remedy: SETTING_SHAPE_REMEDY,
+  });
+  expect(compilations).toBe(0);
+});
