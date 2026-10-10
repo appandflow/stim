@@ -20,7 +20,7 @@ import { Touch } from '@/components/touch';
 import { CLIENT, useMacs } from '@/hooks/machines';
 import { pair } from '@/lib/connection';
 import { renameMac, saveMac } from '@/lib/macs';
-import { manualPairing, parsePairingCode } from '@/lib/pairing';
+import { endpointHost, isExpectedHost, manualPairing, parsePairingCode } from '@/lib/pairing';
 import type { PairingPayload } from '@/protocol/types';
 
 const FALLBACK_DEVICE_NAME = 'Phone';
@@ -37,6 +37,7 @@ const tokenTransformer = new Transformer(({ value, selection }) => {
 type Step =
   | { kind: 'scan'; paused?: boolean }
   | { kind: 'manual' }
+  | { kind: 'confirm'; payload: PairingPayload; from: 'scan' | 'manual' }
   | { kind: 'connecting'; endpoint: string }
   | { kind: 'name'; id: string; name: string };
 
@@ -64,6 +65,7 @@ export function Pair() {
   const [name, setName] = useState('');
   const busy = useRef(false);
   const connectingTo = step.kind === 'connecting' ? step.endpoint : '';
+  const confirmHost = step.kind === 'confirm' ? endpointHost(step.payload.endpoint) : '';
 
   const start = async (payload: PairingPayload, from: 'scan' | 'manual') => {
     if (busy.current) return;
@@ -87,7 +89,7 @@ export function Pair() {
     if (busy.current || step.kind !== 'scan') return;
     const parsed = parsePairingCode(result.data);
     if (!parsed.ok) return setError(parsed.error);
-    void start(parsed.payload, 'scan');
+    setStep({ kind: 'confirm', payload: parsed.payload, from: 'scan' });
   };
 
   const onManual = () => {
@@ -97,7 +99,14 @@ export function Pair() {
     // field is emptied, and that change reaches the native view, before the form is replaced.
     tokenInput.current?.clear();
     setToken('');
-    requestAnimationFrame(() => void start(parsed.payload, 'manual'));
+    requestAnimationFrame(() => setStep({ kind: 'confirm', payload: parsed.payload, from: 'manual' }));
+  };
+
+  const onCancelConfirm = () => {
+    if (step.kind !== 'confirm') return;
+    busy.current = false;
+    if (step.from === 'manual') setToken(step.payload.pairingToken);
+    setStep({ kind: step.from });
   };
 
   const onSave = async () => {
@@ -143,6 +152,23 @@ export function Pair() {
               importantForAutofill="no"
             />
             <Button title={t`Pair`} onPress={onManual} />
+          </View>
+        ) : null}
+        {step.kind === 'confirm' ? (
+          <View style={styles.form}>
+            <Text variant="title" weight="semibold">
+              <Trans>Pair with this machine?</Trans>
+            </Text>
+            <Text variant="body" mono>
+              {confirmHost}
+            </Text>
+            {isExpectedHost(confirmHost) ? null : (
+              <Text variant="callout" tone="warning">
+                <Trans>This is not a Tailscale (.ts.net) address. Pair only if you trust it.</Trans>
+              </Text>
+            )}
+            <Button title={t`Connect`} onPress={() => void start(step.payload, step.from)} />
+            <Button title={t`Cancel`} variant="plain" onPress={onCancelConfirm} />
           </View>
         ) : null}
         {step.kind === 'connecting' ? (

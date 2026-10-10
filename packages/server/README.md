@@ -37,7 +37,8 @@ runs (see [Tailscale](#tailscale)). Stim Desktop starts its own server with the 
 unless it serves phones.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the
-serving command: see [Run as a service](#run-as-a-service).
+serving command: see [Run as a service](#run-as-a-service). When serving, a bare
+`--env KEY` takes the value from the server's own environment.
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
@@ -1052,9 +1053,15 @@ created a route to another `--port`, run `uninstall` first.
 the server. stim-server replaces its environment with the login shell's at
 start, so a `PATH` or `GEM_HOME` in the plist alone is lost and an entry in
 `~/.zshrc` changes the terminal too. These flags apply after that capture, to
-the server and to the builds it starts, and the plist stores them as
-`ProgramArguments`. `--path-prepend` puts directories in front of PATH in the
-order given; `--env` cannot set `STIM_HOME`. The values sit in plain text in the plist and in the process arguments, so do not pass secrets. For a private CocoaPods:
+the server and to the builds it starts. The plist stores each `--env` value in
+`EnvironmentVariables`, so it stays out of the server's process arguments, and
+passes only the name as `--env KEY`; the server reads that variable from the
+environment launchd gives it. The values sit in plain text in the plist. A
+plist written by an earlier release keeps `--env KEY=VALUE` in its
+`ProgramArguments` until the next `service install`. `--path-prepend` puts
+directories in front of PATH in the order given, as `ProgramArguments`; `--env`
+cannot set `STIM_HOME` or `SHELL`, which the job takes from the installing
+process. For a private CocoaPods:
 
 ```bash
 stim-server service install --serve \

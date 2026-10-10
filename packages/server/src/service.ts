@@ -26,6 +26,7 @@ import {
   planServe,
   renderPlist,
   argumentsWithScript,
+  normalizeEnv,
   ServiceError,
   signatureProblem,
   unusedInstalls,
@@ -302,7 +303,7 @@ export async function installJob(
     previous?.script === script &&
     previous.port === options.port &&
     previous.host === spec.host &&
-    JSON.stringify(previous.env) === JSON.stringify(spec.env) &&
+    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
     JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
   ) {
     const health = await fetchHealth(options.port);
