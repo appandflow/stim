@@ -5,7 +5,7 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { fingerprintNativeInputs, NativeInputError, type NativeInputSnapshot } from './native-inputs.ts';
 import { pbxReferences, pbxString, type NativeXcodeModel, type NativeXcodeSelection } from './native-xcode-project.ts';
 import { workspaceDir, workspaceDerivedData } from '../workspace/paths.ts';
-import { getExecutor } from '../exec.ts';
+import { gitQuiet } from '../workspace/git.ts';
 
 export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
@@ -81,11 +81,11 @@ function fold(path: string): string {
 
 function gitVisibility(sourceRoot: string) {
   if (!existsSync(join(sourceRoot, '.git'))) return null;
-  const listing = getExecutor().runFileQuiet(
-    'git',
-    ['-C', sourceRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-    { untrimmed: true, omitEnv: ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'] },
-  );
+  const listing = gitQuiet(sourceRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    untrimmed: true,
+    omitEnv: ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'],
+    timeoutMs: 120_000,
+  });
   if (listing === null) return null;
   const listed = new Set<string>();
   const whole = new Set<string>();

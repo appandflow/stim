@@ -32,6 +32,7 @@ import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -557,9 +558,8 @@ interface RepoIdentity {
 
 /** The repository on the remote Mac: one area per git common dir, shared by all its worktrees. */
 function repoIdentity(projectRoot: string): RepoIdentity {
-  const run = getExecutor().runFile;
-  const repoRoot = realpathSync(run('git', ['-C', projectRoot, 'rev-parse', '--show-toplevel']));
-  const common = realpathSync(run('git', ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir']));
+  const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
+  const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
   const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));

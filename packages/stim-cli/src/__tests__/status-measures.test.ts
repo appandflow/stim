@@ -145,8 +145,8 @@ test('measures stale folders and pull requests in the background, then status re
   });
   expect(duWalks()).toHaveLength(4);
   expect(calls.filter((call) => call.file === 'gh')).toHaveLength(1);
-  expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 2))).toEqual([
-    ['-C', join(home, 'repo')],
+  expect(calls.filter((call) => call.file === 'git').map((call) => call.args.slice(0, 3))).toEqual([
+    ['--no-optional-locks', '-C', join(home, 'repo')],
   ]);
   expect(updated).toHaveBeenCalled();
 
