@@ -533,7 +533,7 @@ describe('strict client routing', () => {
       runFile: (_file, args) =>
         args?.includes('--git-common-dir') ? join(root, '.git') : args?.includes('ls-files') ? '' : root,
     });
-    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation((credential) => ({
+    vi.spyOn(buildMachines, 'pinnedEndpoint').mockImplementation(async (credential) => ({
       url: credential.machine,
       servername: credential.machine,
       host: credential.machine,

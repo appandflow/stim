@@ -1000,7 +1000,8 @@ these additive fields. The output includes worktrees,
 ports, devices, supervisors, builds, logs, capacity, and free disk space.
 Each linked worktree shows its uncommitted changes, commits ahead of and
 behind its upstream, and whether its branch is merged, as a
-`git: 2 changed, 1 untracked, ahead 3` line. See
+`git: 2 changed, 1 untracked, ahead 3` line. One-shot `stim status` shows it
+only for live environments; `stim status --watch` shows it for every worktree. See
 [Parallel environments](./worktrees.md#parallel-environments) for the JSON
 fields.
 

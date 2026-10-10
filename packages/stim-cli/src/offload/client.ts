@@ -688,7 +688,7 @@ async function probeMachine(
   identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
-  const target = pinnedEndpoint(credential);
+  const target = await pinnedEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
   const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
@@ -842,7 +842,7 @@ async function resumeJob(
   let delay = RESUME_DELAY_MS;
   let last = 'no attempt';
   while (!abandoned()) {
-    const target = pinnedEndpoint(credential);
+    const target = await pinnedEndpoint(credential);
     const connection =
       typeof target === 'string'
         ? { failure: target, refused: false }

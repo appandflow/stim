@@ -58,7 +58,9 @@ worktree, carries git:
                null when git fails or does not answer within 3 s, or the
                worktree has no environment and sits in ~/Desktop, ~/Documents,
                ~/Downloads, iCloud Drive, ~/Library/CloudStorage or /Volumes,
-               which status does not open on macOS
+               which status does not open on macOS; one-shot status also
+               leaves it null for a worktree with no live environment and
+               for every unprovisioned worktree
   changed      tracked paths with staged or unstaged changes, conflicts included
   untracked    untracked entries as git status lists them; a new directory
                counts once
@@ -68,16 +70,17 @@ worktree, carries git:
   mergedInto   "origin/<default>" when gc would call the branch merged, judged
                from local refs without fetching, else null
 
-status runs \`git status --porcelain=v2 --branch\` in every worktree in
-parallel, and caches the merge verdict by HEAD and default-branch commit
+status runs \`git status --porcelain=v2 --branch\` in the worktrees it reads,
+six git calls at a time, and caches the merge verdict by HEAD and default-branch commit
 under $STIM_HOME/git-merge. One call starts no new merge check 250 ms after
 its first; later calls judge the rest, and until then a verdict for the same
 HEAD at an older default-branch commit stands in; a check that timed out
 is retried after 5 minutes. \`status --watch\` reuses a worktree's git read
 until its index, HEAD, reflog or the branch, upstream or default-branch refs
 change, and for at most 60 s, so a file edit, creation or deletion that is
-not staged can take up to a minute to show. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
-each environment, and the same after each worktree with no environment.
+not staged can take up to a minute to show. One-shot status reads git only
+for live environments; \`status --watch\` reads every worktree. Plain status prints "git: 2 changed, 1 untracked, ahead 3" under
+each environment it read, and the same after each worktree with no environment under \`--watch\`.
 
 The paired phone's Work sheet can open changed and untracked files when the
 server advertises workspace-diff. File lists and selected patches load on

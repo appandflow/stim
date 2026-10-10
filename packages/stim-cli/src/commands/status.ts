@@ -340,7 +340,8 @@ async function readStatusFacts(
     }),
   );
   processes.catch(() => {});
-  const gitRead = readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs);
+  const watching = gitMaxAgeMs > 0;
+  const gitRead = watching ? readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs) : null;
 
   const androidRuntimeOf = androidRuntimeReader();
   const devices = projects.map(([, proj]) => ({
@@ -521,6 +522,11 @@ async function readStatusFacts(
         !state?.macos,
       ),
     );
+  }
+
+  if (!watching) {
+    const live = new Set(states.flatMap((state) => (state.live && state.worktree ? [state.worktree.path] : [])));
+    await readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs, live);
   }
 
   applyStatusMeasures(states, worktrees);
@@ -921,11 +927,18 @@ async function watchStatus(json: boolean): Promise<void> {
   await new Promise<never>(() => {});
 }
 
-async function readGitInto(worktrees: WorktreeFacts[], orphans: WorktreeFacts[], maxAgeMs: number): Promise<void> {
+async function readGitInto(
+  worktrees: WorktreeFacts[],
+  orphans: WorktreeFacts[],
+  maxAgeMs: number,
+  only?: ReadonlySet<string>,
+): Promise<void> {
   const home = homedir();
   const byPath = await readWorktreeGit(worktrees, {
     maxAgeMs,
-    skip: (w) => process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home),
+    skip: (w) =>
+      (only !== undefined && !only.has(w.path)) ||
+      (process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home)),
   });
   for (const worktree of worktrees) worktree.git = byPath.get(worktree.path) ?? null;
 }
