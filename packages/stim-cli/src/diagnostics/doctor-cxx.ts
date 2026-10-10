@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { projectCmakeLauncher } from '../engine/ccache.ts';
@@ -126,12 +127,9 @@ export function repairCxxLauncherState(
         throw new Error('generated directory resolves outside this checkout');
       if (realpathSync(cxx) !== join(realpathSync(dirname(cxx)), '.cxx')) throw new Error('.cxx is a symbolic link');
       const gitPath = relative(canonicalRoot, canonicalTarget);
-      const tracked = getExecutor().runFile('git', ['ls-files', '-z', '--', `:(literal)${gitPath}`], {
-        cwd: canonicalRoot,
-        timeoutMs: 5000,
-      });
+      const tracked = git(canonicalRoot, ['ls-files', '-z', '--', `:(literal)${gitPath}`], { timeoutMs: 5000 });
       if (tracked) throw new Error('directory contains tracked files');
-      getExecutor().runFile('git', ['check-ignore', '-q', '--', gitPath], { cwd: canonicalRoot, timeoutMs: 5000 });
+      git(canonicalRoot, ['check-ignore', '-q', '--', gitPath], { timeoutMs: 5000 });
       const androidLocks = listBuildLocks().filter((lock) => lock.platform === 'android');
       if (androidLocks.some((lock) => lock.unresolved)) {
         throw new Error('an Android build lock holder cannot be identified, so a build may be active');

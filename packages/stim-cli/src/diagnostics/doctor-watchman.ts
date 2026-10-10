@@ -1,6 +1,6 @@
 import { readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { getExecutor } from '../exec.ts';
+import { gitQuiet } from '../workspace/git.ts';
 import { parseWatchRoots, runWatchman, type WatchmanCommand } from '../watchman.ts';
 import { listWorktrees, repoRoot } from '../workspace/worktree.ts';
 import type { Finding } from './doctor.ts';
@@ -103,7 +103,7 @@ export function inspectNestedWorktrees(projectRoot: string): NestedWorktrees[] {
     const configPath = join(checkout, '.watchmanconfig');
     const config = readWatchmanConfig(configPath);
     const { nested, add } = nestedWorktreeIgnores(checkout, worktrees, ignoreDirsOf(config), (dir) =>
-      Boolean(getExecutor().runFileQuiet('git', ['-C', checkout, 'ls-files', '--', dir]) ?? true),
+      Boolean(gitQuiet(checkout, ['ls-files', '--', dir]) ?? true),
     );
     return nested.length > 0 ? [{ checkout, configPath, config, nested, add }] : [];
   });

@@ -57,15 +57,15 @@ test('matchesInclude treats ? as a single-character wildcard, not a quantifier',
 });
 
 test('hasUncommittedWork reflects git status output', () => {
-  setExecutor({ run: () => '', runFileQuiet: () => ' M file.js', spawn: () => {} });
+  setExecutor({ run: () => '', runFile: () => ' M file.js', spawn: () => {} });
   expect(hasUncommittedWork('/wt')).toBe(true);
-  setExecutor({ run: () => '', runFileQuiet: () => '', spawn: () => {} });
+  setExecutor({ run: () => '', runFile: () => '', spawn: () => {} });
   expect(hasUncommittedWork('/wt')).toBe(false);
 });
 
 test('unpushedCommits lists commits missing from every remote and every other local branch', () => {
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) =>
+    runFile: (_file: string, args: string[]) =>
       args.includes('symbolic-ref') ? 'worktree-ws' : 'abc123 first\ndef456 second',
     spawn: () => {},
   });
@@ -74,7 +74,7 @@ test('unpushedCommits lists commits missing from every remote and every other lo
 
 test('unpushedCommits returns empty when git reports nothing', () => {
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) => (args.includes('symbolic-ref') ? 'worktree-ws' : ''),
+    runFile: (_file: string, args: string[]) => (args.includes('symbolic-ref') ? 'worktree-ws' : ''),
     spawn: () => {},
   });
   expect(unpushedCommits('/wt')).toEqual([]);
@@ -83,17 +83,18 @@ test('unpushedCommits returns empty when git reports nothing', () => {
 test('unpushedCommits excludes only the worktree own branch from the local-branch protection', () => {
   const calls: string[][] = [];
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       calls.push(args);
       if (args.includes('symbolic-ref')) return 'worktree-ws';
       if (args.includes('log')) return 'abc123 own-work';
-      return null;
+      throw new Error('Command failed');
     },
     spawn: () => {},
   });
   expect(unpushedCommits('/wt')).toEqual(['abc123 own-work']);
   const log = calls.find((args) => args.includes('log'));
   expect(log).toEqual([
+    '--no-optional-locks',
     '-C',
     '/wt',
     'log',
@@ -110,11 +111,11 @@ test('unpushedCommits falls back to the remotes-only count on an unsafe branch n
   for (const branch of ['evil"; touch PWNED; "']) {
     const calls: string[][] = [];
     setExecutor({
-      runFileQuiet: (_file: string, args: string[]) => {
+      runFile: (_file: string, args: string[]) => {
         calls.push(args);
         if (args.includes('symbolic-ref')) return branch;
         if (args.includes('log')) return '';
-        return null;
+        throw new Error('Command failed');
       },
       spawn: () => {},
     });
@@ -350,7 +351,7 @@ test('removeWorktree runs git via runFile (no shell) from another checkout, with
   expect(calls).toEqual([
     ['git', '-C', from, 'worktree', 'remove', '--', path],
     ['git', '-C', from, 'worktree', 'remove', '--force', '--', path],
-    ['git', '-c', 'core.longpaths=true', '-C', from, 'worktree', 'remove', '--', path],
+    ['git', '-C', from, '-c', 'core.longpaths=true', 'worktree', 'remove', '--', path],
   ]);
 });
 
@@ -709,6 +710,7 @@ test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and pa
   });
   expect(dirtyFingerprintFiles('/p')).toEqual(['app.json', 'package.json']);
   expect(calls[0]).toEqual([
+    '--no-optional-locks',
     '-C',
     '/p',
     'status',
@@ -805,10 +807,10 @@ test('detached and @-prefixed worktrees preserve unique commits but not commits 
 test('an unproven detached HEAD keeps the conservative remotes-only comparison', () => {
   const calls: string[][] = [];
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFile: (_file: string, args: string[]) => {
       calls.push(args);
       if (args.includes('log')) return 'abc123 local work';
-      return null;
+      throw new Error('Command failed');
     },
   });
   expect(unpushedCommits('/wt')).toEqual(['abc123 local work']);

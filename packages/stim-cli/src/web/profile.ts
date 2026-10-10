@@ -58,7 +58,7 @@ export function chromeProcessState(
   if (identity === 'same') return 'running';
   if (identity === 'unknown') return 'unknown';
   if (identity === 'different' || !processGroupAlive(record.pid)) return 'gone';
-  const listing = getExecutor().runFileQuiet('ps', ['-A', '-ww', '-o', 'pgid=,command=']);
+  const listing = getExecutor().runFileQuiet('ps', ['-A', '-ww', '-o', 'pgid=,command='], { timeoutMs: 10_000 });
   if (listing === null) return 'unknown';
   return groupRunsProfile(listing, record.pid, profile) ? 'lingering' : 'gone';
 }

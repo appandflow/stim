@@ -124,11 +124,11 @@ export function isOnMountedVolume(
   return mounted.has(volume) || uncShareIsReachable(volume, statFn);
 }
 
-export function directorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number {
+export function directorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number {
   return measuredDirectorySize(dir, { timeoutMs }) ?? 0;
 }
 
-export function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs?: number } = {}): number | null {
+export function measuredDirectorySize(dir: string, { timeoutMs }: { timeoutMs: number | 'unbounded' }): number | null {
   let out: string;
   try {
     out = getExecutor().runFile('du', ['-sk', dir], { timeoutMs });

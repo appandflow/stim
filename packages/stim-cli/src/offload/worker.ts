@@ -28,6 +28,7 @@ import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
@@ -195,10 +196,10 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
   } catch {}
   mkdirSync(src, { recursive: true });
   if (!existsSync(join(src, '.git'))) {
-    getExecutor().runFile('git', ['init', '--quiet', src], { timeoutMs: 30_000 });
-    getExecutor().runFile('git', ['-C', src, 'config', 'core.excludesFile', '/dev/null'], { timeoutMs: 30_000 });
+    git(src, ['init', '--quiet'], { write: true, timeoutMs: 30_000 });
+    git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
   }
-  getExecutor().runFile('git', ['-C', src, 'read-tree', '--empty'], { timeoutMs: 30_000 });
+  git(src, ['read-tree', '--empty'], { write: true, timeoutMs: 30_000 });
   let retained: string[] = [];
   if (job.native) {
     if (job.native.provider === 'gradle') {
@@ -286,18 +287,15 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
   if (job.native) {
     const indexed = job.manifest.filter((entry) => entry.kind !== 'directory').map((entry) => `${entry.path}\0`);
     if (indexed.length)
-      getExecutor().runFile('git', ['-C', src, 'update-index', '--add', '--info-only', '-z', '--stdin'], {
+      git(src, ['update-index', '--add', '--info-only', '-z', '--stdin'], {
+        write: true,
         input: indexed.join(''),
         timeoutMs: 120_000,
       });
   }
   const untracked = job.native
     ? []
-    : getExecutor()
-        .runFile('git', ['-C', src, 'ls-files', '-z', '-o', '--exclude-standard'], {
-          untrimmed: true,
-          timeoutMs: 120_000,
-        })
+    : git(src, ['ls-files', '-z', '-o', '--exclude-standard'], { untrimmed: true, timeoutMs: 120_000 })
         .split('\0')
         .filter(Boolean);
   let removed = 0;

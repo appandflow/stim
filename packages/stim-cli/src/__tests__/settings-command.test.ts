@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
 import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
@@ -20,14 +20,14 @@ beforeEach(() => {
   app = join(repo, 'apps', 'mobile');
   mkdirSync(home);
   mkdirSync(app, { recursive: true });
-  getExecutor().runFile('git', ['init', '-q', repo]);
+  getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
   writeFileSync(join(repo, 'package.json'), '{}\n');
   writeFileSync(join(app, 'package.json'), '{}\n');
   process.env.STIM_HOME = home;
   const real = getExecutor();
   setExecutor(
     Object.assign(Object.create(real), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
     }),
   );
@@ -163,7 +163,7 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
   let desktop = '/Applications/Stim.app';
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
     }),
   );
@@ -199,7 +199,7 @@ test('a command run by Stim Desktop reports the Desktop viewer default without t
   const stubbed = getExecutor();
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) => {
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'osascript') throw new Error('Launch Services lookup ran');
         return stubbed.runFileQuiet(file, args, opts);
       },

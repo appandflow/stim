@@ -42,6 +42,7 @@ import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWork
 import { withDirLock } from './dir-lock.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
 import { getExecutor } from './exec.ts';
+import { gitAsync } from './workspace/git.ts';
 import { workspaceDir } from './workspace/paths.ts';
 import { gitCommonDirOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
 import { pullRequestLookups, type PullRequestFact, type PullRequestQuery } from './workspace/pull-request.ts';
@@ -399,7 +400,7 @@ export function createStatusMeasurer({
 
   async function branchHead(repository: string, branch: string): Promise<string | null> {
     try {
-      const out = await exec.runFileAsync('git', ['-C', repository, 'rev-parse', '--verify', `refs/heads/${branch}`], {
+      const out = await gitAsync(repository, ['rev-parse', '--verify', `refs/heads/${branch}`], {
         timeoutMs: GIT_TIMEOUT_MS,
       });
       return out.trim() || null;

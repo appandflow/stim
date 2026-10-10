@@ -131,7 +131,7 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
 // plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
 function readPlistKey(e: Executor, plist: string, key: string, format: 'raw' | 'json'): string | null {
   try {
-    return e.runFile('plutil', ['-extract', key, format, '-o', '-', plist]);
+    return e.runFile('plutil', ['-extract', key, format, '-o', '-', plist], { timeoutMs: 10_000 });
   } catch (err) {
     if (/No value at that key path/.test(describe(err))) return null;
     throw err;
@@ -289,10 +289,10 @@ export async function swapJsBundle({
     tmp = mkdtemp();
     appCopy = join(tmp, basename(cachedAppPath));
     try {
-      e.runFile('cp', ['-c', '-R', cachedAppPath, appCopy]);
+      e.runFile('cp', ['-c', '-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     } catch {
       removeTemporaryEntry(appCopy);
-      e.runFile('cp', ['-R', cachedAppPath, appCopy]);
+      e.runFile('cp', ['-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     }
   } catch (err) {
     return fail('copy', `could not copy ${cachedAppPath} aside: ${describe(err)}`);
@@ -394,8 +394,8 @@ export async function swapJsBundle({
     } else {
       const hbc = join(tmp, `${JS_BUNDLE_NAME}.hbc`);
       try {
-        e.runFile(hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }));
-        e.runFile('mv', [hbc, bundleOutput]);
+        e.runFile(hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }), { timeoutMs: 'unbounded' });
+        e.runFile('mv', [hbc, bundleOutput], { timeoutMs: 30_000 });
         hermes = true;
       } catch (err) {
         return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
@@ -404,8 +404,8 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)]);
-    e.runFile('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`]);
+    e.runFile('cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)], { timeoutMs: 'unbounded' });
+    e.runFile('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('replace', `could not replace the JS bundle inside ${appCopy}: ${describe(err)}`);
   }
@@ -419,6 +419,7 @@ export async function swapJsBundle({
         const output = e.runFile(
           'xcrun',
           actoolArgs({ catalog: catalogDir, out: catalogBundle, target: catalogTarget }),
+          { timeoutMs: 'unbounded' },
         );
         if (!exists(join(catalogBundle, 'Assets.car'))) {
           return fail(
@@ -454,7 +455,7 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('codesign', ['--force', '--sign', '-', appCopy]);
+    e.runFile('codesign', ['--force', '--sign', '-', appCopy], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('codesign', `codesign --force --sign - ${appCopy} failed: ${describe(err)}`);
   }

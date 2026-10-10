@@ -25,7 +25,7 @@ import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { goneClaimOwner, liveClaimOwner, recycledClaimOwner } from './_factories.ts';
 import { MODE_COMMAND } from '../supervisor/state.ts';
@@ -87,7 +87,7 @@ beforeEach(() => {
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFileAsync: (file: string, args?: string[], opts?: object) =>
+    runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
       file === 'watchman'
         ? Promise.reject(new Error('watchman is not used here'))
         : real.runFileAsync(file, args, opts),

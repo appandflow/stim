@@ -23,7 +23,7 @@ import {
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
@@ -418,9 +418,9 @@ describe('macOS build placement and promotion', () => {
     const base = getExecutor();
     setExecutor({
       ...base,
-      runFile: (file: string, args: string[]) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         calls.push([file, args]);
-        return base.runFile(file, args);
+        return base.runFile(file, args, opts);
       },
     });
     const fetched = remoteBundle();
@@ -460,9 +460,9 @@ describe('macOS build placement and promotion', () => {
         const run = getExecutor().runFile;
         setExecutor({
           ...getExecutor(),
-          runFile: (file: string, args: string[]) => {
+          runFile: (file: string, args: string[], opts: ExecOptions) => {
             if (file === 'codesign' && args.includes('--verify')) throw new Error('invalid signature');
-            return run(file, args);
+            return run(file, args, opts);
           },
         });
       }
@@ -736,9 +736,9 @@ describe('macOS build placement and promotion', () => {
     const run = getExecutor().runFile;
     setExecutor({
       ...getExecutor(),
-      runFile: (file: string, args: string[]) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'codesign') throw new Error('signing failed');
-        return run(file, args);
+        return run(file, args, opts);
       },
     });
     await expect(build()).rejects.toThrow('signing failed');

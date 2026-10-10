@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { fingerprintNativeInputs } from './native-inputs.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeTransferManifest, sourceManifest, type NativeTransferFile } from '../offload/native-source.ts';
@@ -73,7 +73,7 @@ function requireRealParents(repository: string, path: string): void {
 
 export function nativeGradleTransfer(root: string, value: unknown): GradleTransfer {
   const declaration = gradleOffloadInputs(value);
-  const repository = realpathSync(getExecutor().runFile('git', ['-C', root, 'rev-parse', '--show-toplevel']));
+  const repository = realpathSync(git(root, ['rev-parse', '--show-toplevel']));
   const project = relative(repository, realpathSync(root)).split(sep).join('/');
   if (project && !containedPath(project)) throw new Error('The native Gradle project leaves its repository.');
   if (lstatSync(join(repository, project, 'buildSrc'), { throwIfNoEntry: false })?.isDirectory())

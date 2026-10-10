@@ -7,6 +7,7 @@ import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/buil
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifact } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
+import { git, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
@@ -53,7 +54,7 @@ const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android'
 
 function gitIgnoredNames(projectRoot: string, names: readonly string[]): Set<string> {
   if (names.length === 0) return new Set();
-  const out = getExecutor().runFileQuiet('git', ['-C', projectRoot, 'check-ignore', '--', ...names]);
+  const out = gitQuiet(projectRoot, ['check-ignore', '--', ...names]);
   return new Set(
     String(out ?? '')
       .split('\n')
@@ -239,7 +240,7 @@ export function storeBuild(
   registerOnce(root);
 
   return storeArtifact(entryDir(platform, key, root), buildPath, {
-    runFile: getExecutor().runFile,
+    runFile: (file, args) => getExecutor().runFile(file, args, { timeoutMs: 'unbounded' }),
     overwrite: Boolean(options.overwrite),
     writeMetadata: (staging) => {
       if (Array.isArray(options.sources)) {
@@ -558,17 +559,13 @@ export const UNTRACKED_MISS_CAP = 3;
 export function untrackedNativeFiles({
   projectRoot,
   iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
-  exec = getExecutor(),
 }: {
   projectRoot: string;
   iosProjectPath?: string;
-  exec?: { runFile: (file: string, args?: string[]) => string };
 }): string[] {
   let out: string;
   try {
-    out = exec.runFile('git', [
-      '-C',
-      projectRoot,
+    out = git(projectRoot, [
       'ls-files',
       '--others',
       '--exclude-standard',

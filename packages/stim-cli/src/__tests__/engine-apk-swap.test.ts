@@ -30,6 +30,7 @@ import {
 } from '../engine/apk-swap.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../devices/android.ts';
+import type { ExecOptions } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 import { androidLayoutSetting, defaultAndroidLayout } from '../workspace/settings.ts';
 
@@ -348,7 +349,7 @@ interface Call {
   op: string;
   file?: string;
   args?: string[];
-  opts?: Record<string, unknown>;
+  opts?: ExecOptions;
 }
 
 function manifest(assets: Record<string, string>): AssetManifest {
@@ -381,7 +382,7 @@ function harness({
   const bundleOutput = join(stage, 'assets', ANDROID_BUNDLE_NAME);
   const hermesc = androidHermescPath(root, { exists: () => false });
   const exec = makeExecutor({
-    runFile: (file: string, args: string[] = [], opts: Record<string, unknown> = {}) => {
+    runFile: (file: string, args: string[], opts: ExecOptions) => {
       calls.push({ op: 'runFile', file, args, opts });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
       if (file === hermesc) writeFileSync(args[args.indexOf('-out') + 1]!, 'hermes bytecode');
@@ -611,7 +612,11 @@ describe('swapApkBundle', () => {
     const sign = calls.find((c) => c.file === apksigner);
     expect(sign?.args).toContain(`env:${KEYSTORE_PASSWORD_ENV}`);
     expect(sign?.args?.join(' ')).not.toContain('hunter2');
-    expect(sign?.opts).toEqual({ env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' }, redact: ['hunter2'] });
+    expect(sign?.opts).toEqual({
+      timeoutMs: 'unbounded',
+      env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' },
+      redact: ['hunter2'],
+    });
   });
 
   test('an apksigner failure fails at the apksigner step -- an unsigned APK is never handed back', async () => {

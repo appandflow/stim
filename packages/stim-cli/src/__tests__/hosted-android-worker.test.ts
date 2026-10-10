@@ -184,7 +184,7 @@ test('AVD creation remains in the worker process group', { skip: process.platfor
   });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
   const workerGroup = getExecutor()
-    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)])
+    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)], { timeoutMs: 60_000 })
     .trim();
   expect(readFileSync(groupFile, 'utf8').trim()).toBe(workerGroup);
 });
