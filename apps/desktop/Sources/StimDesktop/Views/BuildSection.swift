@@ -449,7 +449,6 @@ struct BuildOutcomeBadge: View {
   var body: some View {
     if let label = build.outcomeLabel {
       Pill(label, tone: build.outcome == "hit" ? .success : .warning, size: .small)
-        .tutorialAnchor(.cacheBadge)
     }
   }
 }

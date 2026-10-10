@@ -18,6 +18,8 @@ struct Notice: Identifiable {
     var perform: @MainActor () -> Void
   }
   var secondaryAction: Action?
+
+  var launchedWorkspace: String? { key?.hasPrefix("device-launch:") == true ? workspacePath : nil }
 }
 
 @MainActor
@@ -151,13 +153,18 @@ private struct NoticeCard: View {
     .padding(.top, Space.xxs)
   }
 
-  private var primary: some View {
-    Button(notice.actionTitle) {
+  @ViewBuilder private var primary: some View {
+    let button = Button(notice.actionTitle) {
       center.remove(notice.id)
       notice.perform()
     }
     .buttonStyle(.stim(.primary))
     .fixedSize()
+    if let path = notice.launchedWorkspace {
+      button.tutorialAnchor(.launchNoticeShow, workspace: path)
+    } else {
+      button
+    }
   }
 
   private func secondary(_ action: Notice.Action) -> some View {

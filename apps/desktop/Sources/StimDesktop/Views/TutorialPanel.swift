@@ -19,6 +19,7 @@ struct TutorialPanel: View {
   var runIOS: () -> Void = {}
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
+  var openBuild: (() -> Void)? = nil
   var pairPhone: () -> Void = {}
   var updateCLI: () -> Void = {}
   @State private var expanded: String?
@@ -129,6 +130,13 @@ struct TutorialPanel: View {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           if let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
+          if step.id == "build", current, let openBuild {
+            HStack(spacing: Space.sm) {
+              Text("Click Show to watch the build.")
+              Button("Open the build", action: openBuild).buttonStyle(.link)
+                .accessibilityLabel("Open the tutorial build")
+            }
+          }
           if step.id == "build", agentDeviceMissing { AgentDeviceCard(copied: copied) }
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)

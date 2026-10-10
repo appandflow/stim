@@ -151,7 +151,6 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
-      .environment(\.tutorialHint, tutorialHint)
     }
     .confirmationDialog(
       "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
@@ -536,7 +535,6 @@ struct WorkspaceDetail: View {
     )
     return
       tile
-      .tutorialAnchor(.deviceTile, workspace: workspace.path)
       .background {
         Button {
           focusedID = device.id

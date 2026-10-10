@@ -114,10 +114,12 @@ either way; without it your agent can only check the build and logs.
 Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
 grant access. Its only build is the **Run iOS** button.
 
-Accent rings and short callouts point to existing controls without covering the
-app with a dimming layer. **Show me** selects the tutorial workspace when its
-control is not visible. Build details and the device viewer keep their own
-highlights when opened.
+A soft glow with a short label points at the control a step needs, without
+covering the app with a dimming layer, and fades after a few seconds; it shows
+again when the step or page changes. On **Make a Change**, it points at the
+**Show** button of the "launched for" notice for your first change's worktree;
+if that notice is gone, **Open the build** in the step does the same. **Show
+me** selects the tutorial workspace when the control is not on the page.
 
 Progress stays in this app's preferences. Closing the panel preserves it;
 Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
