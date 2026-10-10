@@ -271,8 +271,10 @@ PATH).
   Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
   to cover the warm path. It runs on dispatch, on a pull request labeled
   `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
-  `apps/desktop`, `packages/ci`, `scripts/ci`, the action or the workflow. A
-  change to the other packages is covered by the native e2e smoke on every push.
+  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
+  `scripts/ci`, the action or the workflow. A change to the other packages or
+  to the lockfile does not start it on push; a pull request label or dispatch
+  runs it on demand.
   Every job uses a standard runner; larger runners are billed per minute even
   on public repositories. The only larger-runner label in the workflows is the
   dispatch-only `ga-large` choice in `e2e-native.yml`.

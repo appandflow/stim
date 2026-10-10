@@ -8,6 +8,8 @@ on:
       - 'apps/mobile/**'
       - 'apps/desktop/**'
       - 'packages/ci/**'
+      - 'packages/core/**'
+      - 'packages/stim-cli/**'
       - 'scripts/ci/**'
       - '.github/actions/stim-ci/**'
       - '.github/workflows/stim-ci.yml'
