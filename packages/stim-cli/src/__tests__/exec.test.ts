@@ -83,7 +83,7 @@ test('a failure redacts the given values from every field of the thrown error', 
   } catch (error) {
     failure = error as typeof failure;
   }
-  const asyncFailure = await getExecutor()
+  const asyncFailure: typeof failure = await getExecutor()
     .runFileAsync(process.execPath, args, { redact: [secret] })
     .then(
       () => new Error('did not fail'),
