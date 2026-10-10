@@ -43,6 +43,7 @@ import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from
 import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
+  MODE_COMMAND,
   clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
@@ -414,7 +415,7 @@ async function stopWorkspace({
   clearCollectors = clearCollectorState,
   isAlive = pidExists,
   killGroup = killMetroTree,
-  signalServer = (pid: number) => signalProcessTree(pid),
+  signalServer = (pid: number, group: boolean) => signalProcessTree(pid, 'SIGTERM', { group }),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
@@ -443,7 +444,7 @@ async function stopWorkspace({
   clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
   isAlive?: (pid: number) => boolean;
   killGroup?: typeof killMetroTree;
-  signalServer?: (pid: number) => boolean;
+  signalServer?: (pid: number, group: boolean) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
@@ -839,6 +840,16 @@ async function stopSupervisor(
   report(
     chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
   );
+  if (target.mode === MODE_COMMAND) {
+    report(
+      chalk.dim(
+        phaseLine(
+          '',
+          'metro.command runs in its own process group: once the supervisor is gone, run stim stop again to stop it',
+        ),
+      ),
+    );
+  }
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 
@@ -856,7 +867,7 @@ async function stopMetro(
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
-    signalServer: (pid: number) => boolean;
+    signalServer: (pid: number, group: boolean) => boolean;
     inspectIdentity: typeof inspectProcessIdentity;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
@@ -877,7 +888,7 @@ async function stopMetro(
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
     let signalled = false;
     try {
-      signalled = signalServer(serverPid as number);
+      signalled = signalServer(serverPid as number, server?.mode === MODE_COMMAND);
     } catch {}
     const exited = signalled
       ? await waiter(serverPid as number, serverProcessToken as string)

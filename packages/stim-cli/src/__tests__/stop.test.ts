@@ -395,6 +395,21 @@ test('the dev server a dead supervisor left behind is stopped by its recorded id
   expect(calls.signals).toEqual([]);
 });
 
+test('a command-child server a dead supervisor left behind is stopped as its whole process group', async () => {
+  const signalled: [number, boolean][] = [];
+  const { opts } = seams({
+    state: { pid: 4242, port: 8083, mode: 'command-child', serverPid: 4243, serverProcessToken: 'server-token' },
+    inspectIdentity: (record: { pid?: unknown }) => (record?.pid === 4243 ? 'same' : 'gone'),
+    signalServer: (pid: number, group: boolean) => {
+      signalled.push([pid, group]);
+      return true;
+    },
+  });
+  const r = await runStop(opts);
+  expect(r.outcomes.metro.status).toBe('stopped');
+  expect(signalled).toEqual([[4243, true]]);
+});
+
 test.each([
   ['unknown', 'refused', []],
   ['same', 'failed', [4243]],

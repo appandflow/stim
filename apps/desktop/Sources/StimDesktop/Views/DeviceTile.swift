@@ -1257,13 +1257,18 @@ private struct BuildCover: View {
   @Environment(\.workspaceTitle) private var title
 
   var body: some View {
-    Text(
-      heading
-        ?? (build.phase == "wait" && build.waitingOn != nil
-          ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
-          : "Waiting for the \(platformName(build.platform)) build")
-    )
-    .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    VStack(spacing: Space.sm) {
+      StimBuildAnimation(platform: build.platform)
+        .environment(\.colorScheme, .dark)
+        .frame(width: 56, height: 84)
+      Text(
+        heading
+          ?? (build.phase == "wait" && build.waitingOn != nil
+            ? "Waiting for \(title(build.waitingOn?.path ?? ""))'s \(platformName(build.platform)) build"
+            : "Waiting for the \(platformName(build.platform)) build")
+      )
+      .font(.stim(.callout)).foregroundStyle(.white.opacity(0.85))
+    }
     .multilineTextAlignment(.center)
     .padding()
     .frame(maxWidth: .infinity, maxHeight: .infinity)

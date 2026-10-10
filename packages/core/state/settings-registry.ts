@@ -238,6 +238,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     description: 'How a remote device reaches Metro; tailscale is tailnet-only and requires explicit selection',
   },
+  {
+    key: 'metro.command',
+    type: { kind: 'strings' },
+    scopes: ['workspace', 'committed'],
+    description:
+      "Command that starts this project's dev server, as an argv array run from the app directory; {port} is replaced with the reserved Metro port",
+  },
   { key: 'metro.ngrokUrl', type: STRING, scopes: PROJECT, description: 'Stable ngrok URL for the managed tunnel' },
   { key: 'metro.publicUrl', type: STRING, scopes: PROJECT, description: 'Existing public Metro URL' },
   {

@@ -18,6 +18,8 @@ import {
   iosSimSlimProfileSetting,
   iosSimSlimProfileSettingError,
   mergeSettingsLayers,
+  metroCommandSettingError,
+  metroTunnelSettingError,
   ngrokUrlSetting,
   parseAndroidAvdConfigIni,
   publicUrlSetting,
@@ -36,6 +38,7 @@ import {
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
+import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
 import { saveConfig, setProjectSetting, setRepoSetting, upsertProject, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
@@ -441,6 +444,11 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
   'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
+  'metro.command': {
+    valid: ['npx', 'react-native', 'start', '--port', '{port}'],
+    invalid: ['npx', 7],
+    expected: 'an array of strings',
+  },
   'metro.ngrokUrl': { valid: 'https://a.ngrok.app', invalid: {}, expected: 'a string' },
   'metro.publicUrl': { valid: 'https://metro.example', invalid: false, expected: 'a string' },
   'metro.port': { valid: 25062, invalid: '25062', expected: 'a whole number from 1024 through 65535' },
@@ -632,6 +640,38 @@ describe('ngrokUrlSetting', () => {
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'http://stable.ngrok.app' } })).toBeNull();
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
     expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
+  });
+});
+
+test('metroTunnelSettingError accepts the hosted overlay that clears the public tunnel keys', () => {
+  expect(metroTunnelSettingError(hostedMetroSettings({ ios: { remote: 'auto' } }, true))).toBeNull();
+  expect(
+    metroTunnelSettingError(
+      hostedMetroSettings({ metro: { tunnel: 'auto', ngrokUrl: 'https://stable.ngrok.app' } }, true),
+    ),
+  ).toBeNull();
+  expect(metroTunnelSettingError({ metro: { ngrokUrl: null } })).toBe(
+    'metro.ngrokUrl requires metro.tunnel to be "ngrok".',
+  );
+});
+
+describe('metroCommandSettingError', () => {
+  test('accepts an argv that passes {port}, and an unset command', () => {
+    expect(metroCommandSettingError({ metro: { command: ['npx', 'react-native', 'start', '--port={port}'] } })).toBe(
+      null,
+    );
+    expect(metroCommandSettingError({})).toBe(null);
+  });
+
+  test('refuses a command that cannot listen on the reserved port', () => {
+    expect(metroCommandSettingError({ metro: { command: ['npx', 'react-native', 'start'] } })).toMatch(
+      /must pass \{port\}/,
+    );
+  });
+
+  test('refuses an empty argv or a blank program', () => {
+    expect(metroCommandSettingError({ metro: { command: [] } })).toMatch(/non-empty array/);
+    expect(metroCommandSettingError({ metro: { command: [' ', '{port}'] } })).toMatch(/non-empty array/);
   });
 });
 
