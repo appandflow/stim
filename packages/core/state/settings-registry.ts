@@ -208,6 +208,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'android.avdConfig', type: OBJECT, scopes: PROJECT, description: 'Validated AVD config values' },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
   {
+    key: 'android.artifactInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Complete repeatable native Gradle inputs for local APK caching, including declared local files and environment names',
+  },
+  {
     key: 'android.offloadInputs',
     type: OBJECT,
     scopes: PROJECT,

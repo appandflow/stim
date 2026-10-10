@@ -233,7 +233,7 @@ export async function acquireAndroidArtifact(
   let providerLoad: Promise<LoadCacheProviderResult> | null = null;
   const cacheWarn = createWarnOnce((line) => phase('cache', chalk.yellow(line)));
   const loadTieredProvider =
-    cachePolicy.remote && cacheProviderConfig
+    recipe.cacheScope !== 'local' && cachePolicy.remote && cacheProviderConfig
       ? () => (providerLoad ??= loadCacheProviderModule({ projectRoot: root, config: cacheProviderConfig }))
       : null;
   let cacheKey = '';
@@ -425,6 +425,10 @@ export async function acquireAndroidArtifact(
       return null;
     }
     swapDir = prepared.directory;
+    if (prepared.androidPackage) {
+      androidPackage = prepared.androidPackage;
+      record.bundleId = androidPackage;
+    }
     return prepared.apkPath;
   };
 
@@ -581,7 +585,9 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    const uncached = Boolean(
+      recipe.offload?.uncachedArtifacts || (cacheIneligible && recipe.offload?.supportsUncachedArtifacts),
+    );
     if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
@@ -662,6 +668,12 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const { timings } = outcome;
+    if (uncached) {
+      record.fingerprint = null;
+      record.cacheKey = null;
+      record.cacheHit = false;
+      record.cacheSkipped = true;
+    }
     apkPath = stored;
     handoff = outcome.handoff ?? null;
     record.builtOn = outcome.machine;

@@ -72,6 +72,15 @@ function requireRealParents(repository: string, path: string): void {
 }
 
 export function nativeGradleTransfer(root: string, value: unknown): GradleTransfer {
+  return nativeGradleInventory(root, value, []);
+}
+
+export function nativeGradleLocalSourceDigest(root: string, value: unknown, localFiles: readonly string[]): string {
+  const { project, digest } = nativeGradleInventory(root, value, localFiles);
+  return createHash('sha256').update(JSON.stringify({ project, digest })).digest('hex');
+}
+
+function nativeGradleInventory(root: string, value: unknown, localFiles: readonly string[]): GradleTransfer {
   const declaration = gradleOffloadInputs(value);
   const repository = realpathSync(getExecutor().runFile('git', ['-C', root, 'rev-parse', '--show-toplevel']));
   const project = relative(repository, realpathSync(root)).split(sep).join('/');
@@ -93,6 +102,10 @@ export function nativeGradleTransfer(root: string, value: unknown): GradleTransf
     });
   }
   for (const file of files.values()) {
+    if (localFiles.some((path) => resolve(path) === resolve(repository, file.path))) {
+      files.delete(file.path);
+      continue;
+    }
     if (!containedPath(file.path)) throw new Error(`Native input ${file.path} is not a contained relative path.`);
     requireRealParents(repository, file.path);
     if (state.some((path) => below(file.path, path)))

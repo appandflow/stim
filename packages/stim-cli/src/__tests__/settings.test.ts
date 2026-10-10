@@ -425,6 +425,17 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
+  'android.artifactInputs': {
+    valid: {
+      complete: true,
+      ignored: [],
+      outputs: ['app/build'],
+      localFiles: ['../signing/key'],
+      environment: ['SIGNING_PASSWORD'],
+    },
+    invalid: [],
+    expected: 'an object',
+  },
   'android.offloadInputs': {
     valid: { complete: true, ignored: [], outputs: ['app/build'] },
     invalid: [],

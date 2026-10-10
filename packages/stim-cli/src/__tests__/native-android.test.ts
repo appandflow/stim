@@ -121,7 +121,7 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
       runFileAsync: external,
       spawn: external,
       runQuiet: external,
-      runFileQuiet: external,
+      runFileQuiet: (file) => (file === 'git' ? null : external()),
       findExecutable: external,
     }),
   );

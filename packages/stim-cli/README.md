@@ -41,8 +41,10 @@ readiness. Plain output streams progress and reports the complete result. Use
 Native Gradle apps can use an approved build worker after declaring that
 Git-visible source and exact additional ignored files are sufficient. See
 `stim guide lifecycle` for `android.offloadInputs`, generated output ownership,
-and supported input boundaries. Stim does not invent an artifact-cache key for
-arbitrary Gradle inputs; Gradle keeps its own incremental and task caches.
+and supported input boundaries. Workers remain uncached. Local builds can opt
+into APK caching through a separate complete `android.artifactInputs` declaration;
+it never authorizes private files or environment values for transfer. Gradle
+keeps its own incremental and task caches in both cases.
 
 ## Programmatic API
 

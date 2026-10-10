@@ -510,9 +510,12 @@ never open a Metro bridge.
 Multiple application modules, density/split APK sets, unsigned APKs and
 EAS/proxy targets are unsupported. Set `org.gradle.configureondemand=false` so all
 application modules can be enumerated; configuration cache remains supported.
-Stim artifact caching remains unavailable because arbitrary Gradle inputs cannot
-be proven complete. Build workers accept an explicit project declaration in
-`.stim.json`:
+Local APK caching is opt-in through `android.artifactInputs` in `.stim.json`.
+It declares complete repeatable inputs, including signing files and environment
+names; [the artifact-input contract](./build-caches.md#native-gradle-artifact-inputs)
+describes eligibility and private input handling. Without it, builds retain
+Gradle's incremental and task-cache reuse and skip Stim artifact caching.
+Build workers require their separate transfer declaration:
 
 ```json
 {
@@ -538,8 +541,10 @@ or made explicit source; only default `.gradle`/`.kotlin` state is retained.
 Only declared output directories reported by AGP and recorded after a successful
 worker build survive the next sync. Gradle incremental, task-cache and
 configuration-cache reuse remain available; the transfer digest is never an APK
-cache key. Old workers refuse before source upload. Native `--plan` refuses without
-executing Gradle; `doctor` reports native prerequisites. `reload` refuses for a
+cache key. Old workers refuse before source upload. Native `--plan` uses the local
+artifact-input identity and verifies the cached APK without running Gradle or
+preparing a device. Missing declarations, unknown local ABI, hosted placement and
+experimental CAS setup refuse a prediction. `doctor` reports native prerequisites. `reload` refuses for a
 process-only app. Re-run `stim android` after an edit; `stop` keeps the existing
 scoped device cleanup and physical-device lease behavior.
 

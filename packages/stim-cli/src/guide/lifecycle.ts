@@ -18,8 +18,28 @@ Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the 
 must support native Android process mode. Multiple application modules,
 density/split APK sets and EAS/proxy targets are unsupported. Set
 org.gradle.configureondemand=false; configuration cache remains supported. Stim verifies the existing APK signature; it does not sign it.
-Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
-tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+Local APK caching is opt-in through project-scoped \`android.artifactInputs\`:
+\`{"complete":true,"ignored":[],"outputs":["build","app/build"],"localFiles":["../signing/release.keystore"],"environment":["SIGNING_PASSWORD"]}\`.
+complete promises that Git-visible files, exact listed ignored files, declared
+local files and environment variables completely determine a repeatable build
+with pinned dependencies. It is a project contract, not proof of arbitrary
+Gradle code. Do not opt in with undeclared files, mutable dependencies, network
+responses, time or other changing inputs. Include signing keys, signing property
+files, alternate JDK/toolchain release metadata and custom external configuration.
+localFiles are exact regular files, absolute or relative to the project; absence
+is fingerprinted. environment contains names, never values. SDK version metadata,
+the wrapper JDK, local.properties, user gradle.properties and ordinary debug
+keystores (including absence) also contribute. Custom JVM user.home/signing
+locations must be declared explicitly. The SDK reported by AGP must match
+ANDROID_HOME for publication. Changed inputs during compilation prevent storage.
+Cached APKs must retain their verified bytes, package, signature and target ABI.
+Local input values are hashed; they are not uploaded or logged. Local cache
+identities do not enable cache providers or authorize build-worker transfer.
+Without a valid declaration the app still builds without Stim artifact caching;
+Gradle incremental and task-cache reuse continue. --no-build-cache skips artifact
+reads, writes and shared-build waits. Native Release APKs are reused unchanged.
+
+Build workers require a separate project-scoped \`android.offloadInputs\` declaration:
 \`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
 Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
 Paths are exact repository-relative paths. complete affirms that Git-visible
@@ -31,8 +51,10 @@ reported by AGP and previously produced by this worker remain warm, along with
 worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
 incremental, task-cache and configuration-cache reuse; transfer digests never
 become reusable APK cache keys. Older hosts refuse before source upload.
-Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
-prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+Native Android \`--plan\` uses the same local input and APK verification without
+executing Gradle or preparing devices. Missing input declarations, unresolved
+local ABI, hosted placement and experimental CAS setup refuse a prediction.
+\`doctor\` reports native prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.
 
 Two workflows share steps 2 through 6.

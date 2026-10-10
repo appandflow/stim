@@ -240,6 +240,16 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
+  android.artifactInputs a native Gradle local APK cache declaration:
+                        complete: true, ignored: [exact repository-relative files],
+                        outputs: [generated repository-relative directories],
+                        localFiles: [exact project-relative or absolute files],
+                        environment: [variable names]. complete promises all
+                        inputs are repeatable and dependencies pinned. Include
+                        signing keys and every external or environment input.
+                        Missing local files and environment values are hashed
+                        as absent. Values stay local; this is not build-worker
+                        transfer authorization. See the native Android guide.
   android.offloadInputs a native Gradle build-worker declaration:
                         {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
                         complete confirms Git-visible source plus the exact
@@ -247,7 +257,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build. outputs names generated directories reported
                         by AGP; recorded outputs can survive worker sync.
                         Omitted optional inputs can change build results.
-                        Stim artifact caching remains unavailable. See
+                        Worker APKs remain uncached. See
                         \`stim guide lifecycle native-android\` for input,
                         privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,

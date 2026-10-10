@@ -27,6 +27,55 @@ tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
 
 ## Native artifact cache
 
+### Native Gradle artifact inputs
+
+Native Android projects can opt into local APK reuse in `.stim.json`:
+
+```json
+{
+  "android": {
+    "artifactInputs": {
+      "complete": true,
+      "ignored": [],
+      "outputs": ["build", "app/build"],
+      "localFiles": ["../signing/release.keystore"],
+      "environment": ["SIGNING_PASSWORD"]
+    }
+  }
+}
+```
+
+`complete` is the project's promise that Git-visible source, listed ignored files,
+local files and environment variables fully determine a repeatable build with
+pinned dependencies. Stim does not infer this from arbitrary Gradle code.
+Declare every signing file, external configuration and environment input. Mutable
+dependencies, undeclared files, network responses, time and other changing inputs
+do not meet this contract. Leave the declaration unset to build without Stim
+artifact caching; Gradle's own caches remain available.
+
+`ignored` lists exact repository-relative files and `outputs` lists generated
+repository-relative directories. Source cannot overlap outputs. `localFiles`
+lists exact regular files, absolute or relative to the project; `environment`
+lists variable names. Missing files and unset variables contribute an absence
+marker. Private bytes and values contribute only hashes and are not persisted in
+cache receipts. This declaration adds no files or values to worker transfers;
+the independent `android.offloadInputs` contract still governs Git-visible and
+explicitly authorized ignored source. Never authorize private signing files for
+worker transfer.
+
+The identity also includes the wrapper JDK release, installed SDK version
+metadata, variant, ABI, build options, `local.properties`, user
+`gradle.properties`, and ordinary debug keystores, including their absence.
+Declare alternate JDK/toolchain release files and custom JVM `user.home` or
+signing locations explicitly. For publication, AGP's SDK must match
+`ANDROID_HOME`. Changed inputs during compilation prevent storage. Native
+Release hits reuse the original signed APK; signature, package, ABI and receipt
+bytes are checked before reuse. Cache providers and worker-built APKs remain
+outside this local identity contract. `--no-build-cache` skips artifact reads,
+writes and shared-build waits. `--plan` performs the same read-only local check.
+
+### React Native and Expo inputs
+
 Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an

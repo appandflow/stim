@@ -1,9 +1,9 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { androidHome, findBuildTool } from '../devices/android.ts';
 import { getExecutor } from '../exec.ts';
-import { skippedMissReason } from '../cache/miss-reason.ts';
+import { explainBuildMiss, skippedMissReason } from '../cache/miss-reason.ts';
 import { androidProcessRuntime } from '../commands/android/launch.ts';
 import { buildGradle, androidSdkRefusal, type GradlePreflightFailure, type LocateApkResult } from '../engine/gradle.ts';
 import { resolveCcache } from '../engine/ccache.ts';
@@ -11,11 +11,17 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { androidToolchain } from '../offload/toolchain.ts';
 import { settingValueAt } from '../workspace/settings.ts';
 import { gradleOffloadInputs, nativeGradleTransfer, type GradleTransfer } from './native-gradle-inputs.ts';
+import {
+  gradleArtifactInputs,
+  nativeGradleArtifactSnapshot,
+  NATIVE_GRADLE_CACHE_LIMIT,
+} from './native-gradle-artifact-inputs.ts';
+import { materializeNativeApk, nativeAndroidCache } from './native-android-cache.ts';
+import { planNativeAndroid } from './native-android-plan.ts';
 import type { AndroidProject } from './android-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 
-const CACHE_LIMIT =
-  'Native Gradle inputs can include arbitrary external files and plugins; Stim artifact caching is unavailable. Offload requires a complete android.offloadInputs declaration. Gradle still owns incremental and task-cache reuse.';
+const CACHE_LIMIT = `${NATIVE_GRADLE_CACHE_LIMIT} Offload requires a separate complete android.offloadInputs declaration and remains uncached.`;
 const MODEL_LIMIT =
   'Native Android requires AGP with androidComponents, one application module and configuration-on-demand disabled. Gradle resolves the exact variant and APK outputs during the build.';
 
@@ -121,13 +127,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
     targets: ['emulator', 'physical', 'hosted'],
     eas: false,
     runtimeKind: () => 'process',
-    plan: async () => ({
-      refusal: {
-        code: 'STIM_BAD_ARG',
-        message: `${MODEL_LIMIT} --plan does not execute Gradle. ${CACHE_LIMIT}`,
-        remedy: 'Run `stim android` with an exact --variant to resolve and build the native app.',
-      },
-    }),
+    plan: (options) => planNativeAndroid(root, options),
     runtime: ({ phase }) =>
       androidProcessRuntime(async () => {
         phase('metro', 'skipped (native process)');
@@ -136,22 +136,67 @@ export function nativeAndroidProject(root: string): AndroidProject {
     artifact: ({ writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
       const inputs = settingValueAt(settings, 'android.offloadInputs');
+      const artifactInputs = settingValueAt(settings, 'android.artifactInputs');
+      let snapshot: ReturnType<typeof nativeGradleArtifactSnapshot> | null = null;
+      let cacheRefusal: string | null = CACHE_LIMIT;
+      let compiledPackage: string | null = null;
+      let compiledSdk: string | null = null;
+      const read = () => nativeGradleArtifactSnapshot(root, artifactInputs, buildPlan, target.abi);
       let transfer: GradleTransfer | null = null;
       const modelFile = join(workspaceDir(root), 'gradle-build', `native-apk-${encodeURIComponent(variant)}.json`);
       return {
-        identity: async () => ({ cacheIneligible: CACHE_LIMIT }),
-        cache: () => {
-          throw new Error(CACHE_LIMIT);
+        cacheScope: 'local',
+        identity: async () => {
+          try {
+            snapshot = read();
+            cacheRefusal = null;
+            return snapshot;
+          } catch (error) {
+            cacheRefusal = (error as Error).message;
+            return { cacheIneligible: cacheRefusal };
+          }
         },
+        cache: () => nativeAndroidCache(snapshot!.sdkDirectory, target.abi, () => compiledPackage),
         prepare: async () => {},
-        reconcile: async () => ({ identity: null, rekeyedBy: [], cacheRefusal: null }),
-        validate: async () => null,
-        materialize: async () => null,
-        explain: () => ({ reason: skippedMissReason(CACHE_LIMIT), diff: null }),
+        reconcile: async () => {
+          if (snapshot) {
+            try {
+              snapshot = read();
+            } catch {
+              snapshot = null;
+            }
+          }
+          return { identity: snapshot, rekeyedBy: [], cacheRefusal: null };
+        },
+        validate: async () => {
+          if (!snapshot || compiledSdk !== snapshot.sdkDirectory) return null;
+          try {
+            return read().hash === snapshot.hash ? snapshot : null;
+          } catch {
+            return null;
+          }
+        },
+        materialize: async (key, path) => {
+          if (!snapshot) return null;
+          try {
+            if (read().hash !== snapshot.hash) return null;
+            return materializeNativeApk(key, path, snapshot.sdkDirectory, target.abi);
+          } catch {
+            return null;
+          }
+        },
+        explain: (rekeyedBy) => ({
+          reason: snapshot
+            ? explainBuildMiss({ root, platform: 'android', current: { hash: snapshot.hash, sources: [] }, rekeyedBy })
+                .reason
+            : skippedMissReason(cacheRefusal ?? CACHE_LIMIT),
+          diff: null,
+        }),
         untrackedLine: () => null,
         legacyCache: null,
         offload: {
           supportsUncachedArtifacts: true,
+          uncachedArtifacts: true,
           get unsupported() {
             if (buildPlan.cas) return 'Apple Clang CAS builds build here';
             try {
@@ -192,7 +237,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
             .map((path) => fileURLToPath(new URL(path, import.meta.url)))
             .find(existsSync);
           if (!script) throw new Error('Stim installation is missing shim/native-android.gradle.');
-          return buildGradle(
+          const result = await buildGradle(
             {
               root,
               logWriter: writer,
@@ -210,7 +255,16 @@ export function nativeAndroidProject(root: string): AndroidProject {
                 `-Pstim.native.variant=${variant}`,
                 `-Pstim.native.model=${modelFile}`,
               ],
-              locate: () => locateNativeApk(modelFile, variant, target.abi),
+              locate: async () => {
+                const located = await locateNativeApk(modelFile, variant, target.abi);
+                if (!('code' in located)) {
+                  compiledSdk = realpathSync(
+                    (JSON.parse(readFileSync(modelFile, 'utf8')) as NativeApkModel).sdkDirectory,
+                  );
+                  compiledPackage = located.androidPackage ?? null;
+                }
+                return located;
+              },
             },
             {
               estimateMs: estimates().coldBuildMs,
@@ -221,6 +275,7 @@ export function nativeAndroidProject(root: string): AndroidProject {
               compilerCacheDisabled: buildPlan.compilerCache === 'none',
             },
           );
+          return result;
         },
       };
     },
@@ -229,7 +284,13 @@ export function nativeAndroidProject(root: string): AndroidProject {
 
 export function nativeAndroidDoctor(root: string): ProjectDoctor {
   return {
-    inspect: () => {
+    inspect: ({ settings }) => {
+      let cache = CACHE_LIMIT;
+      try {
+        gradleArtifactInputs(settingValueAt(settings, 'android.artifactInputs'));
+        cache =
+          'Local native APK caching uses the project-declared complete inputs. Build workers remain uncached and need their separate android.offloadInputs declaration.';
+      } catch {}
       const sdkPath = androidHome();
       const sdk = androidSdkRefusal({
         sdkPath,
@@ -242,7 +303,7 @@ export function nativeAndroidDoctor(root: string): ProjectDoctor {
         {
           level: 'note',
           title: 'Native Android Gradle project',
-          detail: `${MODEL_LIMIT} ${CACHE_LIMIT} Metro and EAS are unsupported; local and hosted emulators use native process readiness.`,
+          detail: `${MODEL_LIMIT} ${cache} Metro and EAS are unsupported; local and hosted emulators use native process readiness.`,
           fix: null,
         },
         ...(sdk
