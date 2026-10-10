@@ -36,7 +36,7 @@ struct TutorialTrack: View {
   }
 
   private func node(_ step: TutorialStep, state: TutorialStepState) -> some View {
-    let size: CGFloat = step.optional ? 12 : 16
+    let size: CGFloat = 16
     return ZStack {
       switch state {
       case .done:
