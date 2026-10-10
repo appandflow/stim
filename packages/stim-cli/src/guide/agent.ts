@@ -88,8 +88,8 @@ Before native work, run doctor for the platform in scope when the STATUS block
 at the top of this topic says it is due. No block means doctor is current and
 Stim is up to date. In the worktree workflow, run it from the linked worktree
 so it also checks the source checkout. Doctor never loads fingerprint.config.js
-or runs an eas from the project tree; with dependencies installed, its
-fingerprint checks run the installed Expo packages, as a build does. warm,
+or runs an eas from the project tree; its fingerprint checks can still run
+installed Expo packages, including hoisted ones, as a build does. warm,
 start, ios and android run project code. Follow each finding's printed remedy,
 and read the routed topic below before acting on one you do not understand. If
 the stim resolved from PATH is older than another installation, fix PATH or the

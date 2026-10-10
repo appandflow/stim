@@ -1365,43 +1365,40 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32')(
-  'doctor never runs a PATH eas it cannot place outside the repository',
-  () => {
-    const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-placement-')));
-    const marker = join(base, 'ran');
-    const path = process.env.PATH;
-    const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
-    const unchecked = (project: string, binDir: string) => {
-      process.env.PATH = [binDir, ...pathWithoutEas].join(delimiter);
-      return runDoctor(project).find((f) => /EAS session/.test(f.title))?.title;
-    };
-    try {
-      const workspace = join(base, 'workspace');
-      const app = join(workspace, 'apps', 'mobile');
-      mkdirSync(app, { recursive: true });
-      writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
-      writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
-      writeMarkerScript(join(workspace, 'node_modules', '.bin', 'eas'), marker, 'janic');
-      expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
-      expect(existsSync(marker)).toBe(false);
+test.skipIf(process.platform === 'win32')('doctor never runs a PATH eas it cannot place outside the repository', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-placement-')));
+  const marker = join(base, 'ran');
+  const path = process.env.PATH;
+  const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
+  const unchecked = (project: string, binDir: string) => {
+    process.env.PATH = [binDir, ...pathWithoutEas].join(delimiter);
+    return runDoctor(project).find((f) => /EAS session/.test(f.title))?.title;
+  };
+  try {
+    const workspace = join(base, 'workspace');
+    const app = join(workspace, 'apps', 'mobile');
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+    writeMarkerScript(join(workspace, 'node_modules', '.bin', 'eas'), marker, 'janic');
+    expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
 
-      execSync('git init -q', { cwd: app });
-      expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
-      expect(existsSync(marker)).toBe(false);
+    execSync('git init -q', { cwd: app });
+    expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
 
-      const outside = join(base, 'outside', 'eas');
-      writeMarkerScript(outside, marker, 'janic');
-      mkdirSync(join(app, 'tools'));
-      symlinkSync(outside, join(app, 'tools', 'eas'));
-      expect(unchecked(app, join(app, 'tools'))).toBe(EAS_SESSION_UNCHECKED);
-      expect(existsSync(marker)).toBe(false);
-    } finally {
-      process.env.PATH = path;
-      rmSync(base, { recursive: true, force: true });
-    }
-  },
-);
+    const outside = join(base, 'outside', 'eas');
+    writeMarkerScript(outside, marker, 'janic');
+    mkdirSync(join(app, 'tools'));
+    symlinkSync(outside, join(app, 'tools', 'eas'));
+    expect(unchecked(app, join(app, 'tools'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    process.env.PATH = path;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
 
 test.each(['buildCache', 'remoteBuildCache'])('doctor skips EAS auth when %s is disabled', (setting) => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
