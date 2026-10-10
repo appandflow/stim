@@ -66,6 +66,15 @@ private struct SkinNode {
 
 @MainActor
 enum EmulatorFrameArtwork {
+  private static var cache: [String: DeviceFrameArtwork] = [:]
+
+  static func cached(avdName: String) -> DeviceFrameArtwork? {
+    if let hit = cache[avdName] { return hit }
+    let artwork = load(avdName: avdName)
+    if let artwork { cache[avdName] = artwork }
+    return artwork
+  }
+
   static func load(avdName: String) -> DeviceFrameArtwork? {
     let environment = ProcessInfo.processInfo.environment
     let home = FileManager.default.homeDirectoryForCurrentUser

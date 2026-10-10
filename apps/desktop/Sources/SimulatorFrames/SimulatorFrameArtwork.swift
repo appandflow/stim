@@ -7,6 +7,15 @@ import AppKit
 
 @MainActor
 enum SimulatorFrameArtwork {
+  private static var cache: [String: DeviceFrameArtwork] = [:]
+
+  static func cached(udid: String) -> DeviceFrameArtwork? {
+    if let hit = cache[udid] { return hit }
+    let artwork = load(udid: udid)
+    if let artwork { cache[udid] = artwork }
+    return artwork
+  }
+
   static func load(udid: String) -> DeviceFrameArtwork? {
     guard let resources = resources(udid: udid) else { return nil }
     let profile = plist(resources.appendingPathComponent("profile.plist"))

@@ -46,6 +46,10 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     self.accurateScreenSize = accurateScreenSize
   }
 
+  @MainActor public static func frameSize(avdName: String) -> CGSize? {
+    EmulatorFrameArtwork.cached(avdName: avdName)?.geometry.size
+  }
+
   public final class Coordinator {
     var identity: String?
   }
@@ -58,7 +62,7 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     canvas.onFrameSizeChange = onFrameSizeChange ?? { _ in }
     let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
     context.coordinator.identity = frameIdentity
-    canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+    canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.cached(avdName: $0) }
     canvas.showsFrame = showsDeviceFrame
     canvas.artworkScale = artworkScale
     canvas.accurateScreenSize = accurateScreenSize
@@ -78,7 +82,7 @@ public struct EmulatorDisplayView: NSViewRepresentable {
     let frameIdentity = showsDeviceFrame || onFrameSizeChange != nil ? avdName : nil
     if context.coordinator.identity != frameIdentity {
       context.coordinator.identity = frameIdentity
-      canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.load(avdName: $0) }
+      canvas.artwork = frameIdentity == nil ? nil : avdName.flatMap { EmulatorFrameArtwork.cached(avdName: $0) }
     }
     canvas.showsFrame = showsDeviceFrame
     canvas.artworkScale = artworkScale
