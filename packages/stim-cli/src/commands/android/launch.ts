@@ -71,7 +71,6 @@ import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult,
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
-import { detectAndroidPackage } from '../../workspace/app-id.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
@@ -109,6 +108,24 @@ interface AndroidRuntimeLaunchContext {
   launchRelease: typeof launchAndroidReleaseApp;
 }
 
+export type AndroidRuntimeKind = 'metro' | 'embedded-js' | 'process';
+
+function androidLaunchOutcomeRecord(
+  kind: AndroidRuntimeKind,
+  args: Omit<Parameters<typeof launchOutcomeRecord>[0], 'release'>,
+): Record<string, unknown> {
+  if (kind !== 'process') return launchOutcomeRecord({ ...args, release: kind === 'embedded-js' });
+  const unverified = args.launchState === LAUNCH_UNVERIFIED;
+  return {
+    src: 'build',
+    level: unverified ? 'warn' : 'info',
+    event: unverified ? 'launch_unverified' : 'launch_verified',
+    msg: unverified
+      ? `${args.bundleId} could not be verified as running`
+      : `${args.bundleId} is running its native process`,
+  };
+}
+
 export interface AndroidRuntimePlan extends RuntimePlan<
   MobileRuntimePreparation,
   AndroidRuntimeLaunchContext,
@@ -116,12 +133,17 @@ export interface AndroidRuntimePlan extends RuntimePlan<
   VerifyAndroidRunArgs,
   RuntimeReadiness
 > {
+  kind: AndroidRuntimeKind;
   scheme(root: string, apkPath: string | null, resolve: typeof androidDevClientScheme): string | null | undefined;
   verificationWaitMs: number;
 }
 
-export function androidProcessRuntime(prepare: AndroidRuntimePlan['prepare']): AndroidRuntimePlan {
+export function androidProcessRuntime(
+  prepare: AndroidRuntimePlan['prepare'],
+  kind: 'embedded-js' | 'process' = 'process',
+): AndroidRuntimePlan {
   return {
+    kind,
     prepare,
     scheme: () => undefined,
     verificationWaitMs: RELEASE_VERIFY_WAIT_MS,
@@ -129,12 +151,14 @@ export function androidProcessRuntime(prepare: AndroidRuntimePlan['prepare']): A
       remoteDevice
         ? remoteDevice.launch({ serial, packageName: androidPackage, metroPort: null })
         : launchRelease({ serial, packageName: androidPackage }),
-    verify: async (_prepared, context) => verifyAndroidProcessRun(context),
+    verify: async (_prepared, context) =>
+      verifyAndroidProcessRun({ ...context, embeddedJavaScript: kind === 'embedded-js' }),
   };
 }
 
 export function androidMetroRuntime(prepare: AndroidRuntimePlan['prepare']): AndroidRuntimePlan {
   return {
+    kind: 'metro',
     prepare,
     scheme: (root, apkPath, resolve) => resolve(root, apkPath),
     verificationWaitMs: DEBUG_VERIFY_STEP_MS,
@@ -161,7 +185,8 @@ async function verifyAndroidProcessRun({
   logsDir,
   launchedAt,
   phase,
-}: VerifyAndroidRunArgs): Promise<RuntimeReadiness> {
+  embeddedJavaScript,
+}: VerifyAndroidRunArgs & { embeddedJavaScript: boolean }): Promise<RuntimeReadiness> {
   const readNativeCrashes = () =>
     remoteDevice
       ? []
@@ -203,7 +228,7 @@ async function verifyAndroidProcessRun({
   phase(
     '',
     chalk.yellow(
-      'A release process exited before readiness. Run `stim logs --errors` for captured crash reports, or `stim logs --source device` for the full device output.',
+      `${embeddedJavaScript ? 'A release process' : 'The app process'} exited before readiness. Run \`stim logs --errors\` for captured crash reports, or \`stim logs --source device\` for the full device output.`,
     ),
   );
   return { state: LAUNCH_FATAL };
@@ -428,6 +453,8 @@ interface FinishAndroidRunArgs {
     extra?: FailExtra,
   ) => RunAndroidResult;
   readApkPackage: (apkPath: string | null) => string | null;
+  readProjectPackage: () => string | null;
+  packageRemedy: string;
   install: typeof installAndroidApp;
   launch: typeof launchAndroidApp;
   launchRelease: typeof launchAndroidReleaseApp;
@@ -609,6 +636,8 @@ export async function finishAndroidRun({
   phase,
   fail,
   readApkPackage,
+  readProjectPackage,
+  packageRemedy,
   install,
   launch,
   launchRelease,
@@ -690,7 +719,7 @@ export async function finishAndroidRun({
   if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
-  androidPackage = packageFromApk || androidPackage || detectAndroidPackage(root);
+  androidPackage = packageFromApk || androidPackage || readProjectPackage();
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
   if (adopting) {
@@ -795,7 +824,7 @@ export async function finishAndroidRun({
     return fail(
       LAUNCH_FAILED,
       "Could not determine this app's Android package name, so there is nothing to launch.",
-      'Set `expo.android.package` in app.json / app.config.js, or `namespace` in android/app/build.gradle.',
+      packageRemedy,
       { lastBuildStatus: true },
     );
   }
@@ -843,9 +872,11 @@ export async function finishAndroidRun({
     level: 'info',
     event: 'app_launched',
     msg:
-      (release
-        ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
-        : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`) +
+      (runtime.kind === 'process'
+        ? `launched ${androidPackage} on ${serial} (${variant ?? 'debug'}, native process, no Metro)`
+        : runtime.kind === 'embedded-js'
+          ? `launched ${androidPackage} on ${serial} (${variant}, embedded JS bundle, no Metro)`
+          : `launched ${androidPackage} on ${serial} against Metro port ${metroPort}`) +
       restartedAppNote(launched.restartedPid, '; '),
   });
   phase('launch', `${androidPackage}${restartedAppNote(launched.restartedPid)} ${launchTimer()}`);
@@ -857,6 +888,7 @@ export async function finishAndroidRun({
         deviceId: serial,
         metroPort,
         release,
+        ...(runtime.kind === 'process' ? { runtime: 'process' as const } : {}),
         launchedAt: new Date(launchedAt).toISOString(),
       });
     } catch (error) {
@@ -864,7 +896,7 @@ export async function finishAndroidRun({
     }
   }
 
-  if (!release)
+  if (runtime.kind === 'metro')
     reportMetroRoute({ launched, remote: Boolean(remoteDevice), metroPort, androidPackage, serial, phase, writer });
   if (launched.devClientNote) {
     phase('metro', chalk.yellow(launched.devClientNote));
@@ -942,9 +974,8 @@ export async function finishAndroidRun({
     );
   }
   writer.write(
-    launchOutcomeRecord({
+    androidLaunchOutcomeRecord(runtime.kind, {
       launchState,
-      release,
       bundleId: androidPackage,
       configuration: variant,
       metroPort,
@@ -962,6 +993,7 @@ export async function finishAndroidRun({
     useBuildCache,
     variant,
     release,
+    runtimeKind: runtime.kind,
     metroCheck,
     metroPort,
     logsDir: remoteRelease ? null : logsDir,
