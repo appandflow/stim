@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { readBuildHistory } from '@stim-cli/core/state';
 import { dirname, join } from 'node:path';
 import * as selection from '../offload/selection.ts';
 import * as offload from '../offload/client.ts';
@@ -268,11 +269,11 @@ test.each([false, true])(
       builtOn: 'worker',
     });
     expect(readFileSync(result.apkPath, 'utf8')).toBe('verified worker artifact');
-    expect(readWorkspaceState(root)?.lastBuild).toMatchObject({
+    expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
       status: 'ok',
       cacheKey: null,
       cacheSkipped: true,
-      bundleId: 'org.example.worker',
+      builtOn: 'worker',
     });
   },
 );
