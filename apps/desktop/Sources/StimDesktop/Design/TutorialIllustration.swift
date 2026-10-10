@@ -25,7 +25,7 @@ struct TutorialIllustration: View {
           if let image = art.still(failed ? step : "\(step).still") { Image(nsImage: image).resizable() }
         } else {
           LottieView(animation: art.animation)
-            .playbackMode(playback(art))
+            .playbackMode(playback)
             .animationDidFinish { completed in
               if completed { bridge = nil }
             }
@@ -64,21 +64,20 @@ struct TutorialIllustration: View {
     }
   }
 
-  private func playback(_ art: TutorialArt) -> LottiePlaybackMode {
+  private var playback: LottiePlaybackMode {
     guard let shown else { return .paused(at: .frame(0)) }
     if failed { return .paused(at: .marker(shown)) }
     if reduceMotion || (pausesHidden && !windowVisible) { return .paused(at: .marker("\(shown).still")) }
     if let bridge {
       return .playing(.fromMarker(bridge, toMarker: bridge, playEndMarkerFrame: true, loopMode: .playOnce))
     }
-    return .playing(.marker(shown, loopMode: art.once.contains(shown) ? .playOnce : .loop))
+    return .playing(.marker(shown, loopMode: .loop))
   }
 }
 
 struct TutorialArt {
   let animation: LottieAnimation
   let markers: Set<String>
-  let once: Set<String>
 
   @MainActor private static var cache: [ColorScheme: TutorialArt] = [:]
 
@@ -88,10 +87,7 @@ struct TutorialArt {
       let asset = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let animation = try? LottieAnimation(dictionary: asset)
     else { return nil }
-    let modes = (asset["stim"] as? [String: Any])?["modes"] as? [String: String] ?? [:]
-    let art = TutorialArt(
-      animation: animation, markers: Set(animation.markerNames),
-      once: Set(modes.filter { $0.value == "once" }.keys))
+    let art = TutorialArt(animation: animation, markers: Set(animation.markerNames))
     cache[scheme] = art
     return art
   }

@@ -1,11 +1,9 @@
 """Writes the Stim Desktop tutorial illustrations to website/static/img/branding.
 
 `stim-tutorial-{light,dark}.json` is one timeline per scheme. Each tutorial step id is a marker spanning that step's
-animation, and `stim.modes` maps each step id to `loop` or `once`. A loop starts and ends on the step's rest pose; a
-once step plays a single time and holds its last frame. A `<from>><to>` marker spans an authored transition from one
-step's end pose to the next step's start. A `<step>.still` marker, with no duration, is the frame to show under Reduce
-Motion; for a once step it is the last frame. `stim-step-done-{light,dark}.json` is the badge played when a step
-completes.
+loop, which starts and ends on the step's rest pose. A `<from>><to>` marker spans an authored transition from one
+step's rest pose to the next. A `<step>.still` marker, with no duration, is the frame to show under Reduce Motion.
+`stim-step-done-{light,dark}.json` is the badge played when a step completes.
 
 Lottie's Core Animation engine renders every feature used here; check that it still picks it (no fallback warning)
 after adding a shape or property type.
@@ -132,7 +130,6 @@ class Timeline:
     def __init__(self):
         self.layers = []
         self.markers = []
-        self.modes = {}
         self.t = 0
 
     def add(self, nm, shapes=None, ip=None, op=None, parent=None, o=100, p=(0, 0), s=100, r=0, a=(0, 0),
@@ -149,15 +146,11 @@ class Timeline:
         self.layers.append(layer)
         return ind
 
-    def segment(self, name, length, still=None, once=False):
+    def segment(self, name, length, still=None):
         global OFF
         OFF = self.t
         self.ip, self.op = self.t, self.t + length - 0.5
         self.markers.append({'tm': self.t, 'cm': name, 'dr': length - 1})
-        if '>' not in name:
-            self.modes[name] = 'once' if once else 'loop'
-        if once:
-            still = length - 1
         if still is not None:
             self.markers.append({'tm': self.t + still, 'cm': f'{name}.still', 'dr': 0})
         self.t += length
@@ -458,11 +451,12 @@ def build(pal):
     phone(tl, pal, j, header=pal['accent'])
     jar(tl, pal, j)
 
-    tl.segment('finish', 60, once=True)
-    j = rig(tl, 'jar', st(HOME + [0]), s=kf([(32, [100, 100, 100]), (35, [103, 97, 100]), (40, [100, 100, 100])]))
-    sparkle(tl, pal, j, 38)
-    lid(tl, pal, j, p=kf([(18, [0, -40]), (32, [0, 0], OUTE)]), o=kf([(18, 0), (26, 100)]))
-    phone(tl, pal, j, header=pal['accent'], o=kf([(6, 100), (18, 0)]))
+    tl.segment('finish', 100, still=85)
+    j = rig(tl, 'jar', st(HOME + [0]), s=kf([(52, [100, 100, 100]), (55, [103, 97, 100]), (60, [100, 100, 100])]))
+    sparkle(tl, pal, j, 56)
+    lid(tl, pal, j, p=kf([(0, [0, 0]), (10, [0, -40]), (38, [0, -40]), (52, [0, 0], OUTE)]),
+        o=kf([(0, 100), (8, 0), (38, 0), (46, 100)]))
+    phone(tl, pal, j, header=pal['accent'], o=kf([(2, 0), (10, 100), (26, 100), (38, 0)]))
     jar(tl, pal, j)
 
     tl.segment('finish>delete', TRANS)
@@ -470,12 +464,13 @@ def build(pal):
     lid(tl, pal, j)
     jar(tl, pal, j)
 
-    tl.segment('delete', 110, once=True)
+    tl.segment('delete', 170, still=120)
     j = rig(tl, 'jar', st(HOME + [0]))
-    fill = kf([(2, 100, SMOOTH), (12, 0)])
-    gap = [(14, 0, SMOOTH), (24, LDASH)]
-    lid(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(26, 100, UNTRACE), (40, 0)]))
-    jar(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(30, 100, UNTRACE), (46, 0)]))
+    fill = kf([(2, 100, SMOOTH), (12, 0), (156, 0, SMOOTH), (166, 100)])
+    gap = [(14, 0, SMOOTH), (24, LDASH), (150, LDASH, SMOOTH), (156, 0)]
+    lid(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(26, 100, UNTRACE), (40, 0), (136, 0, OUTE), (150, 100)]))
+    jar(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(30, 100, UNTRACE), (46, 0), (136, 0, OUTE), (150, 100)]))
+    gone = kf([(128, 100), (136, 0)])
     disk_w, disk_h, space = 28, 20, 10
     bar_w, bar_h = 112, 16
     bar_x, bar_y = HOME[0] + (disk_w + space) / 2, 100
@@ -487,18 +482,18 @@ def build(pal):
                         stk(pal['stroke'], SW, gap=[(56, DASH, SMOOTH), (62, 0)])]),
                     gr([rc(0, 0, disk_w, disk_h, 5), draw, stk(pal['stroke'], SW, gap=[(56, DASH, SMOOTH), (62, 0)]),
                         fl(pal['side'], kf([(58, 0), (62, 100)]))])],
-           p=st([disk_x, bar_y]))
+           p=st([disk_x, bar_y]), o=gone)
     tl.add('used', [gr([rc(0, 0, bar_w - 8, bar_h - 8, 4), fl(pal['accent'])],
                        p=(-(bar_w - 8) / 2, 0), a=(-(bar_w - 8) / 2, 0),
                        s=kf([(62, [80, 100]), (80, [28, 100], SMOOTH)]))],
-           p=st([bar_x, bar_y]), o=kf([(58, 0), (62, 100)]))
+           p=st([bar_x, bar_y]), o=kf([(58, 0), (62, 100), (128, 100), (136, 0)]))
     tl.add('gauge', [gr([rc(0, 0, bar_w, bar_h, 8), tm(kf([(48, 0), (58, 100)], OUTE)),
                          stk(pal['stroke'], SW, gap=[(56, DASH, SMOOTH), (62, 0)]),
                          fl(pal['jar'], kf([(58, 0), (62, 100)]))])],
-           p=st([bar_x, bar_y]))
+           p=st([bar_x, bar_y]), o=gone)
 
     return {'v': '5.7.4', 'fr': FPS, 'ip': 0, 'op': tl.t, 'w': W, 'h': H, 'nm': 'Stim tutorial', 'ddd': 0,
-            'assets': [], 'markers': tl.markers, 'stim': {'modes': tl.modes}, 'layers': tl.layers}
+            'assets': [], 'markers': tl.markers, 'layers': tl.layers}
 
 
 def step_done(pal):
