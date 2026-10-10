@@ -40,7 +40,7 @@ export interface ProjectRegistry {
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
   selectAndroid(
     root: string,
-  ): { load: (resolved: ResolvedProjectSettings) => Promise<AndroidProject> } | { problem: ProjectProblem };
+  ): { id: string; load: (resolved: ResolvedProjectSettings) => Promise<AndroidProject> } | { problem: ProjectProblem };
   selectIos(
     root: string,
   ): { id: string; load: (settings: SettingsObject) => Promise<IosProject> } | { problem: ProjectProblem };
@@ -151,7 +151,7 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     if (problem) return { problem };
     const selected = operationSelection(root, matches, 'android');
     if ('problem' in selected) return selected;
-    if (selected.match.android) return { load: selected.match.android };
+    if (selected.match.android) return { id: selected.match.id, load: selected.match.android };
     return {
       problem: {
         kind: 'not-an-app',

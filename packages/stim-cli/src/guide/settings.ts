@@ -282,6 +282,16 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
+  android.offloadInputs a native Gradle build-worker declaration:
+                        {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
+                        complete confirms Git-visible source plus the exact
+                        repository-relative ignored files suffice for this
+                        build. outputs names generated directories reported
+                        by AGP; recorded outputs can survive worker sync.
+                        Omitted optional inputs can change build results.
+                        Stim artifact caching remains unavailable. See
+                        \`stim guide lifecycle native-android\` for input,
+                        privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
                         absolute or relative to the project root. Unset means
                         android/app/debug.keystore, which every RN and Expo

@@ -164,3 +164,28 @@ test.skipIf(process.platform !== 'darwin')(
     await expect(iosToolchainAsync(root)).resolves.toMatchObject({ cocoapods: '1.16.2' });
   },
 );
+
+test('native Gradle discovery reads JDK and SDK facts without Apple or Ruby probes', () => {
+  const sdk = join(root, 'android-sdk');
+  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
+  const jdk = join(root, 'jdk');
+  mkdirSync(jdk);
+  writeFileSync(join(jdk, 'release'), 'JAVA_VERSION="17.0.20"\n');
+  vi.stubEnv('JAVA_HOME', jdk);
+  vi.stubEnv('ANDROID_HOME', sdk);
+  setExecutor(
+    makeExecutor({
+      runFileQuiet: () => {
+        throw new Error('Unrelated native discovery probe');
+      },
+    }),
+  );
+  expect(workerToolchain(null, 'gradle')).toMatchObject({
+    jdk: '17',
+    androidSdk: { platforms: ['android-35'] },
+    xcode: null,
+    simulatorSdk: null,
+    cocoapods: null,
+    runtimes: [],
+  });
+});

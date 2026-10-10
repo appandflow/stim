@@ -36,6 +36,14 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
+## Native Android build workers
+
+Native Gradle apps can use an approved build worker after declaring that
+Git-visible source and exact additional ignored files are sufficient. See
+`stim guide lifecycle native-android` for `android.offloadInputs`, generated
+output ownership, and supported input boundaries. Stim does not invent an artifact-cache key for
+arbitrary Gradle inputs; Gradle keeps its own incremental and task caches.
+
 ## Programmatic API
 
 Install `stim` as a dependency with `npm install --save-dev stim`, then import

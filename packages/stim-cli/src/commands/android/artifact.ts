@@ -503,7 +503,7 @@ export async function acquireAndroidArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
-    if (cacheIneligible) {
+    if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
       return null;
@@ -543,9 +543,16 @@ export async function acquireAndroidArtifact(
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     let asked: PlacementCandidate[] = [];
+    let target: ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>;
+    try {
+      target = recipe.offload!.target();
+    } catch (error) {
+      fallBack((error as Error).message);
+      return null;
+    }
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: recipe.offload!.target(),
+      target,
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => phase('build', chalk.dim(`offload: ${line}`)),
@@ -574,7 +581,8 @@ export async function acquireAndroidArtifact(
 
   /** Builds on the chosen machine and stores the APK under the post-mutation key; false builds here instead unless a machine was named. */
   async function compileElsewhere(choice: OffloadChoice, candidate: Candidate): Promise<boolean> {
-    if (!storeKey || !storeHash) {
+    const uncached = Boolean(cacheIneligible && recipe.offload?.supportsUncachedArtifacts);
+    if ((!storeKey || !storeHash) && !uncached) {
       const reason = 'the build fingerprint or cache key is unavailable';
       if (namedBuildMachine(buildMachine)) fallBack(reason, reason, { machine: choice.machine });
       else
@@ -589,9 +597,10 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
+    if (uncached) swapDir = stagingDir;
     const outcome = await offloadBuild({
       choice,
-      expectedFingerprint: storeHash,
+      expectedFingerprint: uncached ? null : storeHash,
       request: recipe.offload!.request,
       stagingDir,
       onPhase: (name, msg) => phase(name, remotePhaseText(name, msg, choice.machine)),
@@ -608,14 +617,27 @@ export async function acquireAndroidArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
-      if (!(await recipe.offload!.unchanged())) {
-        reason = 'the checkout here changed while it built';
+      let unchanged = false;
+      try {
+        unchanged = await recipe.offload!.unchanged();
+      } catch (error) {
+        reason = (error as Error).message;
+      }
+      if (!unchanged) {
+        reason ??= 'the checkout here changed while it built';
+      } else if (uncached) {
+        if (!outcome.androidPackage) reason = 'the worker returned no verified APK package';
+        else {
+          stored = outcome.artifactPath;
+          androidPackage = outcome.androidPackage;
+          swapDir = stagingDir;
+        }
       } else {
         try {
           stored =
             (await recipe
               .cache()
-              .store({ ...cacheTarget(storeKey), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
+              .store({ ...cacheTarget(storeKey!), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
             null;
         } catch (err) {
           reason = `could not store the APK: ${(err as Error)?.message || err}`;
@@ -623,7 +645,10 @@ export async function acquireAndroidArtifact(
       }
     }
     try {
-      rmSync(stagingDir, { recursive: true, force: true });
+      if (!uncached || !stored) {
+        rmSync(stagingDir, { recursive: true, force: true });
+        if (swapDir === stagingDir) swapDir = null;
+      }
     } catch {}
     step('compile');
     if (!outcome.ok || !stored) {

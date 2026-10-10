@@ -240,6 +240,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   },
   { key: 'android.variant', type: STRING, scopes: PROJECT, description: 'Gradle build variant' },
   {
+    key: 'android.offloadInputs',
+    type: OBJECT,
+    scopes: PROJECT,
+    description:
+      'Native Gradle source sufficiency, exact ignored inputs and generated output directories for build workers',
+  },
+  {
     key: 'android.keystore',
     type: PATH,
     scopes: PROJECT,

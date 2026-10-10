@@ -37,7 +37,14 @@ import { runCancellationSignal } from '../engine/native-run.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
-import { checkNativeTransferMembership, nativeTransferManifest, type NativeTransferFile } from './native-source.ts';
+import {
+  checkNativeTransferMembership,
+  gitVisiblePaths,
+  nativeTransferManifest,
+  sourceManifest,
+  type NativeTransferFile,
+} from './native-source.ts';
+import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
@@ -570,36 +577,6 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 
 type ManifestFile = NativeTransferFile;
 
-/** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
-function sourceManifest(repoRoot: string): ManifestFile[] {
-  const files: ManifestFile[] = [];
-  for (const path of gitVisiblePaths(repoRoot)) {
-    const absolute = join(repoRoot, path);
-    let stat;
-    try {
-      stat = lstatSync(absolute);
-    } catch {
-      continue;
-    }
-    if (stat.isSymbolicLink()) {
-      const target = Buffer.from(readlinkSync(absolute));
-      files.push({ path, kind: 'link', size: target.length, sha256: sha256(target) });
-    } else if (stat.isFile()) {
-      const content = readFileSync(absolute);
-      files.push({ path, kind: stat.mode & 0o111 ? 'exec' : 'file', size: content.length, sha256: sha256(content) });
-    }
-  }
-  return files;
-}
-
-function gitVisiblePaths(repoRoot: string): Set<string> {
-  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
-    untrimmed: true,
-    timeoutMs: 120_000,
-  });
-  return new Set(listed.split('\0').filter(Boolean));
-}
-
 const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
 /** Why the native inputs cannot be sent to a remote Mac, such as an ignored file among them, or null when they can. */
@@ -645,6 +622,7 @@ export type OffloadOutcome =
       machine: string;
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
+      androidPackage?: string;
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
       timings: OffloadTimings;
@@ -678,6 +656,19 @@ export function closeOffload(choice: OffloadChoice): void {
   for (const each of choice.runnersUp.splice(0)) each.connection.close();
 }
 
+const NATIVE_BUILD_FEATURE = { xcode: 'native-xcode-build', gradle: 'native-gradle-build' } as const;
+
+const unsupportedNative = (provider: 'xcode' | 'gradle'): string =>
+  `This worker does not support native ${provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
+
+const ANDROID_PACKAGE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/;
+
+function nativeTransferInput(
+  native: Extract<BuildRequest, { platform: 'ios' | 'android' }>['native'],
+): NativeInputSnapshot | GradleTransfer | undefined {
+  return native?.provider === 'xcode' ? native.snapshot : native?.transfer;
+}
+
 type MachineProbe =
   | { credential: BuildMachineCredential; failure: string }
   | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
@@ -685,18 +676,21 @@ type MachineProbe =
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
 async function probeMachine(
   credential: BuildMachineCredential,
-  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' },
+  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' | 'gradle' },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
   const target = await pinnedEndpoint(credential);
   if (typeof target === 'string') return { credential, failure: target };
   const connection = await BuildConnection.open(target, credential.deviceToken, connectMs);
   if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
-  if (identity.native && !connection.supports('native-xcode-build')) {
+  if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
-    return { credential, failure: 'This worker does not support native Xcode builds.' };
+    return { credential, failure: unsupportedNative(identity.native) };
   }
-  const native = identity.native && connection.supports('native-xcode-toolchain') ? identity.native : undefined;
+  const native =
+    identity.native === 'gradle' || (identity.native && connection.supports('native-xcode-toolchain'))
+      ? identity.native
+      : undefined;
   const reply = await connection.request(
     'build.offer',
     {
@@ -752,7 +746,7 @@ export async function chooseBuildMachine({
       probeMachine(credential, {
         ...identity,
         rubyVersion,
-        ...(target.platform === 'ios' ? { native: target.native } : {}),
+        ...(target.platform !== 'macos' ? { native: target.native } : {}),
       }),
     ),
   );
@@ -816,7 +810,12 @@ export type BuildRequest =
       isExpo: boolean;
       optimizations: unknown;
     }
-  | { platform: 'android'; isExpo: boolean; android: AndroidBuildOptions }
+  | {
+      platform: 'android';
+      native?: { provider: 'gradle'; transfer: GradleTransfer };
+      isExpo: boolean;
+      android: AndroidBuildOptions;
+    }
   | {
       platform: 'macos';
       product: string;
@@ -825,6 +824,13 @@ export type BuildRequest =
       resources?: Record<string, string>;
       assetCatalog?: string | null;
     };
+
+function validArtifactIdentity(request: BuildRequest, fingerprint: string | null | undefined): boolean {
+  if (request.platform === 'macos') return true;
+  return request.native?.provider === 'gradle'
+    ? fingerprint === null
+    : typeof fingerprint === 'string' && fingerprint.length > 0;
+}
 
 const ARTIFACT_NAME = { ios: /^[^/]+\.app$/, android: /^[^/]+\.apk$/, macos: /^[^/]+\.app$/ } as const;
 
@@ -838,7 +844,7 @@ async function resumeJob(
   job: string,
   abandoned: () => boolean,
   signal: AbortSignal | undefined,
-  native = false,
+  native?: 'xcode' | 'gradle',
 ): Promise<{ connection: BuildConnection; outcome: Record<string, unknown> | null; early: ProgressEvent[] } | string> {
   const deadline = Date.now() + RESUME_WINDOW_MS;
   let delay = RESUME_DELAY_MS;
@@ -857,9 +863,9 @@ async function resumeJob(
         connection.close();
         break;
       }
-      if (native && !connection.supports('native-xcode-build')) {
+      if (native && !connection.supports(NATIVE_BUILD_FEATURE[native])) {
         connection.close();
-        return 'This worker does not support native Xcode builds.';
+        return unsupportedNative(native);
       }
       const early: ProgressEvent[] = [];
       connection.onProgress((event) => early.push(event));
@@ -894,14 +900,20 @@ async function syncSource(
   connection: BuildConnection,
   identity: RepoIdentity,
   onEnter: (phase: string) => void,
-  native?: NativeInputSnapshot,
+  native?: NativeInputSnapshot | GradleTransfer,
 ): Promise<
   { files: number; uploaded: number; uploadedBytes: number; syncMs: number; digest: string } | { failure: string }
 > {
   onEnter('sync');
   const syncStarted = Date.now();
-  const visible = sourceManifest(identity.repoRoot);
-  const manifest = native ? nativeTransferManifest(identity.repoRoot, native, visible) : visible;
+  const manifest =
+    native && 'declaration' in native
+      ? nativeGradleTransfer(join(identity.repoRoot, identity.project), native.declaration).files
+      : native
+        ? nativeTransferManifest(identity.repoRoot, native, sourceManifest(identity.repoRoot))
+        : sourceManifest(identity.repoRoot);
+  if (native && 'declaration' in native && manifestDigest(manifest) !== native.digest)
+    return { failure: 'The native Gradle source changed before upload.' };
   const bySha = new Map(manifest.map((file) => [file.sha256, file]));
   const missing: string[] = [];
   for (let index = 0; index < manifest.length || index === 0;) {
@@ -965,10 +977,10 @@ export async function offloadBuild({
   note: (line: string) => void;
 } & (
   | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
-  | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string }
+  | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
 )): Promise<OffloadOutcome> {
   const { identity } = choice;
-  const native = request.platform === 'ios' ? request.native : undefined;
+  const native = request.platform !== 'macos' ? request.native : undefined;
   let sourceDigest: string | null = null;
   const started = Date.now();
   const fail = (reason: string): OffloadOutcome => {
@@ -995,7 +1007,9 @@ export async function offloadBuild({
   signal?.addEventListener('abort', cancel, { once: true });
   try {
     throwIfCancelled();
-    if (native && native.snapshot.hash !== expectedFingerprint)
+    if (!validArtifactIdentity(request, expectedFingerprint))
+      return fail('The build request has an invalid reusable artifact identity.');
+    if (native?.provider === 'xcode' && native.snapshot.hash !== expectedFingerprint)
       return fail('The native source snapshot does not match the requested artifact identity.');
     let job: string | null = null;
     let early: ProgressEvent[] = [];
@@ -1004,7 +1018,7 @@ export async function offloadBuild({
       if (resuming || settled) return;
       resuming = true;
       note(`offload: the connection to ${choice.machine} dropped (${why}); reattaching to the build there`);
-      const resumed = await resumeJob(choice.credential, job!, () => settled, signal, Boolean(native));
+      const resumed = await resumeJob(choice.credential, job!, () => settled, signal, native?.provider);
       resuming = false;
       if (settled) {
         if (typeof resumed !== 'string') resumed.connection.close();
@@ -1047,11 +1061,12 @@ export async function offloadBuild({
         if (moveOn(reason)) continue;
         return fail(reason);
       }
-      if (native && !choice.connection.supports('native-xcode-build')) {
-        if (moveOn('This worker does not support native Xcode builds.')) continue;
-        return fail('This worker does not support native Xcode builds.');
+      if (native && !choice.connection.supports(NATIVE_BUILD_FEATURE[native.provider])) {
+        const reason = unsupportedNative(native.provider);
+        if (moveOn(reason)) continue;
+        return fail(reason);
       }
-      const synced = await syncSource(choice.connection, identity, onEnter, native?.snapshot);
+      const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
       throwIfCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
@@ -1078,9 +1093,9 @@ export async function offloadBuild({
               native: {
                 provider: native.provider,
                 sourceDigest: synced.digest,
-                cacheKey: native.cacheKey,
-                arch: native.arch,
-                parameters: native.snapshot.parameters,
+                ...(native.provider === 'xcode'
+                  ? { cacheKey: native.cacheKey, arch: native.arch, parameters: native.snapshot.parameters }
+                  : { inputs: native.transfer.declaration }),
               },
             }
           : {}),
@@ -1131,6 +1146,8 @@ export async function offloadBuild({
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
     if (native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
+    if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
+      return fail('The worker returned no verified native APK package.');
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
     const name = typeof artifact?.name === 'string' ? artifact.name : '';
     if (!ARTIFACT_NAME[request.platform].test(name) || typeof artifact.sha256 !== 'string') {
@@ -1206,6 +1223,7 @@ export async function offloadBuild({
         : {}),
       compilationCache:
         request.platform === 'ios' ? compilationActivity(result.compilationCache) : COMPILATION_CACHE_UNAVAILABLE,
+      ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
       ccache: request.platform === 'android' ? ccacheActivity(result.compilationCache) : CCACHE_UNAVAILABLE,
       timings: {
         offerMs: choice.offerMs,

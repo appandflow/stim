@@ -412,6 +412,12 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
 });
 
+test('native Gradle build-worker references route to the rendered native-android section', () => {
+  expect(renderSection('lifecycle', 'native-android')).toContain('android.offloadInputs');
+  expect(renderTopic('settings')).toContain('stim guide lifecycle native-android');
+  expect(renderSection('lifecycle', 'hosted-android')).toContain('stim guide lifecycle native-android');
+});
+
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
   expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {

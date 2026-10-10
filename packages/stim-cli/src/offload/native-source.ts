@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { readlinkSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import { manifestDigest } from './manifest.ts';
+import { getExecutor } from '../exec.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 
 export interface NativeTransferFile {
@@ -84,4 +85,46 @@ export function verifyNativeTransfer(
     parameters: null,
   });
   return manifestDigest(nativeTransferManifest(root, snapshot, files)) === digest;
+}
+
+/** The exact source a build needs: tracked and untracked, not ignored, as `git ls-files -co --exclude-standard`. */
+export function sourceManifest(repoRoot: string, strict = false): NativeTransferFile[] {
+  const files: NativeTransferFile[] = [];
+  for (const path of gitVisiblePaths(repoRoot)) {
+    const absolute = join(repoRoot, path);
+    let stat;
+    try {
+      stat = lstatSync(absolute);
+    } catch (error) {
+      if (strict && (error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      const target = Buffer.from(readlinkSync(absolute));
+      files.push({
+        path,
+        kind: 'link',
+        size: target.length,
+        sha256: createHash('sha256').update(target).digest('hex'),
+      });
+    } else if (stat.isFile()) {
+      const content = readFileSync(absolute);
+      files.push({
+        path,
+        kind: stat.mode & 0o111 ? 'exec' : 'file',
+        size: content.length,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      });
+    } else if (strict)
+      throw new Error(`Native source ${path} is not a file or link; transfer submodule contents explicitly.`);
+  }
+  return files;
+}
+
+export function gitVisiblePaths(repoRoot: string): Set<string> {
+  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
+    untrimmed: true,
+    timeoutMs: 120_000,
+  });
+  return new Set(listed.split('\0').filter(Boolean));
 }

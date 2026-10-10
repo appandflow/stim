@@ -893,6 +893,7 @@ describe('pairing', () => {
           'hosted-ios-process',
           'native-xcode-build',
           'native-xcode-toolchain',
+          'native-gradle-build',
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
@@ -1376,6 +1377,57 @@ test('build.start rejects escaping or oversized macOS resources before probing t
   }
 });
 
+test('native Gradle requires declared source scope and a null artifact identity before worker admission', async () => {
+  const host = new BuildHost({ worker: 'unused-worker', env: process.env });
+  const toolchain = vi.spyOn(host, 'toolchain').mockResolvedValue(null);
+  const session = host.session('client', {} as WebSocket, () => {});
+  const android = { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' };
+  const inputs = { complete: true, ignored: [], outputs: ['app/build'] };
+  const native = { provider: 'gradle', sourceDigest: 'a'.repeat(64), inputs };
+  const valid = {
+    configuration: null,
+    scheme: null,
+    runtime: null,
+    packageName: null,
+    isExpo: false,
+    optimizations: null,
+    repo: 'app-1',
+    project: '',
+    platform: 'android',
+    fingerprint: null,
+    stimBuild: 'b1',
+    android,
+    native,
+  };
+  try {
+    session.sync({ repo: 'app-1', files: [], done: true });
+    for (const invalid of [
+      { ...valid, native: undefined },
+      { ...valid, fingerprint: 'fake-reusable-identity' },
+      { ...valid, native: { ...native, sourceDigest: '' } },
+      { ...valid, native: { ...native, inputs: { ...inputs, complete: false } } },
+      { ...valid, native: { ...native, inputs: { ...inputs, outputs: ['../outside'] } } },
+      { ...valid, platform: 'ios', runtime: 'iOS-27-0' },
+    ])
+      expect(await session.start(invalid)).toMatchObject({ error: { code: 'bad-request' } });
+    expect(toolchain).not.toHaveBeenCalled();
+    const validate = new Ajv2020({ strict: false }).compile({ ...protocolJsonSchema(), $ref: '#/$defs/ClientRequest' });
+    expect(validate({ id: 'request', method: 'build.start', params: valid })).toBe(true);
+    for (const params of [
+      { ...valid, native: undefined },
+      { ...valid, fingerprint: 'fake-reusable-identity' },
+    ])
+      expect(validate({ id: 'request', method: 'build.start', params })).toBe(false);
+    expect(await session.start(valid)).toMatchObject({
+      error: { code: 'build-refused', message: 'This Mac runs Stim build unknown.' },
+    });
+    expect(toolchain).toHaveBeenCalledExactlyOnceWith(null, 'gradle');
+  } finally {
+    toolchain.mockRestore();
+    await host.close();
+  }
+});
+
 test('native and general toolchain reports cache independently from each Ruby context', async () => {
   const worker = join(root, 'toolchain-context.mjs');
   const toolchainCalls = join(root, 'toolchain-context.calls');
@@ -1469,8 +1521,13 @@ test('native build admission rejects invalid provider identity before toolchain 
     expect(await session.start({ ...base, native: undefined })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, platform: 'android' })).toHaveProperty('error.code', 'bad-request');
     expect(await session.start({ ...base, optimizations: null })).toHaveProperty('error.code', 'bad-request');
-    expect(await host.offer('client', { repo: 'app-1', native: 'gradle' })).toHaveProperty('error.code', 'bad-request');
-    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'gradle' } })).toBe(false);
+    expect(await host.offer('client', { repo: 'app-1', native: 'unsupported' })).toHaveProperty(
+      'error.code',
+      'bad-request',
+    );
+    expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'unsupported' } })).toBe(
+      false,
+    );
     expect(toolchain).not.toHaveBeenCalled();
     expect(validate({ id: 'request', method: 'build.offer', params: { repo: 'app-1', native: 'xcode' } })).toBe(true);
     expect(await host.offer('client', { repo: 'app-1', native: 'xcode' })).toHaveProperty(

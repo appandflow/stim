@@ -8,11 +8,14 @@ import { androidProcessRuntime } from '../commands/android/launch.ts';
 import { buildGradle, androidSdkRefusal, type GradlePreflightFailure, type LocateApkResult } from '../engine/gradle.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { workspaceDir } from '../workspace/paths.ts';
+import { androidToolchain } from '../offload/toolchain.ts';
+import { settingValueAt } from '../workspace/settings.ts';
+import { gradleOffloadInputs, nativeGradleTransfer, type GradleTransfer } from './native-gradle-inputs.ts';
 import type { AndroidProject } from './android-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 
 const CACHE_LIMIT =
-  'Native Gradle inputs can include arbitrary external files and plugins; Stim artifact caching and build offload are unavailable. Gradle still owns incremental and task-cache reuse.';
+  'Native Gradle inputs can include arbitrary external files and plugins; Stim artifact caching is unavailable. Offload requires a complete android.offloadInputs declaration. Gradle still owns incremental and task-cache reuse.';
 const MODEL_LIMIT =
   'Native Android requires AGP with androidComponents, one application module and configuration-on-demand disabled. Gradle resolves the exact variant and APK outputs during the build.';
 
@@ -130,8 +133,10 @@ export function nativeAndroidProject(root: string): AndroidProject {
         phase('metro', 'skipped (native process)');
         return { ok: true, prepared: { metroPort: null } };
       }),
-    artifact: ({ writer, buildPlan, target, out, estimates }) => {
+    artifact: ({ writer, buildPlan, target, out, estimates, settings }) => {
       const variant = buildPlan.variant ?? 'debug';
+      const inputs = settingValueAt(settings, 'android.offloadInputs');
+      let transfer: GradleTransfer | null = null;
       const modelFile = join(workspaceDir(root), 'gradle-build', `native-apk-${encodeURIComponent(variant)}.json`);
       return {
         identity: async () => ({ cacheIneligible: CACHE_LIMIT }),
@@ -145,7 +150,43 @@ export function nativeAndroidProject(root: string): AndroidProject {
         explain: () => ({ reason: skippedMissReason(CACHE_LIMIT), diff: null }),
         untrackedLine: () => null,
         legacyCache: null,
-        offload: null,
+        offload: {
+          supportsUncachedArtifacts: true,
+          get unsupported() {
+            if (buildPlan.cas) return 'Apple Clang CAS builds build here';
+            try {
+              gradleOffloadInputs(inputs);
+              return null;
+            } catch (error) {
+              return (error as Error).message;
+            }
+          },
+          target: () => {
+            transfer = nativeGradleTransfer(root, inputs);
+            return {
+              platform: 'android',
+              native: 'gradle',
+              local: androidToolchain(),
+              requires: { ndk: null, buildTools: null, compileSdk: null },
+            };
+          },
+          get request() {
+            if (!transfer) throw new Error('Native Gradle offload needs a declared source inventory.');
+            return {
+              platform: 'android' as const,
+              isExpo: false,
+              native: { provider: 'gradle' as const, transfer },
+              android: {
+                variant,
+                abi: target.abi,
+                gradleBuildCache: buildPlan.gradleBuildCache,
+                pch: buildPlan.pch,
+                compilerCache: buildPlan.compilerCache === 'none' ? ('none' as const) : ('ccache' as const),
+              },
+            };
+          },
+          unchanged: async () => transfer !== null && nativeGradleTransfer(root, inputs).digest === transfer.digest,
+        },
         compile: async () => {
           const script = ['../shim/native-android.gradle', '../../shim/native-android.gradle']
             .map((path) => fileURLToPath(new URL(path, import.meta.url)))
