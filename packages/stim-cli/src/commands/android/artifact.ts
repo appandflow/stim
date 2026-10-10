@@ -54,7 +54,7 @@ import {
 import { namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
 import type { CcacheActivity, WaitedForBuild } from '../../engine/build-facts.ts';
-import type { AndroidRunPlan } from './plan.ts';
+import type { AndroidBuildPlan } from './plan.ts';
 import { displayPath, PLATFORM } from './support.ts';
 import type { AndroidRecord, AndroidWriter, FailExtra, RemoteUploadLike } from './types.ts';
 
@@ -74,8 +74,8 @@ interface AndroidArtifactRequest {
   writer: AndroidWriter;
   recipe: AndroidArtifactRecipe;
   targetOffloadRefusal: string | null;
-  buildPlan: Pick<AndroidRunPlan['build'], 'variant' | 'cache'>;
-  cacheProviderConfig: AndroidRunPlan['cacheProviderConfig'];
+  buildPlan: Pick<AndroidBuildPlan['build'], 'variant' | 'cache'>;
+  cacheProviderConfig: AndroidBuildPlan['cacheProviderConfig'];
   requestedBuildCache: boolean;
   easBuild: Extract<EasBuildResult, { ok: true }> | null;
   androidPackage: string | null;

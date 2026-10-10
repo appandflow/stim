@@ -16,6 +16,7 @@ import { planEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { planPrebuild } from '../../engine/prebuild.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/remote-cache.ts';
 import { statsProjectKey } from '../../engine/stats.ts';
+import { reactNativeAndroidProject } from '../../integrations/react-native-android.ts';
 import { getProject } from '../../workspace/config.ts';
 import { projectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {
@@ -158,6 +159,7 @@ export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<A
       buildCache: opts.buildCache !== false,
     },
     {
+      runtimeKind: reactNativeAndroidProject(root).runtimeKind,
       warn: (label, message) => note(phaseLine(label, chalk.yellow(message))),
       resolveCompilerCache: ({ optimizations }) => ({ cas: null, optimizations, warning: null }),
       listSystemImages: deps.listSystemImages,

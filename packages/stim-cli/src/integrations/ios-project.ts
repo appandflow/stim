@@ -1,6 +1,6 @@
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
-import type { IosRuntimePlan } from '../commands/ios/launch.ts';
+import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
 import type { FailArgs } from '../commands/ios/types.ts';
 import type { BuildIosResult } from '../engine/xcode.ts';
 import type { SimulatorArch } from '../engine/agent-device.ts';
@@ -52,7 +52,7 @@ export interface IosArtifactContext {
   buildScheme?: string;
   buildProfile?: string;
   target: {
-    udid: string;
+    udid: string | null;
     destination: string | null;
     sdk: string;
     arch: SimulatorArch | null;
@@ -62,6 +62,7 @@ export interface IosArtifactContext {
     offloadRefusal: string | null;
   };
   device: {
+    udid: string;
     lanAddress: string | null;
     metroPort: number | null;
     signingName: string | null;
@@ -81,9 +82,10 @@ export interface IosArtifactContext {
 export interface IosProject {
   isExpo: boolean;
   bundleId(): string | null;
-  schemeProblem(scheme: string | undefined): FailArgs | null;
+  schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
   eas: boolean;
+  runtimeKind(configuration: string | null): IosRuntimeKind;
   runtime(args: {
     configuration: string | null;
     prepareMetro: IosRuntimePlan['prepare'];
