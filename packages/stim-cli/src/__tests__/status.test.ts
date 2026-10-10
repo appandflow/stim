@@ -1012,7 +1012,7 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
   },
 );
 
-test('status lists worktrees with no environment for every registered repository, from outside any repository, with their git state once every merge verdict is cached', async () => {
+test('status lists worktrees with no environment for every registered repository, from outside any repository, and reads git only for live environments once every merge verdict is cached', async () => {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   const commit = (cwd: string, file: string, message: string) => {
@@ -1047,6 +1047,7 @@ test('status lists worktrees with no environment for every registered repository
     const nested = worktree(first, 'nested');
     const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
+    const idleWorktree = worktree(second, 'idle');
     const deleted = worktree(second, 'deleted');
     rmSync(deleted, { recursive: true, force: true });
 
@@ -1070,17 +1071,38 @@ test('status lists worktrees with no environment for every registered repository
         version: 2,
         projects: {
           [first]: { label: 'first', platforms: {} },
-          [join(nested, 'apps', 'mobile')]: { label: 'nested', platforms: {} },
+          [join(nested, 'apps', 'mobile')]: {
+            label: 'nested',
+            platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
+          },
+          [join(loose, 'apps', 'mobile')]: {
+            label: 'loose',
+            platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } },
+          },
           [join(base, 'gone')]: { label: 'gone', platforms: {} },
           [join(second, 'apps', 'mobile')]: { label: 'second', platforms: {} },
+          [join(idleWorktree, 'apps', 'mobile')]: { label: 'idle', platforms: {} },
         },
       }),
     );
     const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
       file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
+    const bootedSims = JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ['UDID-ABC', 'UDID-DEF'].map((udid) => ({
+          udid,
+          name: `stim-${udid}`,
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        })),
+      },
+    });
     setExecutor({
       runFileAsync: (file: string, args: string[], opts: object) =>
-        file === 'git' ? realExecutor.runFileAsync(file, args, opts) : Promise.resolve(''),
+        file === 'git'
+          ? realExecutor.runFileAsync(file, args, opts)
+          : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
       runFile: real(''),
       runQuiet: () => null,
       runFileQuiet: (file: string, args: string[], opts: object) =>
@@ -1093,28 +1115,29 @@ test('status lists worktrees with no environment for every registered repository
     await runStatusJson();
     const payload = await runStatusJson();
     expect(payload.unprovisionedWorktrees).toEqual([
-      {
-        path: loose,
-        branch: 'loose',
-        repository: first,
-        git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
-        gitChip: {
-          parts: [
-            { kind: 'arrows', ahead: 1, behind: 0 },
-            { kind: 'changed', count: 4 },
-          ],
-          ci: null,
-        },
-      },
       { path: deleted, branch: 'deleted', repository: second, git: null },
-      {
-        path: other,
-        branch: 'other',
-        repository: second,
-        git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
-        gitChip: { parts: [{ kind: 'no-upstream' }], ci: null },
-      },
+      { path: other, branch: 'other', repository: second, git: null },
     ]);
+    const liveLoose = payload.environments.find((e: { path: string }) => e.path === join(loose, 'apps', 'mobile'));
+    expect(liveLoose.worktree).toEqual({
+      path: loose,
+      branch: 'loose',
+      repository: first,
+      git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
+      gitChip: {
+        parts: [
+          { kind: 'arrows', ahead: 1, behind: 0 },
+          { kind: 'changed', count: 4 },
+        ],
+        ci: null,
+      },
+    });
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('git: 2 changed, 2 untracked');
+    expect(plain).toContain(`${other} [other]`);
+    expect(plain).not.toContain(`${other} [other] --`);
+    const idle = payload.environments.find((e: { path: string }) => e.path === join(idleWorktree, 'apps', 'mobile'));
+    expect(idle).toMatchObject({ live: false, worktree: { path: idleWorktree, branch: 'idle', git: null } });
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
     expect(env.worktree).toEqual({
       path: nested,
@@ -1126,7 +1149,7 @@ test('status lists worktrees with no environment for every registered repository
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test.each([
   ['mini', 'mini', false, 'ok', undefined, 'mini'],

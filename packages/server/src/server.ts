@@ -661,6 +661,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (recorders > 0) return;
       stopRecording?.();
       stopRecording = null;
+      usage.pause();
     };
   };
   const controllers = new Map<WebSocket, Controller>();

@@ -7,6 +7,7 @@ import {
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
+  type HostedAppOffer,
 } from '@stim-cli/core/state';
 import { BuildConnection } from '../offload/client.ts';
 import { pinnedEndpoint } from '../offload/tailnet.ts';
@@ -88,7 +89,7 @@ export async function connectHost(
   strict = false,
 ): Promise<HostConnection> {
   const credential = hostingCredential(machine);
-  const target = pinnedEndpoint(credential);
+  const target = await pinnedEndpoint(credential);
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
   const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
@@ -115,6 +116,19 @@ export async function connectHost(
     );
   }
   return { machine, credential, connection: opened };
+}
+
+export function requireHostedAppMode(
+  host: HostConnection,
+  platform: 'ios' | 'android',
+  mode?: HostedAppOffer['mode'],
+): void {
+  if (mode !== 'process') return;
+  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-process' : 'hosted-android-process'))
+    throw credentialRefusal(
+      `${host.machine} does not support hosted ${platform} process apps.`,
+      `Update stim-server on ${host.machine} to a version supporting hosted ${platform} process apps, then retry.`,
+    );
 }
 
 const gatewaySecrets = new WeakMap<HostConnection, string>();

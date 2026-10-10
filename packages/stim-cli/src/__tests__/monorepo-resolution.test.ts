@@ -3,12 +3,20 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { runDoctor } from '../diagnostics/doctor.ts';
+import {
+  reactNativeDoctorFindings,
+  type DoctorInspectionOptions,
+  runDoctor as inspectDoctor,
+} from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
+
+function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+}
 
 let home: string;
 let ws: string;

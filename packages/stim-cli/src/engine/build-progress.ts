@@ -401,7 +401,11 @@ function finishedResult(record: Record<string, unknown>): BuildResult {
 export function recordFinishedBuild(
   root: string,
   record: Record<string, unknown>,
-  { update = updateWorkspaceState, now = Date.now }: { update?: typeof updateWorkspaceState; now?: () => number } = {},
+  {
+    update = updateWorkspaceState,
+    now = Date.now,
+    artifactOnly = false,
+  }: { update?: typeof updateWorkspaceState; now?: () => number; artifactOnly?: boolean } = {},
 ): void {
   const platform = record.platform as BuildPlatform;
   update(root, (state) => {
@@ -413,11 +417,12 @@ export function recordFinishedBuild(
       slot: own?.slot ?? 'default',
       phases: own ? phaseDurations(own.phases, now()) : {},
     };
+    if (artifactOnly || platform === 'macos') return withHistoryEntry(state, platform, entry);
     const slot = own?.slot ?? 'default';
     const slots = isJsonObject(state.deviceSlots) ? state.deviceSlots : {};
     const savedSlot = isJsonObject(slots[slot]) ? slots[slot] : {};
     const savedDevice = slot === 'default' ? state[platform] : savedSlot[platform];
-    if (platform !== 'macos' && (record.devicePlacement || isJsonObject(savedDevice))) {
+    if (record.devicePlacement || isJsonObject(savedDevice)) {
       const device = isJsonObject(savedDevice) ? { ...savedDevice } : {};
       if (record.devicePlacement) device.devicePlacement = record.devicePlacement;
       else delete device.devicePlacement;
@@ -426,7 +431,6 @@ export function recordFinishedBuild(
           ? { ...state, [platform]: device }
           : { ...state, deviceSlots: { ...slots, [slot]: { ...savedSlot, [platform]: device } } };
     }
-    if (platform === 'macos') return withHistoryEntry(state, platform, entry);
     return withHistoryEntry({ ...state, lastBuild: record, [LAST_BUILD_KEYS[platform]]: record }, platform, entry);
   });
 }
@@ -455,12 +459,9 @@ export function recordBuildPhase(
 function withInterruptedBuild(state: WorkspaceState): WorkspaceState {
   const left = parseActiveBuild(state[ACTIVE_BUILD_KEY]);
   if (!left) return state;
-  const last =
-    left.platform === 'macos'
-      ? ((state[BUILD_HISTORY_KEY] as Record<string, unknown[]> | undefined)?.macos?.[0] as
-          | { startedAt?: unknown }
-          | undefined)
-      : (state[LAST_BUILD_KEYS[left.platform]] as { startedAt?: unknown } | undefined);
+  const last = (state[BUILD_HISTORY_KEY] as Record<string, unknown[]> | undefined)?.[left.platform]?.[0] as
+    | { startedAt?: unknown }
+    | undefined;
   if (Date.parse(String(last?.startedAt)) >= Date.parse(left.startedAt)) return state;
   return withHistoryEntry(state, left.platform, {
     platform: left.platform,

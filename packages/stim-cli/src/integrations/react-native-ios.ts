@@ -22,7 +22,10 @@ import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { iosToolchain } from '../offload/toolchain.ts';
+import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
+
+import { planReactNativeIos } from './react-native-ios-plan.ts';
 
 const PLATFORM = 'ios';
 
@@ -50,8 +53,9 @@ type ReactNativeIosDependencies = Pick<
   | 'swapJsBundle'
 >;
 
-export function reactNativeIosSchemeProblem(
+function reactNativeIosSchemeProblem(
   root: string,
+  iosDir: string,
   scheme: string | undefined,
   isExpo: boolean,
   d: ReactNativeIosDependencies,
@@ -64,28 +68,42 @@ export function reactNativeIosSchemeProblem(
       remedy: 'Pass the exact scheme name shown by xcodebuild -list.',
     };
   if (isExpo) return null;
-  const project = d.discoverXcodeProject(root);
+  const project = d.discoverXcodeProject(root, iosDir);
   if (project.error) return project.error;
   return d.resolveScheme(project, { scheme }).error ?? null;
 }
 
+const runtimeKind: IosProject['runtimeKind'] = (configuration) =>
+  isReleaseConfiguration(configuration) ? 'embedded-js' : 'metro';
+
 export function reactNativeIosProject(
   root: string,
-  dependencies: Partial<ReactNativeIosDependencies> = {},
+  settings: SettingsObject,
+  dependencies: Partial<IosDeps> = {},
 ): IosProject {
   const d: ReactNativeIosDependencies = { ...DEFAULT_DEPS, ...dependencies };
   const isExpo = d.detectIsExpo(root);
+  const iosProject = resolveIosProjectDir(settings, root);
   return {
+    plan: (options, resolved) =>
+      planReactNativeIos(
+        root,
+        options,
+        { ...DEFAULT_DEPS, ...dependencies },
+        (scheme) => reactNativeIosSchemeProblem(root, iosProject.dir, scheme, isExpo, d),
+        resolved,
+      ),
     isExpo,
-    bundleId: () => d.detectBundleId(root),
-    schemeProblem: (scheme) => reactNativeIosSchemeProblem(root, scheme, isExpo, d),
+    bundleId: () => d.detectBundleId(root, iosProject.dir),
+    schemeProblem: (scheme) => reactNativeIosSchemeProblem(root, iosProject.dir, scheme, isExpo, d),
     targets: ['simulator', 'physical', 'remote', 'hosted'],
     eas: true,
+    runtimeKind,
     runtime: ({ configuration, prepareMetro, prepareEmbedded }) =>
-      isReleaseConfiguration(configuration)
+      runtimeKind(configuration) === 'embedded-js'
         ? iosProcessRuntime(prepareEmbedded, 'embedded-js')
         : iosMetroRuntime(prepareMetro),
-    artifact: (context) => reactNativeIosArtifact(context, isExpo, d),
+    artifact: (context) => reactNativeIosArtifact(context, isExpo, iosProject, d),
   };
 }
 
@@ -113,6 +131,7 @@ function reactNativeIosArtifact(
     setPodsMs,
   }: IosArtifactContext,
   isExpo: boolean,
+  iosProject: IosProjectDir,
   d: ReactNativeIosDependencies,
 ): IosArtifactRecipe {
   const physical = device !== null;
@@ -134,7 +153,11 @@ function reactNativeIosArtifact(
   const materialize: IosArtifactRecipe['materialize'] = async (artifactPath, { fresh: isFresh, ownTemporary }) => {
     const lanAddress = device?.lanAddress ?? null;
     const metroPort = device?.metroPort ?? null;
-    const prepareDeviceApp = async (path: string, { fresh }: { fresh: boolean }): Promise<string | null> => {
+    const prepareDeviceApp = async (
+      path: string,
+      physicalDevice: NonNullable<IosArtifactContext['device']>,
+      { fresh }: { fresh: boolean },
+    ): Promise<string | null> => {
       const refuse = (code: string, reason: string, remedy: string): null => {
         if (fresh) {
           fail({ code, message: reason, remedy, build: { appPath: path } });
@@ -144,7 +167,7 @@ function reactNativeIosArtifact(
         return null;
       };
       const gateProfile = (): string | null => {
-        const gate = d.gateProfileForDevice({ appPath: path, udid, configuration });
+        const gate = d.gateProfileForDevice({ appPath: path, udid: physicalDevice.udid, configuration });
         return gate.ok ? path : refuse(gate.code, gate.reason, gate.remedy);
       };
 
@@ -181,10 +204,10 @@ function reactNativeIosArtifact(
       writeIpTxt(copy.appPath, lanAddress as string, metroPort as number);
       const sealed = d.sealAppForDevice({
         appPath: copy.appPath,
-        udid,
+        udid: physicalDevice.udid,
         configuration,
-        pinnedName: device?.signingName ?? null,
-        pinnedSha1: device?.signingSha1 ?? null,
+        pinnedName: physicalDevice.signingName ?? null,
+        pinnedSha1: physicalDevice.signingSha1 ?? null,
       });
       if (!sealed.ok) {
         try {
@@ -202,10 +225,16 @@ function reactNativeIosArtifact(
     };
 
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
-      if (physical) return prepareDeviceApp(cachedPath, { fresh: false });
+      if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
-      const swap = await d.swapJsBundle({ root, isExpo, cachedAppPath: cachedPath, logWriter: logWriter() });
+      const swap = await d.swapJsBundle({
+        root,
+        iosDir: iosProject.dir,
+        isExpo,
+        cachedAppPath: cachedPath,
+        logWriter: logWriter(),
+      });
       if (swap?.ok && swap.appPath) {
         if (swap.note) note(chalk.yellow(phaseLine('swap', swap.note)));
         if (swap.tmpDir) ownTemporary(swap.tmpDir);
@@ -228,7 +257,7 @@ function reactNativeIosArtifact(
       return null;
     };
 
-    if (isFresh) return physical ? prepareDeviceApp(artifactPath, { fresh: true }) : artifactPath;
+    if (isFresh) return device ? prepareDeviceApp(artifactPath, device, { fresh: true }) : artifactPath;
     return installableCachedApp(artifactPath);
   };
   return {
@@ -236,7 +265,7 @@ function reactNativeIosArtifact(
       let computedFingerprint: string | null;
       let fingerprintError = 'no hash';
       try {
-        const computed = await d.fingerprintProject(root, { platform: PLATFORM });
+        const computed = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
         computedFingerprint = computed?.hash ?? null;
         fingerprintSources = computed?.sources ?? [];
       } catch (error) {
@@ -257,8 +286,8 @@ function reactNativeIosArtifact(
     },
     cache: () => filesystemBuildCapability({ resolve: d.resolveBuild, store: d.storeBuild, sources: storeSources }),
     validateExternal(path) {
-      if (physical) {
-        const gate = d.gateProfileForDevice({ appPath: path, udid, configuration });
+      if (device) {
+        const gate = d.gateProfileForDevice({ appPath: path, udid: device.udid, configuration });
         if (!gate.ok) {
           fail({ code: gate.code, message: gate.reason, remedy: easDeviceBuildRemedy(easProfile!) });
         }
@@ -280,11 +309,11 @@ function reactNativeIosArtifact(
       if (prebuild === 'refuse') {
         fail({ ...staleNativeDirRefusal(PLATFORM) });
       }
-      const pods = d.readPodState(root);
+      const pods = d.readPodState(root, iosProject.dir);
       const mutates =
         prebuild === 'generate' ||
         prebuild === 'regenerate' ||
-        podAction(pods, d.podsAreStale(pods.lockText, pods.manifestText)).install;
+        podAction(pods, d.podsAreStale(pods.lockText, pods.manifestText, pods.dir)).install;
       if (mutates && cachePolicy.read) beforePrepare();
       if (prebuild === 'generate' || prebuild === 'regenerate') {
         step('prebuild');
@@ -308,18 +337,21 @@ function reactNativeIosArtifact(
       }
 
       if (isExpo && buildScheme !== undefined) {
-        const project = d.discoverXcodeProject(root);
+        const project = d.discoverXcodeProject(root, iosProject.dir);
         if (project.error) fail({ ...project.error });
         const schemeError = d.resolveScheme(project, { scheme: buildScheme }).error;
         if (schemeError) fail({ ...schemeError });
       }
 
-      const podState = d.readPodState(root);
-      const verdict = d.podsAreStale(podState.lockText, podState.manifestText);
+      const podState = d.readPodState(root, iosProject.dir);
+      const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
       const action = podAction(podState, verdict);
       if (action.install) {
         step('pods');
-        const result = await d.runPodInstall(root, logWriter(), { estimateMs: estimates().podsMs });
+        const result = await d.runPodInstall(root, logWriter(), {
+          estimateMs: estimates().podsMs,
+          directory: iosProject.dir,
+        });
         const podCommand = result?.command || 'pod install';
         for (const line of result?.notes || []) note(chalk.dim(phaseLine('pods', line)));
         if (result?.failed) {
@@ -346,6 +378,7 @@ function reactNativeIosArtifact(
           projectRoot: root,
           platform: PLATFORM,
           previousHash: fingerprint,
+          iosProjectPath: iosProject.relative,
           fingerprint: d.fingerprintProject,
         });
         const prebuildRan = mutatingSteps.includes('prebuild');
@@ -385,6 +418,7 @@ function reactNativeIosArtifact(
         projectRoot: root,
         platform: PLATFORM,
         previousHash: storeHash,
+        iosProjectPath: iosProject.relative,
         fingerprint: d.fingerprintProject,
       });
       const changed = after
@@ -419,6 +453,7 @@ function reactNativeIosArtifact(
     compile: () =>
       d.buildIos({
         root,
+        iosDir: iosProject.dir,
         scheme: buildScheme,
         udid,
         destination: target.destination,
@@ -450,7 +485,8 @@ function reactNativeIosArtifact(
             : null,
       };
     },
-    untrackedLine: () => untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root })),
+    untrackedLine: () =>
+      untrackedMissLine(d.untrackedNativeFiles({ projectRoot: root, iosProjectPath: iosProject.relative })),
     legacyCache:
       physical || !cachePolicy.remote || buildProfile || buildScheme
         ? null
@@ -468,7 +504,9 @@ function reactNativeIosArtifact(
             : !cachePolicy.write
               ? 'the build cache is off'
               : !runtime
-                ? `the runtime of simulator ${udid} is unknown`
+                ? udid
+                  ? `the runtime of simulator ${udid} is unknown`
+                  : 'no simulator runtime is available for worker selection'
                 : null);
         return { runtime, unsupported };
       },
@@ -486,6 +524,7 @@ function reactNativeIosArtifact(
         runtime,
         configuration,
         scheme: buildScheme ?? null,
+        iosProjectPath: iosProject.relative,
         isExpo,
         optimizations,
       }),
@@ -494,6 +533,7 @@ function reactNativeIosArtifact(
           projectRoot: root,
           platform: PLATFORM,
           previousHash: storeHash!,
+          iosProjectPath: iosProject.relative,
           fingerprint: d.fingerprintProject,
         });
         return Boolean(after && !after.moved);

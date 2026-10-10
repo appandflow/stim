@@ -3,11 +3,19 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../diagnostics/doctor-config.ts';
-import { runDoctor } from '../diagnostics/doctor.ts';
+import {
+  reactNativeDoctorFindings,
+  type DoctorInspectionOptions,
+  runDoctor as inspectDoctor,
+} from '../diagnostics/doctor.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { mergeSettingsLayers, settingsLayers } from '../workspace/settings.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { writeCasToolchain } from './_factories.ts';
+
+function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+}
 
 const MACHINE = '/home/.stim/config.json';
 

@@ -93,7 +93,6 @@ public struct TutorialRecord: Codable, Equatable, Sendable {
   public var stopped: Bool?
   public var runPromptCopiedAt: Date?
   public var phonePairedAtStart: Bool?
-  public var approvedMachine: String?
 
   public init(
     version: Int, tourPath: String? = nil, startedAt: Date, step: String = "begin",
@@ -130,7 +129,7 @@ public final class TutorialRecordStore {
 
   public init(_ defaults: UserDefaults = .standard) { self.defaults = defaults }
 
-  public var completed: Bool { record?.step == "done" }
+  public var completed: Bool { ["done", "delete"].contains(record?.step) }
 
   public var record: TutorialRecord? {
     get {
@@ -155,10 +154,10 @@ public struct TutorialInput: Sendable {
   public var pairedPhoneCount: Int?
   /// Without the phone app the phone step is skipped.
   public var phoneApp: Bool
-  public var machineApproved: Bool
-  public var approvedMachine: String?
   public var replayOff: Bool
   public var archiveEnabled: Bool
+  public var cloneFolderExists: Bool?
+  public var newCloneFolder: TutorialCloneFolder?
   public var now: Date
   public var record: TutorialRecord?
 
@@ -166,7 +165,8 @@ public struct TutorialInput: Sendable {
     environment: TutorialEnvironment?, siblings: [TutorialEnvironment] = [], archivedProjectRoots: [String] = [],
     logRecords: [LogRecord] = [],
     viewerEvents: [TutorialViewerEvent] = [], pairedPhoneCount: Int? = nil, phoneApp: Bool = true,
-    machineApproved: Bool = false, approvedMachine: String? = nil, replayOff: Bool = false, archiveEnabled: Bool = true,
+    replayOff: Bool = false, archiveEnabled: Bool = true, cloneFolderExists: Bool? = nil,
+    newCloneFolder: TutorialCloneFolder? = nil,
     now: Date, record: TutorialRecord? = nil
   ) {
     self.environment = environment
@@ -176,12 +176,33 @@ public struct TutorialInput: Sendable {
     self.viewerEvents = viewerEvents
     self.pairedPhoneCount = pairedPhoneCount
     self.phoneApp = phoneApp
-    self.machineApproved = machineApproved
-    self.approvedMachine = approvedMachine
     self.replayOff = replayOff
     self.archiveEnabled = archiveEnabled
+    self.cloneFolderExists = cloneFolderExists
+    self.newCloneFolder = newCloneFolder
     self.now = now
     self.record = record
+  }
+}
+
+public enum TutorialAction: Equatable, Sendable {
+  case restart, updateCLI, updateDesktop
+}
+
+public struct TutorialNotice: Equatable, Sendable {
+  public var text: String
+  public var action: TutorialAction?
+
+  public init(_ text: String, action: TutorialAction? = nil) {
+    self.text = text
+    self.action = action
+  }
+
+  public static func version(_ version: Int) -> Self? {
+    guard !TutorialSteps.supportedVersions.contains(version) else { return nil }
+    return version < TutorialSteps.supportedVersions.min()!
+      ? Self("This tutorial was started with an older version. Restart it to follow the new steps.", action: .restart)
+      : Self("Update Stim Desktop to follow this tutorial", action: .updateDesktop)
   }
 }
 
@@ -200,6 +221,7 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var id: String
   public var state: TutorialStepState
   public var detail: String
+  public var action: TutorialAction?
   public var ticks: [TutorialTick]
   public var canMarkDone: Bool
 }
@@ -210,21 +232,17 @@ public struct TutorialSnapshot: Sendable {
   public var record: TutorialRecord
   public var shouldReopen: Bool
   public var isComplete: Bool { currentStep == nil }
+  public var isFinished: Bool { isComplete || currentStep == "delete" }
 }
 
 public struct TutorialProgress: Sendable {
   public private(set) var record: TutorialRecord?
   private var viewerOpened = false
   private var viewerInput = false
-  private var details: [String: String] = [:]
+  private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
 
   public init() {}
-
-  public mutating func requestRestart(now: Date) {
-    self = Self()
-    record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: now)
-  }
 
   public mutating func skip(now: Date) {
     guard var record, record.step != "done" else { return }
@@ -275,13 +293,14 @@ public struct TutorialProgress: Sendable {
     }
     let tracked = environment.flatMap { $0.path == record?.tourPath ? $0 : nil }
     let second = Self.pairedSecond(&record, tracked: tracked, siblings: input.siblings)
-    if launching, record?.tourPath != nil, tracked == nil, second == nil,
+    if launching, record?.step != "done", record?.tourPath != nil, tracked == nil, second == nil,
       record?.allArchived(input.archivedProjectRoots) == true || (!input.archiveEnabled && record?.step == "finish")
     {
       let skipped = record!.skipped
-      record?.done = TutorialSteps.all.map(\.id).filter { !skipped.contains($0) }
-      record?.step = "done"
-    } else if launching {
+      record?.done = TutorialSteps.all.prefix { $0.id != "delete" }.map(\.id).filter { !skipped.contains($0) }
+      let step = firstUnfinished
+      record?.step = step
+    } else if launching, record?.step != "done" {
       let step = firstUnfinished
       record?.step = step
     }
@@ -300,11 +319,9 @@ public struct TutorialProgress: Sendable {
         if event == .input(udid), viewerOpened { viewerInput = true }
       }
     }
-    var failure: String?
-    if let version = tracked?.version ?? record?.version, !TutorialSteps.supportedVersions.contains(version) {
-      failure =
-        version < TutorialSteps.supportedVersions.min()!
-        ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
+    var failure: TutorialNotice?
+    if let version = tracked?.version ?? record?.version, let notice = TutorialNotice.version(version) {
+      failure = notice
     } else {
       while record!.step != "done" {
         let id = record!.step
@@ -317,19 +334,14 @@ public struct TutorialProgress: Sendable {
         }
         let since = record!.stepSince ?? record!.startedAt
         let checkpoint = checkpoint(id, since: since, environment: tracked, second: second, logs: logs, input: input)
-        details[id] = checkpoint.detail
+        details[id] = TutorialNotice(checkpoint.detail, action: checkpoint.action)
         if let reason = checkpoint.failure {
-          failure = reason
+          failure = TutorialNotice(reason)
           break
         }
         guard let completed = checkpoint.completed else { break }
         complete(at: completed)
       }
-    }
-    if input.machineApproved, let machine = input.approvedMachine,
-      record?.step == "machine" || record?.done.contains("machine") == true
-    {
-      record?.approvedMachine = machine
     }
     let current = record!.step == "done" ? nil : record!.step
     let steps = TutorialSteps.steps(phoneApp: input.phoneApp).map { step in
@@ -338,13 +350,15 @@ public struct TutorialProgress: Sendable {
         ? .skipped
         : record!.done.contains(step.id)
           ? .done
-          : current == step.id ? failure.map(TutorialStepState.failed) ?? .current : .pending
+          : current == step.id ? failure.map { TutorialStepState.failed($0.text) } ?? .current : .pending
       let checkpoint = checkpoint(
         step.id, since: record!.stepTimes?[step.id] ?? record!.startedAt, environment: tracked, second: second, logs: logs,
         input: input)
+      let notice =
+        current == step.id ? failure ?? details[step.id] : details[step.id]
+      let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
       return TutorialStepProgress(
-        id: step.id, state: state,
-        detail: failure != nil && current == step.id ? failure! : details[step.id] ?? checkpoint.detail,
+        id: step.id, state: state, detail: shown.text, action: shown.action,
         ticks: checkpoint.ticks,
         canMarkDone: current == step.id && input.now.timeIntervalSince(record!.stepSince ?? record!.startedAt) >= 120)
     }
@@ -410,6 +424,7 @@ public struct TutorialProgress: Sendable {
     var completed: Date?
     var failure: String?
     var detail = ""
+    var action: TutorialAction?
     var ticks: [TutorialTick] = []
   }
 
@@ -433,10 +448,24 @@ public struct TutorialProgress: Sendable {
       let appeared = environment?.builds.isEmpty == false || environment?.build != nil ? record?.startedAt : now
       let newClone = Self.registeredClones(input.siblings).first { isNewClone($0) }
       let exists = environment != nil || newClone != nil
+      let stage = input.newCloneFolder?.stage(since: record?.startedAt ?? now) ?? .absent
+      let timedOut = record?.beginWaitTimedOut(now: now) == true && environment == nil
+      let detail: String
+      switch stage {
+      case .absent:
+        detail =
+          timedOut ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
+      case .cloning: detail = "Cloning the test app..."
+      case .cloned: detail = "Cloned. Waiting for its dependencies..."
+      case .installing: detail = "Installing dependencies..."
+      case .installed: detail = "Dependencies installed. Waiting for Stim to register the clone..."
+      }
       return Checkpoint(
-        completed: exists ? appeared : nil,
-        detail: record?.beginWaitTimedOut(now: now) == true && environment == nil
-          ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace")
+        completed: exists ? appeared : nil, detail: detail, action: timedOut ? .restart : nil,
+        ticks: [
+          tick("cloned", [.cloned, .installing, .installed].contains(stage)), tick("installed", stage == .installed),
+          tick("registered", exists),
+        ])
     case "build":
       if let last, last.status == "failed", parseTimestamp(last.startedAt).map({ $0 >= since }) == true {
         return Checkpoint(
@@ -496,25 +525,27 @@ public struct TutorialProgress: Sendable {
         detail: paired
           ? "Open Stim on your phone: the tour workspace is there"
           : "Pair your phone")
-    case "machine":
-      let offloaded = last?.offloadedTo != nil && last.flatMap { parseTimestamp($0.startedAt) }.map { $0 >= since } == true
-      return Checkpoint(
-        completed: input.machineApproved ? now : nil, detail: "Choose an approved remote Mac",
-        ticks: [
-          tick("approved", input.machineApproved || record?.done.contains("machine") == true),
-          tick("offloaded", offloaded, optional: true),
-        ])
     case "finish":
       if record?.step == "finish", environment?.live == false { record?.stopped = true }
       let absent = environment == nil && second == nil && record?.tourPath != nil
       let archived = record?.allArchived(input.archivedProjectRoots) == true
       let complete = absent && (!input.archiveEnabled || archived)
+      let gone = input.archiveEnabled && absent && !complete
       return Checkpoint(
         completed: complete ? now : nil,
         detail: !input.archiveEnabled
           ? "Archived is off"
-          : absent && !complete ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
+          : gone ? "Tutorial workspace gone: Restart" : "Stop the tutorial, then remove its worktrees",
+        action: gone ? .restart : nil,
         ticks: [tick("stopped", record?.stopped == true), tick("archived", absent && archived)])
+    case "delete":
+      let worktreesGone = environment == nil && second == nil
+      let registered = input.siblings.contains { $0.path == record?.clonePath }
+      let cloneGone = record?.clonePath != nil && !registered && input.cloneFolderExists == false
+      return Checkpoint(
+        completed: worktreesGone && cloneGone ? now : nil,
+        detail: "Waiting for your agent to remove the tutorial",
+        ticks: [tick("worktrees", worktreesGone), tick("clone", cloneGone)])
     default: return Checkpoint()
     }
   }

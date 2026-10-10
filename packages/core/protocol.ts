@@ -47,6 +47,10 @@ export type Capability = (typeof CAPABILITIES)[number];
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
+ * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
+ * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
+ * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  */
 export const FEATURES = [
@@ -68,7 +72,12 @@ export const FEATURES = [
   'workspace-diff',
   'hosted-congestion',
   'hosted-ios-data',
+  'hosted-ios-process',
+  'native-xcode-build',
+  'native-xcode-toolchain',
+  'native-gradle-build',
   'hosted-android-data',
+  'hosted-android-process',
   'server-update',
 ] as const;
 
@@ -777,6 +786,7 @@ export interface BuildOfferParams {
   lockfile?: string;
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
+  native?: 'xcode' | 'gradle';
 }
 
 /** The toolchain a build must match exactly on both Macs. */
@@ -825,7 +835,7 @@ export interface BuildOfferResult {
 /** One file of the client's checkout. A `link` blob holds the symlink's target. */
 export interface BuildFile {
   path: string;
-  kind: 'file' | 'exec' | 'link';
+  kind: 'file' | 'exec' | 'link' | 'directory';
   size: number;
   sha256: string;
 }
@@ -852,11 +862,20 @@ export interface BuildAndroidOptions {
   gradleBuildCache: boolean;
   pch: 'auto' | 'on' | 'off';
   compilerCache: 'ccache' | 'none';
+  gradleRoot?: string | null;
+  module?: string | null;
+}
+
+export interface GradleOffloadInputs {
+  complete: true;
+  ignored: string[];
+  outputs: string[];
 }
 
 /**
  * Builds the synced manifest of `repo`. The machine refuses unless its fingerprint equals `fingerprint`. iOS
  * needs `runtime`; Android needs `android`; macOS needs `macos` and uses the manifest digest as its fingerprint.
+ * Declared native Gradle jobs use a null fingerprint; their sourceDigest is only a transfer identity.
  */
 export interface BuildStartParams {
   repo: string;
@@ -864,8 +883,19 @@ export interface BuildStartParams {
   platform: 'ios' | 'android' | 'macos';
   configuration?: string | null;
   scheme?: string | null;
+  iosProjectPath?: string | null;
   runtime?: string | null;
-  fingerprint: string;
+  fingerprint: string | null;
+  native?:
+    | {
+        provider: 'xcode';
+        sourceDigest: string;
+        cacheKey: string;
+        arch: 'arm64' | 'x86_64' | null;
+        /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
+        parameters: Record<string, unknown>;
+      }
+    | { provider: 'gradle'; sourceDigest: string; inputs: GradleOffloadInputs };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;
@@ -905,7 +935,9 @@ export type BuildJobOutcome =
   | {
       ok: true;
       artifact: BuildArtifactResult;
-      fingerprint: string;
+      fingerprint: string | null;
+      sourceDigest?: string;
+      androidPackage?: string;
       compilationCache: Record<string, unknown>;
       timings: Record<string, number>;
     }

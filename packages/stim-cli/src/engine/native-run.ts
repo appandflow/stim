@@ -11,7 +11,7 @@ export const NATIVE_RUN_WAIT_MS: number = 30 * 60_000;
 const WAIT_HEARTBEAT_MS = 30_000;
 const CANCEL_REQUEST_KEY = 'nativeRunCancel';
 
-export type NativeRunCommand = 'ios' | 'android' | 'macos' | 'stop';
+export type NativeRunCommand = 'ios' | 'android' | 'macos' | 'build' | 'stop';
 
 export interface NativeRunDetails {
   command: NativeRunCommand;
@@ -40,6 +40,7 @@ export function describeNativeRunHolder(holder: ClaimHolder, now: number): strin
   const facts = [`pid ${holder.owner.pid}`];
   if (Number.isFinite(started)) facts.push(`running for ${formatElapsed(now - started)}`);
   if (command === null) return `another Stim run (${facts.join(', ')})`;
+  if (command === 'build') return `an artifact build (${facts.join(', ')})`;
   return `\`stim ${command}${slot === 'default' ? '' : ` --slot ${slot}`}\` (${facts.join(', ')})`;
 }
 
@@ -95,7 +96,7 @@ export function decideStopAction({
   ownerIdentity: ProcessIdentityStatus;
   deviceSlots: readonly string[];
 }): StopHolderAction {
-  if (holder.command === 'macos') {
+  if (holder.command === 'macos' || holder.command === 'build') {
     if (stopSlot !== undefined) return { action: 'proceed' };
     return ownerIdentity === 'same' ? { action: 'interrupt' } : { action: 'refuse' };
   }

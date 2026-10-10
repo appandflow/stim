@@ -9,7 +9,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { nativeProjectIntegration } from '../integrations/projects.ts';
-import { projectMetroCommand } from '../workspace/settings.ts';
+import { resolveProjectSettings, runnableMetroCommand, type SettingsObject } from '../workspace/settings.ts';
 import type { ServerHandle, ServerStarter } from './types.ts';
 export type { ServerExitInfo } from './types.ts';
 import { describeError } from './errors.ts';
@@ -149,7 +149,7 @@ export interface RunSupervisorOptions {
   startCommand?:
     | ((opts: Parameters<ServerStarter>[0] & { command: readonly string[] }) => Promise<ServerHandle>)
     | null;
-  metroCommand?: (projectRoot: string) => string[] | null;
+  settings?: SettingsObject | null;
   now?: () => number;
   onExit?: (code: number) => void;
   attachSignals?: boolean;
@@ -170,7 +170,7 @@ export async function runSupervisor({
   startBare = null,
   startExpo = null,
   startCommand = null,
-  metroCommand = projectMetroCommand,
+  settings: settingsOverride = null,
   now = Date.now,
   onExit = (code: number) => process.exit(code),
   attachSignals = true,
@@ -186,7 +186,8 @@ export async function runSupervisor({
   const logsDir = workspaceLogsDir(root);
   const writer = createNdjsonWriter(join(logsDir, 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   const integration = nativeProjectIntegration(root, isExpo);
-  const command = metroCommand(root);
+  const settings = settingsOverride ?? resolveProjectSettings(root).settings;
+  const command = runnableMetroCommand(settings);
   const mode = command ? MODE_COMMAND : integration.mode;
   const startedAt = new Date(now()).toISOString();
   const processToken = captureProcessToken(process.pid);
@@ -327,6 +328,7 @@ export async function runSupervisor({
       writer: serverWriter,
       tunnel,
       resetCache,
+      settings,
       onTunnelUrl: (url: string) => {
         try {
           withWorkspaceStateLock(root, () => {

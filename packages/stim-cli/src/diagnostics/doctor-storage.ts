@@ -6,19 +6,26 @@ import { sharedBuildCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { filesystemDevice, temporaryRoot } from '../temporary.ts';
 import { repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
 import { apkOutputsDir } from '../integrations/react-native-build.ts';
+import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
 export function checkStorageLayout(
   projectRoot: string,
   {
     platform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = defaultAndroidLayout(projectRoot),
     host = process.platform,
     device = filesystemDevice,
     stagingRoot = temporaryRoot,
+    scope,
   }: {
     platform?: DoctorPlatform;
+    iosProjectPath?: string;
+    androidLayout?: AndroidLayout;
     host?: NodeJS.Platform;
     device?: typeof filesystemDevice;
     stagingRoot?: typeof temporaryRoot;
+    scope?: 'shared' | 'native';
   } = {},
 ): Finding[] {
   const findings: Finding[] = [];
@@ -37,26 +44,31 @@ export function checkStorageLayout(
     });
   };
   try {
-    const target = repoRoot(projectRoot) ?? projectRoot;
-    const source = resolveSourceCheckout(target);
-    check(
-      'Worktree copy',
-      ['path' in source ? source.path : target, target],
-      'Keep the source checkout and linked worktree on the same volume to share file blocks when warming.',
-    );
     const cache = sharedBuildCache();
-    check('Cached app/APK staging', [cache, stagingRoot(join(cache, 'artifact.app'))], temporaryFix);
+    if (scope !== 'native') {
+      const target = repoRoot(projectRoot) ?? projectRoot;
+      const source = resolveSourceCheckout(target);
+      check(
+        'Worktree copy',
+        ['path' in source ? source.path : target, target],
+        'Keep the source checkout and linked worktree on the same volume to share file blocks when warming.',
+      );
+      check('Cached app/APK staging', [cache, stagingRoot(join(cache, 'artifact.app'))], temporaryFix);
+    }
     const cacheFix =
       'Place STIM_BUILD_CACHE / machine caches.buildCache on the build-output volume, ' +
       'or accept the full-copy cost of keeping the cache on a separate volume.';
-    const localIos = platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, 'ios')));
-    if (localIos && host === 'darwin') {
+    const localIos = platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, iosProjectPath)));
+    if (scope !== 'shared' && localIos && host === 'darwin') {
       const output = join(workspaceDerivedData(projectRoot), 'Build', 'Products');
       check('iOS build-cache storage', [output, cache], cacheFix);
       check('iOS device app staging', [output, stagingRoot(join(output, 'artifact.app'))], temporaryFix);
     }
-    if (platform === 'android' || (platform !== 'ios' && existsSync(join(projectRoot, 'android')))) {
-      check('Android build-cache storage', [apkOutputsDir(projectRoot), cache], cacheFix);
+    if (
+      scope !== 'shared' &&
+      (platform === 'android' || (platform !== 'ios' && existsSync(androidLayout.gradleRoot)))
+    ) {
+      check('Android build-cache storage', [apkOutputsDir(androidLayout), cache], cacheFix);
     }
   } catch (error) {
     findings.push({

@@ -23,6 +23,7 @@ export const nativeIosFixture: ProjectIntegration = {
         eas: false,
         bundleId: () => 'org.example.native',
         schemeProblem: () => null,
+        runtimeKind: () => 'process',
         runtime: () => iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
         artifact: ({ logWriter, configuration, target }) => {
           let hash = '';

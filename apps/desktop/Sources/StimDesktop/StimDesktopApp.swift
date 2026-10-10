@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SimulatorFrames
 import StimKit
 import StimStores
@@ -157,6 +158,7 @@ struct StimDesktopApp: App {
   private let machineSettings: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
   private let statsReader: StatsReader
+  private let serverStatus: AnyCancellable
   private let metrics: MetricsStore
   private let storage: StorageStore
   private let planChecks: BuildPlanChecks
@@ -193,6 +195,11 @@ struct StimDesktopApp: App {
     _ = ServerSession.shared
     let store = StatusStore(cli: cli)
     self.store = store
+    serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.statsConnection) }
+      }
+    }
     notifier = Notifier(store: store)
     let actions = ActionCenter(cli: cli)
     self.actions = actions
@@ -260,7 +267,7 @@ struct StimDesktopApp: App {
     .commands {
       UpdateCommands()
       CommandGroup(replacing: .newItem) {
-        Button("Add Remote Mac\u{2026}") {
+        Button("Add Remote Machine\u{2026}") {
           MainWindow.show()
           OpenRequests.shared.addMachine = AddMachineRequest(machineID: nil, hostedSimulators: false)
         }
@@ -289,7 +296,7 @@ struct StimDesktopApp: App {
     #endif
 
     Settings {
-      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines)
+      SettingsView(cli: cli, store: store, machine: machineSettings, buildMachines: buildMachines, actions: actions)
         .environmentObject(autopilot)
         .environmentObject(onboarding)
     }

@@ -26,9 +26,9 @@ export function hermesEnabledFromProperties(text: unknown): boolean {
   return raw !== 'false' && raw !== false;
 }
 
-export function readHermesEnabled(root: string): boolean {
+export function readHermesEnabled(iosDir: string): boolean {
   try {
-    return hermesEnabledFromProperties(readFileSync(join(root, 'ios', 'Podfile.properties.json'), 'utf-8'));
+    return hermesEnabledFromProperties(readFileSync(join(iosDir, 'Podfile.properties.json'), 'utf-8'));
   } catch {
     return true;
   }
@@ -213,10 +213,14 @@ const IOS_FRAMEWORK_UPDATES_MANIFEST = join(
   UPDATES_MANIFEST_NAME,
 );
 
-export function hermescPath(root: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string {
+export function hermescPath(
+  root: string,
+  iosDir: string,
+  { exists = existsSync }: { exists?: (p: string) => boolean } = {},
+): string {
   const candidates = [
     join(root, 'node_modules', 'hermes-compiler', 'hermesc', 'osx-bin', 'hermesc'),
-    join(root, 'ios', 'Pods', 'hermes-engine', 'destroot', 'bin', 'hermesc'),
+    join(iosDir, 'Pods', 'hermes-engine', 'destroot', 'bin', 'hermesc'),
     join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', 'osx-bin', 'hermesc'),
   ];
   return candidates.find(exists) ?? candidates[candidates.length - 1]!;
@@ -243,6 +247,7 @@ export type JsSwapResult = {
 
 export async function swapJsBundle({
   root,
+  iosDir,
   isExpo,
   cachedAppPath,
   logWriter = null,
@@ -256,6 +261,7 @@ export async function swapJsBundle({
   onHeartbeat = (line: string) => console.error(line),
 }: {
   root: string;
+  iosDir: string;
   isExpo: boolean;
   cachedAppPath: string;
   logWriter?: NdjsonWriter | null;
@@ -380,9 +386,9 @@ export async function swapJsBundle({
 
   let hermes = false;
   let note: string | undefined;
-  const wantsHermes = hermesEnabled ?? readHermesEnabled(root);
+  const wantsHermes = hermesEnabled ?? readHermesEnabled(iosDir);
   if (wantsHermes) {
-    const hermesc = hermescPath(root);
+    const hermesc = hermescPath(root, iosDir);
     if (!exists(hermesc)) {
       note = `hermesc not found at ${hermesc}; embedding the plain JS bundle instead of Hermes bytecode`;
     } else {

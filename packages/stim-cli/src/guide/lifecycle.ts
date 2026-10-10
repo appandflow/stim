@@ -1,9 +1,14 @@
+import { WATCH_CPU_STEP_PERCENT, WATCH_MEMORY_STEP_MB } from '../status-watch.ts';
 import type { GuideTopic } from './types.ts';
 
 const lifecycle: GuideTopic = {
   summary:
     'The full worktree -> start -> ios/android -> logs -> teardown flow, with sections for builds, devices and flags',
   preamble: () => `ENVIRONMENT LIFECYCLE
+
+For a native Xcode or Gradle app without React Native or Expo, read
+\`stim guide lifecycle native-ios\` or \`stim guide lifecycle native-android\`.
+The Metro and JavaScript steps below apply to React Native and Expo.
 
 Two workflows share steps 2 through 6.
 
@@ -80,7 +85,7 @@ a seed belongs to this workflow.
   #    unwarmed worktrees with no Stim registry entry. Git-created branches stay.
   stim worktree remove
 
-A Debug \`ios\` or \`android\` run checks the reserved port before the device
+A React Native or Expo Debug \`ios\` or \`android\` run checks the reserved port before the device
 or the build. When no healthy dev server of this workspace answers there, it
 runs the same start as step 2: a dev server started outside Stim is reused, a
 reservation held by a foreign process moves to a free port, and the budgets
@@ -244,7 +249,10 @@ WAITING FOR A CHANGE
   To wait for a device, a build or a dev server instead of polling, run
   \`stim status --watch --json\`. It keeps running and prints one complete
   status payload per line: one at once, then one each time the payload
-  changes, never two identical ones in a row. It reacts to Stim state files,
+  changes, never two identical ones in a row. In a watch line, a usage
+  figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
+  owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
+  changes as a whole, so its residentMb and processes update with it. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds
@@ -255,6 +263,121 @@ WAITING FOR A CHANGE
   still running, which it notices at the next change.
   Without --json it reprints the human view on change.`,
   sections: {
+    'native-ios': {
+      summary: 'native Xcode project selection, process launch, cache behavior and current limits',
+      body: () => `NATIVE XCODE APPS
+Run from the directory containing the .xcodeproj or .xcworkspace. A Node
+package.json is not required. React Native and Expo apps keep their existing
+integration.
+
+  stim doctor --platform ios
+  stim ios --scheme MyApp --configuration Debug --json
+  stim ios --scheme MyApp --configuration Release --json
+  stim logs --errors
+  stim stop
+
+Use the project's actual scheme and configuration names. Shared Run schemes
+select application targets; a unique application target can also use its
+automatic scheme. A workspace owns its referenced projects. --scheme selects
+an exact name; duplicate container/scheme matches refuse instead of guessing.
+--configuration overrides ios.configuration in .stim.json, then defaults to
+Debug. Custom configurations such as Staging use the same path.
+
+Native Debug, Release and custom configurations do not start or require Metro,
+embed JavaScript, or swap a JavaScript bundle. The app is launched as a native
+process and reports metroPort: null. launched: true establishes a live process;
+verify the expected screen and interaction on the reported device separately.
+After a native source edit, rerun stim ios. stim reload is for JavaScript.
+The existing owned simulator, device lease, signing, log and teardown services
+still apply. Stim does not change signing accounts or provisioning profiles.
+
+A reusable artifact key includes the selected build configuration, source and
+known dependency inputs, toolchain and build options. In a git checkout,
+ignored files the project does not reference are not part of the key. Native
+Release cache reuse does not depend on releaseBundleSwap. Xcode compilation
+uses the shared compilation cache when the toolchain and settings support it.
+--plan predicts this same local artifact without preparing dependencies or
+choosing a device.
+
+Inputs whose complete build closure cannot be established build locally with
+artifact caching skipped. This includes shell build phases, custom build rules,
+C-family header graphs, Swift package graphs and unresolved external input
+paths or compiler overrides. The miss reason explains the exclusion. --plan
+refuses such a prediction; omit --plan to prepare and build the app.
+
+A compatible approved build Mac can compile a native Xcode app with
+--remote-build auto or --remote-build <name>. Both peers must support
+native-xcode-build. This first worker path requires a verified artifact identity
+and all inputs contained in the repository and visible to git. Ignored or
+external inputs keep the build here, and placement names the first one; their
+bytes are never silently omitted. The common case is a Finder .DS_Store that a
+global gitignore hides: delete it, or stop ignoring it, to offload. The worker
+compares its own toolchain and compiler environment identity before compiling
+and refuses, naming the differing parameter, so the build falls back here.
+Worker source mirrors remove stale inputs, while Xcode compilation caches remain
+in the worker's private Stim home. Physical builds stay local.
+
+Native Xcode apps can install on an already approved hosting Mac with
+process-mode support:
+  stim ios --scheme MyApp --configuration Debug --remote janics-mac-mini --json
+
+The host must advertise hosted-ios-process; older hosts refuse with an update
+remedy before reservation or upload. --remote auto skips incompatible hosts,
+but an existing session stays on its recorded host until stim stop. Debug,
+Release and custom configurations use the offered simulator architecture,
+report metroPort: null, and close any previous session Metro bridge. Logs,
+view/control, agent access and scoped stop use the existing hosted-ios services.
+Verify UI and interaction separately from the host's live process evidence.
+
+Unbounded native build offload, hosted --plan, eas/proxy devices and EAS artifact
+profiles remain unsupported for native Xcode apps. These limits do not change React Native or
+Expo support.
+
+Copyable agent request:
+  Run this native Xcode app with stim ios --scheme MyApp --configuration Debug
+  --json. Verify its expected screen and interaction on the reported device,
+  inspect stim logs --errors, then stop only this workspace with stim stop.`,
+    },
+    'native-android': {
+      summary: 'native Gradle app selection, hosted emulators, build-worker inputs and current limits',
+      body: () => `NATIVE ANDROID GRADLE APPS
+Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
+no Metro, npm install or React Native dependency is required. The directory must
+contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
+one application module and the exact variant (debug by default). Stim installs
+one signed universal or matching-ABI APK on an owned emulator or leased phone.
+Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
+must support native Android process mode. Multiple application modules,
+density/split APK sets and EAS/proxy targets are unsupported. Set
+org.gradle.configureondemand=false; configuration cache remains supported.
+Stim verifies the existing APK signature; it does not sign it.
+
+Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
+tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+\`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
+Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
+Paths are exact repository-relative paths. complete affirms that Git-visible
+source plus the listed ignored files suffice, including optional files; Gradle
+DSL can read undeclared input without failing. Never list secrets or user Gradle
+homes. External inputs, directory links, submodules and custom local.properties
+refuse; an SDK-only local.properties stays local. Only declared directories
+reported by AGP and previously produced by this worker remain warm, along with
+worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
+incremental, task-cache and configuration-cache reuse; transfer digests never
+become reusable APK cache keys. Older hosts refuse before source upload.
+
+outputs must list every build directory of this build's projects that the build
+creates: the root build directory and each module's, library modules included.
+A remote build that creates an undeclared one fails with its name, and Stim
+builds locally; add it to outputs. A buildSrc directory refuses before upload.
+Included builds (includeBuild, such as a build-logic plugin build) and
+externalNativeBuild staging (.cxx) are not reported by AGP and cannot be
+declared, so a remote build that creates them fails and Stim builds locally.
+
+Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
+    },
     ci: {
       summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
       body: () => `CONTINUOUS INTEGRATION
@@ -318,7 +441,7 @@ policy. No flag or setting runs on this Mac.
 A named Mac is strict: refusal, unreachable, declined or failed preparation
 returns STIM_HOSTING_REFUSED without fallback. --device, a different recorded
 machine, a running local owned emulator in the slot, and --no-metro-check for
-hosted Debug refuse STIM_BAD_ARG. Run stim stop before switching placement.
+hosted Metro development apps refuse STIM_BAD_ARG. Run stim stop before switching placement.
 Unreadable android.host blocks only its slot; restore its recorded machine and
 session from the host before stopping that slot.
 
@@ -328,7 +451,7 @@ compatible build worker. Stim builds before reserving, records the session as
 soon as it exists, then delivers one App.apk. The emulator boots headless;
 androidEmulatorApp is ignored with a note.
 
-Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
+React Native Debug requires the local Metro supervisor. metro.publicUrl and metro.tunnel
 are ignored with a note. A private tailnet gateway reaches the host loopback
 bridge; the host reverses the client's Metro port into that bridge on its exact
 ledger-owned serial and sets debug_http_host to localhost:<clientMetroPort>.
@@ -337,6 +460,14 @@ adb server restart. Reload broadcasts through the local Metro and never runs
 adb against the host serial on this Mac. Release variants skip Metro. Launch
 is true only with client bundle evidence or a live host release process;
 bundling requires a bundle request and unverified has no launch evidence.
+
+Native Gradle apps use process mode for every variant. The host must advertise
+hosted-android-process; older hosts refuse before admission or APK upload.
+Native runs close any previous Metro bridge, launch the signed APK and require
+a live app process for launched=true. --no-metro-check is allowed, and reload
+refuses because there is no Metro runtime. Re-run stim android after an edit.
+Native EAS/proxy targets remain unsupported. Build offload requires the complete
+android.offloadInputs declaration; see stim guide lifecycle native-android.
 
 Status adds android.host { machine, session, selected, agent, device: { name,
 systemImage, api }, state } per slot. The public name is the profile and API
@@ -534,7 +665,7 @@ sessions.
 
 
 Stim builds or fetches before reserving, records the session immediately, then
-uploads the app on every run. Debug keeps Metro here; its supervisor owns a
+uploads the app on every run. React Native and Expo Debug keep Metro here; the supervisor owns a
 private gateway bound to this Mac's Tailscale address, pinned to the host peer
 and protected by a per-session secret. The host exposes only a loopback bridge.
 No start --remote is needed; metro.tunnel and metro.publicUrl are ignored.
@@ -542,7 +673,8 @@ Debug requires a running supervisor with private gateway support before reservin
 a simulator. --no-metro-check refuses with STIM_BAD_ARG for hosted Debug runs.
 If its supervisor is missing or older, run stim stop; stim start, then retry.
 Non-Debug runs skip Metro. Launch is unverified until this workspace's Metro
-provides bundle evidence, or the host proves a live release process.
+provides bundle evidence, or the host proves a live release process. Native Xcode
+apps use process mode in every configuration and require no Metro; see native-ios.
 
 A rerun on the same named Mac reattaches and delivers a new app attempt. A
 stopped or missing session is replaced; an unreachable or unknown owner refuses
@@ -1218,6 +1350,11 @@ PREDICTING THE NEXT BUILD (--plan)
   installing, or starting Metro. They take no workspace lock and write no
   Stim state, cache entry or statistic, so they run beside a build.
 
+  The selected project integration supplies the read-only plan and uses its
+  build recipe's identity and cache policy. If it has no planner, --plan
+  refuses with STIM_BAD_ARG; run the command without --plan. The refusal
+  reports no cache hit. React Native and Expo planning behaves as follows.
+
     stim ios --plan
       plan        ios 1b625d.. -> local cache hit
       expect      ~2.7s (median of 1 hit run)
@@ -1268,13 +1405,16 @@ IOS SCHEME SELECTION
   Xcode scheme, not the app's URL scheme. Combine it with --configuration
   when choosing both an app scheme and a build configuration.
 
-  Without --scheme, automatic selection is unchanged:
+  The ios.scheme setting names the scheme once for the app (guide settings);
+  --scheme overrides it per run, and both give the same keys below.
+
+  Without --scheme or ios.scheme, automatic selection is unchanged:
   Stim keeps a scheme matching the workspace/project name, or the sole non-test
   scheme. When neither identifies one, it also checks the static top-level name
   in the app directory's app.json against Xcode's listed schemes. It does not
   execute app config or choose an arbitrary scheme from an ambiguous list.
-  If selection fails, pass --scheme with an available name, or share the app
-  scheme in Xcode first. See guide errors STIM_NO_SCHEME.
+  If selection fails, pass --scheme with an available name, set ios.scheme, or
+  share the app scheme in Xcode first. See guide errors STIM_NO_SCHEME.
 
   Explicit schemes have separate artifact keys, shared-build locks, and Xcode
   build directories. Stim identifies the resulting application from Xcode's
@@ -1283,7 +1423,8 @@ IOS SCHEME SELECTION
   configured Stim cache providers use the scheme-specific key. The older Expo
   buildCacheProvider tier is skipped for explicit schemes because a provider
   may key only on the fingerprint and return another scheme's app. Omitting
-  --scheme retains the existing cache keys and provider behavior.
+  both --scheme and ios.scheme retains the existing cache keys and provider
+  behavior.
 
 AN ARTIFACT THE DEVICE ALREADY HOLDS IS NOT INSTALLED AGAIN
   Both platforms store the artifact verbatim, so its hash is its identity.
@@ -2246,7 +2387,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   MUTATE: the cache entry stays the pristine, shareable artifact, and the
   per-run address lives only in the copy that is installed and then deleted.
 
-  A RELEASE device run builds fresh every time for now. A cached Release app
+  A React Native or Expo RELEASE device run builds fresh every time for now. A cached Release app
   carries its BUILDER's JS, and the device JS swap (which has to re-seal what
   it injects) lands with phase 6 of appandflow/stim#178, so the cache hit is
   refused rather than installed with someone else's JavaScript.
@@ -2461,8 +2602,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   distribution stay out of scope.
 
   \`ios --configuration <name>\` selects the Xcode configuration --
-  \`--configuration Release\` builds a SIMULATOR Release app with the JS
-  bundle embedded. It overrides the ios.configuration setting (the app-level
+  for React Native and Expo, \`--configuration Release\` builds a SIMULATOR
+  Release app with the JS bundle embedded. It overrides the ios.configuration setting (the app-level
   default); unset, the Debug flow is unchanged. A non-Debug configuration
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --
@@ -2550,6 +2691,19 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Doctor and failure diagnostics report macOS memory pressure when available;
   a failed query remains unknown. Existing swap or low free RAM alone is not
   enough to diagnose pressure.
+
+  Doctor, and boot messages under warning or critical pressure, also name any
+  process whose physical footprint is abnormal, read from macOS top (it counts
+  compressed and swapped memory, which ps RSS leaves out, and reads root-owned
+  daemons). Abnormal is at least a quarter of physical memory and 8 GiB, or
+  2 GiB for fseventsd and Watchman, which are normally far smaller. A known
+  safe-to-restart process comes with its command; Stim never runs it:
+    fseventsd                      sudo killall fseventsd (launchd restarts it;
+                                   file watchers rescan once)
+    Watchman                       stim gc --delete --cache watchman
+    Gradle or Kotlin daemon        stim gc --delete --cache gradle-daemons
+  Any other process is named with its size only; ask before quitting it.
+  Doctor skips this check when STIM_HOME is set: processes are machine-global.
 
   If pressure is elevated, free host memory before retrying. Use \`stim stop\`
   only in workspaces you own and have finished using; ask before closing other

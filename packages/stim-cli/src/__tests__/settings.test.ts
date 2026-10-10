@@ -11,6 +11,10 @@ import {
   androidDataPartitionSizeGbSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
+  androidLayoutSetting,
+  androidLayoutSettingError,
+  iosProjectDirSetting,
+  iosProjectDirSettingError,
   iosSigningIdentitySetting,
   iosSigningIdentitySettingError,
   iosSigningIdentitySha1Setting,
@@ -34,6 +38,7 @@ import {
   tunnelModeSetting,
   metroIdleStopMinutesSetting,
   metroPortSetting,
+  resolveProjectSettings,
   deviceIdleShutdownMinutesSetting,
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
@@ -114,12 +119,13 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 
 test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuses a port below 1024', () => {
   upsertProject(tmpHome, {});
-  expect(metroPortSetting(tmpHome, {})).toEqual({ port: null, error: null });
+  expect(metroPortSetting(resolveProjectSettings(tmpHome).settings, {})).toEqual({ port: null, error: null });
   setProjectSetting(tmpHome, 'metro.port', 25062);
-  expect(metroPortSetting(tmpHome, {})).toEqual({ port: 25062, error: null });
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
-  expect(metroPortSetting(tmpHome, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
+  const { settings } = resolveProjectSettings(tmpHome);
+  expect(metroPortSetting(settings, {})).toEqual({ port: 25062, error: null });
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
+  expect(metroPortSetting(settings, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
 });
 
 test('resolveSettings orders project over repo over committed', () => {
@@ -417,7 +423,9 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
+  'ios.scheme': { valid: 'RNTester', invalid: ['RNTester'], expected: 'a string' },
   'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },
+  'ios.projectPath': { valid: '.', invalid: {}, expected: 'a string path' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
   'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
@@ -427,7 +435,18 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'android.dataPartitionSizeGb': { valid: 8, invalid: '8', expected: 'a number' },
   'android.avdConfigFile': { valid: 'avd/config.ini', invalid: {}, expected: 'a string path' },
   'android.avdConfig': { valid: { 'hw.ramSize': 4096 }, invalid: 'hw.ramSize=4096', expected: 'an object' },
+  'android.gradleRoot': { valid: '../..', invalid: {}, expected: 'a string path' },
+  'android.module': {
+    valid: ':packages:rn-tester:android:app',
+    invalid: {},
+    expected: 'a string',
+  },
   'android.variant': { valid: 'productionDebug', invalid: {}, expected: 'a string' },
+  'android.offloadInputs': {
+    valid: { complete: true, ignored: [], outputs: ['app/build'] },
+    invalid: [],
+    expected: 'an object',
+  },
   'android.keystore': { valid: 'android/app/release.keystore', invalid: {}, expected: 'a string path' },
   'android.keystorePassword': { valid: 'env:MY_KS_PASS', invalid: 1234, expected: 'a string' },
   'android.remote': {
@@ -672,6 +691,90 @@ describe('metroCommandSettingError', () => {
   test('refuses an empty argv or a blank program', () => {
     expect(metroCommandSettingError({ metro: { command: [] } })).toMatch(/non-empty array/);
     expect(metroCommandSettingError({ metro: { command: [' ', '{port}'] } })).toMatch(/non-empty array/);
+  });
+});
+
+describe('iosProjectDirSetting', () => {
+  let app: string;
+  beforeEach(() => {
+    app = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ios-path-')));
+  });
+  afterEach(() => {
+    rmSync(app, { recursive: true, force: true });
+  });
+
+  test('defaults to ios/ without requiring it to exist yet', () => {
+    expect(iosProjectDirSetting({}, app)).toEqual({ dir: join(app, 'ios'), relative: 'ios', custom: false });
+    for (const projectPath of ['ios', 'ios/', './ios']) {
+      expect(iosProjectDirSetting({ ios: { projectPath } }, app)).toEqual({
+        dir: join(app, 'ios'),
+        relative: 'ios',
+        custom: false,
+      });
+    }
+  });
+
+  test('resolves the app directory itself when it holds the Xcode project', () => {
+    mkdirSync(join(app, 'RNTesterPods.xcworkspace'));
+    expect(iosProjectDirSetting({ ios: { projectPath: '.' } }, app)).toEqual({ dir: app, relative: '.', custom: true });
+  });
+
+  test('refuses a path outside the app, an absolute path, and a directory with no Xcode project', () => {
+    mkdirSync(join(app, 'apple'));
+    expect(iosProjectDirSettingError({ ios: { projectPath: '..' } }, app)).toMatch(/escapes the app directory/);
+    expect(iosProjectDirSettingError({ ios: { projectPath: app } }, app)).toMatch(/relative to the app directory/);
+    expect(iosProjectDirSettingError({ ios: { projectPath: 'apple' } }, app)).toMatch(
+      /no \.xcworkspace or \.xcodeproj/,
+    );
+  });
+});
+
+describe('androidLayoutSetting', () => {
+  let repo: string;
+  let app: string;
+  beforeEach(() => {
+    repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-layout-')));
+    app = join(repo, 'packages', 'tester');
+    mkdirSync(join(app, 'android', 'app'), { recursive: true });
+    writeFileSync(join(repo, 'settings.gradle.kts'), '');
+    writeFileSync(join(app, 'android', 'app', 'build.gradle.kts'), '');
+  });
+  afterEach(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+  const tester = { android: { gradleRoot: '../..', module: ':packages:tester:android:app' } };
+
+  test('defaults to android/ and :app without requiring them to exist yet', () => {
+    expect(androidLayoutSetting({}, app, repo)).toMatchObject({
+      gradleRoot: join(app, 'android'),
+      module: ':app',
+      moduleDir: join(app, 'android', 'app'),
+      custom: false,
+    });
+  });
+
+  test('resolves a Gradle root above the app and maps the module to its directory', () => {
+    expect(androidLayoutSetting(tester, app, repo)).toEqual({
+      gradleRoot: repo,
+      gradleRootRelative: join('..', '..'),
+      module: ':packages:tester:android:app',
+      moduleDir: join(app, 'android', 'app'),
+      custom: true,
+    });
+  });
+
+  test('refuses a root outside the repository, a root without settings, a module without a build script, and a malformed module', () => {
+    expect(androidLayoutSettingError(tester, app, app)).toMatch(/resolves outside/);
+    rmSync(join(repo, 'settings.gradle.kts'));
+    expect(androidLayoutSettingError(tester, app, repo)).toMatch(/no settings\.gradle/);
+    writeFileSync(join(repo, 'settings.gradle'), '');
+    expect(androidLayoutSettingError({ android: { gradleRoot: '../..', module: ':missing' } }, app, repo)).toMatch(
+      /has no build\.gradle/,
+    );
+    expect(androidLayoutSettingError({ android: { module: 'app' } }, app, repo)).toMatch(/Gradle project path/);
+    expect(
+      androidLayoutSettingError({ android: { gradleRoot: '../..', module: ':..:..:outside' } }, app, repo),
+    ).toMatch(/Gradle project path/);
   });
 });
 

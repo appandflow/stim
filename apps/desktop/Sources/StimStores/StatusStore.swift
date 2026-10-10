@@ -13,7 +13,9 @@ public final class StatusStore: ObservableObject {
   }
   private var projectTitleMap: [String: String] = [:]
   @Published public private(set) var watching = false
-  @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim"
+  @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim" {
+    didSet { syncServerFeed() }
+  }
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
 
   private let cli: Task<StimCLI, Never>
@@ -21,6 +23,13 @@ public final class StatusStore: ObservableObject {
   private var started = false
   private var terminating = false
   private var watcher: Process?
+  private var watchGeneration = 0
+  private var restartTimer: Timer?
+  private var serverActive = false
+  private var serverConnection: (client: ServerClient, home: String)?
+  private lazy var serverFeed = ServerStatusFeed(
+    onPayload: { [weak self] in self?.accept($0) },
+    onDelivering: { [weak self] in self?.serverDelivering($0) })
   private var watchStderr: [String] = []
   private var backoff = RestartBackoff()
   private var pollTimer: Timer?
@@ -78,12 +87,15 @@ public final class StatusStore: ObservableObject {
   }
 
   private func startWatch() {
+    restartTimer = nil
     let cli = cli
     Task { [weak self] in
       let cli = await cli.value
-      guard let self, !self.terminating else { return }
+      guard let self, !self.terminating, !self.serverActive, self.watcher == nil else { return }
       let startedAt = Date()
       self.watchStderr = []
+      self.watchGeneration += 1
+      let generation = self.watchGeneration
       do {
         self.watcher = try cli.stream(
           StatusWatch.arguments, cwd: NSHomeDirectory(),
@@ -93,7 +105,7 @@ public final class StatusStore: ObservableObject {
               ? Result { try decodeReporting(StatusPayload.self, from: Data(line.text.utf8), source: .cli) } : nil
             DispatchQueue.main.async {
               MainActor.assumeIsolated {
-                guard let self else { return }
+                guard let self, generation == self.watchGeneration else { return }
                 if let decoded {
                   self.accept(decoded)
                 } else {
@@ -104,7 +116,10 @@ public final class StatusStore: ObservableObject {
           },
           onExit: { [weak self] status in
             DispatchQueue.main.async {
-              MainActor.assumeIsolated { self?.watchExited(status, ranFor: Date().timeIntervalSince(startedAt)) }
+              MainActor.assumeIsolated {
+                guard let self, generation == self.watchGeneration else { return }
+                self.watchExited(status, ranFor: Date().timeIntervalSince(startedAt))
+              }
             }
           })
         self.watching = true
@@ -117,7 +132,7 @@ public final class StatusStore: ObservableObject {
 
   private func watchExited(_ status: Int32, ranFor duration: TimeInterval) {
     watcher = nil
-    watching = false
+    watching = serverActive
     guard !terminating else { return }
     if StatusWatch.isUnsupported(stderr: watchStderr) {
       startPolling()
@@ -129,9 +144,35 @@ public final class StatusStore: ObservableObject {
 
   private func restartWatch(ranFor duration: TimeInterval) {
     let delay = backoff.delay(afterRunning: duration)
-    Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+    restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated { self?.startWatch() }
     }
+  }
+
+  public func useServer(_ connection: (client: ServerClient, home: String)?) {
+    serverConnection = connection
+    syncServerFeed()
+  }
+
+  private func syncServerFeed() {
+    serverFeed.use(readCapableServer(serverConnection, stimHome: stimHome))
+  }
+
+  func serverDelivering(_ delivering: Bool) {
+    serverActive = delivering
+    if delivering {
+      restartTimer?.invalidate()
+      restartTimer = nil
+      watchGeneration += 1
+      watcher?.terminate()
+      watcher = nil
+      watching = true
+      return
+    }
+    watching = watcher != nil
+    guard started, !terminating, pollTimer == nil, watcher == nil else { return }
+    backoff = RestartBackoff()
+    startWatch()
   }
 
   private func startPolling() {

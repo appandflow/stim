@@ -71,6 +71,7 @@ final class BuildMachinesModel {
   func update(_ entry: String, checkout: String?) async {
     guard updates[entry]?.isDone ?? true else { return }
     updates[entry] = .sending(0)
+    let expectedBuild = check(in: checkout)?.statuses.first { $0.machine == entry }.flatMap(stimBuildHere)
     let startedAt: String
     do {
       let result = try await request("machines.update.start", ["machine": .string(entry)])
@@ -92,7 +93,7 @@ final class BuildMachinesModel {
       do {
         let result = try await request("machines.update.status", ["machine": .string(entry)])
         let status = try decodeReporting(MachineUpdateStatus.self, from: result, source: .server)
-        phase = MachineUpdatePhase.from(status, startedAt: startedAt)
+        phase = MachineUpdatePhase.from(status, startedAt: startedAt, expectedBuild: expectedBuild)
         unreachable = status.remote == nil ? status.unreachable : nil
         if status.remote != nil, phase == .restarting {
           let since = idleSince ?? ContinuousClock.now

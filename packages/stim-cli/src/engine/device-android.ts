@@ -9,7 +9,8 @@ import {
   withConfigLock,
 } from '../workspace/config.ts';
 import { pidExists } from '../metro.ts';
-import { readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import { memoryCulpritsUnder, readHostMemoryPressure, type HostMemoryPressure } from '../host-memory.ts';
+import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { listAllIosSims } from '../devices/ios.ts';
 import { adoptParked, isLegacyDeletionClaim, parkedMaxSetting, readParked } from '../devices/sim-pool.ts';
 import {
@@ -456,11 +457,12 @@ async function bootOwnedAvdOnFreshPort({
 function reportAndroidMemoryPressure(out: Notify): void {
   const pressure = readHostMemoryPressure();
   if (pressure === 'warning' || pressure === 'critical') {
+    const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
     out(
       chalk.dim(
         phaseLine(
           'memory',
-          `macOS reports ${pressure} host memory pressure; emulator boot may be slow. Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
+          `macOS reports ${pressure} host memory pressure; emulator boot may be slow.${named ? ` ${named}` : ''} Free memory with \`stim stop\` only in workspaces you own; ask before closing other apps or devices.`,
         ),
       ),
     );
@@ -477,8 +479,11 @@ function androidBootRemedy(pressure: HostMemoryPressure | null): string {
     });
     count = typeof live === 'number' ? live : null;
   } catch {}
+  const named = memoryCulpritAdvice(memoryCulpritsUnder(pressure));
   const observation =
-    pressure === 'warning' || pressure === 'critical' ? `macOS reports ${pressure} host memory pressure. ` : '';
+    pressure === 'warning' || pressure === 'critical'
+      ? `macOS reports ${pressure} host memory pressure. ${named ? `${named} ` : ''}`
+      : '';
   const devices = count ? `${count} Stim-owned ${count === 1 ? 'device is' : 'devices are'} running. ` : '';
   if (observation || devices) {
     return `${observation}${devices}Stop an unneeded device with \`stim stop\` only in a workspace you own, then run \`stim android\` again; ask before closing other apps or devices. These observations do not establish the cause of the timeout or an OOM crash.`;

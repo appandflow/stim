@@ -1,14 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'fs';
+import { join, posix, relative, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/build/Config.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifact } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { register } from './cache-manifest.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
+import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/settings.ts';
 
 export { artifactIn, buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };
@@ -47,23 +49,150 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/.idea/**',
 ];
 
+const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
+
+function gitIgnoredNames(projectRoot: string, names: readonly string[]): Set<string> {
+  if (names.length === 0) return new Set();
+  const out = getExecutor().runFileQuiet('git', ['-C', projectRoot, 'check-ignore', '--', ...names]);
+  return new Set(
+    String(out ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Sources and ignores that make an `ios.projectPath` outside `ios/` count the way
+ * @expo/fingerprint's bare sourcer counts `ios/`. A project directory that is the
+ * app itself cannot be told apart from the app's JavaScript, so every top-level
+ * entry git tracks, except dependencies and build output, is hashed: a JS change
+ * misses the cache instead of risking a stale native build.
+ */
+export function iosProjectFingerprintOptions(
+  projectRoot: string,
+  iosProjectPath: string,
+  {
+    list = (dir: string) => readdirSync(dir),
+    isDirectory = (path: string) => statSync(path).isDirectory(),
+    ignored = gitIgnoredNames,
+  }: {
+    list?: (dir: string) => string[];
+    isDirectory?: (path: string) => boolean;
+    ignored?: (projectRoot: string, names: readonly string[]) => Set<string>;
+  } = {},
+): Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> {
+  if (iosProjectPath === DEFAULT_IOS_PROJECT_PATH) return {};
+  const appRoot = iosProjectPath === '.';
+  const prefix = appRoot ? '' : `${iosProjectPath}/`;
+  const reasons = ['ios.projectPath'];
+  let extraSources: NonNullable<FingerprintOptions['extraSources']> = [
+    { type: 'dir', filePath: iosProjectPath, reasons },
+  ];
+  if (appRoot) {
+    const names = list(projectRoot).filter(
+      (name) => !APP_ROOT_IOS_SKIPPED.has(name) && !name.startsWith('.watchman-cookie-'),
+    );
+    const skip = ignored(projectRoot, names);
+    extraSources = names
+      .filter((name) => !skip.has(name))
+      .toSorted((a, b) => a.localeCompare(b))
+      .map((filePath) => ({
+        type: isDirectory(join(projectRoot, filePath)) ? 'dir' : 'file',
+        filePath,
+        reasons,
+      }));
+  }
+  return {
+    extraSources,
+    ignorePaths: [
+      `${prefix}Pods/**/*`,
+      `${prefix}build/**/*`,
+      `${prefix}.xcode.env.local`,
+      `${prefix}**/project.xcworkspace`,
+      `${prefix}*.xcworkspace/xcuserdata/**/*`,
+    ],
+  };
+}
+
+const ANDROID_ROOT_SOURCES = [
+  'settings.gradle',
+  'settings.gradle.kts',
+  'build.gradle',
+  'build.gradle.kts',
+  'gradle.properties',
+  'gradle',
+];
+
+export function androidProjectFingerprintOptions(
+  projectRoot: string,
+  layout: Pick<AndroidLayout, 'gradleRoot' | 'gradleRootRelative' | 'module' | 'moduleDir' | 'custom'>,
+  exists: (path: string) => boolean = existsSync,
+): Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> {
+  if (!layout.custom) return {};
+  const reasons = ['android.gradleRoot'];
+  const extraSources: NonNullable<FingerprintOptions['extraSources']> = ANDROID_ROOT_SOURCES.filter((name) =>
+    exists(join(layout.gradleRoot, name)),
+  ).map((name) => ({
+    type: name === 'gradle' ? 'dir' : 'file',
+    filePath: posix.join(layout.gradleRootRelative, name),
+    reasons,
+  }));
+  let appRoot = projectRoot;
+  try {
+    appRoot = realpathSync(projectRoot);
+  } catch {}
+  const fromApp = relative(appRoot, layout.moduleDir).split(sep).join('/');
+  if (fromApp === 'android' || fromApp.startsWith('android/')) {
+    return fromApp === 'android/app'
+      ? { extraSources }
+      : { extraSources, ignorePaths: ['build', '.cxx', '.gradle'].map((dir) => `${fromApp}/${dir}/**/*`) };
+  }
+  const moduleRel = posix.join(layout.gradleRootRelative, ...layout.module.split(':').filter(Boolean));
+  extraSources.push({ type: 'dir', filePath: moduleRel, reasons: ['android.module'] });
+  return {
+    extraSources,
+    ignorePaths: ['build', '.cxx', '.gradle'].map((dir) => `${moduleRel}/${dir}/**/*`),
+  };
+}
+
 export async function fingerprintProject(
   projectRoot: string,
   {
     platform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = null,
     createFingerprint = expoFingerprint.createFingerprintAsync,
     debug = false,
-  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync; debug?: boolean } = {},
+  }: {
+    platform?: string;
+    iosProjectPath?: string;
+    androidLayout?: AndroidLayout | null;
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    debug?: boolean;
+  } = {},
 ): Promise<ProjectFingerprint | null> {
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
+  const ios: Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> =
+    platform === 'ios'
+      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath)
+      : androidLayout?.custom
+        ? androidProjectFingerprintOptions(projectRoot, androidLayout)
+        : {};
+  if (ios.extraSources) {
+    // An explicit extraSources replaces fingerprint.config.js's list in @expo/fingerprint, so keep the project's own.
+    const config = await loadFingerprintConfig(projectRoot, true);
+    ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
+  }
   const options: FingerprintOptions = {
     ...platforms,
     ...(debug ? { debug } : {}),
-    ignorePaths: DEFAULT_FINGERPRINT_IGNORES,
+    ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
+    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...(ios.ignorePaths ?? [])],
     silent: true,
   };
   const result = await createFingerprint(projectRoot, options);
@@ -315,16 +444,24 @@ export async function refingerprintAfterMutation({
   projectRoot,
   platform,
   previousHash,
+  iosProjectPath,
+  androidLayout,
   fingerprint = fingerprintProject,
 }: {
   projectRoot: string;
   platform: string;
   previousHash: string;
+  iosProjectPath?: string;
+  androidLayout?: AndroidLayout;
   fingerprint?: typeof fingerprintProject;
 }): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
   let computed: ProjectFingerprint | null = null;
   try {
-    computed = await fingerprint(projectRoot, { platform });
+    computed = await fingerprint(projectRoot, {
+      platform,
+      ...(iosProjectPath ? { iosProjectPath } : {}),
+      ...(androidLayout ? { androidLayout } : {}),
+    });
   } catch {
     return null;
   }
@@ -420,9 +557,11 @@ export const UNTRACKED_MISS_CAP = 3;
 
 export function untrackedNativeFiles({
   projectRoot,
+  iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
   exec = getExecutor(),
 }: {
   projectRoot: string;
+  iosProjectPath?: string;
   exec?: { runFile: (file: string, args?: string[]) => string };
 }): string[] {
   let out: string;
@@ -436,6 +575,7 @@ export function untrackedNativeFiles({
       '--',
       'ios',
       'android',
+      ...(iosProjectPath !== DEFAULT_IOS_PROJECT_PATH ? [iosProjectPath] : []),
     ]);
   } catch {
     return [];

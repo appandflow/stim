@@ -154,7 +154,8 @@ export async function acquireIosArtifact(
   const cachePolicy = cache.policy;
   const signal = runCancellationSignal() ?? new AbortController().signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
-  const useBuildCache = cachePolicy.read;
+  let useBuildCache = cachePolicy.read;
+  let cacheIneligible: string | null = null;
   const cacheProviderConfig = cache.providerConfig;
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
   const temporaryDirs = new Set<string>();
@@ -259,6 +260,12 @@ export async function acquireIosArtifact(
     if (useBuildCache) step('cache-lookup');
     const fingerprintTimer = stepTimer(d.now);
     const identity = await recipe.identity();
+    if ('cacheIneligible' in identity) {
+      cacheIneligible = identity.cacheIneligible;
+      useBuildCache = false;
+      phase('fingerprint', `unavailable: ${cacheIneligible}`);
+      return;
+    }
     fingerprint = identity.hash;
     cacheKey = identity.key;
     stats.setCacheKey(cacheKey);
@@ -290,7 +297,7 @@ export async function acquireIosArtifact(
   }
 
   async function resolveRemoteArtifact(): Promise<LoadProjectProviderResult | null> {
-    if (!recipe.legacyCache) return null;
+    if (cacheIneligible || !recipe.legacyCache) return null;
     if (!appPath) {
       const loaded: LoadProjectProviderResult = await recipe.legacyCache.load();
       if (loaded?.unavailable) {
@@ -414,6 +421,7 @@ export async function acquireIosArtifact(
         diff: null,
       };
     }
+    if (cacheIneligible) return { reason: skippedMissReason(cacheIneligible), diff: null };
     if (!useBuildCache) {
       return {
         reason: skippedMissReason(
@@ -482,13 +490,21 @@ export async function acquireIosArtifact(
 
   /** Whether this build should leave this Mac, before any machine is asked; null builds here. */
   function placeBuild(): Candidate | null {
+    if (cacheIneligible) {
+      if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
+      hereReason = cacheIneligible;
+      return null;
+    }
     const { mode, machines, localEnabled } = buildPlacementCandidates(buildMachine);
     if (localEnabled && machines.length === 0 && !namedBuildMachine(buildMachine) && buildMachine !== 'local')
       return null;
-    const { runtime, unsupported } = recipe.offload?.context() ?? {
-      runtime: null,
-      unsupported: 'this project integration does not support offloaded builds',
-    };
+    const { runtime, unsupported } =
+      mode === 'off' && !namedBuildMachine(buildMachine)
+        ? { runtime: null, unsupported: null }
+        : (recipe.offload?.context() ?? {
+            runtime: null,
+            unsupported: 'this project integration does not support offloaded builds',
+          });
     const here = machineCapacity();
     const placement = offloadPlacement({
       mode,
@@ -646,7 +662,7 @@ export async function acquireIosArtifact(
     identity,
     mutationLabel,
   }: IosSourcePreparation): Promise<ReadyArtifact<string> | null> {
-    if (!identity) {
+    if (cacheIneligible || !identity) {
       storeHash = null;
       storeKey = null;
       buildFailure = { ...buildFailure, fingerprint: null, cacheKey: null };

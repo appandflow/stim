@@ -7,6 +7,9 @@ device with another workspace. Prefer plain output: it streams each phase and
 ends with the facts the next step needs. Use --json only when a script must
 parse a stable payload.
 
+For a native Xcode or Gradle app without React Native or Expo, read guide
+lifecycle native-ios or guide lifecycle native-android before running it.
+
 TWO WORKFLOWS
 
 WORKTREE is the default. Take SINGLE CHECKOUT only when the user asks to work in

@@ -3,10 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   findPeer,
   inspectBuildMachines,
   parseMachine,
+  pinnedEndpoint,
   type Endpoint,
   type HelloReply,
 } from '../offload/build-machines.ts';
@@ -21,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  resetExecutor();
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });
 });
@@ -36,6 +39,27 @@ function status(nodeId: string, dnsName = 'mini.tail1.ts.net.') {
     },
   };
 }
+
+test('pinnedEndpoint reads tailscale status without blocking the event loop, falling back to the Mac app binary', async () => {
+  const asked: string[] = [];
+  setExecutor({
+    runFile: () => {
+      throw new Error('runFile must not be used');
+    },
+    runFileQuiet: () => {
+      throw new Error('runFileQuiet blocks the event loop');
+    },
+    runFileAsync: async (file: string) => {
+      asked.push(file);
+      if (file === 'tailscale') throw Object.assign(new Error('spawn tailscale ENOENT'), { code: 'ENOENT' });
+      return JSON.stringify(status('nMini'));
+    },
+  });
+  const target = await pinnedEndpoint({ machine: 'mini', nodeId: 'nMini' });
+  expect(target).toMatchObject({ host: expect.stringContaining('mini') });
+  expect(asked).toEqual(['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']);
+  expect(await pinnedEndpoint({ machine: 'mini', nodeId: 'nOther' })).toContain('run stim doctor');
+});
 
 function fakeIo(nodeId: string, replies: HelloReply[]) {
   const calls: { endpoint: Endpoint; auth: Record<string, string> }[] = [];
