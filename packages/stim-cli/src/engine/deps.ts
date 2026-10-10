@@ -183,10 +183,11 @@ function readLoginRubyEnv(
 ): LoginRubyEnv | null {
   if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
   if (loginRubyEnvByShell.has(shell)) return loginRubyEnvByShell.get(shell) ?? null;
-  const dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
-  const file = join(dir, 'env');
+  let dir: string | null = null;
   let parsed: LoginRubyEnv | null = null;
   try {
+    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+    const file = join(dir, 'env');
     getExecutor().runFile(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
       timeoutMs: 10_000,
       killSignal: 'SIGKILL',
@@ -196,16 +197,21 @@ function readLoginRubyEnv(
   } catch {
     parsed = null;
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
   loginRubyEnvByShell.set(shell, parsed);
   return parsed;
 }
 
-function rubyPathEntries(login: LoginRubyEnv, exists: (p: string) => boolean): string[] {
+function rubyPathEntries(
+  login: LoginRubyEnv,
+  callerPath: string | undefined,
+  exists: (p: string) => boolean,
+): string[] {
+  const have = new Set((callerPath ?? '').split(delimiter));
   const gemDirs = [login.GEM_HOME, ...(login.GEM_PATH ?? '').split(delimiter)].filter((dir): dir is string => !!dir);
   return (login.PATH ?? '').split(delimiter).filter((entry) => {
-    if (!entry) return false;
+    if (!entry || have.has(entry)) return false;
     if (gemDirs.some((gem) => entry === gem || entry.startsWith(gem + sep))) return true;
     return exists(join(entry, 'ruby')) || exists(join(entry, 'pod'));
   });
@@ -262,7 +268,7 @@ export function podEnvForRuby(
   if (env.GEM_HOME) return out;
   const login = loginEnv();
   if (!login) return out;
-  const rubyPath = rubyPathEntries(login, exists);
+  const rubyPath = rubyPathEntries(login, out.PATH, exists);
   if (rubyPath.length) out.PATH = prependPath(rubyPath, out.PATH);
   if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
   if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;

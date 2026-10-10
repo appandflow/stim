@@ -177,6 +177,17 @@ describe('podEnv (#43, #44)', () => {
     expect(failed.GEM_HOME).toBeUndefined();
   });
 
+  test('keeps the caller PATH order and adds only login Ruby directories it lacks', () => {
+    const login = { PATH: '/usr/bin:/gems/bin:/opt/ruby/bin:/usr/local/bin', GEM_HOME: '/gems' };
+    const env = podEnv('/nonexistent', {
+      env: { PATH: '/agent/bin:/usr/local/bin:/usr/bin' },
+      home: '/home/u',
+      exists: (p) => p === '/usr/bin/ruby' || p === '/opt/ruby/bin/ruby' || p === '/usr/local/bin/pod',
+      loginEnv: () => login,
+    });
+    expect(env.PATH).toBe(['/gems/bin', '/opt/ruby/bin', '/agent/bin', '/usr/local/bin', '/usr/bin'].join(delimiter));
+  });
+
   test('parseLoginRubyEnv ignores shell banners and empty values', () => {
     const out = 'motd\n\n@@ruby-env-begin@@\nPATH=/a:/b\nGEM_HOME=\nGEM_PATH=/g\n@@ruby-env-end@@\n';
     expect(parseLoginRubyEnv(out)).toEqual({ PATH: '/a:/b', GEM_PATH: '/g' });
