@@ -542,7 +542,7 @@ export async function acquireAndroidArtifact(
       return false;
     }
     const stagingDir = join(workspaceDir(root), 'offload', PLATFORM);
-    if (uncached) run.own(stagingDir);
+    const disownStaging = uncached ? run.own(stagingDir) : null;
     const outcome = await offloadBuild({
       choice,
       expectedFingerprint: uncached ? null : storeHash,
@@ -588,9 +588,12 @@ export async function acquireAndroidArtifact(
         }
       }
     }
-    try {
-      if (!uncached || !stored) rmSync(stagingDir, { recursive: true, force: true });
-    } catch {}
+    if (!uncached || !stored) {
+      disownStaging?.();
+      try {
+        rmSync(stagingDir, { recursive: true, force: true });
+      } catch {}
+    }
     step('compile');
     if (!outcome.ok || !stored) {
       const why = reason ?? 'the APK was not stored';

@@ -15,8 +15,11 @@ type BuildSlotOptions = Parameters<typeof acquireBuildSlot>[0];
 
 /** What the driver holds for one acquisition: temporary copies, the build lock, the build slot and an open offload. */
 export interface ArtifactRun {
-  /** Removes the directory when acquisition fails, or when the caller releases a successful artifact. */
-  own(directory: string): void;
+  /**
+   * Removes the directory when acquisition fails, or when the caller releases a successful artifact.
+   * Returns a function that gives up ownership without removing it.
+   */
+  own(directory: string): () => void;
   /** Closes the offload connection when acquisition ends. */
   openOffload(close: () => void): void;
   claimSharedBuild(

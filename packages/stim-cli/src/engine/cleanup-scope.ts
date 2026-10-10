@@ -1,5 +1,6 @@
 export interface CleanupScope {
-  defer(cleanup: () => void): void;
+  /** Returns a function that drops the cleanup without running it. */
+  defer(cleanup: () => void): () => void;
   /** Hands every pending cleanup to the returned function and leaves this scope empty. */
   transfer(): () => void;
   /** Runs pending cleanups, newest first; one that throws is reported and kept for the next call. */
@@ -24,6 +25,9 @@ export function createCleanupScope(report: (error: unknown) => void): CleanupSco
   return {
     defer: (cleanup) => {
       pending.push(cleanup);
+      return () => {
+        pending = pending.filter((entry) => entry !== cleanup);
+      };
     },
     transfer: () => {
       let handed = pending;
