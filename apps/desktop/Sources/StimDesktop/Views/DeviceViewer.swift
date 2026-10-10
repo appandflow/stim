@@ -301,8 +301,6 @@ struct DeviceViewer: View {
   }
 }
 
-/// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
-/// moves, so playing and scrubbing redraw only the replay bar, the screen and the action highlighted.
 private struct TutorialViewerCard: View {
   @Environment(\.tutorialHint) private var hint
 
@@ -321,12 +319,15 @@ private struct TutorialViewerCard: View {
       }
       .frame(width: 260, alignment: .leading)
       .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+      .allowsHitTesting(false)
       .accessibilityElement(children: .combine)
       .accessibilityLabel("Stim tutorial: Live View and Control")
     }
   }
 }
 
+/// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
+/// moves, so playing and scrubbing redraw only the replay bar, the screen and the action highlighted.
 private struct ReplayingContent<Content: View>: View {
   private struct Shown: Equatable {
     var replaying: Bool

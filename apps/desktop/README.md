@@ -1865,7 +1865,7 @@ followed by "Open Stim on your phone: the tutorial workspaces are there".
 Add Remote Machine opens the existing wizard using the tour workspace as its
 checkout. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
-name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
+name it when none is recorded. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
 visible. The tutorial never starts the server or pairs or grants access.
