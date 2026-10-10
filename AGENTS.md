@@ -218,10 +218,11 @@ reviews those lines and replaces `review: needs-human` with
 record this because every agent uses the same account.
 
 The agent that pushes a behavior change after a review removes
-`review: ai-approved` until the next clear review. When a push changes lines a maintainer approved, it also
-replaces `review: human-approved` with `review: needs-human`. Merge, including
-with `gh stack merge`, only when every pull request involved has
-`review: ai-approved` and none has `review: needs-human`.
+`review: ai-approved` until the next clear review. When the push changes lines
+a maintainer approved, that agent also replaces `review: human-approved` with
+`review: needs-human`. Merge, including with `gh stack merge`, only when every
+pull request involved has `review: ai-approved` and none has
+`review: needs-human`.
 
 Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
