@@ -1,3 +1,4 @@
+import { debugLog } from '../debug-log.ts';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import {
@@ -9,6 +10,7 @@ import {
   hostedAndroidDeviceName,
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
+import { macosAppPresent } from '../macos/state.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
@@ -41,6 +43,7 @@ import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from
 import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
 import type { MetroResolution } from '../metro.ts';
 import {
+  MODE_COMMAND,
   clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
@@ -392,10 +395,9 @@ async function stopWorkspaceMacos(
   failed: (reason: string) => void,
   enabled: boolean | undefined,
 ): Promise<StopOutcomes['macos']> {
-  if (enabled === false || readWorkspaceState(root)?.macos === undefined) return undefined;
+  if (enabled === false || !macosAppPresent(root)) return undefined;
   try {
-    await stopMacosApp(root);
-    return { status: 'stopped' };
+    return (await stopMacosApp(root)) ? { status: 'stopped' } : undefined;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     failed(reason);
@@ -413,7 +415,7 @@ async function stopWorkspace({
   clearCollectors = clearCollectorState,
   isAlive = pidExists,
   killGroup = killMetroTree,
-  signalServer = (pid: number) => signalProcessTree(pid),
+  signalServer = (pid: number, group: boolean) => signalProcessTree(pid, 'SIGTERM', { group }),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
@@ -442,7 +444,7 @@ async function stopWorkspace({
   clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
   isAlive?: (pid: number) => boolean;
   killGroup?: typeof killMetroTree;
-  signalServer?: (pid: number) => boolean;
+  signalServer?: (pid: number, group: boolean) => boolean;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
@@ -482,6 +484,7 @@ async function stopWorkspace({
   let stillHolding: string | null | undefined = null;
   let keepPort: string | null = null;
 
+  debugLog.log('stop.phase.start', { phase: 'supervisor' });
   const target = resolveSupervisorTarget({
     state: sup,
     record: proj?.supervisor ?? null,
@@ -512,6 +515,8 @@ async function stopWorkspace({
     }
   }
 
+  debugLog.log('stop.phase.end', { phase: 'supervisor', status: outcomes.supervisor.status });
+  debugLog.log('stop.phase.start', { phase: 'collectors' });
   outcomes.collectors = await reapCollectors(root, collectorRecords, {
     isAlive,
     signal: signalCollector,
@@ -534,10 +539,16 @@ async function stopWorkspace({
   } else if (outcomes.collectors.entries.some((entry) => entry.status === 'failed')) {
     ok = false;
     stillHolding ??= 'a collector could not be stopped';
-  } else if (outcomes.collectors.entries.length && clearCollectors(root, collectorRecords) === false) {
-    ok = false;
-    stillHolding ??= 'a replacement collector appeared during cleanup';
+  } else if (outcomes.collectors.entries.length) {
+    debugLog.log('stop.phase.start', { phase: 'clear-collectors' });
+    const cleared = clearCollectors(root, collectorRecords);
+    debugLog.log('stop.phase.end', { phase: 'clear-collectors', cleared });
+    if (cleared === false) {
+      ok = false;
+      stillHolding ??= 'a replacement collector appeared during cleanup';
+    }
   }
+  debugLog.log('stop.phase.end', { phase: 'collectors', status: outcomes.collectors.status });
 
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
@@ -829,6 +840,16 @@ async function stopSupervisor(
   report(
     chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
   );
+  if (target.mode === MODE_COMMAND) {
+    report(
+      chalk.dim(
+        phaseLine(
+          '',
+          'metro.command runs in its own process group: once the supervisor is gone, run stim stop again to stop it',
+        ),
+      ),
+    );
+  }
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 
@@ -846,7 +867,7 @@ async function stopMetro(
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
-    signalServer: (pid: number) => boolean;
+    signalServer: (pid: number, group: boolean) => boolean;
     inspectIdentity: typeof inspectProcessIdentity;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
@@ -867,7 +888,7 @@ async function stopMetro(
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
     let signalled = false;
     try {
-      signalled = signalServer(serverPid as number);
+      signalled = signalServer(serverPid as number, server?.mode === MODE_COMMAND);
     } catch {}
     const exited = signalled
       ? await waiter(serverPid as number, serverProcessToken as string)
@@ -932,12 +953,10 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
       } else {
-        device[iosKey] = reportDevice(
-          iosUdid,
-          teardownIos(iosUdid, { del: false, label: iosName, workspace }),
-          report,
-          'ios',
-        );
+        debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
+        const result = teardownIos(iosUdid, { del: false, label: iosName, workspace });
+        debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: result.status });
+        device[iosKey] = reportDevice(iosUdid, result, report, 'ios');
       }
     }
 
@@ -952,12 +971,15 @@ function shutDownDevices(
         };
         report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
       } else {
-        device[androidKey] = reportDevice(
-          android.avdName,
-          teardownAvd(android.avdName, { del: false, workspace }),
-          report,
-          'android',
-        );
+        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: android.avdName });
+        const result = teardownAvd(android.avdName, { del: false, workspace });
+        debugLog.log('stop.device.end', {
+          platform: 'android',
+          slot,
+          deviceId: android.avdName,
+          status: result.status,
+        });
+        device[androidKey] = reportDevice(android.avdName, result, report, 'android');
       }
     }
   }

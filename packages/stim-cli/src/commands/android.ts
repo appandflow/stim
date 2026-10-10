@@ -31,8 +31,10 @@ import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
+  deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
+  projectSettingsContext,
   SETTING_SHAPE_REMEDY,
   publicUrlSetting,
   remoteEasFallbackSetting,
@@ -121,7 +123,6 @@ import {
 } from './android/support.ts';
 import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifact } from './android/artifact.ts';
@@ -228,10 +229,10 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
-          throw new InvalidArgumentError('expected eas, proxy, auto, or a tailnet machine name');
+          throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');
         return value;
       },
     )
@@ -780,14 +781,13 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     return { ok: false, error: { code, message, remedy: remedy ?? null } };
   };
 
-  const settingsRepoRoot = repoRoot(root);
   const settingsRoot = root;
-  const settingsContext = {
-    projectPath: root,
-    gitCommonDir: gitCommonDir(root),
-    repoRoot: settingsRepoRoot,
-  };
-  const projectKey = statsProjectKey({ root, commonDir: settingsContext.gitCommonDir, repoRoot: settingsRepoRoot });
+  const settingsContext = projectSettingsContext(root);
+  const projectKey = statsProjectKey({
+    root,
+    commonDir: settingsContext.gitCommonDir,
+    repoRoot: settingsContext.repoRoot,
+  });
   stats.setProject(projectKey);
   progress.estimate(projectKey);
   let estimatesRead: RunEstimates | null = null;
@@ -843,6 +843,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     signal: runCancellationSignal(),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
+    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
@@ -968,6 +969,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         root,
         port: reservedPort,
         settings: hostedMetroSettings(settings, Boolean(hostedTarget)),
+        settingsContext,
         remote: remoteContext !== null,
         note: out,
         resolve: resolveMetro,
@@ -986,7 +988,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       );
       return { ok: true, prepared: { metroPort } };
     } else {
-      const pin = metroPortSetting(root);
+      const pin = metroPortSetting(settings);
       if (pin.error) {
         return { ok: false, error: { code: 'STIM_BAD_ARG', message: pin.error, remedy: SETTING_SHAPE_REMEDY } };
       }
@@ -1279,6 +1281,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         record,
         fail,
         phase,
+        enterPhase: progress.step,
         out,
         json,
         useBuildCache,

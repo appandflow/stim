@@ -25,9 +25,15 @@ then 8081, without probing or reserving; an invalid pin still refuses.
 
 New allocations scan TCP ports 8900-8999. They skip registry reservations
 and existing listeners, announcing occupied ports and upward retries on
-stderr. Listener checks require lsof, or netstat on Windows. All 100 ports
-occupied or reserved is a refusal; stop or release unused allocations in
-their owning workspaces.
+stderr. All 100 ports occupied or reserved is a refusal; stop or release
+unused allocations in their owning workspaces.
+
+Metro allocation (from 8082 up) and named allocation find listeners in the
+native TCP table: netstat on macOS and Windows, /proc/net on Linux. When that
+table is denied, empty or unreadable, as in some sandboxes, each candidate is
+checked with an lsof listener scan and connects to 127.0.0.1 and ::1 instead.
+Allocation refuses only when none of them can answer: start refuses with
+STIM_PORT_INSPECTION_FAILED, and ports get prints the same message.
 
 The machine registry, under STIM_HOME, serializes allocation and cleanup.
 The workspace is the nearest package.json directory, resolved through
@@ -50,6 +56,7 @@ ports lists named labels and ports, plus Metro marked managed.
 ports stop [label] kills TCP listeners on those named ports and releases
 the allocations. It sends SIGTERM, waits two seconds, then SIGKILL if needed;
 on Windows it terminates the listener's process tree with taskkill.
+Stopping listeners requires lsof on macOS and Linux, or netstat on Windows.
 It prints the PID and command (the image name on Windows) for each stopped
 process. The listener's cwd can be anywhere: the named reservation is
 permission to stop that listener.

@@ -21,9 +21,10 @@ import {
   workspaceAgentDeviceDir,
 } from '../workspace/paths.ts';
 import { reserveMetroPort } from '../ports.ts';
+import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.ts';
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
-import { clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
+import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
@@ -41,16 +42,20 @@ import {
   deviceIdleShutdownMinutesSetting,
   metroIdleStopMinutesSetting,
   metroPortSetting,
+  metroCommandSetting,
+  metroCommandSettingError,
   metroTunnelSettingError,
   remoteAndroidSetting,
   cacheProviderSettingError,
   remoteIosSetting,
   resolveCacheProviderConfig,
-  resolveSettings,
+  resolveProjectSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
   tunnelModeSetting,
   unknownSettingKeys,
+  type ProjectSettingsContext,
+  type SettingsObject,
 } from '../workspace/settings.ts';
 import { detectProviders, planMetroReach, PUBLIC_METRO_ENV, type ManagedProvider } from '../engine/metro-reach.ts';
 import {
@@ -64,7 +69,6 @@ import {
   type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
@@ -379,12 +383,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
       }
       recordWorkspaceUse(root);
 
-      const settingsContext = {
-        projectPath: root,
-        gitCommonDir: gitCommonDir(root),
-        repoRoot: repoRoot(root) ?? root,
-      };
-      const settings = resolveSettings(settingsContext);
+      const { context: settingsContext, settings } = resolveProjectSettings(root);
       const [shapeError, ...moreShapeErrors] = settingShapeErrors(settings);
       if (shapeError) {
         return fail({
@@ -403,6 +402,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         {
           root,
           settings,
+          settingsContext,
           waitSeconds,
           remote: Boolean(opts.remote),
           resetCache: Boolean(opts.resetCache),
@@ -440,7 +440,8 @@ class StartRefusal extends Error {
 
 export interface StartDevServerRequest {
   root: string;
-  settings: ReturnType<typeof resolveSettings>;
+  settings: SettingsObject;
+  settingsContext: ProjectSettingsContext;
   waitSeconds?: number;
   remote?: boolean;
   resetCache?: boolean;
@@ -456,6 +457,7 @@ export async function startDevServer(
   {
     root,
     settings,
+    settingsContext,
     waitSeconds = DEFAULT_WAIT_SECONDS,
     remote: remoteFlag = false,
     resetCache = false,
@@ -471,12 +473,11 @@ export async function startDevServer(
     throw new StartRefusal(refusal);
   };
   const isExpo = detectIsExpo(root);
-  const worktreeRoot = repoRoot(root) ?? root;
-  const cacheProvider = resolveCacheProviderConfig({
-    projectPath: root,
-    gitCommonDir: gitCommonDir(root),
-    repoRoot: worktreeRoot,
-  });
+  const metroCommand = metroCommandSetting(settings);
+  const serverMode = metroCommand ? MODE_COMMAND : isExpo ? MODE_EXPO : MODE_BARE;
+  const expoServer = serverMode === MODE_EXPO;
+  const worktreeRoot = settingsContext.repoRoot ?? root;
+  const cacheProvider = resolveCacheProviderConfig(settingsContext);
   const run = async (): Promise<StartFacts> => {
     const settingError = metroTunnelSettingError(settings);
     if (settingError) {
@@ -486,6 +487,31 @@ export async function startDevServer(
         remedy: 'Set metro.tunnel to "ngrok" and metro.ngrokUrl to an HTTPS URL, or remove metro.ngrokUrl.',
       });
     }
+    if (metroCommand && d.platform === 'win32') {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message:
+          'metro.command is not supported on Windows: Stim cannot read a process working directory there, so it cannot prove the Metro a wrapper starts belongs to this app.',
+        remedy: 'Remove metro.command on Windows, or run this app from macOS or Linux.',
+      });
+    }
+    if (metroCommand && resetCache) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: '--reset-cache cannot reach a dev server started by metro.command; Stim does not know its reset flag.',
+        remedy:
+          "Add the command's own cache-reset flag to metro.command (for React Native, --reset-cache), then run stim stop and stim start.",
+      });
+    }
+    const commandError = metroCommandSettingError(settings);
+    if (commandError) {
+      return fail({
+        code: 'STIM_BAD_ARG',
+        message: commandError,
+        remedy:
+          'Set metro.command to the argv that starts the dev server, e.g. ["npx", "react-native", "start", "--port", "{port}"], or remove it.',
+      });
+    }
     const remote =
       remoteFlag ||
       remoteIosSetting(settings)?.kind === 'backend' ||
@@ -493,7 +519,7 @@ export async function startDevServer(
     const tunnelMode = tunnelModeSetting(settings) ?? 'auto';
     const publicUrl = publicUrlSetting(settings);
     const tunnel = wantsExpoOwnTunnel({
-      isExpo,
+      isExpo: expoServer,
       remote,
       mode: tunnelMode,
       publicUrl,
@@ -516,9 +542,9 @@ export async function startDevServer(
       };
       if (resetCache) {
         await gateBudget();
-        const pin = metroPortSetting(root);
+        const pin = metroPortSetting(settings);
         if (pin.port !== null || pin.error) {
-          const pinCheck = await resolveWorkspaceMetroPort(root, note, 'start', false);
+          const pinCheck = await resolveWorkspaceMetroPort(root, settings, note, 'start', false);
           if (typeof pinCheck !== 'number') return fail(pinCheck);
         }
         try {
@@ -536,7 +562,7 @@ export async function startDevServer(
 
       const logsDir = workspaceLogsDir(root);
       const logFile = supervisorLogFile(root);
-      const port = await resolvePort(root, note, fail);
+      const port = await resolvePort(root, settings, note, fail);
       let publicOrigin = remote ? publicUrl : null;
       let resolution = await resolveProjectMetro(port, root);
       let supervisor = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
@@ -651,14 +677,7 @@ export async function startDevServer(
           d.platform === 'win32'
             ? await spawnThroughWindowsShell(supervisorArgs, childEnv)
             : spawnDirect(supervisorArgs, childEnv);
-        out(
-          chalk.dim(
-            phaseLine(
-              'metro',
-              `starting on port ${port} (${isExpo ? 'expo-child' : 'bare-inproc'}, supervisor pid ${child.pid})`,
-            ),
-          ),
-        );
+        out(chalk.dim(phaseLine('metro', `starting on port ${port} (${serverMode}, supervisor pid ${child.pid})`)));
         spawnedChild = child;
         return child;
       };
@@ -676,7 +695,7 @@ export async function startDevServer(
 
       if (remote && !tunnel && !publicUrl && tunnelMode !== 'off') {
         const available = d.providers(tunnelMode);
-        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo, available });
+        const plan = planMetroReach({ mode: tunnelMode, metroPort: port, publicUrl, isExpo: expoServer, available });
         if ('failed' in plan) {
           return fail({ code: 'STIM_REMOTE_METRO_UNREACHABLE', message: plan.failed, remedy: plan.remedy });
         }
@@ -860,7 +879,7 @@ export async function startDevServer(
                 pid: child.pid as number,
                 processToken: child.pid ? captureProcessToken(child.pid) : null,
                 port,
-                mode: isExpo ? 'expo-child' : 'bare-inproc',
+                mode: serverMode,
                 startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
               };
               try {
@@ -1125,25 +1144,27 @@ export async function startDevServer(
 
 async function resolvePort(
   root: string,
+  settings: SettingsObject,
   note: (line: string) => void,
   fail: (refusal: StartRefusalArgs) => never,
 ): Promise<number> {
-  const result = await resolveWorkspaceMetroPort(root, note, 'start');
+  const result = await resolveWorkspaceMetroPort(root, settings, note, 'start');
   return typeof result === 'number' ? result : fail(result);
 }
 
 export async function resolveWorkspaceMetroPort(
   root: string,
+  settings: SettingsObject,
   note: (line: string) => void,
   command: 'start' | 'web',
   reserve = true,
 ): Promise<number | StartError> {
-  const setting = metroPortSetting(root);
+  const setting = metroPortSetting(settings);
   if (setting.error) return { code: 'STIM_BAD_ARG', message: setting.error, remedy: SETTING_SHAPE_REMEDY };
   const pinned = setting.port;
   const project = getProject(root);
   const recorded = project?.metroPort;
-  if (pinned === null && command === 'web') return recorded ?? (await reserveMetroPort(root));
+  if (pinned === null && command === 'web') return recorded ?? (await reservePort(root, null));
   if (recorded) {
     const supervisor = resolveSupervisorTarget({
       state: readWorkspaceState(root)?.supervisor,
@@ -1179,17 +1200,24 @@ export async function resolveWorkspaceMetroPort(
   } else if (recorded) {
     const held = await resolveProjectMetro(recorded, root);
     if (!held.notOurs) return recorded;
-    const fresh = await reserveMetroPort(root);
-    if (fresh !== recorded) {
+    const fresh = await reservePort(root, null);
+    if (typeof fresh === 'number' && fresh !== recorded) {
       note(chalk.yellow(`Port ${recorded} is held by something else (${held.notOurs}).`));
       note(chalk.dim(`Reserved port ${fresh} for this project instead.`));
     }
     return fresh;
   }
   if (!reserve && pinned !== null) return pinned;
+  return reservePort(root, pinned);
+}
+
+async function reservePort(root: string, pinned: number | null): Promise<number | StartError> {
   try {
     return await reserveMetroPort(root, undefined, undefined, pinned);
   } catch (error) {
+    if (error instanceof PortInspectionError) {
+      return { code: error.code, message: error.reason, remedy: PORT_INSPECTION_REMEDY };
+    }
     return {
       code: 'STIM_BAD_ARG',
       message: (error as Error).message,

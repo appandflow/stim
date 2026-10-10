@@ -9,6 +9,7 @@ import {
   parseBenchmarkTargets,
   shellCommandSegments,
   topLevelShellCommand,
+  sameLiteralShellCommand,
   stimShellProvenanceInvalidReasons,
   benchmarkCcache,
   assertAndroidDoctorClean,
@@ -30,6 +31,75 @@ const targetConfig = parseBenchmarkTargets({
 
 const build = (output) => [{ id: 'build', command: 'stim android', exitCode: 0, output }];
 const refusal = (output, exitCode = 1) => [{ id: 'refusal', command: 'stim android', exitCode, output }];
+
+describe('standalone benchmark proof commands', () => {
+  const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
+  const expected = `${prefix}wait text "Offline maps"`;
+
+  it.each(["'Offline maps'", 'Offline\\ maps', '"Offline "maps'])(
+    'accepts equivalent literal text %s without changing the run prefix',
+    (text) => {
+      const command = `${prefix}wait text ${text}`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(true);
+      for (const shell of ['zsh', 'bash', 'sh']) {
+        for (const option of ['-c', '-lc']) {
+          expect(sameLiteralShellCommand(`/bin/${shell} ${option} ${JSON.stringify(command)}`, expected)).toBe(true);
+        }
+      }
+    },
+  );
+
+  it.each([';', '&&', '|', '&', '\n', '\r', '\r\n'])(
+    'rejects unquoted command boundary %j even when the separated words otherwise match',
+    (boundary) => {
+      const command = `${prefix}wait text${boundary}"Offline maps"`;
+      expect(sameLiteralShellCommand(command, expected)).toBe(false);
+      expect(sameLiteralShellCommand(`/bin/zsh -lc '${command}'`, expected)).toBe(false);
+    },
+  );
+
+  it.each([
+    '"$TEXT"',
+    '"${TEXT}"',
+    '"$(echo Offline maps)"',
+    '`echo Offline maps`',
+    "$'Offline maps'",
+    'Offline*',
+    '"Offline maps" > /tmp/proof',
+    '"Offline maps" 2>&1',
+    '"Offline maps" # ignored',
+    '"Offline maps" && echo done',
+    '"Offline maps"\nagent-device close',
+    '"Offline maps"\ragent-device close',
+    '"Offline maps" ""',
+    '"Offline maps" extra',
+    '"Different text"',
+    '"Offline maps',
+  ])('rejects expansion, shell syntax or changed argv: %s', (text) => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ${text}`, expected)).toBe(false);
+  });
+
+  it('retains empty arguments and literal metacharacters without evaluating either shell layer', () => {
+    expect(sameLiteralShellCommand(`${prefix}wait text ''`, `${prefix}wait text ""`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text`, `${prefix}wait text ""`)).toBe(false);
+    expect(sameLiteralShellCommand(`${prefix}wait text '\\q'`, `${prefix}wait text "\\q"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "\\$TEXT"`)).toBe(true);
+    expect(sameLiteralShellCommand(`${prefix}wait text '$TEXT'`, `${prefix}wait text "$TEXT"`)).toBe(false);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc "${prefix}wait text '$TEXT'"`, `${prefix}wait text '$TEXT'`)).toBe(
+      false,
+    );
+    expect(sameLiteralShellCommand(`${prefix}wait text 'a\nb'`, `${prefix}wait text "a\nb"`)).toBe(true);
+    expect(sameLiteralShellCommand(`/bin/zsh -lc '${expected}'; echo extra`, expected)).toBe(false);
+  });
+
+  it('requires the exact session and target even when target arguments are quoted', () => {
+    const open = `${prefix}open app --platform android --serial emulator-5554`;
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', '"emulator-5554"'), open)).toBe(true);
+    expect(sameLiteralShellCommand(open.replace('emulator-5554', 'emulator-5556'), open)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('SESSION=bench-run', 'SESSION=other'), expected)).toBe(false);
+    expect(sameLiteralShellCommand(expected.replace('/tmp/bench-state', '/tmp/other-state'), expected)).toBe(false);
+  });
+});
 
 describe('agent-device session isolation', () => {
   const prefix = 'env AGENT_DEVICE_STATE_DIR=/tmp/bench-state AGENT_DEVICE_SESSION=bench-run agent-device ';
@@ -299,6 +369,8 @@ describe('compiler cache health', () => {
 
   const noMetro =
     '  error       STIM_NO_METRO: No Metro port is reserved for this workspace.\n  remedy      Run `stim start` first.';
+  const supervisorExited =
+    "  error       STIM_SUPERVISOR_EXITED: Could not start this workspace's dev server: The supervisor exited (code 1).";
   const artifactHit = build(
     'fingerprint abcdef.. hit (1s)\ncompilation cache not run; artifact cache supplied the app',
   );
@@ -346,16 +418,17 @@ describe('compiler cache health', () => {
     ).toContain('ccache-hit-rate-below-target');
   });
 
-  it('does not blame the compiler cache for a STIM_NO_METRO refusal that precedes an artifact hit', () => {
-    expect(benchmarkCcache(meta, [...refusal(noMetro), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
-    const structured = JSON.stringify({ code: 'STIM_NO_METRO', message: 'Port 8082 is not held.', remedy: null });
-    expect(benchmarkCcache(meta, [...refusal(structured), ...artifactHit])).toMatchObject({
-      status: 'artifact-hit',
-      invalidReasons: [],
-    });
+  it.each([
+    ['STIM_NO_METRO', noMetro],
+    ['STIM_SUPERVISOR_EXITED', supervisorExited],
+  ])('does not blame the compiler cache for a %s refusal that precedes an artifact hit', (code, output) => {
+    const structured = JSON.stringify({ code, message: 'The dev server is unavailable.', remedy: null });
+    for (const evidence of [output, structured]) {
+      expect(benchmarkCcache(meta, [...refusal(evidence), ...artifactHit])).toMatchObject({
+        status: 'artifact-hit',
+        invalidReasons: [],
+      });
+    }
   });
 
   it('still flags a failed build that reports no compiler statistics', () => {
@@ -363,10 +436,17 @@ describe('compiler cache health', () => {
     expect(benchmarkCcache(meta, [...refusal(failed), ...artifactHit]).invalidReasons).toContain(
       'ccache-evidence-missing',
     );
-    expect(
-      benchmarkCcache(meta, [...refusal(`${noMetro}\n  build       compiling debug with Gradle`), ...artifactHit])
-        .invalidReasons,
-    ).toContain('ccache-evidence-missing');
+    for (const output of [noMetro, supervisorExited]) {
+      for (const buildEvidence of [
+        'build       compiling debug with Gradle',
+        'compilation cache unavailable',
+        JSON.stringify({ ccache: { status: 'unavailable' } }),
+      ]) {
+        expect(
+          benchmarkCcache(meta, [...refusal(`${output}\n${buildEvidence}`), ...artifactHit]).invalidReasons,
+        ).toContain('ccache-evidence-missing');
+      }
+    }
   });
 
   it('still flags an interrupted, killed, or crashed command that could have compiled', () => {
@@ -381,17 +461,23 @@ describe('compiler cache health', () => {
       benchmarkCcache(meta, [...refusal('TypeError: boom\n    at runAndroid (android.ts:1)'), ...artifactHit])
         .invalidReasons,
     ).toContain('ccache-evidence-missing');
-    expect(benchmarkCcache(meta, [...refusal(noMetro, 0), ...artifactHit]).invalidReasons).toContain(
-      'ccache-evidence-missing',
-    );
+    for (const output of [noMetro, supervisorExited]) {
+      for (const exitCode of [0, null, 137]) {
+        expect(benchmarkCcache(meta, [...refusal(output, exitCode), ...artifactHit]).invalidReasons).toContain(
+          'ccache-evidence-missing',
+        );
+      }
+    }
   });
 
   it('still flags a refusal that is the only platform run', () => {
-    expect(benchmarkCcache(meta, refusal(noMetro))).toMatchObject({
-      status: 'investigate',
-      builds: [],
-      invalidReasons: ['ccache-evidence-missing'],
-    });
+    for (const output of [noMetro, supervisorExited]) {
+      expect(benchmarkCcache(meta, refusal(output))).toMatchObject({
+        status: 'investigate',
+        builds: [],
+        invalidReasons: ['ccache-evidence-missing'],
+      });
+    }
   });
 
   it('measures structured Stim output for both collection and immediate alerts', () => {
@@ -486,6 +572,44 @@ describe('benchmark run guards', () => {
         },
       }),
     ).toThrow(/at least platformCommandSeconds/);
+  });
+
+  it.each([
+    'stim guide agent && git status --short --branch && git worktree list --porcelain',
+    'stim guide agent&&git status --short',
+    'stim guide agent && printf "%s" "literal && text"',
+  ])('accepts a completed guide-first AND chain without changing warm ordering: %s', (command) => {
+    const guide = { command: `/bin/zsh -lc '${command}'`, exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, endEventOffset: 2 };
+    const start = { command: 'stim start', exitCode: 0, startEventOffset: 3 };
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, warm, start])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, start])).toEqual([
+      'stim-worktree-warm-missing-or-failed',
+    ]);
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [guide, { ...warm, endEventOffset: 4 }, start])).toEqual([
+      'stim-worktree-warm-not-complete-before-use',
+    ]);
+  });
+
+  it.each([
+    ['stim guide agent && git status --short', 1],
+    ['stim guide agent && git status --short', null],
+    ['stim guide agent; git status --short', 0],
+    ['stim guide agent || git status --short', 0],
+    ['stim guide agent | cat', 0],
+    ['stim guide agent & git status --short', 0],
+    ['stim guide agent\ngit status --short', 0],
+    ['stim guide agent && git status --short; true', 0],
+    ['stim guide agent && git status --short || true', 0],
+    ['stim guide agent > /tmp/guide && git status --short', 0],
+    ['stim guide agent && eval "$NEXT"', 0],
+    ['echo "stim guide agent" && git status --short', 0],
+    ['exit 0 && stim guide agent && git status --short', 0],
+    ['exec true && stim guide agent && git status --short', 0],
+  ])('does not infer guide success from ambiguous or unsuccessful chain %s (%s)', (command, exitCode) => {
+    expect(benchmarkSetupInvalidReasons({ arm: 'stim' }, [{ command, exitCode }])).toContain(
+      'stim-guide-agent-missing-or-failed',
+    );
   });
 
   it('finds commands in shell chains without splitting quoted operators', () => {

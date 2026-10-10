@@ -1,5 +1,6 @@
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { isMetroRunning } from '../ports.ts';
+import { parseLsofListeners } from '../listening-ports.ts';
 import {
   parseLsofPids,
   parseNetstatPids,
@@ -7,7 +8,6 @@ import {
   listeningPidsByPort,
   parseLsofCwd,
   parseLsofCwds,
-  parseLsofListeners,
   processCwds,
   isInsideProject,
   processCwd,

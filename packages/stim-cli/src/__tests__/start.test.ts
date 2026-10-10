@@ -1,4 +1,5 @@
 import * as portProbes from '../ports.ts';
+import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -128,8 +129,9 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
+  runFileAsync(): Promise<string>;
   runQuiet(cmd: string): string;
-  runFileQuiet(file: string): string;
+  runFileQuiet(file: string, args?: readonly string[]): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
 }
 
@@ -152,6 +154,9 @@ function metroExecutor({
       return '';
     },
     runFile() {
+      return '';
+    },
+    async runFileAsync() {
       return '';
     },
     runQuiet(cmd) {
@@ -960,6 +965,48 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(facts.mode).toBe('bare-inproc');
   });
 
+  test('a plain start resolves its settings once', async () => {
+    const { server, port } = await metroListener();
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      writeWorkspaceState(root, {
+        supervisor: {
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          port,
+          mode: 'bare-inproc',
+          startedAt: 'T',
+        },
+      });
+      exec.listening = true;
+      return { pid: process.pid, unref() {}, on() {} };
+    };
+    const base = exec.runQuiet.bind(exec);
+    exec.runQuiet = (cmd) => {
+      if (new RegExp(`lsof -nP -iTCP:${port}`).test(cmd)) return exec.listening ? String(DEAD_LISTENER_PID) : '';
+      return base(cmd);
+    };
+    const gitLookups: string[] = [];
+    exec.runFileQuiet = (file, args = []) => {
+      if (file === 'git' && args.includes('rev-parse')) gitLookups.push(args.at(-1) ?? '');
+      return '';
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port });
+
+    let result;
+    try {
+      result = await runAction({ json: true, wait: '10' });
+    } finally {
+      server.close();
+    }
+
+    expect(result.exitCode).toBe(null);
+    expect(exec.calls.spawn).toHaveLength(1);
+    expect(gitLookups.toSorted()).toEqual(['--git-common-dir', '--show-toplevel']);
+  });
+
   test('win32 starts the supervisor through PowerShell and reads its pid from the record it writes', async () => {
     const { server, port } = await metroListener();
     const exec = metroExecutor({ listeners: {} });
@@ -1233,6 +1280,26 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(exec.calls.spawn).toEqual([]);
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.logs[0] ?? '').code).toBe('STIM_BAD_ARG');
+  });
+
+  test.each([
+    ['--reset-cache', { json: true, resetCache: true }, 'linux', /--reset-cache cannot reach/],
+    ['Windows', { json: true }, 'win32', /not supported on Windows/],
+  ] as const)('metro.command refuses %s before anything starts', async (_label, opts, platform, message) => {
+    const exec = metroExecutor({ listeners: {} });
+    setExecutor(exec);
+    upsertProject(root, {
+      metroPort: 8180,
+      settings: { metro: { command: ['node', 'cli.js', 'start', '--port', '{port}'] } },
+    });
+
+    const result = await runAction({ ...opts }, (cmd) => registerStart(cmd, { platform }));
+
+    expect(result.exitCode).toBe(1);
+    const refusal = JSON.parse(result.logs[0] ?? '');
+    expect(refusal.code).toBe('STIM_BAD_ARG');
+    expect(refusal.message).toMatch(message);
+    expect(exec.calls.spawn).toEqual([]);
   });
 
   test('start --remote reports worktree removal before project registration', async () => {
@@ -2179,6 +2246,24 @@ describe('action: the reserved port', { timeout: 30_000 }, () => {
       message: expect.stringContaining('held by something else'),
     });
     expect(getProject(root)?.metroPort).toBe(null);
+    expect(exec.calls.spawn).toEqual([]);
+  });
+
+  test('an unpinned first use refuses with the inspection code when no listener check can answer', async () => {
+    vi.spyOn(listeningPorts, 'readListeningPorts').mockRejectedValue(new Error('netstat printed no TCP listen table.'));
+    vi.spyOn(listeningPorts, 'readLsofListeningPorts').mockResolvedValue(null);
+    vi.spyOn(listeningPorts, 'probeLoopback').mockResolvedValue('unknown');
+    const exec = metroExecutor();
+    setExecutor(exec);
+
+    const result = await runAction({ json: true });
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.logs[0]!)).toMatchObject({
+      code: 'STIM_PORT_INSPECTION_FAILED',
+      message: expect.stringContaining('netstat printed no TCP listen table.'),
+    });
+    expect(getProject(root)?.metroPort ?? null).toBe(null);
     expect(exec.calls.spawn).toEqual([]);
   });
 

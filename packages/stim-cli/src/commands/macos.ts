@@ -26,16 +26,15 @@ import { planMacos } from '../macos/plan.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopMacosAppHeld } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import { findProjectRoot } from '../workspace/project.ts';
-import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+import { resolveProjectSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 
 /**
  * Builds the Debug app and launches it here, or with `remote` on that approved remote Mac. A named host never falls
@@ -68,7 +67,7 @@ export async function runMacos(
       code: 'STIM_NO_PROJECT',
       remedy: operation.problem.remedy,
     });
-  const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) });
+  const { settings } = resolveProjectSettings(root);
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const selected = resolveBuildPlacement(buildMachineFlag);
@@ -251,6 +250,7 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
 }
 
 async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAppRecord> {
+  await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   let child;
   try {

@@ -34,7 +34,8 @@ import { reconstructCommandEvidence } from './command-evidence.mjs';
 import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
-import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
+import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
+import { compatibilityProofEvidence, prepareCompatibilityProof } from './compatibility-proof.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -63,6 +64,7 @@ import {
   ccacheMeasurements,
   runnerToolOutput,
   topLevelShellCommand,
+  sameLiteralShellCommand,
 } from './run-guards.mjs';
 
 const launchCrashVariant = 'launch-crash';
@@ -189,6 +191,10 @@ function agentDeviceCommand(meta, command) {
   const stateDir = meta.agentDevice?.stateDir ?? agentDeviceState;
   const session = meta.agentDevice?.session ?? meta.runId;
   return `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device ${command}`;
+}
+
+function agentDeviceSessionState(meta) {
+  return `${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${meta.agentDevice?.session ?? meta.runId}`;
 }
 
 function isJavascriptVariant(variant) {
@@ -971,7 +977,7 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   };
 }
 
-function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios') {
+function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios', compatibilityProof = null) {
   const platform = checkedPlatform(requestedPlatform);
   const source = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree = join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId);
@@ -990,7 +996,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
     '\n' +
     prefix +
     '\n' +
-    `The common evidence protocol below records the same endpoint for both arms. Run each proof command separately; navigate to Settings between recording start and the text check.\n\n` +
+    `The common evidence protocol below records the same endpoint for both arms. Copy the full run-scoped prefix unchanged and use the assigned device. Run each proof command as a separate complete shell command, without chaining, pipelines or redirection; literal quoting may differ without changing arguments. Navigate to Settings between recording start and the text check.\n\n` +
     [
       `${prefix} open com.appandflow.trailhead --foreground --platform ${platform} ${target}`,
       `${prefix} record start ${recording} --scope device --quality high --hide-touches`,
@@ -999,6 +1005,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
       `cp ${screenshot} ${join(runDir, 'proof', 'settings.png')}`,
       `${prefix} record stop`,
       `cp ${recording} ${join(runDir, 'proof', 'session.mp4')}`,
+      ...(compatibilityProof ? [compatibilityProof.command] : []),
       `${prefix} close`,
     ]
       .map((command, index) => `${index + 1}. \`${command}\``)
@@ -1088,7 +1095,7 @@ function makeRunnerHome(runDir, arm) {
   return { codexHome };
 }
 
-function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null) {
+function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null, compatibilityProof = null) {
   const runTmp = join(runDir, 'tmp');
   return prepareRunnerIsolation({
     policy: runnerIsolationPolicy({
@@ -1102,7 +1109,12 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
       ],
       writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
-        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
+        readPaths: [
+          crash?.fixtureCheckout,
+          claudeGuidance?.path,
+          compatibilityProof?.helper,
+          compatibilityProof?.node,
+        ].filter(Boolean),
         writePaths: [
           join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
           join(runDir, 'runner-home'),
@@ -1410,11 +1422,17 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       crash.fixtureCheckout,
       executablePath(agentDeviceBin),
     );
-  const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
+  const compatibilityProof = prepareCompatibilityProof({
+    runId,
+    worktree: join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+    runDir,
+    compatibility: preflightReport.nativeCompatibility,
+  });
+  const prompt = promptFor(arm, variant, runId, runDir, crash, platform, compatibilityProof);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
-  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
+  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance, compatibilityProof);
   try {
     preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
       platform,
@@ -1457,6 +1475,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     dispatchAt,
     timingTarget,
     preflight: preflightReport,
+    compatibilityProof,
     expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
     stimShellProvenance: shellProvenance,
     profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
@@ -1734,7 +1753,7 @@ function agentDeviceOpenCommand(meta, appAlive) {
 function nativeMarkerObserved(items, openCommand, expected) {
   let opened = false;
   for (const item of items) {
-    if (item.exit_code === 0 && topLevelShellCommand(item.command) === openCommand) {
+    if (item.exit_code === 0 && sameLiteralShellCommand(item.command, openCommand)) {
       opened = true;
     }
     if (
@@ -1823,7 +1842,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   const indexes = [];
   let after = -1;
   const openIndex = commands.findIndex(
-    (command) => command.exitCode === 0 && topLevelShellCommand(command.command) === openCommand,
+    (command) => command.exitCode === 0 && sameLiteralShellCommand(command.command, openCommand),
   );
   if (openIndex === -1) {
     return {
@@ -1833,8 +1852,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
       target,
     };
   }
-  const session = meta.agentDevice?.session ?? meta.runId;
-  const expectedSessionState = `Session state: ${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${session}`;
+  const expectedSessionState = `Session state: ${agentDeviceSessionState(meta)}`;
   if (!commands[openIndex].output.includes(expectedSessionState)) {
     return {
       valid: false,
@@ -1847,7 +1865,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
   after = openIndex;
   for (const needle of required) {
     const index = commands.findIndex(
-      (command, offset) => offset > after && command.exitCode === 0 && topLevelShellCommand(command.command) === needle,
+      (command, offset) => offset > after && command.exitCode === 0 && sameLiteralShellCommand(command.command, needle),
     );
     if (index === -1) {
       return {
@@ -2213,7 +2231,7 @@ function collect(runDir) {
     commandAudit.commands,
     ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
   );
-  const nativeCompatibility = collectedNativeCompatibility(meta, worktree);
+  const nativeCompatibility = compatibilityProofEvidence(meta, worktree, commandAudit.commands, screen, recording);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents, screen);
   const rollout =
     meta.runner === 'claude'
@@ -2230,6 +2248,11 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
+          agentDeviceLaunch: {
+            command: agentDeviceOpenCommand(meta, appAlive),
+            appId: 'com.appandflow.trailhead',
+            sessionState: agentDeviceSessionState(meta),
+          },
           setup: {
             worktree,
             avdConfig: meta.expectedControlAvdConfig,

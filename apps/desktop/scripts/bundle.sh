@@ -58,6 +58,7 @@ xcrun actool Support/Assets.xcassets --compile "$app/Contents/Resources" --platf
 cp "$website/src/css/fonts/InterVariable.woff2" "$website/src/css/fonts/JetBrainsMono-Regular.woff2" \
   "$website/src/css/fonts/Inter-LICENSE.txt" "$website/src/css/fonts/JetBrainsMono-OFL.txt" \
   "$website/static/img/branding/stim-jar-dark.json" "$website/static/img/branding/stim-jar-light.json" \
+  "$website/static/img/branding/stim-build-dark.json" "$website/static/img/branding/stim-build-light.json" \
   "$website/static/img/branding/wordmark.svg" "$website/static/img/branding/agent-claude.svg" \
   "$website/static/img/branding/agent-codex.svg" "$website/static/img/branding/agent-cursor.svg" \
   "$app/Contents/Resources/"

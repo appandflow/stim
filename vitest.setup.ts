@@ -26,3 +26,6 @@ process.env.GH_CONFIG_DIR = join(tmpdir(), 'stim-test-gh-config-absent');
 delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.CODEX_THREAD_ID;
 delete process.env.CODEX_HOME;
+
+// Stim reads the Ruby environment of the login shell named by SHELL; a test must not run the developer's shell.
+delete process.env.SHELL;

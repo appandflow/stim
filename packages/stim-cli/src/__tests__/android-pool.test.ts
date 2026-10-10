@@ -86,6 +86,7 @@ beforeEach(() => {
     runQuiet: run,
     runFileQuiet: (file) => (file === 'ps' ? '' : null),
     runFile(file, args = []) {
+      if (args[0] === '-list-avds' || args[0] === 'devices') return run([file, ...args].join(' '));
       calls.push([file, ...args].join(' '));
       if (args.includes('list')) return packageOutput;
       if (args.includes('clear') || args.includes('uninstall')) return cleanupResult;
@@ -286,12 +287,12 @@ test('an AVD parked between failed creation and recovery cannot bypass adoption'
       }
       return previous.spawn(file, args, options);
     },
-    run(cmd) {
-      if (cmd === 'emulator -list-avds' && creationFailed) {
+    runFile(file, args = [], options) {
+      if (args[0] === '-list-avds' && creationFailed) {
         creationFailed = false;
         park();
       }
-      return previous.run(cmd);
+      return previous.runFile(file, args, options);
     },
   });
   await expect(
@@ -570,7 +571,8 @@ describe('adoption transport recovery', () => {
     const exec = getExecutor();
     setExecutor({
       ...exec,
-      runFile() {
+      runFile(file, args = [], options) {
+        if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
         running = 'stim-replacement';
         throw Object.assign(new Error('adb command failed'), { stderr: 'adb: device offline' });
       },
@@ -604,7 +606,8 @@ describe('adoption transport recovery', () => {
       let attempts = 0;
       setExecutor({
         ...exec,
-        runFile() {
+        runFile(file, args = [], options) {
+          if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
           attempts++;
           throw Object.assign(new Error('adb command failed'), { stderr });
         },
@@ -620,7 +623,8 @@ describe('adoption transport recovery', () => {
     const exec = getExecutor();
     setExecutor({
       ...exec,
-      runFile() {
+      runFile(file, args = [], options) {
+        if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
         throw Object.assign(new Error('adb command failed'), { stdout: 'SecurityException: permission denied' });
       },
     });
@@ -653,6 +657,10 @@ test('adoption recovery gives ownership and readiness probes the remaining timeo
       },
       runFile(file, args, options) {
         expect(options?.timeoutMs).toBeGreaterThan(0);
+        if (args?.[0] === '-list-avds' || args?.[0] === 'devices') {
+          timeouts.push(options!.timeoutMs!);
+          return exec.runFile(file, args, options);
+        }
         if (!failed) {
           failed = true;
           throw new Error('error: closed');
