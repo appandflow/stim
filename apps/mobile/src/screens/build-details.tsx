@@ -145,7 +145,9 @@ function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string
         {device}
       </Text>
     ) : null,
-    host ? <HostLabel key="host" host={host} color={theme.colors.secondary} variant="footnote" /> : null,
+    host ? (
+      <HostLabel key="host" host={host} color={theme.colors.secondary} variant="footnote" mode="building" />
+    ) : null,
     started ? (
       <Text key="started" variant="footnote" tone="secondary">
         {started}
