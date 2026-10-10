@@ -41,6 +41,18 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
+function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
+  if (timeoutMs === 'unbounded') return undefined;
+  if (!(timeoutMs > 0))
+    throw new RangeError(`timeoutMs must be a positive number of milliseconds or 'unbounded', got ${timeoutMs}`);
+  return timeoutMs;
+}
+
+/** Whether an exec error is a child killed for exceeding its `timeoutMs`. */
+export function isTimeoutError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT';
+}
+
 function nameTimeout(error: unknown, command: string, timeoutMs: ExecOptions['timeoutMs']): unknown {
   if ((error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' && error instanceof Error) {
     error.message = `Command timed out after ${timeoutMs}ms: ${command}`;
@@ -93,7 +105,8 @@ const defaultExecutor: Executor = {
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
     };
-    if (timeoutMs !== 'unbounded') opts.timeout = timeoutMs;
+    const timeout = budgetMs(timeoutMs);
+    if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (env) opts.env = { ...process.env, ...env };
@@ -118,7 +131,8 @@ const defaultExecutor: Executor = {
       maxBuffer: MAX_BUFFER,
     };
     if (detachedSilent) opts.detached = true;
-    if (timeoutMs !== 'unbounded') opts.timeout = timeoutMs;
+    const timeout = budgetMs(timeoutMs);
+    if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (input !== undefined) opts.input = input;
@@ -148,6 +162,7 @@ const defaultExecutor: Executor = {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
       refuseUnsafeBatchArguments(file, args);
+      const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
         : { stdio: ['ignore', 'pipe', 'pipe'] };
@@ -169,12 +184,12 @@ const defaultExecutor: Executor = {
       const stderr: Buffer[] = [];
       let timedOut = false;
       const timer =
-        timeoutMs !== 'unbounded'
-          ? setTimeout(() => {
+        timeout === undefined
+          ? undefined
+          : setTimeout(() => {
               timedOut = true;
               child.kill(killSignal ?? 'SIGTERM');
-            }, timeoutMs)
-          : undefined;
+            }, timeout);
       child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
       child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
       child.on('error', (error) => {
@@ -204,6 +219,7 @@ const defaultExecutor: Executor = {
     });
   },
   runQuiet(cmd, opts) {
+    budgetMs(opts.timeoutMs);
     try {
       return this.run(cmd, opts);
     } catch {
@@ -211,6 +227,7 @@ const defaultExecutor: Executor = {
     }
   },
   runFileQuiet(file, args, opts) {
+    budgetMs(opts.timeoutMs);
     try {
       return this.runFile(file, args, opts);
     } catch {

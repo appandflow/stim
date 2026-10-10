@@ -10,7 +10,7 @@ import {
   utimesSync,
 } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitQuiet } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
 
@@ -454,15 +454,31 @@ export function dirtyFingerprintFiles(root: string): string[] {
     .filter((path) => path !== '');
 }
 
+const REMOVAL_CHECK_TIMEOUT_MS = 60_000;
+
+/**
+ * A git read that decides whether a worktree is safe to remove. Null when git cannot answer; a timeout throws its
+ * `ETIMEDOUT` error, so a slow repository is never read as a clean one.
+ */
+function removalCheck(dir: string, args: string[]): string | null {
+  try {
+    return git(dir, args, { timeoutMs: REMOVAL_CHECK_TIMEOUT_MS });
+  } catch (error) {
+    if (isTimeoutError(error)) throw error;
+    return null;
+  }
+}
+
 export function hasUncommittedWork(dir: string): boolean | null {
-  const out = gitQuiet(dir, ['status', '--porcelain']);
+  const out = removalCheck(dir, ['status', '--porcelain']);
   if (out === null) return null;
   return out.trim().length > 0;
 }
 
-export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] {
-  const out = gitQuiet(dir, ['status', '--porcelain']);
-  if (out === null) return [];
+/** The porcelain status lines, or null when git cannot answer; throws when git times out. */
+export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] | null {
+  const out = removalCheck(dir, ['status', '--porcelain']);
+  if (out === null) return null;
   const lines = out
     .split('\n')
     .map((l) => normalizePorcelainLine(l.trimEnd()))
@@ -487,14 +503,14 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
 export function unpushedCommits(dir: string): string[] | null {
-  const branch = gitQuiet(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const branch = removalCheck(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const own = branch === null ? '' : branch.trim();
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
-  if (!own && gitQuiet(dir, ['rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
+  if (!own && removalCheck(dir, ['rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
     protection.push('--branches');
   }
-  const out = gitQuiet(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
+  const out = removalCheck(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
   if (out === null) return null;
   return out
     .split('\n')
@@ -576,10 +592,12 @@ function parseWorktrees(out: string): WorktreeEntry[] {
   return entries;
 }
 
-export function hasPopulatedSubmodules(worktree: string): boolean {
-  const modules = gitQuiet(worktree, ['rev-parse', '--git-path', 'modules']);
+/** Null when git cannot list the index, so the answer is unknown; throws when git times out. */
+export function hasPopulatedSubmodules(worktree: string): boolean | null {
+  const modules = removalCheck(worktree, ['rev-parse', '--git-path', 'modules']);
   if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
-  const staged = gitQuiet(worktree, ['ls-files', '--stage', '-z']) ?? '';
+  const staged = removalCheck(worktree, ['ls-files', '--stage', '-z']);
+  if (staged === null) return null;
   return staged
     .split('\0')
     .some(

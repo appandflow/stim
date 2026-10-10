@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
+import { isTimeoutError } from '../exec.ts';
 import {
   resolveIosProjectDir,
   resolveProjectSettings,
@@ -792,6 +793,7 @@ interface RemovalInspection {
   cookies: string[];
   unpushed: string[] | null;
   blockers: string[];
+  timedOut?: boolean;
 }
 
 export function removalPath(target: string | undefined): string {
@@ -815,15 +817,27 @@ function canonicalExistingPath(target: string): string {
 }
 
 function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
+  try {
+    return inspectGit(path, mergedHead);
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    const blocker = `a git safety check timed out: ${(error as Error).message}`;
+    return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
+  }
+}
+
+function inspectGit(path: string, mergedHead?: string): RemovalInspection {
   const gitAnswered = hasUncommittedWork(path);
   const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-  const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty);
+  const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
-  const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
+  const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
   const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;
   const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
-  if (hasPopulatedSubmodules(path)) blockers.push('initialized submodules, which git removes only with --force');
+  const submodules = hasPopulatedSubmodules(path);
+  if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
+  else if (submodules) blockers.push('initialized submodules, which git removes only with --force');
   return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
@@ -831,6 +845,14 @@ function printRemovalRefusal(path: string, inspection: RemovalInspection): void 
   const { blockers, dirtyLines, unpushed } = inspection;
   console.error(chalk.red(`Refusing to remove ${path}:`));
   for (const blocker of blockers) console.error(chalk.red(`  - ${blocker}`));
+  if (inspection.timedOut) {
+    console.error(
+      chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'),
+    );
+    console.error(chalk.dim(`Retry once git responds; check with: git -C ${path} status`));
+    process.exitCode = 1;
+    return;
+  }
   if (unpushed && unpushed.length && !hasRemote(path)) {
     console.error(
       chalk.dim(

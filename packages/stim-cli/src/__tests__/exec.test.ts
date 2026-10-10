@@ -147,3 +147,20 @@ test.each([
 ] as const)('isUnsafeBatchSpawn(%s, %j, %s) is %s', (target, args, platform, unsafe) => {
   expect(isUnsafeBatchSpawn(target, args, platform)).toBe(unsafe);
 });
+
+test('an unbounded call runs to completion, and a budget that is not positive is refused before anything runs', async () => {
+  resetExecutor();
+  const executor = getExecutor();
+  const script = ['-e', 'setTimeout(() => console.log("done"), 300)'];
+  const timers = vi.spyOn(globalThis, 'setTimeout');
+  const unbounded = executor.runFileAsync(process.execPath, script, { timeoutMs: 'unbounded' });
+  expect(timers).not.toHaveBeenCalled();
+  timers.mockRestore();
+  expect(await unbounded).toBe('done');
+  expect(executor.runFile(process.execPath, script, { timeoutMs: 'unbounded' })).toBe('done');
+  for (const timeoutMs of [0, -1, Number.NaN]) {
+    expect(() => executor.runFile(process.execPath, script, { timeoutMs })).toThrow(RangeError);
+    expect(() => executor.runFileQuiet(process.execPath, script, { timeoutMs })).toThrow(RangeError);
+    await expect(executor.runFileAsync(process.execPath, script, { timeoutMs })).rejects.toThrow(RangeError);
+  }
+});

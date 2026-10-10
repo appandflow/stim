@@ -202,6 +202,8 @@ function porcelain(entries: PorcelainEntry[]) {
     .join('\n');
 }
 
+const TIMED_OUT = 'timed out';
+
 interface MakeExecutorOptions {
   dirty?: string | null;
   unpushed?: string | null;
@@ -214,6 +216,8 @@ interface MakeExecutorOptions {
   worktreeRemoveError?: string;
   branchDeleteError?: string;
   refSha?: string | null;
+  statusAnswers?: (string | null)[];
+  staged?: string | null;
 }
 
 function makeExecutor({
@@ -228,6 +232,8 @@ function makeExecutor({
   worktreeRemoveError,
   branchDeleteError,
   refSha = 'abc123',
+  statusAnswers = [],
+  staged = '',
 }: MakeExecutorOptions = {}) {
   const runCalls: string[] = [];
   const runQuietCalls: string[] = [];
@@ -251,7 +257,14 @@ function makeExecutor({
         if (branchDeleteError) throw new Error(branchDeleteError);
         return '';
       }
-      if (/rev-parse/.test(cmd)) return refSha;
+      if (/rev-parse --verify/.test(cmd)) return refSha;
+      if (file === 'git') {
+        const out = exec.runFileQuiet(file, args);
+        if (out === TIMED_OUT)
+          throw Object.assign(new Error(`Command timed out after 60000ms: ${cmd}`), { code: 'ETIMEDOUT' });
+        if (out === null) throw new Error(`Command failed: ${cmd}`);
+        return out;
+      }
       throw new Error(`unexpected runFile: ${cmd}`);
     },
     runQuiet(cmd: string) {
@@ -269,7 +282,8 @@ function makeExecutor({
       if (args.includes('symbolic-ref') && bare && args[args.indexOf('-C') + 1] === bare.path) {
         return bare.head ? `refs/heads/${bare.head}` : null;
       }
-      if (/status --porcelain/.test(cmd)) return dirty;
+      if (/status --porcelain/.test(cmd)) return statusAnswers.length ? (statusAnswers.shift() ?? null) : dirty;
+      if (/ls-files --stage/.test(cmd)) return staged;
       const diffMatch = cmd.match(/ diff -- (.+)$/);
       if (diffMatch) return diffs[diffMatch[1] ?? ''] ?? '';
       if (/ checkout -- /.test(cmd)) return '';
@@ -666,6 +680,45 @@ test('action: refuses when git cannot answer the status check, leaving config un
   expect(process.exitCode).toBe(1);
   expect(getProject(wtDir)).toEqual(before);
   expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
+});
+
+test.each([
+  [
+    'cannot answer the dirty-path listing',
+    { statusAnswers: [' M a.txt', null] },
+    /could not determine git status/,
+    true,
+  ],
+  ['cannot answer the submodule check', { staged: null }, /could not check for initialized submodules/, true],
+  ['times out on the status check', { statusAnswers: [TIMED_OUT] }, /git safety check timed out/, false],
+  ['times out on the submodule check', { staged: TIMED_OUT }, /git safety check timed out/, false],
+])('action: refuses before any teardown when git %s', async (_probe, answers, reason, suggestsForce) => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const before = getProject(wtDir);
+  const exec = makeExecutor({
+    ...answers,
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    const run = captureAction(registerRemove);
+    await run(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(reason);
+  expect(/--force/.test(errs.join('\n'))).toBe(suggestsForce);
+  expect(getProject(wtDir)).toEqual(before);
+  expect(exec.calls.run.some((c) => /simctl delete|worktree remove/.test(c))).toBe(false);
 });
 
 test('action: on success, ownership state stays until removeWorktree succeeds', async () => {

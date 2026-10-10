@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { isTimeoutError } from '../exec.ts';
 import { git as runGit, gitQuiet } from './git.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
@@ -60,26 +61,28 @@ function notMerged(detail: string): MergeState {
   return { merged: false, unknown: false, detail };
 }
 
-function currentBranch(path: string): string | null {
-  const ref = gitQuiet(path, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
+type Probe = (args: string[]) => string | null;
+
+function currentBranch(probe: Probe): string | null {
+  const ref = probe(['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref : null;
 }
 
-function upstreamGone(path: string, branch: string | null): boolean {
+function upstreamGone(probe: Probe, branch: string | null): boolean {
   if (!branch) return false;
-  const track = gitQuiet(path, ['for-each-ref', '--format=%(upstream)%00%(upstream:track)', branch]);
+  const track = probe(['for-each-ref', '--format=%(upstream)%00%(upstream:track)', branch]);
   const [upstream, state] = (track ?? '').trim().split('\0');
   return Boolean(upstream) && state === '[gone]';
 }
 
-function committedOn(path: string, branch: string | null, head: string): boolean {
+function committedOn(probe: Probe, branch: string | null, head: string): boolean {
   if (!branch) return false;
-  const entries = gitQuiet(path, ['reflog', 'show', '--format=%H %gs', branch]) ?? '';
+  const entries = probe(['reflog', 'show', '--format=%H %gs', branch]) ?? '';
   return entries.split('\n').some((entry) => {
     const [sha = '', ...subject] = entry.split(' ');
     return (
       /^(commit|cherry-pick|rebase|revert)\b/.test(subject.join(' ')) &&
-      gitQuiet(path, ['merge-base', '--is-ancestor', sha, head]) !== null
+      probe(['merge-base', '--is-ancestor', sha, head]) !== null
     );
   });
 }
@@ -110,6 +113,14 @@ export function mergeState(
     runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input });
   const patch = (args: string[], input?: string): string =>
     runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input, untrimmed: true });
+  const probe: Probe = (args) => {
+    try {
+      return runGit(path, args, { timeoutMs });
+    } catch (error) {
+      if (isTimeoutError(error)) throw error;
+      return null;
+    }
+  };
   const patchIdCommits = (text: string): Map<string, string> =>
     new Map(
       text
@@ -134,14 +145,14 @@ export function mergeState(
   try {
     const head = git(['rev-parse', '--verify', 'HEAD^{commit}']);
     const base = git(['merge-base', head, ref]);
-    const branch = currentBranch(path);
+    const branch = currentBranch(probe);
     if (base === head) {
       const mainline =
         git(['rev-parse', ref]) === head ||
         git(['rev-list', '--first-parent', '--parents', `${head}..${ref}`])
           .split('\n')
           .some((line) => line.split(' ')[1] === head);
-      if (mainline || !committedOn(path, branch, head)) return noOwnCommits;
+      if (mainline || !committedOn(probe, branch, head)) return noOwnCommits;
       const descendants = new Set(git(['rev-list', '--ancestry-path', `${head}..${ref}`]).split('\n'));
       const landed = git(['rev-list', '--first-parent', '--reverse', `${head}..${ref}`])
         .split('\n')
@@ -170,7 +181,7 @@ export function mergeState(
       merged: true,
       into: name,
       head,
-      coversUnpushed: upstreamGone(path, branch),
+      coversUnpushed: upstreamGone(probe, branch),
       mergedAt: committedAt(ids.map((id) => upstream.get(id)!)),
     });
     const squash = patchIds(patch(['diff', ...diffOptions, base, head]));
