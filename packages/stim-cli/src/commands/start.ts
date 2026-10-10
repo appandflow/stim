@@ -914,7 +914,11 @@ export async function startDevServer(
                       message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
                       remedy: stopped
                         ? 'The supervisor process was stopped. Retry `stim start --remote`.'
-                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it before retrying.`,
+                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it with \`stim stop\`${
+                            child.pid === undefined
+                              ? ''
+                              : `, or \`${d.platform === 'win32' ? `taskkill /PID ${child.pid} /T /F` : `kill ${child.pid}`}\``
+                          } before retrying.`,
                     },
                   };
                 }

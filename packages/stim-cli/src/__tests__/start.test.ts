@@ -1650,6 +1650,102 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
   });
 
+  test.each([
+    { identity: 'recycled', owner: recycledClaimOwner, terminated: false },
+    { identity: 'live', owner: liveClaimOwner, terminated: true },
+  ])(
+    'win32 handoff failure with a $identity recorded supervisor terminates it: $terminated',
+    async ({ owner, terminated }) => {
+      const recorded = owner();
+      let handoff: unknown;
+      const { server, port } = await metroListener();
+      const exec = metroExecutor({ listeners: {} });
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const shell = makeChildProcess({ pid: 777 });
+        setTimeout(() => {
+          writeWorkspaceState(root, {
+            supervisor: { ...recorded, port, mode: 'bare-inproc', startedAt: new Date().toISOString() },
+          });
+          shell.emit('exit', 0, null);
+          shell.emit('close', 0, null);
+        }, 20);
+        return shell;
+      };
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+      const terminate = vi.fn<(child: unknown) => Promise<boolean>>(async () => true);
+
+      const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
+        registerStart(cmd, {
+          platform: 'win32',
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://ready.ngrok.app',
+            pid: 4343,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          }),
+          isTunnelAlive: () => true,
+          writeSupervisorRecord: (_root, patch) => {
+            handoff = patch.supervisor;
+            writeWorkspaceState(root, { supervisor: null });
+            throw new Error('disk full');
+          },
+          terminateSupervisorChild: terminate,
+        }),
+      ).finally(() => server.close());
+
+      expect(result.exitCode).toBe(1);
+      const failure = JSON.parse(result.logs[0] ?? '');
+      expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(handoff).toMatchObject({ pid: recorded.pid, processToken: recorded.processToken });
+      expect(terminate).toHaveBeenCalledTimes(terminated ? 1 : 0);
+      if (terminated) {
+        expect(failure.remedy).toMatch(/was stopped/);
+      } else {
+        expect(failure.remedy).toContain(
+          `Unmanaged supervisor pid ${process.pid} may still be running. Stop it with \`stim stop\`, or \`taskkill /PID ${process.pid} /T /F\` before retrying.`,
+        );
+      }
+    },
+    30_000,
+  );
+
+  test('a failed supervisor cleanup names the kill command for the platform', async () => {
+    const port = 8189;
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return Object.assign(makeChildProcess(), { pid: IMPOSSIBLE_PID });
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerPosixStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: async () => ({
+          provider: 'ngrok',
+          url: 'https://ready.ngrok.app',
+          pid: 4343,
+          processToken: 'linux:100',
+          cleanup: successfulTunnelCleanup,
+        }),
+        isTunnelAlive: () => true,
+        writeSupervisorRecord: () => {
+          throw new Error('disk full');
+        },
+        terminateSupervisorChild: async () => false,
+      }),
+    );
+
+    expect(JSON.parse(result.logs[0] ?? '').remedy).toContain(
+      `Stop it with \`stim stop\`, or \`kill ${IMPOSSIBLE_PID}\` before retrying.`,
+    );
+  });
+
   test('a failed managed tunnel acquisition releases the concurrency lock', async () => {
     await managedStartExecutor();
     const { contended, withWorktreeLock } = contendedRemoteStart();
