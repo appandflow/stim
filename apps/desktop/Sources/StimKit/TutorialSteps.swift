@@ -27,8 +27,8 @@ public enum TutorialSteps {
       id: "device", title: "Live View and Control", who: "you", optional: true,
       ask: nil, section: nil),
     TutorialStep(
-      id: "agent", title: "Agent Actions and Replay", who: "agent", optional: true,
-      ask: "Open the app on the iOS simulator, take a screenshot and confirm the title color.", section: nil),
+      id: "agent", title: "Agent Actions and Replay", who: "you", optional: true,
+      ask: nil, section: nil),
     TutorialStep(
       id: "logs", title: "App Logs", who: "you", optional: true,
       ask: nil, section: nil),

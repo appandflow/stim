@@ -257,9 +257,7 @@ struct TutorialPanel: View {
       return
         "While that builds, ask for a second change in a new worktree. Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
     case "device": return "Optional. Open the live view of either simulator and tap around while your agents work."
-    case "agent":
-      return
-        "Optional. Your agent verifies UI changes itself with screenshots, taps and logs. Desktop shows what it did and lets you replay it. Apps can declare readiness with two log lines (stim guide lifecycle readiness), so agents can check their own apps the same way. Try a prompt like this, then watch Agent actions."
+    case "agent": return "See what your agent did on the device, then replay it."
     case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
     case "phone":
       return
@@ -281,7 +279,8 @@ struct TutorialPanel: View {
     switch id {
     case "opened": return "Live view opened"
     case "input": return "Device controlled"
-    case "action": return "Agent action received"
+    case "viewed": return "Agent actions viewed"
+    case "replayed": return "Replay played"
     case "stopped": return "Workspace stopped"
     case "archived": return "Worktree removed and archived"
     case "cloned": return "Test app cloned"

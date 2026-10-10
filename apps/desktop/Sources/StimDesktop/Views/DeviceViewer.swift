@@ -49,7 +49,10 @@ struct DeviceViewer: View {
         AgentFeed(cli: cli, workspace: env.path, slot: device.slot, deviceID: device.activityKey) { agentActions in
           if let target = replayTarget(device) {
             ReplayHost(target: target) { replay in
-              ReplayingContent(replay: replay) { replaying in
+              ReplayingContent(
+                replay: replay,
+                onPlay: { if let udid = device.localSimulatorUDID { TutorialViewerEvents.shared.replayPlayed(udid) } }
+              ) { replaying in
                 content(device, size: size, agentActions: agentActions, replay: replay, replaying: replaying)
               }
             }
@@ -170,6 +173,11 @@ struct DeviceViewer: View {
             }
           )
           .tutorialAnchor(.agentActions, workspace: env.path)
+          .task(id: agentActions.isEmpty) {
+            guard !agentActions.isEmpty, let udid = device.localSimulatorUDID else { return }
+            try? await Task.sleep(for: .seconds(TutorialHint.glowSeconds))
+            if !Task.isCancelled { TutorialViewerEvents.shared.actionsViewed(udid) }
+          }
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
         }
@@ -301,6 +309,7 @@ private struct ReplayingContent<Content: View>: View {
   }
 
   var replay: ReplayController
+  var onPlay: () -> Void
   @ViewBuilder var content: (Bool) -> Content
   @State private var shown = Shown(replaying: false, hasFootage: false)
 
@@ -311,6 +320,7 @@ private struct ReplayingContent<Content: View>: View {
           .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true), replayable: $2) }
           .removeDuplicates()
       ) { shown = $0 }
+      .onReceive(replay.$replay.map { ($0?.rate ?? 0) > 0 }.removeDuplicates()) { if $0 { onPlay() } }
   }
 }
 

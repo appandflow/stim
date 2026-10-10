@@ -11,7 +11,6 @@ export const TUTORIAL_RESTART_PROMPT = 'Restart the Stim tutorial.';
 export const TUTORIAL_ASKS = {
   begin: `Clone ${TUTORIAL_REPO} into {base} and follow stim guide tutorial run.`,
   parallel: 'While that builds, make the Tap me button green in a new worktree and check it on the simulator.',
-  agent: 'Open the app on the iOS simulator, take a screenshot and confirm the title color.',
   finish:
     "I'm done with these experiments in {base} and don't need the changes. Stop the apps and remove the worktrees {worktrees}, and keep the clone. Follow stim guide tutorial finish.",
   delete:
@@ -68,9 +67,9 @@ export const TUTORIAL_STEPS: {
   {
     id: 'agent',
     title: 'Agent Actions and Replay',
-    who: 'agent',
+    who: 'you',
     optional: true,
-    ask: TUTORIAL_ASKS.agent,
+    ask: null,
     section: null,
     commands: [
       'cd "{tour}"',

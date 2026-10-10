@@ -18,6 +18,8 @@ struct TutorialAnchorPreference: PreferenceKey {
 }
 
 struct TutorialHint {
+  static let glowSeconds = 4.0
+
   var step: String?
   /// The first change's worktree.
   var path: String?
@@ -30,6 +32,9 @@ struct TutorialHint {
   var targets: [(anchor: TutorialAnchorID, callout: String)] {
     switch step {
     case "build": return [(.launchNoticeShow, "Click Show to watch the build")]
+    case "agent":
+      return (tick("viewed") ? [(.replay, "Play the replay")] : [(.agentActions, "See what your agent did")])
+        + [(.deviceControl, "Open the live view")]
     case "logs": return [(.logsTab, "Open Logs")]
     case "finish", "done": return [(.archivedFilter, "Find the run in Archived")]
     default: return []
@@ -40,7 +45,7 @@ struct TutorialHint {
   var paths: [String] { [path].compactMap { $0 } }
 
   var offersShowMe: Bool {
-    ["logs", "finish", "done"].contains(step ?? "")
+    ["agent", "logs", "finish", "done"].contains(step ?? "")
   }
 
   func tick(_ id: String) -> Bool { ticks.contains { $0.id == id && $0.done } }
@@ -110,7 +115,6 @@ private struct TutorialHighlights: ViewModifier {
 /// A pulsing glow with a capsule label that fades after a few seconds, and shows again when the target changes or
 /// comes back after an absence.
 private struct TutorialGlow: View {
-  static let visibleSeconds = 4.0
   static let fadeSeconds = 0.6
   static let pulsePeriod = 1.4
 
@@ -138,7 +142,7 @@ private struct TutorialGlow: View {
     .task(id: restartKey) {
       gone = false
       faded = false
-      try? await Task.sleep(for: .seconds(Self.visibleSeconds))
+      try? await Task.sleep(for: .seconds(TutorialHint.glowSeconds))
       if Task.isCancelled { return }
       withAnimation(.easeOut(duration: Self.fadeSeconds)) { faded = true }
       try? await Task.sleep(for: .seconds(Self.fadeSeconds))

@@ -331,6 +331,7 @@ struct DeviceTile: View {
             .lineLimit(1)
             .fixedSize()
             .accessibilityHidden(true)
+            .tutorialAnchor(.deviceControl, workspace: workspace)
         }
         if case .remote = device {
           Pill(tone: .warning) { Text("billable") }

@@ -76,6 +76,8 @@ public struct TutorialEnvironment: Sendable {
 public enum TutorialViewerEvent: Equatable, Sendable {
   case opened(String)
   case input(String)
+  case actionsViewed(String)
+  case replayPlayed(String)
 }
 
 public struct TutorialRecord: Codable, Equatable, Sendable {
@@ -238,6 +240,8 @@ public struct TutorialProgress: Sendable {
   public private(set) var record: TutorialRecord?
   private var viewerOpened = false
   private var viewerInput = false
+  private var actionsViewed = false
+  private var replayPlayed = false
   private var details: [String: TutorialNotice] = [:]
   private var phoneApp = true
   private var finished: Set<String> = []
@@ -313,6 +317,8 @@ public struct TutorialProgress: Sendable {
       for event in input.viewerEvents {
         if event == .opened(udid) { viewerOpened = true }
         if event == .input(udid), viewerOpened { viewerInput = true }
+        if event == .actionsViewed(udid) { actionsViewed = true }
+        if event == .replayPlayed(udid) { replayPlayed = true }
       }
     }
     var failure: TutorialNotice?
@@ -437,9 +443,6 @@ public struct TutorialProgress: Sendable {
     let last = environment?.lastBuild
     let history = environment?.builds ?? []
     let udid = environment?.ios?.udid
-    let actions = logs.filter {
-      udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid && $0.date >= since
-    }
     func signal(_ substring: String) -> LogRecord? { logs.first { $0.msg.contains(substring) } }
     func tick(_ id: String, _ done: Bool, optional: Bool = false) -> TutorialTick {
       TutorialTick(id: id, done: done, optional: optional)
@@ -514,11 +517,15 @@ public struct TutorialProgress: Sendable {
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
     case "logs": return Checkpoint(detail: "Find the app output in Logs")
     case "agent":
-      let first = actions.first
+      let recorded = logs.contains {
+        udid != nil && $0.src == "agent" && $0.event == "agent_action" && $0.deviceId == udid
+      }
       let off = input.replayOff || environment?.recording?.enabled == false
       return Checkpoint(
-        completed: first?.date, detail: off ? "Replay is off: Settings > Advanced" : "Watch the agent actions",
-        ticks: [tick("action", first != nil)])
+        detail: !recorded
+          ? "No agent actions were recorded on the first change's simulator."
+          : off ? "Replay is off: Settings > Advanced" : "",
+        ticks: [tick("viewed", actionsViewed), tick("replayed", replayPlayed)])
     case "phone":
       let paired = (input.pairedPhoneCount ?? 0) > 0
       return Checkpoint(

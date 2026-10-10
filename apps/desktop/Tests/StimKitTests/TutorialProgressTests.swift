@@ -231,22 +231,24 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("device", in: result).detail == "Run the app first, then open its live view")
 }
 
-@Test func tutorialAgentRequiresFreshActionOnTourDevice() throws {
+@Test func tutorialAgentTicksViewerEventsOnTheTourDeviceAndNextRecordsItDone() throws {
   var progress = TutorialProgress()
-  let actionDate = afterRebuild.addingTimeInterval(1)
-  let early = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
-  let wrong = try log("press", at: actionDate, source: "agent", event: "agent_action", device: "other")
-  let failed = try log("replay", at: actionDate, source: "agent", event: "agent_failed", device: "tutorial-simulator")
+  let checked = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
   var input = TutorialInput(
-    environment: try environment(), logRecords: [early, wrong, failed], now: actionDate,
+    environment: try environment(), logRecords: [checked],
+    viewerEvents: [.actionsViewed("other"), .replayPlayed("other")], now: afterRebuild,
     record: saved(at: "agent", since: afterRebuild))
-  #expect(progress.update(input).currentStep == "agent")
-  input.logRecords = [
-    try log("open", at: actionDate, source: "agent", event: "agent_action", device: "tutorial-simulator", command: "open")
-  ]
-  let result = progress.update(input)
+  var result = progress.update(input)
+  #expect(state("agent", in: result).detail.isEmpty)
+  #expect(state("agent", in: result).ticks.allSatisfy { !$0.done })
+  input.viewerEvents = [.actionsViewed("tutorial-simulator"), .replayPlayed("tutorial-simulator")]
+  result = progress.update(input)
+  #expect(result.currentStep == "agent")
+  #expect(state("agent", in: result).ticks.map(\.done) == [true, true])
+  progress.next(now: afterRebuild.addingTimeInterval(1))
+  result = progress.update(TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(1)))
   #expect(result.currentStep == "logs")
-  #expect(state("agent", in: result).ticks.first { $0.id == "action" }?.done == true)
+  #expect(state("agent", in: result).state == .done)
 }
 
 @Test func tutorialLogsStepWaitsForTheUserToMarkItDone() throws {
@@ -408,14 +410,15 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(paired.record.phonePairedAtStart == false)
 }
 
-@Test func tutorialAgentWithoutAnIosDeviceDoesNotAcceptUntargetedActions() throws {
+@Test func tutorialAgentSaysNoActionsWereRecordedForOtherDevicesOrFailures() throws {
   var progress = TutorialProgress()
-  let untargeted = try log("open", at: afterRebuild, source: "agent", event: "agent_action")
+  let wrong = try log("press", at: afterRebuild, source: "agent", event: "agent_action", device: "other")
+  let failed = try log("press", at: afterRebuild, source: "agent", event: "agent_failed", device: "tutorial-simulator")
   let result = progress.update(
     TutorialInput(
-      environment: try environment("01-started"), logRecords: [untargeted],
-      now: afterRebuild, record: saved(at: "agent")))
+      environment: try environment(), logRecords: [wrong, failed], now: afterRebuild, record: saved(at: "agent")))
   #expect(result.currentStep == "agent")
+  #expect(state("agent", in: result).detail.hasPrefix("No agent actions"))
 }
 
 @Test func tutorialArchiveDisabledRelaunchRecognizesAnAlreadyRemovedTour() {
