@@ -14,7 +14,6 @@ import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
 import {
-  sleep,
   call,
   connectHost,
   hostedSession,
@@ -32,6 +31,8 @@ import {
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 export {
   connectHost,
   probeHostedSession as probeHostedMacos,
@@ -80,8 +81,15 @@ export async function placeHostedMacos(
   let session: HostedSession | null = null;
   if (recorded) {
     try {
-      session = await settle(host, await attach(host, recorded.session), ['preparing'], PREPARE_TIMEOUT_MS);
-      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
+      session = await settle(
+        host,
+        await attach(host, recorded.session),
+        ['preparing'],
+        PREPARE_TIMEOUT_MS,
+        'macos',
+        runCancellationSignal(),
+      );
+      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, 'macos', runCancellationSignal());
     } catch (error) {
       if (!heldNoLonger(error)) throw error;
     }
@@ -112,7 +120,7 @@ export async function placeHostedMacos(
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
   reserved(placement);
-  session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS);
+  session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, 'macos', runCancellationSignal());
   if (session.state === 'unknown') throw unknownSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);
@@ -159,7 +167,7 @@ export async function placeHostedMacos(
       );
     }
     if (Date.now() > deadline) throw new Error(`${host.machine} did not finish installing the app.`);
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
     delivery = await call(host, 'device-host.app.attach', ids);
   }
   const appliedArguments = validHostedAppArguments(delivery.arguments) ? delivery.arguments : [];

@@ -36,12 +36,13 @@ import {
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
+  type DeviceHostLimits,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
-import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
+import { DeviceHost } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
