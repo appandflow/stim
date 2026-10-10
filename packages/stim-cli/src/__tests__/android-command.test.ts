@@ -2039,6 +2039,31 @@ describe('the applicationId comes from the built APK', () => {
     expect(result.facts.bundleId).toBe('com.example.app');
   });
 
+  describe('a project applicationId that is not a literal package name', () => {
+    beforeEach(() => {
+      writeFileSync(
+        join(root, 'android', 'app', 'build.gradle'),
+        'android {\n  defaultConfig {\n    applicationId "${appId}"\n  }\n}\n',
+      );
+    });
+
+    test('is refused with the file named when the APK package cannot be read either', async () => {
+      const h = harness();
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.message).toMatch(/Invalid Android package "\$\{appId\}" in .*build\.gradle/);
+      expect(h.calls.install.length).toBe(0);
+      expect(h.calls.launch.length).toBe(0);
+    });
+
+    test('is ignored when the built APK names the package', async () => {
+      const h = harness({ readApkPackage: () => 'io.tlon.groups' });
+      const result = await h.run();
+      expect(result.ok).toBe(true);
+      expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
+    });
+  });
+
   test('the install gets the APK applicationId, not the project namespace', async () => {
     const h = harness({ readApkPackage: () => 'io.tlon.groups' });
     const result = await h.run();

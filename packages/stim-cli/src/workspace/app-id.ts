@@ -7,17 +7,21 @@ import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout } from './settings.ts';
 interface AppIds {
   bundleId: string | null;
   androidPackage: string | null;
+  androidPackageProblem: string | null;
 }
 
 const ANDROID_PACKAGE_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
 
-function checkedAndroidPackage(id: string | null, source: string): string | null {
-  if (id !== null && !ANDROID_PACKAGE_NAME.test(id)) {
-    throw new Error(
+type AndroidPackageFilter = (id: string | null, source: string) => string | null;
+
+function androidPackageFilter(problems: string[]): AndroidPackageFilter {
+  return (id, source) => {
+    if (id === null || ANDROID_PACKAGE_NAME.test(id)) return id;
+    problems.push(
       `Invalid Android package ${JSON.stringify(id)} in ${source}. Expected dot-separated letters, digits and underscores, such as com.example.app.`,
     );
-  }
-  return id;
+    return null;
+  };
 }
 
 function configString(config: unknown, platform: 'ios' | 'android', key: string): string | null {
@@ -34,7 +38,7 @@ function literalString(text: string | null, key: string): string | null {
   return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
 }
 
-function idsFromConfig(projectRoot: string): AppIds {
+function idsFromConfig(projectRoot: string): Pick<AppIds, 'bundleId' | 'androidPackage'> {
   const read = readProjectConfig(projectRoot);
   if (!read.unavailable) {
     return {
@@ -56,11 +60,14 @@ export function detectAppIds(
   androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
 ): AppIds {
   const ids = idsFromConfig(projectRoot);
+  const problems: string[] = [];
+  const accept = androidPackageFilter(problems);
   return {
     bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
     androidPackage:
-      checkedAndroidPackage(ids.androidPackage, 'the Expo config android.package') ??
-      detectAndroidPackageFromGradle(androidModuleDir),
+      accept(ids.androidPackage, 'the Expo config android.package') ??
+      detectAndroidPackageFromGradle(androidModuleDir, accept),
+    androidPackageProblem: problems.length > 0 ? problems.join(' ') : null,
   };
 }
 
@@ -116,7 +123,7 @@ function detectBundleIdFromPbxproj(iosDir: string): string | null {
   return null;
 }
 
-function detectAndroidPackageFromGradle(moduleDir: string): string | null {
+function detectAndroidPackageFromGradle(moduleDir: string, accept: AndroidPackageFilter): string | null {
   const gradle = [join(moduleDir, 'build.gradle'), join(moduleDir, 'build.gradle.kts')].find((file) =>
     existsSync(file),
   );
@@ -129,9 +136,9 @@ function detectAndroidPackageFromGradle(moduleDir: string): string | null {
   }
   const ns = text.match(/namespace\s*=?\s*["']([^"']+)["']/);
   const nsId = ns?.[1];
-  if (nsId) return checkedAndroidPackage(nsId, gradle);
+  const namespace = nsId ? accept(nsId, gradle) : null;
+  if (namespace) return namespace;
   const app = text.match(/applicationId\s*=?\s*["']([^"']+)["']/);
   const appId = app?.[1];
-  if (appId) return checkedAndroidPackage(appId, gradle);
-  return null;
+  return appId ? accept(appId, gradle) : null;
 }
