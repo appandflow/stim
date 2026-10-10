@@ -121,6 +121,42 @@ describe('the Expo Metro config adapter', () => {
     },
   );
 
+  test.each(['ios', 'android', 'web'])(
+    'routes throwing project middleware to the HTTP error handler (%s)',
+    (platform) => {
+      writeFileSync(
+        join(project, 'metro.config.cjs'),
+        `module.exports = { server: { enhanceMiddleware() { return () => { throw new Error('project middleware failed'); }; } } };`,
+      );
+      const script = `
+      const http = require('node:http');
+      Object.defineProperty(process, 'platform', { value: 'darwin' });
+      require('node:child_process').execFile = (file, args, options, callback) => setImmediate(() => callback(null, ''));
+      Promise.resolve(require(process.env.ADAPTER)).then(config => {
+        const middleware = config.server.enhanceMiddleware((req, res) => res.end('unexpected'), {});
+        const server = http.createServer((req, res) => {
+          const next = error => { res.statusCode = 500; res.end(error?.message ?? 'missing error'); };
+          try { middleware(req, res, next); } catch (error) { next(error); }
+        });
+        server.listen(0, '127.0.0.1', () => {
+          http.get('http://127.0.0.1:' + server.address().port + '/index.bundle?platform=' + process.env.PLATFORM, res => {
+            let body = ''; res.on('data', chunk => body += chunk);
+            res.on('end', () => { console.log(JSON.stringify({ status: res.statusCode, body })); server.close(); });
+          });
+        });
+      });
+    `;
+      const result = spawnSync(process.execPath, ['-e', script], {
+        cwd: project,
+        encoding: 'utf8',
+        env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project, PLATFORM: platform },
+        timeout: 5000,
+      });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({ status: 500, body: 'project middleware failed' });
+    },
+  );
+
   test('ships with Stim and is discoverable from source builds', () => {
     expect(adapter.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
     expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);

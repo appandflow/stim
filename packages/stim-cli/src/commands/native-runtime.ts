@@ -30,6 +30,7 @@ export async function ensureDevServer({
   root,
   port,
   settings,
+  settingsContext,
   remote,
   note,
   resolve = resolveProjectMetro,
@@ -39,19 +40,20 @@ export async function ensureDevServer({
   root: string;
   port: number | null;
   settings: StartDevServerRequest['settings'];
+  settingsContext: StartDevServerRequest['settingsContext'];
   remote: boolean;
   note: (line: string) => void;
   resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
 }): Promise<DevServerGate> {
-  const pin = metroPortSetting(root);
+  const pin = metroPortSetting(settings);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
-  const result = await start({ root, settings, remote, out: note, note });
+  const result = await start({ root, settings, settingsContext, remote, out: note, note });
   if (!result.ok) {
     return {
       ok: false,

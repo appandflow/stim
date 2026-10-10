@@ -39,6 +39,7 @@ import {
   sleep,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
@@ -101,10 +102,11 @@ export async function prepareHostedNative(
         session = await settle(
           host,
           await attach(host, recorded.session, undefined, platform),
-          ['preparing', 'stopping'],
-          SESSION_TIMEOUT_MS,
+          ['preparing'],
+          PREPARE_TIMEOUT_MS,
           platform,
         );
+        session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, platform);
       } catch (error) {
         if (!heldNoLonger(error)) throw error;
       }
@@ -137,7 +139,7 @@ export async function prepareHostedNative(
       }
     }
     if (resumeOnly) return null;
-    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 3000);
+    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 45_000);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
       platform === 'ios'
@@ -201,6 +203,7 @@ export async function placeHostedNative(
     devClientScheme,
     reserved,
     note,
+    enterPhase = () => {},
     metro = requestHostedMetro,
     metroPort,
     platform = 'ios',
@@ -218,12 +221,14 @@ export async function placeHostedNative(
     devClientScheme?: string;
     reserved: (placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>) => void;
     note: (line: string) => void;
+    enterPhase?: (phase: 'device' | 'install' | 'launch') => void;
     metro?: typeof requestHostedMetro;
   },
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
   try {
     if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
+    enterPhase('device');
     host = await connectHost(host.machine, undefined, true);
     target.host = host;
     requireHostedAppMode(host, platform, mode);
@@ -254,7 +259,7 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     reserved(placement);
-    session = await settle(host, session, ['preparing'], SESSION_TIMEOUT_MS, platform);
+    session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform);
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
     if (
@@ -303,6 +308,7 @@ export async function placeHostedNative(
       ...(mode === 'development' && devClientScheme ? { devClientScheme } : {}),
       manifest: { sha256: sha256(manifest), size: manifest.length },
     };
+    enterPhase('install');
     note(
       `Delivering ${files.length} files to ${host.machine} (${'runtime' in device ? device.runtime : device.systemImage}, ${device.architecture})`,
     );
@@ -347,6 +353,7 @@ export async function placeHostedNative(
       }
     }
     await upload(host, ids, missing, content);
+    enterPhase('launch');
     note(`Launching on ${host.machine}`);
     let delivery = await call(host, 'device-host.app.launch', ids);
     const deadline = Date.now() + INSTALL_TIMEOUT_MS;

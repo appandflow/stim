@@ -2,8 +2,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuildPlanPayload } from '@stim-cli/core/state';
 import { resolveBuildPlacement } from '../offload/selection.ts';
-import { resolveSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
+import { resolveProjectSettings, settingShapeErrors, SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { resolveBundleExtras, validateInfoPlist } from './stage.ts';
 
 export function planMacos(root: string, buildMachineFlag?: string): MacosBuildPlanPayload {
@@ -11,8 +10,7 @@ export function planMacos(root: string, buildMachineFlag?: string): MacosBuildPl
   root = realpathSync(root);
   if (!existsSync(join(root, 'Package.swift')))
     throw new Error('Run stim macos from the directory containing Package.swift.');
-  const repository = repoRoot(root);
-  const settings = resolveSettings({ projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repository });
+  const { context, settings } = resolveProjectSettings(root);
   const [shape] = settingShapeErrors(settings);
   if (shape) throw new Error(`${shape} ${SETTING_SHAPE_REMEDY}`);
   const selected = resolveBuildPlacement(buildMachineFlag);
@@ -26,7 +24,7 @@ export function planMacos(root: string, buildMachineFlag?: string): MacosBuildPl
       { code: 'STIM_BAD_ARG' },
     );
   validateInfoPlist(root, macos.product, macos.infoPlist);
-  resolveBundleExtras(root, repository ?? root, macos.resources, macos.assetCatalog);
+  resolveBundleExtras(root, context.repoRoot ?? root, macos.resources, macos.assetCatalog);
   return {
     platform: 'macos',
     product: macos.product,
