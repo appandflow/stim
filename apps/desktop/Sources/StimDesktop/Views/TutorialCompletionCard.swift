@@ -6,6 +6,7 @@ struct TutorialCompletionCard: View {
   var steps: [TutorialStep]
   var archiveOff: Bool
   var openArchived: () -> Void
+  var restart: () -> Void = {}
 
   private var record: TutorialRecord { snapshot.record }
   private var stats: TutorialStats { record.stats ?? TutorialStats() }
@@ -60,8 +61,12 @@ struct TutorialCompletionCard: View {
       )
       .foregroundStyle(Palette.secondary)
       .fixedSize(horizontal: false, vertical: true)
-      Button("Open Archived", action: openArchived)
-        .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
+      HStack(spacing: Space.md) {
+        Button("Open Archived", action: openArchived)
+          .buttonStyle(.stim(.primary)).accessibilityLabel("Open Archived workspaces")
+        Button("Restart Tutorial", action: restart)
+          .buttonStyle(.stim(.secondary)).accessibilityLabel("Restart the Stim tutorial")
+      }
     }
   }
 
