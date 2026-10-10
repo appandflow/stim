@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
+import { phaseLine } from '../command-output.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -120,6 +121,8 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
             },
             { artifactOnly: true },
           );
+        } catch (error) {
+          note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
         } finally {
           if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
           writer.close();
