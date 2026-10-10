@@ -89,7 +89,7 @@ export async function connectHost(
   strict = false,
 ): Promise<HostConnection> {
   const credential = hostingCredential(machine);
-  const target = pinnedEndpoint(credential);
+  const target = await pinnedEndpoint(credential);
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
   const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
