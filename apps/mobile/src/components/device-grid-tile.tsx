@@ -84,7 +84,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     deviceLabel,
     ...deviceTileStatusLabels(device, now, item.env),
     workspaceLabel,
-    host ? t`on ${host}` : null,
+    host ? t`Running on ${host}` : null,
     agentsSummary(sessions),
   ]
     .filter(Boolean)
