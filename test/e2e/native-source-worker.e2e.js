@@ -1,11 +1,23 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 import { manifestDigest } from '../../packages/stim-cli/src/offload/manifest.ts';
+import { nativeTransferManifest } from '../../packages/stim-cli/src/offload/native-source.ts';
+import { nativeXcodeIosProject } from '../../packages/stim-cli/src/integrations/native-xcode-ios.ts';
+import { writeNativeXcodeProject } from '../../packages/stim-cli/src/__tests__/_native-xcode-project.ts';
 
 const sha = (content) => createHash('sha256').update(content).digest('hex');
 test('native worker removes stale ignored inputs and verifies the actual provider before compilation', () => {
@@ -79,6 +91,132 @@ test('native worker removes stale ignored inputs and verifies the actual provide
       false,
     );
   } finally {
+    rmSync(area, { recursive: true, force: true });
+  }
+});
+
+test('native worker refuses a compiler environment the client did not key before compiling', async () => {
+  const area = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-identity-')));
+  const saved = { PATH: process.env.PATH, STIM_HOME: process.env.STIM_HOME };
+  try {
+    const tools = join(area, 'tools');
+    mkdirSync(tools);
+    for (const name of ['xcodebuild', 'xcrun', 'xcode-select'])
+      writeFileSync(join(tools, name), '#!/bin/sh\necho "fake $(basename "$0") $*"\n', { mode: 0o755 });
+    process.env.PATH = `${tools}${delimiter}${process.env.PATH}`;
+    process.env.STIM_HOME = join(area, 'client-home');
+    const client = join(area, 'client');
+    mkdirSync(client);
+    spawnSync('git', ['init', '--quiet', client]);
+    writeNativeXcodeProject(client);
+    const unused = () => {
+      throw new Error('Identity must not prepare or compile');
+    };
+    const recipe = nativeXcodeIosProject(client).artifact({
+      root: client,
+      logFile: join(area, 'client.ndjson'),
+      configuration: 'Debug',
+      target: {
+        udid: null,
+        destination: 'generic/platform=iOS Simulator',
+        sdk: 'iphonesimulator',
+        arch: 'arm64',
+        keyArch: 'arm64',
+        offloadRuntime: () => 'iOS-26-0',
+        offloadRefusal: null,
+      },
+      device: null,
+      optimizations: { compilationCache: false, swiftCompilationCache: null, prefixMapping: false },
+      cache: { read: true, write: true, remote: false },
+      phase: unused,
+      note: unused,
+      logWriter: unused,
+      estimates: unused,
+      step: unused,
+      setPodsMs: unused,
+    });
+    const identity = await recipe.identity();
+    assert.equal(identity.cacheIneligible, undefined, identity.cacheIneligible);
+    const request = recipe.offload.request('iOS-26-0');
+    const visible = [];
+    const walk = (directory, prefix) => {
+      for (const name of readdirSync(directory, { withFileTypes: true })) {
+        if (name.name === '.git') continue;
+        const path = prefix ? `${prefix}/${name.name}` : name.name;
+        if (name.isDirectory()) walk(join(directory, name.name), path);
+        else {
+          const content = readFileSync(join(directory, name.name));
+          visible.push({ path, kind: 'file', size: content.length, sha256: sha(content) });
+        }
+      }
+    };
+    walk(client, '');
+    const manifest = nativeTransferManifest(client, request.native.snapshot, visible);
+    const blobs = join(area, 'blobs');
+    for (const file of manifest.filter((each) => each.kind === 'file')) {
+      const blob = join(blobs, file.sha256.slice(0, 2), file.sha256);
+      mkdirSync(dirname(blob), { recursive: true });
+      writeFileSync(blob, readFileSync(join(client, file.path)));
+    }
+    const job = {
+      job: 'native-identity',
+      area,
+      blobs,
+      manifest,
+      platform: 'ios',
+      project: '',
+      packageName: null,
+      isExpo: false,
+      configuration: request.configuration,
+      scheme: request.scheme,
+      runtime: request.runtime,
+      macos: null,
+      android: null,
+      swiftpmCache: join(area, 'swiftpm'),
+      expectedFingerprint: identity.hash,
+      optimizations: request.optimizations,
+      native: {
+        provider: 'xcode',
+        sourceDigest: manifestDigest(manifest),
+        cacheKey: request.native.cacheKey,
+        arch: request.native.arch,
+        parameters: request.native.snapshot.parameters,
+      },
+    };
+    const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+      input: JSON.stringify(job),
+      encoding: 'utf8',
+      timeout: 30000,
+      env: {
+        ...process.env,
+        STIM_HOME: join(area, 'home'),
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: 'WORKER_ONLY',
+      },
+    });
+    assert.equal(result.error, undefined);
+    const records = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      { code: records.at(-1).code, message: records.at(-1).message },
+      {
+        code: 'identity-mismatch',
+        message:
+          'This Mac keys the native build differently in parameters.environment.SWIFT_ACTIVE_COMPILATION_CONDITIONS.',
+      },
+      result.stdout + result.stderr,
+    );
+    assert.equal(
+      records.some((record) => record.phase === 'build'),
+      false,
+    );
+    assert.equal(existsSync(join(area, 'out')), false);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(area, { recursive: true, force: true });
   }
 });
