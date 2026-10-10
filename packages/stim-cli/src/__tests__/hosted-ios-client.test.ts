@@ -262,7 +262,8 @@ test.skipIf(!loopbackAvailable)(
     });
     try {
       const target = await prepareHostedIos('mini', {});
-      expect(target.choice).toEqual(device);
+      const { udid: _udid, name: _name, ...choice } = device;
+      expect(target.choice).toEqual(choice);
       expect(target.session).toBeNull();
       expect(requests).toEqual(['hello', 'device-host.offer']);
     } finally {

@@ -56,7 +56,7 @@
     },
     "test": {
       "as": 28,
-      "nonNull": 36
+      "nonNull": 37
     }
   },
   "packages/expo-build-cache": {
@@ -86,17 +86,17 @@
     },
     "test": {
       "as": 272,
-      "nonNull": 389
+      "nonNull": 390
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 842,
-      "nonNull": 334
+      "as": 845,
+      "nonNull": 337
     },
     "test": {
-      "as": 557,
-      "nonNull": 772
+      "as": 559,
+      "nonNull": 776
     }
   }
 }
