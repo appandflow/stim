@@ -52,7 +52,7 @@ test('describeDereferenced returns an empty list when nothing is claimed', () =>
 });
 
 test('reclaimProject removes the config entry', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
 
@@ -87,7 +87,7 @@ test('reclaimProject keeps the workspace, its devices and its entry while a nati
 });
 
 test('reclaimProject keeps the workspace and its entry when the owned Chrome cannot be closed', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   ensureWorkspaceStorage('/proj');
   const calls: unknown[] = [];
@@ -105,7 +105,7 @@ test('reclaimProject keeps the workspace and its entry when the owned Chrome can
 });
 
 test('reclaimProject keeps the workspace when a browser supervisor appears after its teardown', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
   upsertProject('/proj', { metroPort: 8082 });
   ensureWorkspaceStorage('/proj');
   const result = await reclaimProject('/proj', {
@@ -153,6 +153,10 @@ test('reclaimProject scans and sizes no build output at all', async () => {
       calls.push(cmd);
       return null;
     },
+    runFileQuiet: (file, args = []) => {
+      calls.push([file, ...args].join(' '));
+      return null;
+    },
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -177,13 +181,13 @@ test('reclaimProject keeps the config entry when an owned device delete fails', 
     },
   });
   setExecutor({
-    run: (cmd) => {
-      if (cmd.includes('simctl list devices --json')) return listJson;
-      if (cmd.includes('simctl delete')) throw new Error('Unable to delete device');
-      return '';
+    run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') throw new Error('Unable to delete device');
+      return listJson;
     },
-    runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -215,6 +219,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
     run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
     runFile: () => listJson,
     runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
     spawn: () => {},
   });
   upsertProject('/proj', { metroPort: 8082 });
@@ -229,7 +234,7 @@ test('reclaimProject removes the entry when the owned device really is deleted',
 test('reclaimProject refuses to kill an unidentified process on the port', async () => {
   setExecutor({
     run: () => '',
-    runQuiet: (cmd) => (cmd.includes('-sTCP:LISTEN') ? '4242' : ''),
+    runFileQuiet: (file, args = []) => (file === 'lsof' && args.includes('-sTCP:LISTEN') ? '4242' : ''),
     spawn: () => {},
   });
   upsertProject('/nonexistent/project', { metroPort: 8082 });
