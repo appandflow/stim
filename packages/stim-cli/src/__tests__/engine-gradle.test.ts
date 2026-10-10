@@ -1327,7 +1327,7 @@ test('a Gradle root outside the app runs its wrapper there with the module-quali
       },
     },
   );
-  expect(calls[0]?.cmd).toBe(join(root, 'gradlew'));
+  expect(calls[0]?.cmd).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
   expect(calls[0]?.args).toContain(':packages:rn-tester:android:app:assembleDebug');
   expect(calls[0]?.opts.cwd).toBe(root);
   assert(result.ok);
