@@ -17,6 +17,7 @@ enum TutorialEntry { case resume, begin }
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
   @Published var device: DeviceOpenRequest?
+  @Published var viewer: ViewedDevice?
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
   /// The workspace selected in the main window, which the Settings window edits.

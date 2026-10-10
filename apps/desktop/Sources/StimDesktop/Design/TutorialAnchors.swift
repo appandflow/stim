@@ -1,10 +1,6 @@
 import StimKit
 import SwiftUI
 
-enum TutorialAnchorID: Hashable {
-  case launchNoticeShow, deviceControl, viewerScreen, logsTab, agentActions, replay, archivedFilter
-}
-
 struct TutorialAnchorKey: Hashable {
   var id: TutorialAnchorID
   var workspace: String?
@@ -25,32 +21,27 @@ struct TutorialHint {
   var path: String?
   var secondPath: String?
   var selectedPath: String?
+  var logsShown = false
   var ticks: [TutorialTick] = []
   var showMe: () -> Void
 
-  /// The controls this step points at, most specific first; the first one on screen glows.
-  var targets: [(anchor: TutorialAnchorID, callout: String)] {
-    switch step {
-    case "build": return [(.launchNoticeShow, "Click Show to watch the build")]
-    case "device":
-      return [(.viewerScreen, "Tap the Tap me button and watch the counter"), (.deviceControl, "Open the live view")]
-    case "agent":
-      return (tick("viewed") ? [(.replay, "Play the replay")] : [(.agentActions, "See what your agent did")])
-        + [(.deviceControl, "Open the live view")]
-    case "logs": return [(.logsTab, "Open Logs")]
-    case "finish", "done": return [(.archivedFilter, "Find the run in Archived")]
-    default: return []
-    }
+  var paths: [String] { [path, secondPath].compactMap { $0 } }
+
+  var onPage: Bool { selectedPath.map(paths.contains) == true }
+
+  var targets: [TutorialGlowTarget] {
+    TutorialGlowPath.targets(step: step, ticks: ticks, onPage: onPage, logsShown: logsShown)
   }
 
-  /// The worktrees whose controls this step may point at.
-  var paths: [String] { (step == "device" ? [path, secondPath] : [path]).compactMap { $0 } }
+  func glowsInPlace(_ anchor: TutorialAnchorID, workspaces: [String] = []) -> Bool {
+    anchor == .sidebarRow
+      ? targets.contains { $0.anchor == anchor } && workspaces.contains(where: paths.contains)
+      : targets.first?.anchor == anchor
+  }
 
   var offersShowMe: Bool {
     ["device", "agent", "logs", "finish", "done"].contains(step ?? "")
   }
-
-  func tick(_ id: String) -> Bool { ticks.contains { $0.id == id && $0.done } }
 }
 
 private struct TutorialHintKey: EnvironmentKey {
@@ -74,6 +65,18 @@ extension View {
   func tutorialHighlights(showFallback: Bool = true) -> some View {
     modifier(TutorialHighlights(showFallback: showFallback))
   }
+
+  func tutorialGlowInPlace(_ hint: TutorialHint?, _ anchor: TutorialAnchorID, workspaces: [String] = []) -> some View {
+    overlay {
+      if let hint, hint.glowsInPlace(anchor, workspaces: workspaces) {
+        GeometryReader { geometry in
+          TutorialGlow(
+            rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,
+            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)")
+        }
+      }
+    }
+  }
 }
 
 private struct TutorialHighlights: ViewModifier {
@@ -85,23 +88,20 @@ private struct TutorialHighlights: ViewModifier {
       GeometryReader { geometry in
         if let hint {
           let bounds = CGRect(origin: .zero, size: geometry.size)
-          let onPage = hint.selectedPath.map(hint.paths.contains) == true
           let found = hint.targets.lazy.compactMap { target -> (TutorialAnchorID, String, CGRect)? in
-            guard
-              let anchor = anchors.first(where: {
-                $0.key.id == target.anchor && ($0.key.workspace == nil || hint.paths.contains($0.key.workspace!))
-              })
-            else { return nil }
-            let rect = geometry[anchor.value]
-            let global = [.archivedFilter, .launchNoticeShow].contains(target.anchor)
-            guard global || onPage, rect.intersects(bounds) else { return nil }
+            let keys =
+              hint.paths.map { TutorialAnchorKey(id: target.anchor, workspace: $0) }
+              + [TutorialAnchorKey(id: target.anchor, workspace: nil)]
+            guard let anchor = keys.lazy.compactMap({ anchors[$0] }).first else { return nil }
+            let rect = geometry[anchor]
+            guard rect.intersects(bounds) else { return nil }
             return (target.anchor, target.callout, rect)
           }.first
           if let found {
             TutorialGlow(
               rect: found.2, bounds: geometry.size, callout: found.1,
               restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(found.0)")
-          } else if showFallback, hint.offersShowMe, hint.path != nil, !onPage {
+          } else if showFallback, hint.offersShowMe, hint.path != nil, !hint.onPage {
             Button("Show Me", action: hint.showMe)
               .buttonStyle(.stim(.secondary))
               .accessibilityLabel("Show the tutorial workspace")
@@ -122,7 +122,7 @@ private struct TutorialGlow: View {
 
   var rect: CGRect
   var bounds: CGSize
-  var callout: String
+  var callout: String?
   var restartKey: String
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var faded = false
@@ -165,16 +165,18 @@ private struct TutorialGlow: View {
         .strokeBorder(Palette.accent.opacity(0.4), lineWidth: 1)
         .frame(width: size.width, height: size.height)
         .position(x: rect.midX, y: rect.midY)
-      Text(callout).font(.stim(.footnote, weight: .semibold))
-        .foregroundStyle(Palette.onPrimary)
-        .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
-        .background(Capsule().fill(Palette.accent))
-        .shadow(color: Palette.accent.opacity(0.4), radius: 6)
-        .fixedSize(horizontal: true, vertical: false)
-        .position(
-          x: max(140, min(bounds.width - 140, rect.midX)),
-          y: aboveY >= 14 ? aboveY : min(rect.maxY + 18, bounds.height - 14)
-        )
+      if let callout {
+        Text(callout).font(.stim(.footnote, weight: .semibold))
+          .foregroundStyle(Palette.onPrimary)
+          .padding(.horizontal, Space.md).padding(.vertical, Space.xs)
+          .background(Capsule().fill(Palette.accent))
+          .shadow(color: Palette.accent.opacity(0.4), radius: 6)
+          .fixedSize(horizontal: true, vertical: false)
+          .position(
+            x: max(140, min(bounds.width - 140, rect.midX)),
+            y: aboveY >= 14 ? aboveY : min(rect.maxY + 18, bounds.height - 14)
+          )
+      }
     }
   }
 }

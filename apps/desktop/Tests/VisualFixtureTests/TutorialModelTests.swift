@@ -93,7 +93,7 @@
       let delete = try XCTUnwrap(TutorialSteps.all.first { $0.id == "delete" })
       XCTAssertEqual(
         model.ask(for: delete),
-        "Remove the Stim tutorial: remove its worktrees and the clone at \(clone) with stim worktree remove, then delete \(clone). Follow stim guide tutorial delete."
+        "Remove the test app: run stim worktree remove on \(clone), then delete the folder. Follow stim guide tutorial delete."
       )
       try FileManager.default.removeItem(atPath: clone)
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
