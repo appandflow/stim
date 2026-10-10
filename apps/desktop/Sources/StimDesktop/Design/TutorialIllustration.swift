@@ -36,7 +36,7 @@ struct TutorialIllustration: View {
         }
       }
     }
-    .aspectRatio(Self.size, contentMode: .fit)
+    .frame(width: Self.size.width, height: Self.size.height)
     .accessibilityHidden(true)
     .onChange(of: step, initial: true) { _, next in show(next) }
   }
