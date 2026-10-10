@@ -1,7 +1,7 @@
 import { ChildProcess, spawnSync } from 'node:child_process';
 import { afterAll } from 'vitest';
 
-type Tracked = { pid: number; detached: boolean };
+type Tracked = { pid: number; detached: boolean; exited: boolean };
 
 const installed = Symbol.for('stim.test.reapChildren');
 const live = new Map<ChildProcess, Tracked>();
@@ -41,7 +41,7 @@ export function reapChildren(): void {
     for (const { pid } of tracked) kill(pid, false);
     return;
   }
-  const below = descendants(tracked.map(({ pid }) => pid));
+  const below = descendants(tracked.filter(({ exited }) => !exited).map(({ pid }) => pid));
   for (const { pid, detached } of tracked) kill(pid, detached);
   for (const pid of below) kill(pid, false);
 }
@@ -54,8 +54,12 @@ if (!proto[installed]) {
   proto.spawn = function (this: ChildProcess, options) {
     const result = original.call(this, options);
     if (this.pid !== undefined) {
-      live.set(this, { pid: this.pid, detached: options?.detached === true });
-      this.once('exit', () => live.delete(this));
+      const entry = { pid: this.pid, detached: options?.detached === true, exited: false };
+      live.set(this, entry);
+      this.once('exit', () => {
+        entry.exited = true;
+        if (!entry.detached) live.delete(this);
+      });
     }
     return result;
   };

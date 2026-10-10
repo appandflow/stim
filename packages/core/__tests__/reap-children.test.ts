@@ -20,27 +20,51 @@ async function until(check: () => boolean): Promise<boolean> {
 }
 
 describe('reapChildren', () => {
-  it('kills a SIGTERM-ignoring child, its detached group and a grandchild it started', async () => {
-    const grandchild = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
-    const parent = `
+  it.skipIf(process.platform === 'win32')(
+    'kills a SIGTERM-ignoring child, its detached group, a grandchild it started and an orphan of an exited detached leader',
+    async () => {
+      const grandchild = "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)";
+      const parent = `
       const { spawn } = require('node:child_process');
       process.on('SIGTERM', () => {});
       const child = spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'inherit' });
       console.log(child.pid);
       setInterval(() => {}, 1000);
     `;
-    const fixture = spawn(process.execPath, ['-e', parent], { stdio: ['ignore', 'pipe', 'inherit'] });
-    const grandchildPid = await new Promise<number>((resolve) => {
-      fixture.stdout.once('data', (data: Buffer) => resolve(Number(data.toString().trim())));
-    });
-    const sleeper = spawn(process.execPath, ['-e', grandchild], { detached: true, stdio: 'ignore' });
-    const fixturePid = fixture.pid as number;
-    const sleeperPid = sleeper.pid as number;
+      const fixture = spawn(process.execPath, ['-e', parent], { stdio: ['ignore', 'pipe', 'inherit'] });
+      const grandchildPid = await new Promise<number>((resolve) => {
+        fixture.stdout.once('data', (data: Buffer) => resolve(Number(data.toString().trim())));
+      });
+      const sleeper = spawn(process.execPath, ['-e', grandchild], { detached: true, stdio: 'ignore' });
+      const leaderScript = `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(grandchild)}], { stdio: 'inherit' });
+      child.unref();
+      console.log(child.pid);
+    `;
+      const leader = spawn(process.execPath, ['-e', leaderScript], {
+        detached: true,
+        stdio: ['ignore', 'pipe', 'inherit'],
+      });
+      const orphanPid = await new Promise<number>((resolve) => {
+        leader.stdout.once('data', (data: Buffer) => resolve(Number(data.toString().trim())));
+      });
+      if (leader.exitCode === null) await new Promise((resolve) => leader.once('exit', resolve));
+      const fixturePid = fixture.pid as number;
+      const sleeperPid = sleeper.pid as number;
 
-    expect([alive(fixturePid), alive(grandchildPid), alive(sleeperPid)]).toEqual([true, true, true]);
+      expect([alive(fixturePid), alive(grandchildPid), alive(sleeperPid), alive(orphanPid)]).toEqual([
+        true,
+        true,
+        true,
+        true,
+      ]);
 
-    reapChildren();
+      reapChildren();
 
-    expect(await until(() => !alive(fixturePid) && !alive(grandchildPid) && !alive(sleeperPid))).toBe(true);
-  });
+      expect(
+        await until(() => !alive(fixturePid) && !alive(grandchildPid) && !alive(sleeperPid) && !alive(orphanPid)),
+      ).toBe(true);
+    },
+  );
 });
