@@ -298,7 +298,6 @@ export function podEnvForRuby(
   return out;
 }
 
-/** `podEnvForRuby` for callers that must not block the event loop on the login shell it may run. */
 export async function podEnvForRubyAsync(version: string | null): Promise<NodeJS.ProcessEnv> {
   let loginNeeded = false;
   const withoutLogin = podEnvForRuby(version, {

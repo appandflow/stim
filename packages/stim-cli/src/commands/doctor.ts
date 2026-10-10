@@ -262,11 +262,7 @@ export default function doctorCommand(
         }
       }
 
-      const versions = inspectVersions(version);
-      const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
-      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
-
-      const stim = await versions;
+      const stim = await inspectVersions(version);
 
       const { findings, context } = runDoctor(
         root,
@@ -304,6 +300,8 @@ export default function doctorCommand(
 
       const budget = await inspectBudget(root);
       findings.push(...budget.findings);
+      const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
+      const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
       const nestedWorktrees = inspectNestedWorktrees(root);
       const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
       const targetInspectors = doctors.flatMap((doctor) => {
