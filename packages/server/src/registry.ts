@@ -170,6 +170,21 @@ function validClientName(name: string): boolean {
   return name.length <= MAX_CLIENT_NAME && !/[\p{Cc}\p{Cf}]/u.test(name);
 }
 
+/**
+ * A phone sends its OS device name, which the person cannot edit in the app, so pairing cleans it up instead of
+ * refusing it. U+200D stays because emoji sequences join with it.
+ */
+function pairingName(name: string): string {
+  const clean = name
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CLIENT_NAME)
+    .replace(/[\ud800-\udbff]$/, '')
+    .trim();
+  return clean || 'Phone';
+}
+
 function newDeviceId(): string {
   const taken = new Set(
     [...readDevices(), ...readRecords(clientsFile('build')), ...readRecords(clientsFile('device-host'))].map(
@@ -320,7 +335,6 @@ export function spendPairingToken(
   identity: PeerIdentity,
   now: number = Date.now(),
 ): AuthOutcome {
-  if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
   return transaction(() => {
     const pairings = readPairings();
     const tokenHash = hashToken(token);
@@ -333,7 +347,7 @@ export function spendPairingToken(
     const at = new Date(now).toISOString();
     const device: PairedDevice = {
       id: newDeviceId(),
-      name,
+      name: pairingName(name),
       tokenHash: hashToken(deviceToken),
       identity,
       pairedAt: at,

@@ -49,15 +49,27 @@ describe('build clients', () => {
     expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
   });
 
-  it('refuses a build or pairing name that could forge the approval listing', () => {
-    const { token } = createPairingToken();
+  it('refuses a build name that could forge the approval listing', () => {
     for (const name of ['Laptop\n1234  Mini  build  from mini', 'Laptop\u202e', 'x'.repeat(65)]) {
       expect(requestBuildAccess(name, node('nA'))).toEqual({ ok: false, reason: 'bad-device-name' });
-      expect(spendPairingToken(token, name, node('nPhone'))).toEqual({ ok: false, reason: 'bad-device-name' });
     }
     expect(readBuildClients()).toEqual([]);
-    expect(readDevices()).toEqual([]);
-    expect(spendPairingToken(token, 'Phone', node('nPhone'))).toMatchObject({ ok: true, device: { name: 'Phone' } });
+  });
+
+  it.each([
+    ['control and bidi characters', 'Phone\n1234  Mini\u202e  read', 'Phone 1234 Mini read'],
+    [
+      'a ZWJ emoji sequence',
+      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
+      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
+    ],
+    ['a long name ending in a split emoji', `${'x'.repeat(63)}\u{1F4F1}`, 'x'.repeat(63)],
+    ['nothing printable', '\u0000\u2028', 'Phone'],
+  ])('pairs a phone whose OS name has %s under a cleaned-up name', (_case, name, stored) => {
+    const { token } = createPairingToken();
+    expect(spendPairingToken(token, name, node('nPhone'))).toMatchObject({ ok: true, device: { name: stored } });
+    expect(spendPairingToken(token, name, node('nPhone'))).toEqual({ ok: false, reason: 'pairing-unknown' });
+    expect(readDevices().map((device) => device.name)).toEqual([stored]);
   });
 
   it('keeps one pending request per node and caps the total', () => {

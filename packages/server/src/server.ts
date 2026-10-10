@@ -373,7 +373,7 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
   },
   'bad-device-name': {
     code: 'bad-request',
-    message: 'A device requesting access needs a one-line name of at most 64 characters.',
+    message: 'A Mac requesting access needs a one-line name of at most 64 characters.',
   },
   'build-requests-full': {
     code: 'limit-exceeded',
