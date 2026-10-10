@@ -131,7 +131,7 @@ struct TutorialPanel: View {
           if step.id == "build", current, let openBuild {
             HStack(spacing: Space.sm) {
               Text("Click Show to watch the build.")
-              Button("Open the build", action: openBuild).buttonStyle(.link)
+              Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
                 .accessibilityLabel("Open the tutorial build")
             }
           }
