@@ -18,6 +18,7 @@ import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '
 import { readManifest } from '../cache/cache-manifest.ts';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import {
+  iosProjectFingerprintOptions,
   artifactIn,
   buildCacheKey,
   filesystemBuildCapability,
@@ -326,6 +327,61 @@ test('fingerprintProject ignores the paths a fresh checkout does not have', asyn
   await fingerprintProject(root, { platform: 'ios', createFingerprint });
   expect(options?.ignorePaths).toEqual(['**/android/local.properties', '**/android/.idea/**']);
   expect(options?.platforms).toEqual(['ios']);
+});
+
+test('fingerprintProject hashes a custom iOS project directory the way it hashes ios/', async () => {
+  let options: FingerprintOptions | undefined;
+  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
+    options = opts;
+    return { hash: 'h', sources: [] };
+  };
+  await fingerprintProject(root, { platform: 'ios', iosProjectPath: 'apple', createFingerprint });
+  expect(options?.extraSources).toEqual([{ type: 'dir', filePath: 'apple', reasons: ['ios.projectPath'] }]);
+  expect(options?.ignorePaths).toEqual(expect.arrayContaining(['apple/Pods/**/*', 'apple/build/**/*']));
+});
+
+test('a custom iOS project directory keeps the sources fingerprint.config.js declares', async () => {
+  writeFileSync(
+    join(root, 'fingerprint.config.js'),
+    "module.exports = { extraSources: [{ type: 'file', filePath: 'native.txt', reasons: ['custom'] }] };",
+  );
+  let options: FingerprintOptions | undefined;
+  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
+    options = opts;
+    return { hash: 'h', sources: [] };
+  };
+  await fingerprintProject(root, { platform: 'ios', iosProjectPath: 'apple', createFingerprint });
+  expect(options?.extraSources).toEqual([
+    { type: 'file', filePath: 'native.txt', reasons: ['custom'] },
+    { type: 'dir', filePath: 'apple', reasons: ['ios.projectPath'] },
+  ]);
+});
+
+test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
+  const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
+  const { extraSources, ignorePaths } = iosProjectFingerprintOptions(root, '.', {
+    list: () => [
+      'node_modules',
+      'js',
+      'Pods',
+      'Podfile.lock',
+      'Gemfile.lock',
+      'android',
+      'build',
+      'RNTesterPods.xcodeproj',
+      'shared',
+    ],
+    isDirectory: (path) => directories.has(path.slice(root.length + 1)),
+    ignored: (_root, names) => new Set(names.filter((name) => name === 'Gemfile.lock')),
+  });
+  expect(extraSources).toEqual([
+    { type: 'dir', filePath: 'js', reasons: ['ios.projectPath'] },
+    { type: 'file', filePath: 'Podfile.lock', reasons: ['ios.projectPath'] },
+    { type: 'dir', filePath: 'RNTesterPods.xcodeproj', reasons: ['ios.projectPath'] },
+    { type: 'dir', filePath: 'shared', reasons: ['ios.projectPath'] },
+  ]);
+  expect(ignorePaths).toContain('Pods/**/*');
+  expect(iosProjectFingerprintOptions(root, 'ios')).toEqual({});
 });
 
 test('the ignore list holds only paths no native build reads', async () => {

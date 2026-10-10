@@ -451,7 +451,8 @@ Rerun with --remote-build auto for normal placement and local fallback, or
       body: () => `STIM_NO_SCHEME
   Stim could not list or select an app scheme in ios/. Share the intended app
   scheme so xcodebuild can see it. Select an available exact name with
-  \`stim ios --scheme <name>\`. An unknown explicit name prints available choices.
+  \`stim ios --scheme <name>\`, or set it once with the ios.scheme setting. An
+  unknown explicit name prints available choices.
   Without an explicit selector, a workspace
   name match wins; otherwise Stim accepts a sole non-test scheme, or a listed
   scheme matching app.json. Unmatched ambiguous schemes are refused.`,

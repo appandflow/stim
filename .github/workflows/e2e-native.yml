@@ -20,7 +20,7 @@
 #   all     loop, caches and pool, as separate parallel matrix jobs.
 #
 # Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
-# loop and caches; Windows Android smoke and loop.
+# loop and caches; Windows Android smoke only, until #3086 is fixed.
 #
 # WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain), so nothing native runs on an unlabeled pull request:
@@ -42,7 +42,7 @@
 # Bare and Expo exercise different stim-cli Metro paths. Linux Android runs
 # both frameworks; iOS runs Expo ONLY, because the bare template cannot launch
 # on iOS 27 (see the matrix `exclude` below); Windows runs bare only, so an
-# `all` dispatch is three iOS jobs, four Linux Android jobs and one Windows job.
+# `all` dispatch is three iOS jobs and four Linux Android jobs.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out

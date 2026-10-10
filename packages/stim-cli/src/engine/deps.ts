@@ -98,18 +98,19 @@ function extractRubyHead(lines: string[]): PodDiagnostics | null {
 export function podsAreStale(
   lockText: unknown,
   manifestText: unknown,
+  dir = 'ios/',
 ): { noPods?: boolean; stale: boolean; reason?: string } {
   const lock = normalize(lockText);
   const manifest = normalize(manifestText);
   if (lock === null && manifest === null) return { noPods: true, stale: false };
   if (lock === null) {
-    return { stale: true, reason: 'ios/Podfile.lock is missing but ios/Pods exists' };
+    return { stale: true, reason: `${dir}Podfile.lock is missing but ${dir}Pods exists` };
   }
   if (manifest === null) {
-    return { stale: true, reason: 'ios/Pods/Manifest.lock is missing (pods have never been installed here)' };
+    return { stale: true, reason: `${dir}Pods/Manifest.lock is missing (pods have never been installed here)` };
   }
   if (lock !== manifest) {
-    return { stale: true, reason: 'ios/Podfile.lock and ios/Pods/Manifest.lock differ' };
+    return { stale: true, reason: `${dir}Podfile.lock and ${dir}Pods/Manifest.lock differ` };
   }
   return { stale: false };
 }
@@ -126,11 +127,14 @@ export function readPodState(
   hasPodfile: boolean;
   lockText: string | null;
   manifestText: string | null;
+  dir: string;
 } {
+  const rel = relative(root, directory);
   return {
     hasPodfile: existsSync(join(directory, 'Podfile')),
     lockText: readOrNull(join(directory, 'Podfile.lock')),
     manifestText: readOrNull(join(directory, 'Pods', 'Manifest.lock')),
+    dir: rel ? `${rel}/` : '',
   };
 }
 
@@ -545,7 +549,7 @@ export async function runPodInstall(
     return {
       failed: true,
       code: DEPS_ERROR,
-      reason: `No ios/ directory in ${root}, so there is nothing to pod install.`,
+      reason: `No ${relative(root, iosDir) || '.'}/ directory in ${root}, so there is nothing to pod install.`,
       remedy: 'Run `stim ios` on a project with native iOS sources, or let prebuild generate them.',
       lastLines: [] as string[],
     };

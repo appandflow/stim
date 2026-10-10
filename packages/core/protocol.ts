@@ -881,6 +881,7 @@ export interface BuildStartParams {
   platform: 'ios' | 'android' | 'macos';
   configuration?: string | null;
   scheme?: string | null;
+  iosProjectPath?: string | null;
   runtime?: string | null;
   fingerprint: string | null;
   native?:

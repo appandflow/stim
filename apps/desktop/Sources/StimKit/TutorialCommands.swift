@@ -1,7 +1,7 @@
 import Foundation
 
 public func tutorialCommands(
-  _ lines: [String], tourPath: String?, repository: String?, stateDir: String?, machine: String?, udid: String? = nil,
+  _ lines: [String], tourPath: String?, repository: String?, stateDir: String?, udid: String? = nil,
   second: String? = nil
 ) -> String {
   let base = repository ?? "~/stim-tutorial"
@@ -9,13 +9,13 @@ public func tutorialCommands(
     lines.joined(separator: "\n"),
     [
       "base": base, "tour": tourPath ?? "<first worktree>",
-      "stateDir": stateDir ?? "<agentDevice.stateDir>", "machine": machine ?? "<approved machine>",
+      "stateDir": stateDir ?? "<agentDevice.stateDir>",
       "udid": udid ?? "<ios.udid>", "second": second ?? "<second worktree>",
     ], shellDoubleQuotedValue)
 }
 
 public func tutorialAsk(
-  _ template: String, tourPath: String?, repository: String?, machine: String?, second: String? = nil,
+  _ template: String, tourPath: String?, repository: String?, second: String? = nil,
   existing: Set<String>? = nil
 ) -> String {
   let base = repository ?? "~/stim-tutorial"
@@ -24,13 +24,13 @@ public func tutorialAsk(
   return fillTutorial(
     template,
     [
-      "base": base, "tour": tourPath ?? "the first worktree", "machine": machine ?? "my approved Mac",
+      "base": base, "tour": tourPath ?? "the first worktree",
       "worktrees": worktrees.isEmpty ? "(there are none, so there is nothing to remove)" : worktrees,
     ], { $0 })
 }
 
 private func fillTutorial(_ source: String, _ values: [String: String], _ format: (String) -> String) -> String {
-  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|second|worktrees|stateDir|machine|udid)\}"#)
+  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|second|worktrees|stateDir|udid)\}"#)
   var result = source
   for match in pattern.matches(in: source, range: NSRange(source.startIndex..., in: source)).reversed() {
     let key = String(source[Range(match.range(at: 1), in: source)!])

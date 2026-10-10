@@ -23,7 +23,7 @@ interface ProjectMatch {
   ownedRoots?: readonly string[];
   platforms(settings: SettingsObject): ProjectPlatform[];
   android?(): Promise<AndroidProject>;
-  ios?(): Promise<IosProject>;
+  ios?(settings: SettingsObject): Promise<IosProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
   doctor?(): Promise<ProjectDoctor>;
@@ -39,7 +39,9 @@ export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
   selectAndroid(root: string): { id: string; load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
-  selectIos(root: string): { id: string; load: () => Promise<IosProject> } | { problem: ProjectProblem };
+  selectIos(
+    root: string,
+  ): { id: string; load: (settings: SettingsObject) => Promise<IosProject> } | { problem: ProjectProblem };
   selectMacos(root: string): { load: () => Promise<MacosProject> } | { problem: ProjectProblem };
   selectWeb(root: string): { load: () => Promise<WebProject> } | { problem: ProjectProblem };
   selectDoctor(

@@ -11,13 +11,17 @@ import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import { androidRequirements, androidToolchain, iosToolchain } from '../offload/toolchain.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
+import { resolveIosProjectDir } from '../workspace/settings.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
 
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
     inspect: reactNativeDoctorFindings,
-    async inspectAsync({ options: { platform } }) {
-      const parity = await detectFingerprintParity(root, { platform });
+    async inspectAsync({ options: { platform }, settings }) {
+      const parity = await detectFingerprintParity(root, {
+        platform,
+        iosProjectPath: resolveIosProjectDir(settings, root).relative,
+      });
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
       return [parity, linkedGit].filter((finding) => finding !== null);
     },

@@ -48,6 +48,8 @@ import {
   resolveEasCliBin,
 } from '../engine/remote-cache.ts';
 import {
+  DEFAULT_IOS_PROJECT_PATH,
+  resolveIosProjectDir,
   iosSimSlimProfileSetting,
   projectSettingsContext,
   remoteAndroidSetting,
@@ -160,8 +162,8 @@ function brokenPodLinks(podsRoot: string): string[] {
   }
 }
 
-function hasIosWarmOutput(root: string): boolean {
-  if (existsSync(join(root, 'ios', 'build'))) return true;
+function hasIosWarmOutput(root: string, iosRoot: string): boolean {
+  if (existsSync(join(iosRoot, 'build'))) return true;
   const derivedData = workspaceDerivedData(root);
   if (existsSync(join(derivedData, 'Build', 'Products'))) return true;
   try {
@@ -307,6 +309,7 @@ export function checkMainCheckout(
     linkedWorktrees = undefined,
     platform,
     localIos = platform !== 'android',
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
@@ -314,6 +317,7 @@ export function checkMainCheckout(
     linkedWorktrees?: boolean;
     platform?: DoctorPlatform;
     localIos?: boolean;
+    iosProjectPath?: string;
   } = {},
 ): Finding[] {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
@@ -347,9 +351,10 @@ export function checkMainCheckout(
     }
   }
 
-  const podfileLock = join(mainRoot, 'ios', 'Podfile.lock');
-  const podManifest = join(mainRoot, 'ios', 'Pods', 'Manifest.lock');
-  const podsRoot = join(mainRoot, 'ios', 'Pods');
+  const iosRoot = join(mainRoot, iosProjectPath);
+  const podfileLock = join(iosRoot, 'Podfile.lock');
+  const podManifest = join(iosRoot, 'Pods', 'Manifest.lock');
+  const podsRoot = join(iosRoot, 'Pods');
   if (localIos && existsSync(podfileLock)) {
     let podsState: 'missing' | 'stale' | null = null;
     if (!existsSync(podManifest)) podsState = 'missing';
@@ -361,7 +366,6 @@ export function checkMainCheckout(
       }
     }
     if (podsState) {
-      const iosRoot = join(mainRoot, 'ios');
       const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
       findings.push(
         finding(
@@ -375,7 +379,6 @@ export function checkMainCheckout(
 
     const broken = brokenPods === undefined && existsSync(podsRoot) ? brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
-      const iosRoot = join(mainRoot, 'ios');
       const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
       findings.push(
         finding(
@@ -389,7 +392,7 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    localIos && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
+    localIos && existsSync(iosRoot) && !hasIosWarmOutput(mainRoot, iosRoot) ? 'iOS' : null,
     platform !== 'ios' &&
     existsSync(join(mainRoot, 'android')) &&
     !existsSync(join(mainRoot, 'android', 'build')) &&
@@ -1055,8 +1058,9 @@ export function reactNativeDoctorFindings({
   const dynamicConfig = appConfig
     ? null
     : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
-  const podfileProperties = readJsonObject(join(projectRoot, 'ios', 'Podfile.properties.json'));
-  const podfile = read(join('ios', 'Podfile'));
+  const iosProject = resolveIosProjectDir(projectSettings, projectRoot);
+  const podfileProperties = readJsonObject(join(iosProject.dir, 'Podfile.properties.json'));
+  const podfile = read(relative(projectRoot, join(iosProject.dir, 'Podfile')));
   const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
 
   const isExpo = detectIsExpo(projectRoot);
@@ -1108,9 +1112,9 @@ export function reactNativeDoctorFindings({
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
-    ...checkMainCheckout(projectRoot, { platform, localIos }),
-    ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
-    ...checkStorageLayout(projectRoot, { platform, host, scope: 'native' }),
+    ...checkMainCheckout(projectRoot, { platform, localIos, iosProjectPath: iosProject.relative }),
+    ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot), iosProject.relative) : []),
+    ...checkStorageLayout(projectRoot, { platform, host, scope: 'native', iosProjectPath: iosProject.relative }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
@@ -1351,11 +1355,13 @@ export async function detectFingerprintParity(
     differ = expoFingerprint.diffFingerprints,
     dirtyFiles = dirtyFingerprintFiles,
     platform: selectedPlatform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
     dirtyFiles?: (root: string) => string[];
     platform?: DoctorPlatform;
+    iosProjectPath?: string;
   } = {},
 ): Promise<Finding | null> {
   const exec = getExecutor();
@@ -1369,7 +1375,11 @@ export async function detectFingerprintParity(
 
   const platform =
     selectedPlatform ??
-    (existsSync(join(projectRoot, 'ios')) ? 'ios' : existsSync(join(projectRoot, 'android')) ? 'android' : undefined);
+    (existsSync(join(projectRoot, iosProjectPath))
+      ? 'ios'
+      : existsSync(join(projectRoot, 'android'))
+        ? 'android'
+        : undefined);
 
   let base: string;
   try {
@@ -1387,8 +1397,8 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const project = await fingerprintProject(projectRoot, { platform, createFingerprint });
-    const clean = await fingerprintProject(worktree, { platform, createFingerprint });
+    const project = await fingerprintProject(projectRoot, { platform, iosProjectPath, createFingerprint });
+    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({

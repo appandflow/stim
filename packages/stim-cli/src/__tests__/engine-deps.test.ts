@@ -66,12 +66,29 @@ describe('podsAreStale', () => {
   });
 });
 
+describe('readPodState with ios.projectPath', () => {
+  test('reads the pod files beside a project in the app directory and names them without ios/', () => {
+    writeFileSync(join(root, 'Podfile'), "platform :ios, '15.1'\n");
+    writeFileSync(join(root, 'Podfile.lock'), LOCK);
+    const state = readPodState(root, root);
+    expect(state).toEqual({ hasPodfile: true, lockText: LOCK, manifestText: null, dir: '' });
+    expect(podsAreStale(state.lockText, state.manifestText, state.dir).reason).toBe(
+      'Pods/Manifest.lock is missing (pods have never been installed here)',
+    );
+  });
+});
+
 describe('readPodState', () => {
   test.each(['ios', '.'])('reports the Podfile and locks in %s with absent files as null', (relative) => {
     const directory = join(root, relative);
     mkdirSync(directory, { recursive: true });
     const selected = relative === '.' ? directory : undefined;
-    expect(readPodState(root, selected)).toEqual({ hasPodfile: false, lockText: null, manifestText: null });
+    expect(readPodState(root, selected)).toEqual({
+      hasPodfile: false,
+      lockText: null,
+      manifestText: null,
+      dir: relative === '.' ? '' : 'ios/',
+    });
 
     writeFileSync(join(directory, 'Podfile'), "platform :ios, '15.1'\n");
     writeFileSync(join(directory, 'Podfile.lock'), LOCK);

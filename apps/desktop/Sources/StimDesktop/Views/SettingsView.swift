@@ -14,9 +14,14 @@ struct SettingsView: View {
   @AppStorage("settingsScope") private var scope = SettingScope.machine.rawValue
   private let machine: MachineSettingsStore
   private let buildMachines: BuildMachinesModel
+  private let actions: ActionCenter
 
-  init(cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel) {
+  init(
+    cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel,
+    actions: ActionCenter
+  ) {
     self.store = store
+    self.actions = actions
     self.machine = machine
     self.buildMachines = buildMachines
     _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
@@ -32,7 +37,7 @@ struct SettingsView: View {
           .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
           .tag("phones")
       }
-      BuildMachinesView(model: buildMachines, store: store, workspace: workspace)
+      BuildMachinesView(model: buildMachines, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Macs", systemImage: "hammer") }
         .tag("build-machines")
       stimSettings

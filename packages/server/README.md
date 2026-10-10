@@ -1119,7 +1119,9 @@ methods need that approval, not `read`:
   it does not run as a `stim-server service` and so cannot update itself),
   `acceptsClientBuilds`, `running` (the update in progress, with its `state`,
   `missing` package bytes and the last lines of its `log`) and `last` (how the
-  label's last `service update` ended, whoever ran it).
+  label's last `service update` ended, whoever ran it, or how the update this
+  server started ended when that is newer, such as one the update lock refused,
+  with the last line of its log).
 - `server.update.start` takes `{ "release": "<version>" }`, an exact version
   that `stim-server service update --release` installs, or
   `{ "packages": [{ "name", "size", "sha256" }] }`, at most 8 `.tgz` packages
