@@ -35,8 +35,10 @@ struct TutorialPanel: View {
           .font(.stim(.caption)).foregroundStyle(Palette.secondary).monospacedDigit()
       }
       .padding([.horizontal, .top], Space.xl)
+      TutorialTrack(steps: steps, progress: snapshot.steps)
+        .padding(.horizontal, Space.xl)
+        .padding(.vertical, Space.md)
       illustration
-        .padding(.top, Space.md)
         .padding(.horizontal, Space.lg)
         .padding(.bottom, Space.md)
       Divider()
