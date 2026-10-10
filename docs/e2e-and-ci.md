@@ -275,9 +275,8 @@ PATH).
   `scripts/ci`, the action or the workflow. A change to the other packages or
   to the lockfile does not start it on push; a pull request label or dispatch
   runs it on demand.
-  Every job uses a standard runner; larger runners are billed per minute even
-  on public repositories. The only larger-runner label in the workflows is the
-  dispatch-only `ga-large` choice in `e2e-native.yml`.
+  No workflow uses a larger runner, because larger runners are billed per minute
+  even on public repositories.
 
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
