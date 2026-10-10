@@ -1,5 +1,6 @@
 import {
   mkdtempSync,
+  realpathSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -407,6 +408,21 @@ test('a Gradle root outside the app fingerprints its build scripts by name, not 
       { type: 'file', filePath: '../../gradle.properties', reasons: ['android.gradleRoot'] },
       { type: 'dir', filePath: '../../gradle', reasons: ['android.gradleRoot'] },
     ],
+  });
+});
+
+test('a module under android/ other than app keeps its build outputs out of the fingerprint', () => {
+  const app = realpathSync(root);
+  const layout = {
+    gradleRoot: join(app, 'android'),
+    gradleRootRelative: 'android',
+    module: ':mobile',
+    moduleDir: join(app, 'android', 'mobile'),
+    custom: true,
+  };
+  expect(androidProjectFingerprintOptions(app, layout, () => false)).toEqual({
+    extraSources: [],
+    ignorePaths: ['android/mobile/build/**/*', 'android/mobile/.cxx/**/*', 'android/mobile/.gradle/**/*'],
   });
 });
 

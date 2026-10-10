@@ -1041,9 +1041,9 @@ export function reactNativeDoctorFindings({
   settings: projectSettings,
   optimizations,
   options,
-  repoRoot,
+  repoRoot: repositoryRoot,
 }: DoctorContext): Finding[] {
-  const androidLayout = resolveAndroidLayout(projectSettings, projectRoot, repoRoot ?? projectRoot);
+  const androidLayout = resolveAndroidLayout(projectSettings, projectRoot, repositoryRoot ?? projectRoot);
   const {
     readFile = readFileSync,
     xcodeMajor = null,

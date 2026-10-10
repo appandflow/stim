@@ -143,7 +143,11 @@ export function androidProjectFingerprintOptions(
     appRoot = realpathSync(projectRoot);
   } catch {}
   const fromApp = relative(appRoot, layout.moduleDir).split(sep).join('/');
-  if (fromApp === 'android' || fromApp.startsWith('android/')) return { extraSources };
+  if (fromApp === 'android' || fromApp.startsWith('android/')) {
+    return fromApp === 'android/app'
+      ? { extraSources }
+      : { extraSources, ignorePaths: ['build', '.cxx', '.gradle'].map((dir) => `${fromApp}/${dir}/**/*`) };
+  }
   const moduleRel = posix.join(layout.gradleRootRelative, ...layout.module.split(':').filter(Boolean));
   extraSources.push({ type: 'dir', filePath: moduleRel, reasons: ['android.module'] });
   return {
