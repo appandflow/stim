@@ -9,6 +9,17 @@ interface AppIds {
   androidPackage: string | null;
 }
 
+const ANDROID_PACKAGE_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+
+function checkedAndroidPackage(id: string | null, source: string): string | null {
+  if (id !== null && !ANDROID_PACKAGE_NAME.test(id)) {
+    throw new Error(
+      `Invalid Android package ${JSON.stringify(id)} in ${source}. Expected dot-separated letters, digits and underscores, such as com.example.app.`,
+    );
+  }
+  return id;
+}
+
 function configString(config: unknown, platform: 'ios' | 'android', key: string): string | null {
   if (!config || typeof config !== 'object') return null;
   const expoField = (config as { expo?: unknown }).expo;
@@ -47,7 +58,9 @@ export function detectAppIds(
   const ids = idsFromConfig(projectRoot);
   return {
     bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
-    androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(androidModuleDir),
+    androidPackage:
+      checkedAndroidPackage(ids.androidPackage, 'the Expo config android.package') ??
+      detectAndroidPackageFromGradle(androidModuleDir),
   };
 }
 
@@ -116,9 +129,9 @@ function detectAndroidPackageFromGradle(moduleDir: string): string | null {
   }
   const ns = text.match(/namespace\s*=?\s*["']([^"']+)["']/);
   const nsId = ns?.[1];
-  if (nsId) return nsId;
+  if (nsId) return checkedAndroidPackage(nsId, gradle);
   const app = text.match(/applicationId\s*=?\s*["']([^"']+)["']/);
   const appId = app?.[1];
-  if (appId) return appId;
+  if (appId) return checkedAndroidPackage(appId, gradle);
   return null;
 }

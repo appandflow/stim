@@ -1,7 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   ANDROID_BUNDLE_NAME,
   androidBundleCommand,
@@ -22,7 +31,7 @@ import {
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../devices/android.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
-import { androidLayoutSetting } from '../workspace/settings.ts';
+import { androidLayoutSetting, defaultAndroidLayout } from '../workspace/settings.ts';
 
 describe('hermesEnabledFromGradleProperties', () => {
   test('default is enabled: no file, no key, an unrelated file', () => {
@@ -248,6 +257,45 @@ describe('keystore resolution', () => {
       join('/w/app', 'android', 'app', 'release.jks'),
     );
     expect(resolveKeystore('/w/app', { android: { keystore: '' } }).path).toBe(debugKeystore);
+  });
+
+  describe('a keystore from the committed .stim.json', () => {
+    let repo: string;
+    let outside: string;
+    beforeEach(() => {
+      repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ks-repo-')));
+      outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ks-out-')));
+      mkdirSync(join(repo, 'keys'));
+      writeFileSync(join(repo, 'keys', 'release.jks'), 'k');
+      writeFileSync(join(outside, 'release.jks'), 'k');
+      symlinkSync(join(outside, 'release.jks'), join(repo, 'keys', 'link.jks'));
+    });
+    afterEach(() => {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    });
+    const resolve = (keystore: string) =>
+      resolveKeystore(repo, { android: { keystore } }, defaultAndroidLayout(repo), repo).path;
+
+    test('a path inside the repository is accepted, relative or absolute', () => {
+      expect(resolve('keys/release.jks')).toBe(join(repo, 'keys', 'release.jks'));
+      expect(resolve(join(repo, 'keys', 'release.jks'))).toBe(join(repo, 'keys', 'release.jks'));
+    });
+
+    test('an absolute path outside the repository, a ../ escape and a symlink out are refused', () => {
+      for (const escape of [
+        join(outside, 'release.jks'),
+        '../' + basename(outside) + '/release.jks',
+        'keys/link.jks',
+      ]) {
+        expect(() => resolve(escape)).toThrow(/Could not use android\.keystore .* from the committed \.stim\.json/);
+      }
+    });
+
+    test('the same absolute path is kept as given when the value is not from the committed layer', () => {
+      const path = join(outside, 'release.jks');
+      expect(resolveKeystore(repo, { android: { keystore: path } }).path).toBe(path);
+    });
   });
 
   test('a literal android.keystorePassword reaches apksigner through its environment, and a reference passes through', () => {

@@ -364,6 +364,23 @@ test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.
   }
 });
 
+test('detectAndroidPackage refuses an id that is not a dotted Android package name', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bad-package-')));
+  try {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
+    const gradle = join(root, 'android', 'app', 'build.gradle');
+    writeFileSync(gradle, 'android {\n  defaultConfig {\n    applicationId "com.x;reboot"\n  }\n}\n');
+    expect(() => detectAndroidPackage(root)).toThrow(/Invalid Android package "com\.x;reboot" in .*build\.gradle/);
+    writeFileSync(gradle, 'android {\n  namespace "com.example_1.app"\n}\n');
+    expect(detectAndroidPackage(root)).toBe('com.example_1.app');
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: "com.x'; reboot; '" } } }));
+    expect(() => detectAndroidPackage(root)).toThrow(/Invalid Android package .* in the Expo config android\.package/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 describe.skipIf(process.platform === 'win32')(
   'app ids from a dynamic app config (POSIX executable stub; skipped on win32)',
   { timeout: 30_000 },
