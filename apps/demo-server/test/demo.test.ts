@@ -134,14 +134,7 @@ describe('the phone protocol', () => {
   });
 
   it('serves the stage, git chip and app presence stim derives, which the phone renders without deriving', () => {
-    const { environments } = new DemoMachine(fixtures, 'Demo Mac', TOKEN).status() as unknown as {
-      environments: {
-        stage?: unknown;
-        worktree?: { gitChip?: unknown };
-        ios?: { appPresence?: unknown };
-        android?: { appPresence?: unknown };
-      }[];
-    };
+    const { environments } = new DemoMachine(fixtures, 'Demo Mac', TOKEN).status();
     expect(environments.length).toBeGreaterThan(0);
     for (const env of environments) {
       expect(env.stage).toMatchObject({ kind: expect.any(String) });
