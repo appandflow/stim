@@ -107,8 +107,8 @@ a tiny Expo app, and shows:
 When the tutorial ends, the panel shows a completion card: the time from clone to archive, the first build, the second build's cache hit and the time it saved, the two worktrees, the agent actions you can replay, and the space Delete freed, each only when Stim measured it. Each optional step you finished is a badge; a skipped one stays dashed.
 
 Your agent checks each change on its simulator with agent-device, following
-`stim guide tutorial run`: it taps **Tap me**, toggles **Dark accent**, types a
-name and takes a screenshot, so Desktop records its actions for the Agent
+`stim guide tutorial run`: it taps **Tap me**, toggles **Dark accent**, picks a
+**Size** and takes a screenshot, so Desktop records its actions for the Agent
 Actions and Replay step.
 
 When agent-device is not installed, **Make a Change** shows a card with

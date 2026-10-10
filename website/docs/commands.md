@@ -1751,6 +1751,14 @@ parked time; cache scopes omit hosted sessions. JSON adds
 use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
 reconciles the emptied ledger.
 
+Unscoped `stim gc` also lists stale entries of the machine EAS session ledger
+(`~/.stim/machine/eas/sessions.json`): entries whose id is not a UUID and whose
+absolute workspace root is missing on a mounted volume, such as ids written by a
+test fixture. A valid id, an existing root, or a root on an unmounted volume
+keeps the entry. `stim gc --delete` re-checks each entry and removes it under
+the ledger lock without contacting EAS. JSON adds `sections.staleEasLedgerEntries`
+entries with `id` and `workspaceRoot`.
+
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`
 prints, for example:
