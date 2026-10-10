@@ -46,6 +46,7 @@ import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { writeConfigSetting } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
+import { iosProjectDirSetting, type IosProjectDir } from '../workspace/settings.ts';
 
 /** One entry of the source transfer: a visible file of the checkout, or a native build's file or directory input. */
 export interface ManifestEntry {
@@ -75,6 +76,7 @@ export interface WorkerJob {
   isExpo: boolean;
   configuration: string | null;
   scheme: string | null;
+  iosProjectPath?: string | null;
   runtime: string | null;
   android: AndroidBuildOptions | null;
   expectedFingerprint: string;
@@ -401,7 +403,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     } catch (error) {
       return failed('source-mismatch', (error as Error).message);
     }
-    const refused = await time('fingerprintMs', () => nativeIdentityRefusal(job, root, selected.load));
+    const refused = await time('fingerprintMs', () => nativeIdentityRefusal(job, root, () => selected.load({})));
     if (refused) return failed('identity-mismatch', refused);
     compiled = await compileNativeIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
@@ -430,7 +432,15 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     }
 
     const platform = job.platform;
-    const initial = await time('fingerprintMs', () => fingerprintProject(root, { platform }));
+    let iosProject: IosProjectDir;
+    try {
+      iosProject = iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root);
+    } catch (error) {
+      return failed('bad-request', (error as Error).message);
+    }
+    const initial = await time('fingerprintMs', () =>
+      fingerprintProject(root, { platform, iosProjectPath: iosProject.relative }),
+    );
     if (!initial) return failed('no-fingerprint', 'The remote Mac could not fingerprint the project.');
     const plan = planPrebuild(root, platform, {
       isExpo: job.isExpo,
@@ -449,12 +459,12 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       mutations.push('prebuild');
     }
     if (platform === 'ios') {
-      const podState = readPodState(root);
-      const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText));
+      const podState = readPodState(root, iosProject.dir);
+      const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
         note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
         const result = await time('podsMs', () =>
-          runPodInstall(root, log, { onHeartbeat: (line) => note('pods', line) }),
+          runPodInstall(root, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
         if (result?.failed) return failed('pods-failed', result.reason ?? 'pod install failed.');
         mutations.push('pods');
@@ -463,7 +473,12 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     fingerprint = initial.hash;
     if (mutations.length) {
       const after = await time('fingerprintMs', () =>
-        refingerprintAfterMutation({ projectRoot: root, platform, previousHash: initial.hash }),
+        refingerprintAfterMutation({
+          projectRoot: root,
+          platform,
+          previousHash: initial.hash,
+          iosProjectPath: iosProject.relative,
+        }),
       );
       if (!after) return failed('no-fingerprint', `No fingerprint after ${mutations.join(', ')}.`);
       fingerprint = after.hash;
@@ -480,7 +495,12 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       platform === 'android' ? await compileAndroid(job, root, log, time) : await compileIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     const settled = await time('fingerprintMs', () =>
-      refingerprintAfterMutation({ projectRoot: root, platform, previousHash: fingerprint }),
+      refingerprintAfterMutation({
+        projectRoot: root,
+        platform,
+        previousHash: fingerprint,
+        iosProjectPath: iosProject.relative,
+      }),
     );
     if (!settled || settled.moved) return failed('fingerprint-moved', 'The inputs changed during the build there.');
   }
@@ -691,6 +711,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   const built = await time('buildMs', () =>
     buildIos({
       root,
+      iosDir: iosProjectDirSetting({ ios: { projectPath: job.iosProjectPath ?? undefined } }, root).dir,
       destination: target,
       logWriter: log,
       ...(job.scheme ? { scheme: job.scheme } : {}),

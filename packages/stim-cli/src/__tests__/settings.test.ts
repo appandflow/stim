@@ -11,6 +11,8 @@ import {
   androidDataPartitionSizeGbSettingError,
   iosLanHostSetting,
   iosLanHostSettingError,
+  iosProjectDirSetting,
+  iosProjectDirSettingError,
   iosSigningIdentitySetting,
   iosSigningIdentitySettingError,
   iosSigningIdentitySha1Setting,
@@ -421,6 +423,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
   'ios.scheme': { valid: 'RNTester', invalid: ['RNTester'], expected: 'a string' },
   'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },
+  'ios.projectPath': { valid: '.', invalid: {}, expected: 'a string path' },
   'ios.simslimProfile': { valid: '.simslim/dev.json', invalid: {}, expected: 'a string path' },
   'ios.signingIdentity': { valid: 'Apple Development: Jane', invalid: [], expected: 'a string' },
   'ios.signingIdentitySha1': { valid: 'A'.repeat(40), invalid: 42, expected: 'a string' },
@@ -675,6 +678,41 @@ describe('metroCommandSettingError', () => {
   test('refuses an empty argv or a blank program', () => {
     expect(metroCommandSettingError({ metro: { command: [] } })).toMatch(/non-empty array/);
     expect(metroCommandSettingError({ metro: { command: [' ', '{port}'] } })).toMatch(/non-empty array/);
+  });
+});
+
+describe('iosProjectDirSetting', () => {
+  let app: string;
+  beforeEach(() => {
+    app = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ios-path-')));
+  });
+  afterEach(() => {
+    rmSync(app, { recursive: true, force: true });
+  });
+
+  test('defaults to ios/ without requiring it to exist yet', () => {
+    expect(iosProjectDirSetting({}, app)).toEqual({ dir: join(app, 'ios'), relative: 'ios', custom: false });
+    for (const projectPath of ['ios', 'ios/', './ios']) {
+      expect(iosProjectDirSetting({ ios: { projectPath } }, app)).toEqual({
+        dir: join(app, 'ios'),
+        relative: 'ios',
+        custom: false,
+      });
+    }
+  });
+
+  test('resolves the app directory itself when it holds the Xcode project', () => {
+    mkdirSync(join(app, 'RNTesterPods.xcworkspace'));
+    expect(iosProjectDirSetting({ ios: { projectPath: '.' } }, app)).toEqual({ dir: app, relative: '.', custom: true });
+  });
+
+  test('refuses a path outside the app, an absolute path, and a directory with no Xcode project', () => {
+    mkdirSync(join(app, 'apple'));
+    expect(iosProjectDirSettingError({ ios: { projectPath: '..' } }, app)).toMatch(/escapes the app directory/);
+    expect(iosProjectDirSettingError({ ios: { projectPath: app } }, app)).toMatch(/relative to the app directory/);
+    expect(iosProjectDirSettingError({ ios: { projectPath: 'apple' } }, app)).toMatch(
+      /no \.xcworkspace or \.xcodeproj/,
+    );
   });
 });
 

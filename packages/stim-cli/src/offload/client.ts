@@ -810,6 +810,7 @@ export type BuildRequest =
       runtime: string;
       configuration: string | null;
       scheme: string | null;
+      iosProjectPath?: string;
       isExpo: boolean;
       optimizations: unknown;
     }
@@ -1094,6 +1095,7 @@ export async function offloadBuild({
           : {
               configuration: request.platform === 'ios' ? request.configuration : null,
               scheme: request.platform === 'ios' ? request.scheme : null,
+              iosProjectPath: request.platform === 'ios' ? (request.iosProjectPath ?? null) : null,
               runtime: request.platform === 'ios' ? request.runtime : null,
               packageName: packageName(join(identity.repoRoot, identity.project)),
               isExpo: request.isExpo,

@@ -6,17 +6,20 @@ import { sharedBuildCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { filesystemDevice, temporaryRoot } from '../temporary.ts';
 import { repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
 import { apkOutputsDir } from '../integrations/react-native-build.ts';
+import { DEFAULT_IOS_PROJECT_PATH } from '../workspace/settings.ts';
 
 export function checkStorageLayout(
   projectRoot: string,
   {
     platform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
     host = process.platform,
     device = filesystemDevice,
     stagingRoot = temporaryRoot,
     scope,
   }: {
     platform?: DoctorPlatform;
+    iosProjectPath?: string;
     host?: NodeJS.Platform;
     device?: typeof filesystemDevice;
     stagingRoot?: typeof temporaryRoot;
@@ -53,7 +56,7 @@ export function checkStorageLayout(
     const cacheFix =
       'Place STIM_BUILD_CACHE / machine caches.buildCache on the build-output volume, ' +
       'or accept the full-copy cost of keeping the cache on a separate volume.';
-    const localIos = platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, 'ios')));
+    const localIos = platform === 'ios' || (platform !== 'android' && existsSync(join(projectRoot, iosProjectPath)));
     if (scope !== 'shared' && localIos && host === 'darwin') {
       const output = join(workspaceDerivedData(projectRoot), 'Build', 'Products');
       check('iOS build-cache storage', [output, cache], cacheFix);

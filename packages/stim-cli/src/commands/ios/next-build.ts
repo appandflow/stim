@@ -1,4 +1,5 @@
 import { NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
+import { projectSettingsContext } from '../../workspace/settings.ts';
 import { unsupportedPlan } from '../../integrations/project-plan.ts';
 import { planFlagRefusal, printPlan, refusePlan } from '../build-plan.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
@@ -22,9 +23,11 @@ export async function planIos(opts: IosCommandOptions, d: IosDeps): Promise<void
   if (!root) return refusePlan(NO_PROJECT_REFUSAL, json);
   const selected = d.projectRegistry.selectIos(root);
   if ('problem' in selected) return refusePlan({ code: 'STIM_NO_PROJECT', ...selected.problem }, json);
-  const project = await selected.load();
+  const context = projectSettingsContext(root, d);
+  const settings = d.resolveSettings(context);
+  const project = await selected.load(settings);
   if (!project.plan) return refusePlan(unsupportedPlan('ios'), json);
-  const result = await project.plan(opts);
+  const result = await project.plan(opts, { context, settings });
   if ('platform' in result) printPlan(result, json);
   else refusePlan(result.refusal, json, result.lines);
 }

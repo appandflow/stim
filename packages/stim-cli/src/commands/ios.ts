@@ -81,6 +81,7 @@ import {
   resolveIosWait,
   createIosDeviceWaitRun,
   deviceModelRefusal,
+  iosProjectPathError,
   isReleaseConfiguration,
   ownedSimFailure,
   resolveIosBuildSetup,
@@ -392,7 +393,6 @@ async function runIos(
   const root = projectRoot;
   const selectedProject = d.projectRegistry.selectIos(root);
   if ('problem' in selectedProject) return refuseProject(selectedProject.problem);
-  const integration = await selectedProject.load();
 
   try {
     await d.ensureWorkspaceStorage(root, { note });
@@ -535,6 +535,7 @@ async function runIos(
     iosSigningIdentitySettingError(settings),
     iosSigningIdentitySha1SettingError(settings),
     iosLanHostSettingError(settings),
+    iosProjectPathError(settings, root, () => d.detectIsExpo(root)),
   ]) {
     if (settingError) {
       return fail({
@@ -544,6 +545,7 @@ async function runIos(
       });
     }
   }
+  const integration = await selectedProject.load(settings);
 
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   builtConfiguration = configuration ?? 'Debug';
@@ -1057,6 +1059,7 @@ async function runIos(
       if (hostedTarget)
         return await finishHostedIosRun({
           target: hostedTarget,
+          projectBundleId: integration.bundleId,
           root,
           slot,
           d,

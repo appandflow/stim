@@ -23,6 +23,10 @@ import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 
+function unresolvedSettings(root: string) {
+  return { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} };
+}
+
 let root: string;
 let home: string;
 beforeEach(() => {
@@ -180,7 +184,7 @@ test.each([
         },
       }),
     );
-    expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({
+    expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
       refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('application platform') },
     });
   },
@@ -737,7 +741,7 @@ test('native planning refuses unresolved source closure without dependency prepa
       },
     }),
   );
-  const plan = await nativeXcodeIosProject(root).plan!({});
+  const plan = await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root));
   expect(plan).toMatchObject({
     refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('undeclared inputs') },
   });
@@ -764,14 +768,16 @@ test('stim ios, the build API and --plan share one native artifact key for the s
   const run = await identity(null);
   expect(run).toHaveProperty('key');
   expect(await identity(host)).toEqual(run);
-  expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({ cacheKey: (run as { key: string }).key });
+  expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
+    cacheKey: (run as { key: string }).key,
+  });
 });
 
 test('ios.scheme selects the scheme for native planning and the native doctor', async () => {
   writeNativeXcodeProject(root);
   write(join(root, '.stim.json'), JSON.stringify({ ios: { scheme: 'Missing' } }));
   setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
-  expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({
+  expect(await nativeXcodeIosProject(root).plan!({}, unresolvedSettings(root))).toMatchObject({
     refusal: { message: expect.stringContaining('"Missing"') },
   });
   const findings = nativeXcodeDoctor(root).inspect({
@@ -797,7 +803,7 @@ test('a native project removed after recipe selection refuses instead of escapin
 test('native planning validates the simulator model flags like stim ios does', async () => {
   writeNativeXcodeProject(root);
   setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
-  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' })).toMatchObject({
+  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' }, unresolvedSettings(root))).toMatchObject({
     refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--device-type') },
   });
 });

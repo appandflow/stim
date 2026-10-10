@@ -101,6 +101,7 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `ios.configuration`           | Xcode configuration, such as `Debug` or `Release`                                                                                 |
 | `ios.scheme`                  | Shared Xcode scheme to build when the workspace has several; `--scheme` overrides it                                              |
 | `ios.remote`                  | `proxy`, `eas`, an approved remote Mac, `auto` when this Mac is full or busy, or `local` to run here                              |
+| `ios.projectPath`             | Directory of a bare app's Xcode project and Podfile, relative to the app; default `ios`                                           |
 | `ios.simslimProfile`          | SimSlim profile for local iOS devices                                                                                             |
 | `ios.signingIdentity`         | Keychain identity used to re-seal a device build                                                                                  |
 | `ios.signingIdentitySha1`     | SHA-1 of that identity, when two share a name                                                                                     |

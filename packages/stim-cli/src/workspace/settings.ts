@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
@@ -324,6 +324,71 @@ export function androidAvdConfigSettingError(settings: unknown, projectPath: str
   }
 }
 
+export const DEFAULT_IOS_PROJECT_PATH = 'ios';
+
+export interface IosProjectDir {
+  dir: string;
+  relative: string;
+  custom: boolean;
+}
+
+export function iosProjectDirSetting(settings: unknown, appRoot: string): IosProjectDir {
+  const value = iosString(settings, 'projectPath');
+  if (
+    value === undefined ||
+    (typeof value === 'string' && normalize(value).replace(/[\\/]+$/, '') === DEFAULT_IOS_PROJECT_PATH)
+  ) {
+    return { dir: join(appRoot, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
+  }
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value !== value.trim() ||
+    /[\r\n\0]/.test(value) ||
+    isAbsolute(value)
+  ) {
+    throw new Error('Invalid ios.projectPath setting. Expected a directory path relative to the app directory.');
+  }
+  try {
+    const root = realpathSync(appRoot);
+    const candidate = resolve(root, value);
+    if (pathEscapesRoot(root, candidate)) throw new Error('path escapes the app directory');
+    const dir = realpathSync(candidate);
+    if (pathEscapesRoot(root, dir)) throw new Error('symlink target escapes the app directory');
+    if (!statSync(dir).isDirectory()) throw new Error('path is not a directory');
+    if (!readdirSync(dir).some((name) => name.endsWith('.xcworkspace') || name.endsWith('.xcodeproj'))) {
+      throw new Error('it holds no .xcworkspace or .xcodeproj');
+    }
+    return { dir, relative: relative(root, dir) || '.', custom: true };
+  } catch (error) {
+    throw new Error(`Could not use ios.projectPath ${value}: ${String((error as Error)?.message || error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export function iosProjectDirSettingError(settings: unknown, appRoot: string): string | null {
+  try {
+    iosProjectDirSetting(settings, appRoot);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
+
+const INVALID_IOS_PROJECT_DIR = '\0invalid ios.projectPath';
+
+export function resolveIosProjectDir(settings: SettingsObject | null, root: string): IosProjectDir {
+  if (settings === null) {
+    return { dir: join(root, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
+  }
+  try {
+    return iosProjectDirSetting(settings, root);
+  } catch {
+    return { dir: join(root, INVALID_IOS_PROJECT_DIR), relative: INVALID_IOS_PROJECT_DIR, custom: true };
+  }
+}
+
 export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string): string | null {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios) || !('simslimProfile' in settings.ios)) return null;
   const value = settings.ios.simslimProfile;
@@ -570,7 +635,12 @@ export function projectSettingsContext(
   return { projectPath: root, gitCommonDir: git.gitCommonDir(root), repoRoot: git.repoRoot(root) };
 }
 
-export function resolveProjectSettings(root: string): { context: ProjectSettingsContext; settings: SettingsObject } {
+export interface ResolvedProjectSettings {
+  context: ProjectSettingsContext;
+  settings: SettingsObject;
+}
+
+export function resolveProjectSettings(root: string): ResolvedProjectSettings {
   const context = projectSettingsContext(root);
   return { context, settings: resolveSettings(context) };
 }

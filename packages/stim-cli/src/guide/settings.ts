@@ -124,6 +124,19 @@ KEYS STIM READS
                         "auto" places on an approved Mac when this Mac is full or
                         busy. Unset runs here; "local" runs here even when a
                         lower layer says otherwise. See lifecycle hosted-ios.
+  ios.projectPath       directory under the app holding a bare React Native
+                        app's Xcode project and Podfile; default "ios". "."
+                        is the app directory itself (RNTester's layout).
+                        Detection, pod install, xcodebuild, the bundle id,
+                        doctor, worktree warm and remove, and remote builds
+                        all use it. A subdirectory is fingerprinted the way
+                        ios/ is; "." hashes every top-level entry except
+                        node_modules, Pods, build, android, .stim.json and
+                        anything git ignores, so a JS edit misses the build
+                        cache instead of risking a stale build. Workspace or committed scope. ios refuses
+                        with STIM_BAD_ARG a path that escapes the app or
+                        holds no .xcworkspace or .xcodeproj, and any value
+                        on an Expo app, whose prebuild writes ios/.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
