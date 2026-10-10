@@ -76,6 +76,7 @@ all architectures. Each result points to a separate owned copy retained until
 it. A build does not replace a running app's last build record or build log; it
 writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
 distribution archives or infer a web compilation pipeline.
+Use `buildCI` from `@stim-cli/ci` to export the app and diagnostics for CI artifacts.
 
 ## Run
 

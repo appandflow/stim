@@ -48,7 +48,8 @@ Build results retain an owned appPath (iOS), apkPath (Android) or bundle (macOS)
 inside this workspace until worktree removal. Later builds keep earlier copies.
 A build leaves a running app's last build record and build log untouched; it
 writes its own build-artifact-<platform>.ndjson. No distribution archive or web build
-pipeline is inferred.
+pipeline is inferred. Use @stim-cli/ci's buildCI to export a portable artifact and
+diagnostics for your CI provider.
 
 run returns { platform, facts }. iOS facts include udid; Android includes
 serial; both include bundleId, appPath, metroPort, cacheHit and launched.
