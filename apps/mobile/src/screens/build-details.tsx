@@ -141,13 +141,13 @@ function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string
   const spoken = [device, host ? t`Building on ${host}` : null, started].filter(Boolean).join(', ');
   const items = [
     device ? (
-      <Text variant="footnote" tone="secondary">
+      <Text key="device" variant="footnote" tone="secondary">
         {device}
       </Text>
     ) : null,
-    host ? <HostLabel host={host} color={theme.colors.secondary} variant="footnote" /> : null,
+    host ? <HostLabel key="host" host={host} color={theme.colors.secondary} variant="footnote" /> : null,
     started ? (
-      <Text variant="footnote" tone="secondary">
+      <Text key="started" variant="footnote" tone="secondary">
         {started}
       </Text>
     ) : null,
