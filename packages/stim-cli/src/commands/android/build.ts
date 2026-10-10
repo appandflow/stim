@@ -66,7 +66,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
     { settings, settingsContext, variant: options.variant ?? null, buildCache: options.buildCache !== false },
     { warn: phase, runtimeKind: integration.runtimeKind, variantProblem: integration.variantProblem },
   );
-  if (!plan.ok) throw Object.assign(new Error(plan.message), plan);
+  if (!plan.ok) throw Object.assign(new Error(plan.message), plan, { details: { lines: plan.lines } });
   const placement = resolveBuildPlacement(options.remoteBuild);
   if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
   if (options.abi !== undefined && !['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64', 'all'].includes(options.abi))
@@ -176,7 +176,9 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           },
         );
         if (!acquired.ok)
-          throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure);
+          throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure, {
+            details: acquired.failure.extra,
+          });
         artifact = acquired.artifact;
         if (runCancellationSignal()?.aborted)
           throw Object.assign(new Error('The Android build was cancelled.'), { code: 'STIM_CANCELLED' });
