@@ -242,11 +242,9 @@ interface StartCommandDeps {
 export interface SupervisorProcess extends TerminableChild {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   unref(): void;
-  /** On win32, the identity the supervisor wrote for itself; absent for a child this process spawned. */
   recordedIdentity?: ProcessRecord;
 }
 
-/** Whether `child` may be signalled: a stand-in for a recorded supervisor only while its recorded identity holds. */
 export function supervisorSignalable(
   child: Pick<SupervisorProcess, 'recordedIdentity'>,
   inspectIdentity: typeof inspectProcessIdentity = inspectProcessIdentity,
