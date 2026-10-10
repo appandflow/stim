@@ -342,7 +342,9 @@ dependencies {
   write(
     join(fixture, '.stim.json'),
     JSON.stringify({
-      android: { systemImage: process.env.STIM_QA_ANDROID_SYSTEM_IMAGE ?? 'system-images;android-34;google_apis;x86_64' },
+      android: {
+        systemImage: process.env.STIM_QA_ANDROID_SYSTEM_IMAGE ?? 'system-images;android-34;google_apis;x86_64',
+      },
       optimizations: { android: { compilerCache: 'none' } },
     }),
   );
