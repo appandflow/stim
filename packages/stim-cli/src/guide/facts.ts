@@ -1575,8 +1575,8 @@ RULES
   the estimate, with memorySource estimate.
 
   capacity.committedMb sums memoryMb; in a \`status --watch --json\` line each
-  figure is held on its own (see \`guide lifecycle\`), so the sum can differ
-  from committedMb. The memory budget plans before a boot
+  figure, including an environment's memoryMb, is held on its own (see
+  \`guide lifecycle\`), so the sums can differ from what they sum. The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
