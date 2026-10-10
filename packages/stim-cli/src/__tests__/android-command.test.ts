@@ -612,7 +612,7 @@ describe('adopted Android installs', () => {
             if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
             throw new Error(`Unexpected run: ${cmd}`);
           },
-          runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
+          runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
           runFile(file, args = []) {
             if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
             const cmd = [file, ...args].join(' ');
@@ -699,7 +699,7 @@ describe('adopted Android storage', () => {
           if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
           throw new Error(`Unexpected run: ${cmd}`);
         },
-        runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
+        runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
         runFile(file, args = []) {
           if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
           if (args.includes('list')) return 'package:com.example.app';
