@@ -195,7 +195,7 @@ ready only after that fresh review is clear. Merge only after all required CI
 checks pass; if CI fails, fix the branch, repeat the review, and wait for the
 new checks.
 
-The fresh reviewer recThe fresh reviewer records the outcome with labels. When the review is clear, it
+The fresh reviewer records the outcome with labels. When the review is clear, it
 adds `review: ai-approved`. When the diff has a change in one of these that no
 maintainer has approved, it adds `review: needs-human` and removes any
 `review: human-approved`:
@@ -224,7 +224,7 @@ gets a new fresh review. Merge, including with `gh stack merge`, only when
 every pull request involved has `review: ai-approved` and none has
 `review: needs-human`.
 
-s/desktop` or `apps/mobile` can share one issue, branch,
+Polish changes to `apps/desktop` or `apps/mobile` can share one issue, branch,
 review and CI run. A polish change alters only how an app looks or reads:
 layout, styles, copy, icons, animation. It does not change which commands the
 app runs, which Stim data it reads or how it decodes it, navigation,
