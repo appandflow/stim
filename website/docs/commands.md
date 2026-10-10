@@ -78,6 +78,14 @@ checkout without installed dependencies, it also reports fingerprint
 differences against a fresh worktree. The checkout is left untouched unless
 `--fix` is passed.
 
+Doctor never loads `fingerprint.config.js` or `fingerprint.config.cjs`: when
+either exists, it skips the fingerprint checks and reports that it did. It reads
+a project eas-cli's version from its `package.json`, and runs `eas whoami` only
+with an `eas` on `PATH` outside the repository. With dependencies installed,
+its fingerprint checks run the installed Expo packages, which evaluate a dynamic
+app config, as a build does. `worktree warm`, `start`, `ios`, and `android` run
+project code.
+
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. Each run in a React Native or
 Expo app is recorded per platform in Stim's state for this project, which also

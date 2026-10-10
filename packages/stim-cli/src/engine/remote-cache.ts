@@ -85,7 +85,7 @@ export interface EasAuthResult {
   viaToken?: boolean;
   source?: string;
   failed?: true;
-  code?: 'no-cli' | 'logged-out' | 'wrong-account';
+  code?: 'no-cli' | 'logged-out' | 'wrong-account' | 'project-cli';
   reason?: string;
   remedy?: string;
   owner?: string;

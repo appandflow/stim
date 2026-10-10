@@ -32,6 +32,11 @@ stim logs --errors
 stim stop
 ```
 
+`stim doctor` never loads `fingerprint.config.js` or runs an `eas` from the
+project tree. With dependencies installed, its fingerprint checks run the
+installed Expo packages, as a build does. `worktree warm`, `start`, `ios`, and
+`android` run project code.
+
 Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.

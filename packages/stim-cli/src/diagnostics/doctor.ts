@@ -14,7 +14,7 @@ import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo, isPackageResolvable } from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
@@ -643,6 +643,15 @@ export function checkEasAuth({
     );
   }
 
+  if (status.code === 'project-cli') {
+    return finding(
+      'note',
+      'Did not check the EAS session: the only eas-cli is in the project tree',
+      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
+      status.remedy ?? null,
+    );
+  }
+
   if (status.code === 'logged-out') {
     return finding(
       'cost',
@@ -691,9 +700,40 @@ export function checkConcurrency({
   );
 }
 
+function easCliOutsideRepository(projectRoot: string): string | null {
+  const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
+  if (!found) return null;
+  try {
+    const path = relative(realpathSync(repoRoot(projectRoot) ?? projectRoot), realpathSync(found));
+    return path.startsWith('..') || isAbsolute(path) ? found : null;
+  } catch {
+    return null;
+  }
+}
+
 function readProjectEasCliVersion(projectRoot: string): string | null {
-  const bin = resolveEasCliBin(projectRoot);
-  return bin ? readInstalledEasCliVersion(bin.file, projectRoot) : null;
+  const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
+  if (packageJson) {
+    const version = readJsonObject(packageJson)?.version;
+    return typeof version === 'string' ? `eas-cli/${version}` : null;
+  }
+  const onPath = easCliOutsideRepository(projectRoot);
+  return onPath ? readInstalledEasCliVersion(onPath, projectRoot) : null;
+}
+
+function doctorEasAuth({ projectRoot, owner }: { projectRoot: string; owner?: string | null }): EasAuthResult {
+  const file = easCliOutsideRepository(projectRoot);
+  const projectBin = file ? null : resolveEasCliBin(projectRoot);
+  if (projectBin) {
+    return {
+      failed: true,
+      code: 'project-cli',
+      reason: projectBin.file,
+      remedy:
+        'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
+    };
+  }
+  return probeEasAuth({ projectRoot, owner, resolveBin: () => (file ? { file, source: 'path' } : null) });
 }
 
 export function checkRemoteDevice({
@@ -896,7 +936,7 @@ export function runDoctor(
   {
     readFile = readFileSync,
     xcodeMajor = null,
-    easAuth = probeEasAuth,
+    easAuth = doctorEasAuth,
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
@@ -1229,6 +1269,20 @@ export function checkFingerprintParity({
   );
 }
 
+function fingerprintConfigSkipped(root: string): Finding | null {
+  const file = ['fingerprint.config.js', 'fingerprint.config.cjs'].find((name) => existsSync(join(root, name)));
+  if (!file) return null;
+  return {
+    ...finding(
+      'note',
+      `Skipped the fingerprint checks: ${file} is code`,
+      `@expo/fingerprint loads ${file} with require(), and doctor does not execute project code, so it did not compare this checkout's fingerprint with a fresh worktree or look for linked libraries that carry Git metadata into it.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    ),
+    code: 'fingerprint-config-skipped',
+  };
+}
+
 function gitMetadataAt(path: string): boolean {
   try {
     const git = lstatSync(join(path, '.git'));
@@ -1289,6 +1343,8 @@ export async function detectLinkedLibraryGitMetadata(
 ): Promise<Finding | null> {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
   if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  const skipped = fingerprintConfigSkipped(mainRoot);
+  if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
     sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
@@ -1336,6 +1392,8 @@ export async function detectFingerprintParity(
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
+  const skipped = fingerprintConfigSkipped(projectRoot);
+  if (skipped) return skipped;
 
   const platform =
     selectedPlatform ??
@@ -1357,6 +1415,8 @@ export async function detectFingerprintParity(
   }
 
   try {
+    const headSkipped = fingerprintConfigSkipped(worktree);
+    if (headSkipped) return headSkipped;
     const project = await fingerprintProject(projectRoot, { platform, createFingerprint });
     const clean = await fingerprintProject(worktree, { platform, createFingerprint });
     if (!project || !clean) return null;

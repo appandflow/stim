@@ -305,7 +305,7 @@ export default function doctorCommand(
       const parity = await detectFingerprintParity(root, { platform: opts.platform });
       if (parity) findings.push(parity);
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform: opts.platform });
-      if (linkedGit) findings.push(linkedGit);
+      if (linkedGit && linkedGit.code !== parity?.code) findings.push(linkedGit);
 
       if (detectHarness()) {
         const sandbox = sandboxFinding(repoRoot(root) ?? root);
