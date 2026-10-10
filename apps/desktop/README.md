@@ -6,7 +6,7 @@ stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures, or resident memory
 from an older `stim`).
 
-It reads Stim state only through `stim status --watch --json`, `stim status --json`, `stim stats --json`,
+It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
 server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
@@ -447,7 +447,12 @@ cleanup preview leaves it alone. Each workspace runs one action at a time.
 
 Status stays current through one long-running `stim status --watch --json`,
 which prints a payload each time the state changes, and the toolbar shows
-`live` while it runs. If it exits, the app restarts it after a delay that
+`live` while it runs. When the loopback server session is open, allows reads and
+serves the same canonical Stim home as the CLI, the app subscribes to the server's
+`status.subscribe` feed instead, which carries the payloads of the server's own
+`status --watch`. The app ends its own watcher with the feed's first payload, so one
+`status --watch` runs per Stim home, and starts it again when the server session
+closes, errors or stops reading. At launch the watcher runs until the server delivers. If the watcher exits, the app restarts it after a delay that
 doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
 `stim status --json` every 10 seconds instead.
 

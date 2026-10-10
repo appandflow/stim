@@ -86,4 +86,46 @@ struct StatusStoreTests {
     #expect(await until { store.payload?.capacity?.liveCount == 2 })
     #expect(store.error == nil)
   }
+
+  private func watchingCLI(in directory: URL) throws -> StimCLI {
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let executable = directory.appendingPathComponent("stim")
+    let script = """
+      #!/bin/sh
+      [ "$1" = status ] || exit 0
+      echo $$ >> "$STIM_HOME/watchers"
+      echo '{"environments":[]}'
+      exec sleep 60
+      """
+    try Data(script.utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+    return StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+  }
+
+  private func watcherPIDs(in directory: URL) -> [Int32] {
+    let text = (try? String(contentsOf: directory.appendingPathComponent("watchers"), encoding: .utf8)) ?? ""
+    return text.split(separator: "\n").compactMap { Int32($0) }
+  }
+
+  @Test func theStoreRunsNoWatcherOfItsOwnWhileTheServerDeliversStatusAndRunsOneAgainWhenItStops() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let cli = try watchingCLI(in: directory)
+    let store = StatusStore(cli: Task { cli }, fetch: { throw Failed() })
+    store.start()
+    #expect(await until { watcherPIDs(in: directory).count == 1 && store.watching })
+    let first = try #require(watcherPIDs(in: directory).first)
+
+    store.serverDelivering(true)
+    #expect(store.watching)
+    #expect(await until { kill(first, 0) != 0 })
+    try await Task.sleep(nanoseconds: 1_500_000_000)
+    #expect(watcherPIDs(in: directory).count == 1)
+    #expect(store.watching && store.error == nil)
+
+    store.serverDelivering(false)
+    #expect(await until { watcherPIDs(in: directory).count == 2 && store.watching })
+    store.serverDelivering(true)
+    for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }
+  }
 }
