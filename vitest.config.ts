@@ -24,7 +24,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    setupFiles: ['./vitest.setup.ts'],
+    setupFiles: ['./vitest.setup.ts', './vitest.reap-children.ts'],
     disableConsoleIntercept: true,
     // Real git and spawn work take several times longer on the hosted Windows
     // runner; a hang still fails, just later.
