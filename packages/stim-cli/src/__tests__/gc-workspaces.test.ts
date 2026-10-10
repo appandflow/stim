@@ -991,8 +991,8 @@ test.each([
 ])(
   'gc keeps an idle worktree whose %s check times out and says it could not run',
   async (marker, reason, detail) => {
-    const { repo, worktrees } = gitRepoWithWorktrees(['slow']);
-    const slow = realpathSync.native(worktrees.slow!);
+    const { repo } = gitRepoWithWorktrees(['slow']);
+    const slow = realpathSync.native(join(projects, 'slow'));
     upsertProject(slow, { metroPort: null });
     recordWorkspaceUse(slow, new Date(Date.now() - 10 * DAY_MS));
     upsertProject(repo, { metroPort: null });
