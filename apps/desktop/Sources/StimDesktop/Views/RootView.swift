@@ -123,13 +123,13 @@ struct RootView: View {
         if tutorial.isOpen, let snapshot = tutorial.snapshot {
           Rectangle().fill(Palette.border).frame(width: 1).ignoresSafeArea(edges: .top)
           TutorialPanel(
-            snapshot: snapshot, restarting: tutorial.restarting, message: tutorial.message,
+            snapshot: snapshot, message: tutorial.notice,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState, machineState: tutorial.machineState,
             canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
-            restart: { tutorial.restart() },
+            restart: { tutorial.open(beginning: true) },
             runIOS: {
               if let workspace = tutorial.workspace {
                 actions.run(
@@ -449,7 +449,7 @@ struct RootView: View {
   }
 
   private var tutorialMachineCheckout: String? {
-    tutorial.isOpen && !tutorial.restarting && tutorial.workspace != nil && tutorial.snapshot?.currentStep == "machine"
+    tutorial.isOpen && tutorial.workspace != nil && tutorial.snapshot?.currentStep == "machine"
       ? tutorial.tourPath : nil
   }
 

@@ -8,32 +8,6 @@
   @testable import StimDesktop
 
   final class TutorialScreenshotTests: XCTestCase {
-    @MainActor func testRestartShowsPromptAndWaitingMessageOnce() throws {
-      _ = NSApplication.shared
-      BrandAssets.registerFonts()
-      var engine = TutorialProgress()
-      let now = Date()
-      let snapshot = engine.update(
-        TutorialInput(environment: nil, now: now, record: TutorialRecord(version: 1, startedAt: now)))
-      let panel = TutorialPanel(
-        snapshot: snapshot, fixtureRendering: true, restarting: true,
-        message: "Waiting for a restarted tutorial workspace...",
-        commands: { _ in "" })
-      let data = NSMutableData()
-      let consumer = try XCTUnwrap(CGDataConsumer(data: data))
-      var bounds = CGRect(x: 0, y: 0, width: 320, height: 960)
-      let context = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &bounds, nil))
-      ImageRenderer(content: panel.frame(width: bounds.width, height: bounds.height)).render { _, draw in
-        context.beginPDFPage(nil)
-        draw(context)
-        context.endPDFPage()
-      }
-      context.closePDF()
-      let rendered = try XCTUnwrap(PDFDocument(data: data as Data)?.string)
-      XCTAssertEqual(rendered.components(separatedBy: TutorialSteps.restartPrompt).count - 1, 1)
-      XCTAssertEqual(rendered.components(separatedBy: "Waiting for a restarted tutorial").count - 1, 1)
-    }
-
     @MainActor func testTutorialScreenshots() throws {
       guard let directory = ProcessInfo.processInfo.environment["STIM_TUTORIAL_SHOTS"] else {
         throw XCTSkip("Set STIM_TUTORIAL_SHOTS to render tutorial fixtures.")
@@ -42,7 +16,7 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let variants = [
-        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout", "restarting",
+        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout",
         "phone-not-paired", "phone-server-off",
         "phone-already-paired", "phone-paired-during-step",
         "machine-none", "machine-approved", "machine-offloaded", "machine-approved-commands",
@@ -86,8 +60,8 @@
     var body: some View {
       let snapshot = fixture()
       TutorialPanel(
-        snapshot: snapshot, fixtureRendering: true, restarting: name == "restarting",
-        message: name == "begin" ? "Waiting for the tutorial workspace..." : nil,
+        snapshot: snapshot, fixtureRendering: true,
+        message: name == "begin" ? TutorialNotice("Waiting for the tutorial workspace...") : nil,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount), machineState: machineState,
         canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
         asks: { step in
@@ -116,7 +90,7 @@
         ? "phone"
         : name.hasPrefix("machine-")
           ? "machine"
-          : ["failure", "restarting"].contains(name)
+          : name == "failure"
             ? "build"
             : name == "agent-commands"
               ? "agent"

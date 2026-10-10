@@ -6,7 +6,6 @@ import StimKit
 final class TutorialModel: ObservableObject {
   @Published private(set) var snapshot: TutorialSnapshot?
   @Published private(set) var isOpen = false
-  @Published private(set) var restarting = false
   @Published private(set) var cliFailure: String?
   @Published private(set) var workspace: Workspace?
   @Published private(set) var archiveEnabled: Bool?
@@ -45,7 +44,7 @@ final class TutorialModel: ObservableObject {
     var template = step.ask
     if step.id == snapshot?.currentStep, step.id == "build",
       snapshot?.steps.first(where: { $0.id == step.id }).map({
-        if case .failed = $0.state { return true }
+        if case .failed = $0.state { return $0.action == nil }
         return false
       }) == true
     {
@@ -59,24 +58,21 @@ final class TutorialModel: ObservableObject {
     }
   }
 
-  var message: String? {
-    if let cliFailure { return cliFailure }
-    if restarting { return "Waiting for a restarted tutorial workspace..." }
-    if let version = workspace?.tutorial?.version, !TutorialSteps.supportedVersions.contains(version) {
-      return version < TutorialSteps.supportedVersions.min()!
-        ? "Restart the tutorial with the current Stim CLI" : "Update Stim Desktop to follow this tutorial"
-    }
+  var notice: TutorialNotice? {
+    if let cliFailure { return TutorialNotice(cliFailure, action: .updateCLI) }
+    if let notice = workspace?.tutorial.flatMap({ TutorialNotice.version($0.version) }) { return notice }
     if snapshot?.currentStep == "begin" {
       return snapshot?.record.beginWaitTimedOut(now: now) == true
-        ? "No tutorial workspace yet. Ask your agent what failed" : "Waiting for the tutorial workspace..."
+        ? TutorialNotice("No tutorial workspace yet. Ask your agent what failed", action: .restart)
+        : TutorialNotice("Waiting for the tutorial workspace...")
     }
     if workspace == nil, tourPath != nil, snapshot?.isComplete == false,
       !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
     {
-      return "Tutorial workspace gone: Restart"
+      return TutorialNotice("Tutorial workspace gone: Restart", action: .restart)
     }
     if snapshot?.currentStep == "finish", removalRefused {
-      return "Removal was refused: revert the tutorial edit and try again"
+      return TutorialNotice("Removal was refused: revert the tutorial edit and try again")
     }
     return nil
   }
@@ -163,28 +159,23 @@ final class TutorialModel: ObservableObject {
         archiveEnabled: fallback ? false : archiveEnabled ?? true,
         now: now, record: records.record))
     if snapshot?.steps.first(where: { $0.id == "machine" })?.state == .done { self.machineState = .approved }
-    if restarting, snapshot?.record.tourPath != nil {
-      restarting = false
-      logs = []
-    }
     if records.record != snapshot?.record { records.record = snapshot?.record }
     if let path = tourPath, isOpen, !seen.contains(path) { defaults.set(seen + [path], forKey: Self.seenKey) }
     syncFollowers()
   }
 
-  func open(beginning: Bool = false) {
+  func open(beginning: Bool = false, now: Date = Date()) {
     if beginning {
       progress = TutorialProgress()
-      records.record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: Date())
+      records.record = TutorialRecord(version: TutorialSteps.supportedVersions.max()!, startedAt: now)
       snapshot = nil
       workspace = nil
       logs = []
       viewerEventSequence = viewerEvents.last?.sequence ?? 0
-      restarting = false
     }
     isOpen = true
     launchPending = false
-    refresh()
+    refresh(now: now)
     syncFollowers()
     checkCLI()
   }
@@ -204,17 +195,8 @@ final class TutorialModel: ObservableObject {
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
-    guard !restarting else { return }
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
-  }
-
-  func restart(now: Date = Date()) {
-    viewerEventSequence = viewerEvents.last?.sequence ?? 0
-    progress.requestRestart(now: now)
-    records.record = progress.record
-    restarting = true
-    isOpen = true
   }
 
   func commands(for step: TutorialStep) -> String {
