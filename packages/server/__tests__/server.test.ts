@@ -1561,7 +1561,7 @@ describe('offloaded builds', () => {
       const release = join(root, 'release-updater');
       writeFileSync(
         updater,
-        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); process.exit(1); } }, 50);`,
+        `const { existsSync } = await import('node:fs'); const wait = setInterval(() => { if (existsSync(${JSON.stringify(release)})) { clearInterval(wait); console.log('Another update is running.'); process.exit(1); } }, 50);`,
       );
       const port = await start({
         service: { label: 'dev.stim.drain', node: process.execPath, script: updater, runsAsService: async () => true },
@@ -1577,6 +1577,9 @@ describe('offloaded builds', () => {
       await eventually(() => readAudit().some((record) => record.action === 'server.update.ended'));
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: { capacity: { declined: null } },
+      });
+      expect(await client.request('server.update.status')).toMatchObject({
+        result: { running: null, last: { ok: false, message: expect.stringContaining(': Another update is running.;') } },
       });
     } finally {
       if (home === undefined) delete process.env.HOME;
