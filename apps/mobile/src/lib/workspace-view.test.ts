@@ -483,6 +483,23 @@ describe('phaseSteps', () => {
     });
   });
 
+  it('names what the device and launch phases wait on, with Metro percent only while bundling', () => {
+    const bundling = { name: 'bundling', startedAt: iso(12000), percent: 44.6 };
+    expect(currentPhaseLabel(build({ phase: 'launch', activity: bundling }))).toEqual({
+      phase: 'Bundling JS',
+      counts: '45%',
+    });
+    expect(
+      currentPhaseLabel(build({ phase: 'launch', activity: { name: 'waiting-ready', startedAt: iso(0) } })),
+    ).toEqual({ phase: 'Waiting for app ready', counts: null });
+    expect(
+      currentPhaseLabel(
+        build({ phase: 'device', platform: 'android', activity: { name: 'booting', startedAt: iso(0) } }),
+      ),
+    ).toEqual({ phase: 'Booting emulator', counts: null });
+    expect(currentPhaseLabel(build({ phase: 'install', activity: bundling })).phase).toBe('Install');
+  });
+
   it("draws the CLI's planned phases instead of the workspace history when the CLI sends them", () => {
     const planned = build({
       phase: 'cache-lookup',

@@ -1582,6 +1582,35 @@ describe('optional app readiness', () => {
     expect(pendingNotices).toBe(1);
   });
 
+  test('reports bundling from the app request, nothing once Metro delivered it, then waiting for ready', async () => {
+    const activity: [string | null, number][] = [];
+    const metro: NdjsonRecord[] = [
+      { ts: 1200, src: 'metro', platform: 'ios', event: 'bundle_response_started', requestId: 'app' },
+      { ts: 2600, src: 'metro', platform: 'ios', event: 'bundle_response_progress', requestId: 'app', percent: 40 },
+      { ts: 4000, src: 'metro', platform: 'ios', event: 'bundle_response_finished', requestId: 'app' },
+    ];
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      requireBundleResponse: true,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => metro.filter((record) => Number(record.ts) <= clock.at()),
+      readDeviceRecords: () =>
+        [signal(5000, 'pending'), signal(6000, 'ready')].filter((r) => Number(r.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      onActivity: (name, at) => activity.push([name, at]),
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'ready' });
+    expect(activity).toEqual([
+      ['bundling', 1200],
+      [null, 4000],
+      ['waiting-ready', 5000],
+    ]);
+  });
+
   test('a fast ready replaces the default stability delay', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready', { msg: "'[stim:readiness] ready'" })]);
     expect(result).toMatchObject({ readiness: 'ready', waitedMs: 500 });

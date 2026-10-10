@@ -187,6 +187,7 @@ export async function verifyLaunch({
   readNativeCrashes = null,
   processAlive = null,
   onReadinessPending = null,
+  onActivity,
   now = Date.now,
   sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)),
 }: {
@@ -208,6 +209,12 @@ export async function verifyLaunch({
   readNativeCrashes?: (() => NdjsonRecord[]) | null;
   processAlive?: (() => boolean | null) | null;
   onReadinessPending?: (() => void) | null;
+  /**
+   * Called when what the launch waits on changes: `bundling` from the app's bundle request (`bundle_response_started`)
+   * until Metro delivered the bundle, `waiting-ready` once the app reports its readiness pending, null in between. `at` is the evidence's
+   * record time.
+   */
+  onActivity?: ((name: 'bundling' | 'waiting-ready' | null, at: number) => void) | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 } = {}): Promise<VerifyLaunchResult> {
@@ -225,6 +232,13 @@ export async function verifyLaunch({
   let runtimeLoadingAt: number | null = null;
   let runtimeStartedAt: number | null = null;
   let nextCrashCheck = startedAt + 1000;
+  let bundlingAt: NdjsonRecord | null = null;
+  let reported: 'bundling' | 'waiting-ready' | null = null;
+  const report = (name: typeof reported, at: number) => {
+    if (name === reported) return;
+    reported = name;
+    onActivity?.(name, at);
+  };
   while (true) {
     const metroRecords = read().filter((record) => after(record, since));
     const bundleRecords = metroRecords.filter(
@@ -255,6 +269,7 @@ export async function verifyLaunch({
       );
       if (request) {
         deliveryId = request.requestId as string;
+        bundlingAt = request;
         proof = null;
         stabilityDeadline = null;
       }
@@ -312,6 +327,7 @@ export async function verifyLaunch({
         onReadinessPending?.();
       }
     }
+    report(...launchActivity(pendingAt, proof, bundlingAt));
     const ready =
       pendingAt !== null &&
       signals.some(
@@ -408,6 +424,16 @@ export async function verifyLaunch({
         : (stabilityDeadline ?? bundleDeadline);
     await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
   }
+}
+
+function launchActivity(
+  pendingAt: number | null,
+  proof: NdjsonRecord | null,
+  bundling: NdjsonRecord | null,
+): ['bundling' | 'waiting-ready' | null, number] {
+  if (pendingAt !== null) return ['waiting-ready', pendingAt];
+  if (proof) return [null, Number(proof.ts)];
+  return bundling ? ['bundling', Number(bundling.ts)] : [null, 0];
 }
 
 function deliveryOwner(

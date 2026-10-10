@@ -15,6 +15,7 @@ import {
   parseMissReason,
   workspaceBuildDetailFile,
   type ActiveBuildState,
+  type BuildActivity,
   type BuildDetail,
   type BuildMissReason,
   type BuildPhase,
@@ -23,6 +24,7 @@ import {
   type BuildReport,
   type BuildWaitingFor,
   type BuildResult,
+  type MetroBundleState,
   type PlannedPhase,
   type WorkspaceState,
 } from '@stim-cli/core/state';
@@ -58,6 +60,8 @@ export interface ActiveBuildRecord {
   outcome?: RunOutcomeKind;
   /** The estimate the run made when it knew its project, and again when it knew its outcome. */
   estimate?: BuildEstimate;
+  /** What the current `device` or `launch` phase waits on; a phase change clears it. */
+  activity?: Omit<BuildActivity, 'percent'>;
 }
 
 /**
@@ -74,6 +78,8 @@ export interface BuildEstimate {
 
 export interface BuildProgress {
   step(phase: BuildPhase): void;
+  /** Records what the current phase waits on, from the evidence recorded at `at`; null when it no longer waits on one. */
+  activity(name: BuildActivity['name'] | null, at?: number): void;
   /** Estimates the run from the recent runs of the project with `projectKey`, and again once its outcome is known. */
   estimate(projectKey: string): void;
   /**
@@ -102,6 +108,7 @@ export interface BuildProgress {
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
   step: () => {},
+  activity: () => {},
   estimate: () => {},
   miss: () => {},
   hit: () => {},
@@ -235,8 +242,15 @@ export function startBuildProgress({
       record.phaseStartedAt = at;
       record.phases.push({ phase, startedAt: at });
       if (phase !== 'wait') delete record.waitingOn;
+      delete record.activity;
       const outcome = record.outcome || platform === 'macos' ? null : settledOutcome(phase, record.phases);
       if (outcome) settle(outcome);
+      write();
+    },
+    activity(name, at) {
+      if ((record.activity?.name ?? null) === name) return;
+      if (name) record.activity = { name, startedAt: new Date(at ?? now()).toISOString() };
+      else delete record.activity;
       write();
     },
     estimate(key) {
@@ -495,6 +509,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
   const waitingOn = parseWaitingOn(record.waitingOn);
   const waitingFor = parseWaitingFor(record.waitingFor);
   const estimate = parseEstimate(record.estimate);
+  const activity = parseActivity(record.activity);
   return {
     platform: record.platform,
     slot: typeof record.slot === 'string' ? record.slot : 'default',
@@ -510,6 +525,7 @@ export function parseActiveBuild(value: unknown): ActiveBuildRecord | null {
     ...(typeof record.deviceSetup === 'boolean' ? { deviceSetup: record.deviceSetup } : {}),
     ...(record.outcome === 'hit' || record.outcome === 'cold' ? { outcome: record.outcome } : {}),
     ...(estimate ? { estimate } : {}),
+    ...(activity ? { activity } : {}),
     claim: {
       root: claim.root,
       path: typeof claim.path === 'string' ? claim.path : '',
@@ -538,6 +554,13 @@ function parseWaitingFor(value: unknown): BuildWaitingFor | null {
   if (!Number.isInteger(inUse) || inUse < 0 || !Number.isInteger(max) || max <= 0) return null;
   if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) return null;
   return { kind, inUse, max, since };
+}
+
+function parseActivity(value: unknown): ActiveBuildRecord['activity'] | null {
+  if (!value || typeof value !== 'object') return null;
+  const { name, startedAt } = value as Record<string, unknown>;
+  if (name !== 'booting' && name !== 'bundling' && name !== 'waiting-ready') return null;
+  return typeof startedAt === 'string' ? { name, startedAt } : null;
 }
 
 function parseWaitingOn(value: unknown): ActiveBuildRecord['waitingOn'] | null {
@@ -663,11 +686,38 @@ export function buildReport(
     placement: record.placement ?? 'local',
     ...(record.waitingOn ? { waitingOn: record.waitingOn } : {}),
     ...(record.waitingFor ? { waitingFor: record.waitingFor } : {}),
+    ...(record.activity ? { activity: { ...record.activity } } : {}),
   };
+}
+
+/**
+ * The run's `bundling` activity with Metro's percent, when the request Metro reports in flight is the one the activity
+ * started on: same platform and same start, since both come from the request's `bundle_response_started` record.
+ */
+export function bundlingActivity(
+  activity: BuildActivity | undefined,
+  platform: BuildPlatform,
+  bundle: MetroBundleState | undefined,
+): BuildActivity | undefined {
+  if (activity?.name !== 'bundling' || !bundle?.bundling || bundle.percent === undefined) return activity;
+  if (bundle.platform !== platform || bundle.startedAt !== activity.startedAt) return activity;
+  return { ...activity, percent: bundle.percent };
 }
 
 function remainingText(remainingMs: number): string {
   return remainingMs < 60_000 ? 'under a minute left' : `about ${Math.ceil(remainingMs / 60_000)} min left`;
+}
+
+function activityText({ name, percent, startedAt }: BuildActivity, now: number): string {
+  const what =
+    name === 'booting'
+      ? 'booting'
+      : name === 'waiting-ready'
+        ? 'waiting for app ready'
+        : percent === undefined
+          ? 'bundling JS'
+          : `bundling JS ${percent}%`;
+  return `${what}, ${formatElapsed(Math.max(0, now - Date.parse(startedAt)))}`;
 }
 
 export function buildStatusLine(report: BuildReport, now: number): string {
@@ -681,7 +731,8 @@ export function buildStatusLine(report: BuildReport, now: number): string {
       ? ` on ${report.placement.host} (${report.placement.phase}, ${formatElapsed(Math.max(0, now - Date.parse(report.placement.phaseStartedAt)))})`
       : '';
   const waiting = report.waitingOn ? ` on ${report.waitingOn.path}` : '';
-  const head = `build: ${report.platform}${slot} ${report.phase}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
+  const activity = report.activity ? ` (${activityText(report.activity, now)})` : '';
+  const head = `build: ${report.platform}${slot} ${report.phase}${activity}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
   if (report.expectedMs === null) return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;

@@ -1043,6 +1043,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const limits = getLimits();
   let device: OwnedDeviceRecord;
   let bootDuration = '';
+  let bootPending = false;
   let bootPromise: Promise<AndroidBootLike>;
   let startRemoteBoot: (() => Promise<AndroidBootLike>) | null = null;
 
@@ -1145,6 +1146,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       }));
     const startBoot = (): Promise<AndroidBootLike> => {
       const bootTimer = stepTimer(now);
+      bootPending = true;
       return (
         remoteDevice?.ctx.backend === 'eas'
           ? ensureRemoteOwned({
@@ -1163,6 +1165,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           : boot()
       ).then((result) => {
         bootDuration = bootTimer();
+        bootPending = false;
         return result;
       });
     };
@@ -1399,6 +1402,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         trimCaches,
         wipeDevice,
         bootDuration: () => bootDuration,
+        bootPending: () => bootPending,
         apkPath,
         androidPackage,
         androidPackageProblem: appIds.androidPackageProblem ?? null,
@@ -1437,6 +1441,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         reclaimed,
         devServer,
         enterPhase: progress.step,
+        enterActivity: progress.activity,
         rebootDevice: () =>
           Promise.resolve(
             ensureDeviceBooted({

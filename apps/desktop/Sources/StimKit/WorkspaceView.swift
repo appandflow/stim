@@ -438,7 +438,7 @@ public struct PhaseStep: Equatable, Sendable {
   public var elapsedMs: Double?
   public var expectedMs: Double?
   public var fraction: Double?
-  /// A fact about a finished phase, such as `428 steps`.
+  /// A fact about a finished phase, such as `428 steps`, or what the current phase waits on and for how long.
   public var note: String? = nil
 
   public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
@@ -472,6 +472,34 @@ extension Build {
   /// The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases.
   var compileDetail: BuildDetail? { phase == "compile" ? detail : nil }
 
+  /// What the current phase waits on, only in the phases the CLI reports one for.
+  var currentActivity: BuildActivity? { phase == "device" || phase == "launch" ? activity : nil }
+
+  /// Metro's bundling progress as a fraction, only while the app's bundle is building and Metro reported it.
+  var bundledFraction: Double? {
+    guard let activity = currentActivity, activity.name == "bundling", let percent = activity.percent else { return nil }
+    return min(1, max(0, percent / 100))
+  }
+
+  /// Whether the current phase waits on something whose progress nothing measures, so its bar shows no fill amount.
+  public var waitsWithoutProgress: Bool { currentActivity != nil && bundledFraction == nil }
+
+  /// How long the current activity has lasted; nil without one.
+  public func activityElapsedMs(at now: Date) -> Double? {
+    currentActivity.flatMap { parseTimestamp($0.startedAt) }.map { max(0, now.timeIntervalSince($0) * 1000) }
+  }
+
+  /// "Bundling JS" with "45%", or the activity's name alone; nil without an activity.
+  var activityLabel: (phase: String, counts: String?)? {
+    guard let activity = currentActivity else { return nil }
+    let names = [
+      "booting": platform == "android" ? "Booting emulator" : "Booting simulator", "bundling": "Bundling JS",
+      "waiting-ready": "Waiting for app ready",
+    ]
+    guard let name = names[activity.name] else { return nil }
+    return (name, activity.name == "bundling" ? activity.percent.map { "\(Int($0.rounded()))%" } : nil)
+  }
+
   /// The planned phases plus the current one, each done, current or pending.
   public func phaseSteps(history: [BuildHistoryEntry], now: Date) -> [PhaseStep] {
     let reference = plannedDurations(history)
@@ -491,13 +519,22 @@ extension Build {
         return Double(done) / Double(total)
       }
       let timed = expected.flatMap { expected in inPhase.flatMap { expected > 0 ? $0 / expected : nil } }
-      let fraction = counted == nil && timed == nil ? nil : min(0.95, max(counted ?? 0, timed ?? 0))
-      return PhaseStep(phase: step, state: .current, elapsedMs: inPhase, expectedMs: expected, fraction: fraction)
+      let measured = counted ?? bundledFraction
+      let fraction = measured == nil && timed == nil ? nil : min(0.95, max(measured ?? 0, timed ?? 0))
+      let note = activityLabel.map { label in
+        ([label.phase, label.counts].compactMap { $0 }
+          + [activityElapsedMs(at: now).map { Format.clock(ms: $0) }].compactMap { $0 })
+          .joined(separator: " ")
+      }
+      return PhaseStep(
+        phase: step, state: .current, elapsedMs: inPhase, expectedMs: expected, fraction: fraction, note: note)
     }
   }
 
-  /// "Compiling" with "45 of 180 targets", from the build tool's step when it reported one.
+  /// "Compiling" with "45 of 180 targets", from the build tool's step when it reported one, or "Bundling JS" with
+  /// "45%" from what the phase waits on.
   public var currentPhaseLabel: (phase: String, counts: String?) {
+    if let activityLabel { return activityLabel }
     let steps = [
       "configure": "Configuring", "compile": "Compiling", "link": "Linking", "resources": "Copying resources",
       "script": "Running scripts", "dex": "Dexing", "package": "Packaging", "sign": "Signing",

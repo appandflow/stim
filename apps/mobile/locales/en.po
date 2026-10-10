@@ -1023,6 +1023,14 @@ msgstr "billable"
 msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
+#: src/lib/workspace-view.ts
+msgid "Booting emulator"
+msgstr "Booting emulator"
+
+#: src/lib/workspace-view.ts
+msgid "Booting simulator"
+msgstr "Booting simulator"
+
 #: src/screens/welcome.tsx
 msgid "Both Signed in to the Same Tailnet"
 msgstr "Both Signed in to the Same Tailnet"
@@ -1181,6 +1189,10 @@ msgstr "Bundling"
 #: src/lib/workspace-view.ts
 msgid "Bundling · {percent}%"
 msgstr "Bundling · {percent}%"
+
+#: src/lib/workspace-view.ts
+msgid "Bundling JS"
+msgstr "Bundling JS"
 
 #: src/lib/build-machines.ts
 msgid "Busy"
@@ -4343,6 +4355,10 @@ msgstr "Waiting for a frame"
 #: src/screens/build-details.tsx
 msgid "Waiting for another build of the same app"
 msgstr "Waiting for another build of the same app"
+
+#: src/lib/workspace-view.ts
+msgid "Waiting for app ready"
+msgstr "Waiting for app ready"
 
 #: src/lib/build-machines.ts
 msgid "Waiting for approval"

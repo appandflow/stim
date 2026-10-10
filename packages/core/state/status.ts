@@ -72,10 +72,25 @@ export interface BuildReport {
   missProvisional?: true;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
+  /** What the `device` or `launch` phase is waiting on, once Stim observed it; absent otherwise and from older Stim. */
+  activity?: BuildActivity;
   placement: BuildPlacement;
   /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits on, when it is known. */
   waitingOn?: { path: string };
   waitingFor?: BuildWaitingFor;
+}
+
+/**
+ * What a run's `device` or `launch` phase is waiting on. `booting` lasts while the run waits for the owned simulator or
+ * emulator it started booting. `bundling` starts when the app's bundle request reaches this workspace's
+ * Metro and ends when Metro delivered it; `percent` is Metro's own progress for that request, present only once Metro
+ * reported one. `waiting-ready` lasts while the app reports its readiness pending. `startedAt` is when the evidence was
+ * recorded.
+ */
+export interface BuildActivity {
+  name: 'booting' | 'bundling' | 'waiting-ready';
+  startedAt: string;
+  percent?: number;
 }
 
 /** One phase a running build is expected to go through, and its median duration in comparable runs. */

@@ -25,6 +25,8 @@ struct SlotWaitText: View {
 struct PhaseBar: View {
   var steps: [PhaseStep]
   var key: String
+  /// Draws the current segment as indeterminate, for a wait nothing measures.
+  var indeterminate = false
 
   var body: some View {
     let weights = segmentWeights(steps)
@@ -38,7 +40,11 @@ struct PhaseBar: View {
             let width = (geo.size.width - gaps) * weights[i] / sum
             ZStack(alignment: .leading) {
               Capsule().fill(Palette.primary.opacity(Opacity.tint))
-              Capsule().fill(Palette.primary).frame(width: width * fills[i])
+              if indeterminate && steps[i].state == .current {
+                StimProgressBar(value: nil, tint: Palette.primary).controlSize(.small).clipShape(Capsule())
+              } else {
+                Capsule().fill(Palette.primary).frame(width: width * fills[i])
+              }
             }
             .frame(width: width)
           }

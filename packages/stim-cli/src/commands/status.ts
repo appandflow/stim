@@ -64,6 +64,7 @@ import {
   ACTIVE_BUILD_KEY,
   activeBuildState,
   buildReport,
+  bundlingActivity,
   buildStatusLine,
   parseActiveBuild,
   type BuildReport,
@@ -608,6 +609,8 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
       const detail = record.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
       if (detail) state.build.detail = detail;
       else delete state.build.detail;
+      const activity = bundlingActivity(state.build.activity, state.build.platform, state.metro?.bundle);
+      if (activity) state.build.activity = activity;
     }
   }
 }
