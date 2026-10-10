@@ -87,7 +87,7 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 
 ## Automatic machine pools
 
-In **Settings > Remote Macs**, **Automatic builds** and **Automatic simulators**
+In **Settings > Remote Macs**, **Builds enabled** and **Simulators enabled**
 control this Mac and each configured remote independently. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this Mac; other requesters keep their own policy.

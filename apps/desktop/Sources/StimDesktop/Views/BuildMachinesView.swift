@@ -259,7 +259,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
       HStack(spacing: Space.lg) {
         ForEach(["build", "device"], id: \.self) { role in
           Toggle(
-            role == "build" ? "Automatic builds" : "Automatic simulators",
+            role == "build" ? "Builds enabled" : "Simulators enabled",
             isOn: Binding(
               get: { !(poolDisabled[role] ?? []).contains(machine) },
               set: { setPool(role, machine, $0) })
