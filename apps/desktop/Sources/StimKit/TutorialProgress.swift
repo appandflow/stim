@@ -313,12 +313,14 @@ public struct TutorialProgress: Sendable {
     if record?.stepTimes == nil { record?.stepTimes = [:] }
     record?.stepTimes?[currentID] = currentSince
     let logs = input.logRecords.filter { $0.date >= record!.startedAt }.sorted { $0.ts < $1.ts }
-    if let udid = tracked?.ios?.udid {
-      for event in input.viewerEvents {
-        if event == .opened(udid) { viewerOpened = true }
-        if event == .input(udid), viewerOpened { viewerInput = true }
-        if event == .actionsViewed(udid) { actionsViewed = true }
-        if event == .replayPlayed(udid) { replayPlayed = true }
+    let devices = [tracked?.ios?.udid, second?.ios?.udid].compactMap { $0 }
+    for event in input.viewerEvents {
+      switch event {
+      case .opened(let udid) where devices.contains(udid): viewerOpened = true
+      case .input(let udid) where devices.contains(udid) && viewerOpened: viewerInput = true
+      case .actionsViewed(let udid) where udid == tracked?.ios?.udid: actionsViewed = true
+      case .replayPlayed(let udid) where udid == tracked?.ios?.udid: replayPlayed = true
+      default: break
       }
     }
     var failure: TutorialNotice?
@@ -509,11 +511,11 @@ public struct TutorialProgress: Sendable {
         completed: last.cacheHit == .none ? nil : last.endedAt,
         detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
     case "device":
-      guard environment?.ios?.app?.state == "running" else {
+      guard [environment, second].contains(where: { $0?.ios?.app?.state == "running" }) else {
         return Checkpoint(detail: "Run the app first, then open its live view")
       }
       return Checkpoint(
-        completed: viewerOpened && viewerInput ? now : nil, detail: "Open the live view and tap around.",
+        completed: viewerOpened && viewerInput ? now : nil,
         ticks: [tick("opened", viewerOpened), tick("input", viewerInput)])
     case "logs": return Checkpoint(detail: "Find the app output in Logs")
     case "agent":

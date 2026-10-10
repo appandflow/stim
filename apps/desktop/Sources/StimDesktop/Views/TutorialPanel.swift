@@ -161,11 +161,11 @@ struct TutorialPanel: View {
           }
           ForEach(state.ticks, id: \.id) { tick in
             Label(
-              tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
+              Self.tickTitle(tick.id) + (tick.optional ? " (optional)" : ""),
               systemImage: tick.done ? "checkmark.circle.fill" : "circle"
             )
             .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
-            .accessibilityLabel("\(tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
+            .accessibilityLabel("\(Self.tickTitle(tick.id)), \(tick.done ? "done" : "waiting")")
           }
           if current {
             ForEach(issues, id: \.self) { issue in
@@ -256,7 +256,7 @@ struct TutorialPanel: View {
     case "parallel":
       return
         "While that builds, ask for a second change in a new worktree. Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."
-    case "device": return "Optional. Open the live view of either simulator and tap around while your agents work."
+    case "device": return "Open a tutorial simulator's live view and tap the app yourself."
     case "agent": return "See what your agent did on the device, then replay it."
     case "logs": return "Optional. Agents read the logs too. Open Logs to see the app's output and any errors."
     case "phone":
@@ -275,7 +275,7 @@ struct TutorialPanel: View {
     }
   }
 
-  private func tickTitle(_ id: String) -> String {
+  static func tickTitle(_ id: String) -> String {
     switch id {
     case "opened": return "Live view opened"
     case "input": return "Device controlled"

@@ -140,6 +140,7 @@ struct DeviceViewer: View {
       HStack(spacing: 0) {
         VStack(spacing: 0) {
           canvas(device, replay: replay, replaying: replaying)
+            .overlay(alignment: .topLeading) { TutorialViewerCard().padding(Space.lg) }
           if let replay, replaying || env.replayOff || replay.timeline != nil {
             Rectangle().fill(Palette.border).frame(height: 1)
             ReplayBar(
@@ -213,6 +214,7 @@ struct DeviceViewer: View {
           },
           windowChoice: windowChoice
         )
+        .tutorialAnchor(.viewerScreen, workspace: env.path)
         .frame(minWidth: geo.size.width, minHeight: geo.size.height)
       }
       .onChange(of: replaying) { _, replaying in
@@ -301,6 +303,30 @@ struct DeviceViewer: View {
 
 /// Re-renders its content as the replay starts or stops, or its footage appears or goes, and not as the replay
 /// moves, so playing and scrubbing redraw only the replay bar, the screen and the action highlighted.
+private struct TutorialViewerCard: View {
+  @Environment(\.tutorialHint) private var hint
+
+  var body: some View {
+    if let hint, hint.step == "device" {
+      Card(fill: Palette.raised, border: Palette.separator) {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text("Live View and Control").font(.stim(.callout, weight: .semibold))
+          Text("Tap the Tap me button and watch the counter.").foregroundStyle(Palette.secondary)
+          ForEach(hint.ticks, id: \.id) { tick in
+            Label(TutorialPanel.tickTitle(tick.id), systemImage: tick.done ? "checkmark.circle.fill" : "circle")
+              .font(.stim(.footnote)).foregroundStyle(tick.done ? Palette.success : Palette.secondary)
+          }
+        }
+        .padding(Space.lg)
+      }
+      .frame(width: 260, alignment: .leading)
+      .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
+      .accessibilityElement(children: .combine)
+      .accessibilityLabel("Stim tutorial: Live View and Control")
+    }
+  }
+}
+
 private struct ReplayingContent<Content: View>: View {
   private struct Shown: Equatable {
     var replaying: Bool

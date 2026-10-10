@@ -32,6 +32,8 @@ struct TutorialHint {
   var targets: [(anchor: TutorialAnchorID, callout: String)] {
     switch step {
     case "build": return [(.launchNoticeShow, "Click Show to watch the build")]
+    case "device":
+      return [(.viewerScreen, "Tap the Tap me button and watch the counter"), (.deviceControl, "Open the live view")]
     case "agent":
       return (tick("viewed") ? [(.replay, "Play the replay")] : [(.agentActions, "See what your agent did")])
         + [(.deviceControl, "Open the live view")]
@@ -42,10 +44,10 @@ struct TutorialHint {
   }
 
   /// The worktrees whose controls this step may point at.
-  var paths: [String] { [path].compactMap { $0 } }
+  var paths: [String] { (step == "device" ? [path, secondPath] : [path]).compactMap { $0 } }
 
   var offersShowMe: Bool {
-    ["agent", "logs", "finish", "done"].contains(step ?? "")
+    ["device", "agent", "logs", "finish", "done"].contains(step ?? "")
   }
 
   func tick(_ id: String) -> Bool { ticks.contains { $0.id == id && $0.done } }

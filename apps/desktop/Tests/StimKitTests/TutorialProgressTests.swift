@@ -231,6 +231,26 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("device", in: result).detail == "Run the app first, then open its live view")
 }
 
+@Test func tutorialDeviceTicksTheSecondChangesLiveViewToo() throws {
+  let tour = try environment("04-live-clean")
+  var second = tour
+  second.path = "/Users/example/stim-tutorial-second"
+  second.ios?.udid = "second-simulator"
+  var record = saved(at: "device")
+  record.secondPath = second.path
+  var progress = TutorialProgress()
+  var input = TutorialInput(
+    environment: tour, siblings: [tour, second], viewerEvents: [.opened("second-simulator")], now: afterRebuild,
+    record: record)
+  var result = progress.update(input)
+  #expect(result.currentStep == "device")
+  #expect(state("device", in: result).ticks.map(\.done) == [true, false])
+  input.viewerEvents = [.input("second-simulator")]
+  result = progress.update(input)
+  #expect(result.currentStep == "agent")
+  #expect(state("device", in: result).state == .done)
+}
+
 @Test func tutorialAgentTicksViewerEventsOnTheTourDeviceAndNextRecordsItDone() throws {
   var progress = TutorialProgress()
   let checked = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
