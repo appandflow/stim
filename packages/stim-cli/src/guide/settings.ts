@@ -294,9 +294,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         directory, and {port} becomes the reserved Metro port,
                         which the command must pass. It replaces bare-inproc
                         and expo-child with command-child (see \`guide
-                        metro\`). Workspace or committed scope; set in the
-                        committed .stim.json, it also makes a package with no
-                        react-native or expo dependency count as an app.
+                        metro\`). Workspace or committed scope.
                         Metro must keep running from inside the app, which
                         is how Stim proves it is this app's. Without Stim's
                         Metro reporter, launches stay UNVERIFIED. start

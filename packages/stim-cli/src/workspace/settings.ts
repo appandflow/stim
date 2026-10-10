@@ -589,10 +589,6 @@ export function metroCommandSettingError(settings: SettingsObject): string | nul
   return null;
 }
 
-export function commitsMetroCommand(root: string): boolean {
-  return settingValueAt(readCommittedSettings(root), 'metro.command') !== undefined;
-}
-
 export function projectMetroCommand(root: string): string[] | null {
   const settings = settingsForProject(root);
   return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
