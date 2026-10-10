@@ -302,7 +302,7 @@ struct TutorialPanel: View {
     switch id {
     case "begin":
       return
-        "You will see two agents work on two changes at once, each in its own worktree with its own simulator and dev server, each checking its own work on the device. First, clone the test app; the clone stays as the base and is never run or removed."
+        "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
     case "build":
       return
         "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Stim waited until the app said it was ready, not just launched, so the agent knows the app works before it checks the change: look for the readiness phase in the build details. On a fresh Mac this build is usually a cache miss and takes a few minutes. Watch it in Desktop."
