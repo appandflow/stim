@@ -96,27 +96,25 @@ struct TutorialArt {
     return art
   }
 
-  #if DEBUG
-    @MainActor func still(_ marker: String) -> NSImage? {
-      guard let frame = animation.frameTime(forMarker: marker) else { return nil }
-      let view = LottieAnimationView(animation: animation, configuration: LottieConfiguration(renderingEngine: .mainThread))
-      view.frame = CGRect(origin: .zero, size: TutorialIllustration.size)
-      view.currentFrame = frame
-      view.layoutSubtreeIfNeeded()
-      view.layer?.displayIfNeeded()
-      guard let layer = view.layer else { return nil }
-      let scale: CGFloat = 2
-      let width = Int(TutorialIllustration.size.width * scale)
-      let height = Int(TutorialIllustration.size.height * scale)
-      guard
-        let context = CGContext(
-          data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-      else { return nil }
-      context.translateBy(x: 0, y: CGFloat(height))
-      context.scaleBy(x: scale, y: -scale)
-      layer.render(in: context)
-      return context.makeImage().map { NSImage(cgImage: $0, size: TutorialIllustration.size) }
-    }
-  #endif
+  @MainActor func still(_ marker: String) -> NSImage? {
+    guard let frame = animation.frameTime(forMarker: marker) else { return nil }
+    let view = LottieAnimationView(animation: animation, configuration: LottieConfiguration(renderingEngine: .mainThread))
+    view.frame = CGRect(origin: .zero, size: TutorialIllustration.size)
+    view.currentFrame = frame
+    view.layoutSubtreeIfNeeded()
+    view.layer?.displayIfNeeded()
+    guard let layer = view.layer else { return nil }
+    let scale: CGFloat = 2
+    let width = Int(TutorialIllustration.size.width * scale)
+    let height = Int(TutorialIllustration.size.height * scale)
+    guard
+      let context = CGContext(
+        data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    context.translateBy(x: 0, y: CGFloat(height))
+    context.scaleBy(x: scale, y: -scale)
+    layer.render(in: context)
+    return context.makeImage().map { NSImage(cgImage: $0, size: TutorialIllustration.size) }
+  }
 }
