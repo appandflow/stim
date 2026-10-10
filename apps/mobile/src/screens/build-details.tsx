@@ -138,13 +138,16 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
 function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string | null }) {
   const { theme } = useUnistyles();
   const [device, started] = parts;
+  const spoken = [device, host ? t`Building on ${host}` : null, started].filter(Boolean).join(', ');
   const items = [
     device ? (
       <Text key="device" variant="footnote" tone="secondary">
         {device}
       </Text>
     ) : null,
-    host ? <HostLabel key="host" host={host} color={theme.colors.secondary} mode="building" /> : null,
+    host ? (
+      <HostLabel key="host" host={host} color={theme.colors.secondary} variant="footnote" mode="building" />
+    ) : null,
     started ? (
       <Text key="started" variant="footnote" tone="secondary">
         {started}
@@ -152,15 +155,15 @@ function BuildSubtitle({ parts, host }: { parts: (string | null)[]; host: string
     ) : null,
   ].filter(Boolean);
   return (
-    <View style={styles.subtitle}>
+    <View style={styles.subtitle} accessible accessibilityLabel={spoken}>
       {items.map((item, i) => (
-        <View key={i} style={styles.subtitle}>
-          {i > 0 ? (
+        <View key={i} style={styles.subtitleItem}>
+          {item}
+          {i < items.length - 1 ? (
             <Text variant="footnote" tone="secondary">
               {'\u00B7'}
             </Text>
           ) : null}
-          {item}
         </View>
       ))}
     </View>
@@ -941,7 +944,8 @@ function Note({ children }: { children: ReactNode }) {
 }
 
 const styles = StyleSheet.create((theme) => ({
-  subtitle: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.xs },
+  subtitle: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: theme.space.xs },
+  subtitleItem: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, gap: theme.space.xs },
   fallbackReason: { paddingTop: theme.space.xxs },
   switch: {
     flexDirection: 'row',

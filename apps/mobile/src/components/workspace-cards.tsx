@@ -448,7 +448,7 @@ export function BuildInProgressCard({
           color={theme.colors.primary}
           background={theme.colors.raised}
         />
-        <Text variant="body" weight="semibold" numberOfLines={1} style={remote ? styles.shrink : undefined}>
+        <Text variant="body" weight="semibold" numberOfLines={1} style={styles.shrink}>
           {title}
         </Text>
         {host ? <HostLabel host={host} color={theme.colors.secondary} mode="building" /> : null}
@@ -526,6 +526,12 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: withAlpha(theme.colors.primary, 0.3),
     backgroundColor: withAlpha(theme.colors.primary, 0.05),
   },
-  buildingHeader: { flexDirection: 'row', alignItems: 'center', gap: theme.space.sm },
+  buildingHeader: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    columnGap: theme.space.sm,
+    rowGap: theme.space.xxs,
+  },
   phaseLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.sm },
 }));

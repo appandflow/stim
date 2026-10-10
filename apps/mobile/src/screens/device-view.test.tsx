@@ -443,6 +443,20 @@ it.each([
   },
 );
 
+it.each(['ios', 'android'] as const)('labels a stopped hosted %s device as placed, not running', async (platform) => {
+  mockHosted = true;
+  mockStopped = true;
+  mockFeatures = [`${platform}-hosted`, 'device-frames'];
+  const screen = await render(
+    <I18nProvider i18n={i18n}>
+      <DeviceView workspace="/fixture" platform={platform} slot="default" />
+    </I18nProvider>,
+  );
+  expect(screen.getAllByLabelText('On mini').length).toBeGreaterThan(0);
+  expect(screen.queryByLabelText('Running on mini')).toBeNull();
+  await screen.unmount();
+});
+
 it.each(['ios', 'android'] as const)(
   'shows a hosted %s machine label and subscribes through the paired Mac without replay or duo frames',
   async (platform) => {

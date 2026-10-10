@@ -84,7 +84,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
     deviceLabel,
     ...deviceTileStatusLabels(device, now, item.env),
     workspaceLabel,
-    host ? t`Running on ${host}` : null,
+    host ? (device.running ? t`Running on ${host}` : t`On ${host}`) : null,
     agentsSummary(sessions),
   ]
     .filter(Boolean)
@@ -166,7 +166,7 @@ export const DeviceGridTile = memo(function DeviceGridTile({ tile, wide, visible
             </Text>
           ) : null}
         </View>
-        {host ? <HostLabel host={host} /> : null}
+        {host ? <HostLabel host={host} mode={device.running ? 'running' : 'placed'} /> : null}
         {sessions.length ? (
           sessionUrl ? (
             <Touch onPress={openSession} accessible={false} hitSlop={8}>
