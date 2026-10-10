@@ -76,6 +76,10 @@ export function nativeGradleTransfer(root: string, value: unknown): GradleTransf
   const repository = realpathSync(getExecutor().runFile('git', ['-C', root, 'rev-parse', '--show-toplevel']));
   const project = relative(repository, realpathSync(root)).split(sep).join('/');
   if (project && !containedPath(project)) throw new Error('The native Gradle project leaves its repository.');
+  if (lstatSync(join(repository, project, 'buildSrc'), { throwIfNoEntry: false })?.isDirectory())
+    throw new Error(
+      'Native Gradle offload does not support buildSrc: AGP does not report its build directories, so the worker cannot keep them.',
+    );
   const state = gradleStateDirectories(project);
   const files = new Map(sourceManifest(repository, true).map((file) => [file.path, file]));
   for (const path of declaration.ignored) {
@@ -168,6 +172,13 @@ export function nativeGradleOutputs(repository: string, declaration: GradleOfflo
   for (const output of declaration.outputs) {
     if (!reportedPaths.has(output)) throw new Error(`Declared output ${output} was not reported by AGP.`);
   }
+  for (const path of reportedPaths) {
+    if (
+      lstatSync(join(repository, path), { throwIfNoEntry: false })?.isDirectory() &&
+      !declaration.outputs.some((output) => below(path, output))
+    )
+      throw new Error(`Gradle build directory ${path} is not declared; add it to android.offloadInputs.outputs.`);
+  }
   return declaration.outputs.filter((path) =>
     lstatSync(join(repository, path), { throwIfNoEntry: false })?.isDirectory(),
   );
@@ -219,5 +230,15 @@ export function verifyGradleTransfer(
     ignoredDirectoryMarkers: markers.filter((path) => !files.some((file) => join(repository, file.path) === path)),
     parameters: null,
   });
+  const known = new Set(files.map((file) => file.path));
+  for (const entry of snapshot.entries) {
+    if (!entry.path.startsWith('repository/') || entry.path.includes('/@target')) continue;
+    const parts = entry.path.slice('repository/'.length).split('/');
+    const index = parts.findIndex((_, depth) => !known.has(parts.slice(0, depth + 1).join('/')));
+    if (index >= 0 && (index < parts.length - 1 || entry.kind === 'directory'))
+      throw new Error(
+        `Native Gradle directory ${parts.slice(0, index + 1).join('/')} is outside the source transfer and not a declared output reported by AGP; included builds and externalNativeBuild staging directories are not supported for remote builds.`,
+      );
+  }
   return manifestDigest(nativeTransferManifest(repository, snapshot, files)) === digest;
 }

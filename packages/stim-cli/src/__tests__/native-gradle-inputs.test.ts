@@ -142,6 +142,32 @@ test('only declared real output directories reported by AGP become reusable work
   );
   rmSync(join(root, 'app/build'), { recursive: true });
   expect(nativeGradleOutputs(root, declaration, [join(root, 'app/build')])).toEqual([]);
+  mkdirSync(join(root, 'lib/build'), { recursive: true });
+  expect(() => nativeGradleOutputs(root, declaration, [join(root, 'app/build'), join(root, 'lib/build')])).toThrow(
+    'lib/build is not declared; add it to android.offloadInputs.outputs',
+  );
+});
+
+test('a build directory Gradle creates outside reported outputs is named after the build', () => {
+  write('build-logic/settings.gradle.kts', 'source');
+  visible.push('build-logic/settings.gradle.kts');
+  const transfer = nativeGradleTransfer(root, declaration);
+  rmSync(join(root, 'private-unlisted.txt'));
+  write('build-logic/build/classes/Plugin.class', 'compiled');
+  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow(
+    'directory build-logic/build is outside the source transfer',
+  );
+  rmSync(join(root, 'build-logic/build'), { recursive: true });
+  mkdirSync(join(root, 'app/.cxx'));
+  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow(
+    'directory app/.cxx is outside the source transfer',
+  );
+});
+
+test('a buildSrc build refuses before upload because AGP does not report its build directories', () => {
+  write('buildSrc/build.gradle.kts', 'source');
+  visible.push('buildSrc/build.gradle.kts');
+  expect(() => nativeGradleTransfer(root, declaration)).toThrow('does not support buildSrc');
 });
 
 test.skipIf(process.platform === 'win32')(

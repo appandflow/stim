@@ -428,8 +428,6 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await compileNativeAndroid(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
-      if (!verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest))
-        throw new Error('The native source changed while the worker compiled it.');
       const model = JSON.parse(
         readFileSync(
           join(
@@ -440,8 +438,11 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           'utf8',
         ),
       ) as { buildDirectories?: unknown };
+      const outputs = nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
+      if (!verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest))
+        throw new Error('The native source changed while the worker compiled it.');
       const directories = [
-        ...nativeGradleOutputs(src, job.native.inputs, model.buildDirectories),
+        ...outputs,
         ...gradleStateDirectories(job.project).filter((path) =>
           lstatSync(join(src, path), { throwIfNoEntry: false })?.isDirectory(),
         ),
