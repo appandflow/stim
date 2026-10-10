@@ -9,6 +9,7 @@ struct BuildMachinesView: View {
   var model: BuildMachinesModel
   @ObservedObject var store: StatusStore
   var workspace: String?
+  var actions: ActionCenter?
 
   @State private var removing: String?
   @State private var adding: AddMachineModel?
@@ -30,7 +31,7 @@ struct BuildMachinesView: View {
       working: model.working, progress: model.progress, refreshing: model.isBusy, failure: failure,
       tailscaleRunning: model.tailscaleRunning,
       canAsk: checkout != nil,
-      addDisabled: model.working != nil || model.updates.values.contains { !$0.isDone },
+      addDisabled: model.working != nil,
       updatesAutomatically: $updatesAutomatically,
       add: { adding = model.addMachine(checkout: checkout) },
       ask: { entry in Task { await model.ask(entry, checkout: checkout) } },
@@ -38,6 +39,13 @@ struct BuildMachinesView: View {
       remove: { entry in removing = entry },
       poolDisabled: model.poolDisabled,
       setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
+      hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
+      stopHosted: { entry, devices in
+        var steps: [StimCommand] = []
+        for device in devices where !steps.contains(device.stop) { steps.append(device.stop) }
+        guard !steps.isEmpty else { return }
+        actions?.run("Stop hosted devices on \(entry)", steps: steps, key: "stop-hosted:\(entry)", present: false)
+      },
       showsThisMac: ThisMacAccessSections.shows(clients: hostClients, sessions: hosted.sessions ?? []),
       thisMac: ThisMacAccessSections(
         clients: hostClients, sessions: hosted.sessions ?? [], stopping: hosted.stopping,
@@ -181,6 +189,8 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var remove: (String) -> Void
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
+  var hosted: (String) -> [HostedOnMachine] = { _ in [] }
+  var stopHosted: (String, [HostedOnMachine]) -> Void = { _, _ in }
   var showsThisMac = false
   var thisMacName = Host.current().localizedName ?? "This Mac"
   var thisMac: ThisMac
@@ -287,7 +297,8 @@ struct BuildMachinesContent<ThisMac: View>: View {
             refreshing: canAsk && refreshing && status != nil && working != entry,
             capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
             progress: working == entry ? progress : nil,
-            canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
+            canAsk: canAsk, update: updates[entry], hosted: hosted(entry), ask: { ask(entry) },
+            startUpdate: { update(entry) }, stopHosted: { stopHosted(entry, $0) },
             remove: { remove(entry) }, toggles: poolToggles(entry))
         }
       } header: {
@@ -326,8 +337,10 @@ private struct BuildMachineRow<Toggles: View>: View {
   var progress: String?
   var canAsk: Bool
   var update: MachineUpdatePhase?
+  var hosted: [HostedOnMachine]
   var ask: () -> Void
   var startUpdate: () -> Void
+  var stopHosted: ([HostedOnMachine]) -> Void
   var remove: () -> Void
   var toggles: Toggles
 
@@ -385,6 +398,9 @@ private struct BuildMachineRow<Toggles: View>: View {
               }
             }
             MachineUpdateLine(phase: update, needed: needed, update: startUpdate)
+            if case .waiting(_, let sessions)? = update, sessions > 0 {
+              WaitingSessions(machine: entry, sessions: sessions, hosted: hosted, stop: stopHosted)
+            }
           }
         }
         if let command = status?.approvalCommand, let status {
@@ -480,5 +496,42 @@ private struct RemoveMachineSheet: View {
     }
     .padding(Space.xxl)
     .frame(width: 460)
+  }
+}
+
+private struct WaitingSessions: View {
+  var machine: String
+  var sessions: Int
+  var hosted: [HostedOnMachine]
+  var stop: ([HostedOnMachine]) -> Void
+  @State private var confirming = false
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.sm) {
+      if !hosted.isEmpty {
+        Button("Stop and Update\u{2026}") { confirming = true }
+          .buttonStyle(.stim(.secondary))
+          .fixedSize()
+          .help("Stops this Mac's hosted devices on \(machine) so its update can restart stim-server.")
+      }
+      let others = sessions - hosted.count
+      if others > 0 {
+        Text(
+          verbatim:
+            "\(others) hosted \(others == 1 ? "simulator belongs" : "simulators belong") to another Mac. Only someone on \(machine) can stop \(others == 1 ? "it" : "them")."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      }
+    }
+    .confirmationDialog(
+      "Stop \(hosted.count == 1 ? "this hosted device" : "these hosted devices") on \(machine)?", isPresented: $confirming
+    ) {
+      Button("Stop and Update", role: .destructive) { stop(hosted) }
+    } message: {
+      Text(
+        verbatim: (hosted.map { "\($0.device) in \($0.workspace)" } + [
+          "The app running there stops, even if someone else is using it. The update then continues."
+        ]).joined(separator: "\n"))
+    }
   }
 }

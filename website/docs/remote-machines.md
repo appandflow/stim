@@ -486,6 +486,15 @@ An exact npm release needs no extra setting. Installing this checkout's own
 build requires `server.acceptClientBuilds=true` on the worker; it defaults to
 false. A failed server health check restores the previous version.
 
+The worker restarts only once its offloaded builds and hosted sessions end, and
+the card says what it waits for, such as "Waiting for 1 hosted simulator to
+end...". When this Mac's own workspaces hold those hosted simulators, **Stop and
+Update...** stops them with `stim stop` after a confirmation that names each
+device and workspace; another Mac's sessions can only be stopped on the worker.
+The update shows as finished once the worker runs this Mac's Stim build, even
+when another update installed it, and a refused update (for example, one already
+running there) shows the worker's reason.
+
 ## Test build
 
 Desktop creates a pinned Expo blank SDK 58 sample under
