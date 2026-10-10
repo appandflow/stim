@@ -266,6 +266,18 @@ PATH).
   `test (windows)`, repeats install, build, typecheck and the unit suite on
   `windows-latest`.
 
+- **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
+  the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
+  Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
+  to cover the warm path. It runs on dispatch, on a pull request labeled
+  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
+  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
+  `scripts/ci`, the action or the workflow. A change to the other packages or
+  to the lockfile does not start it on push; a pull request label or dispatch
+  runs it on demand.
+  No workflow uses a larger runner, because larger runners are billed per minute
+  even on public repositories.
+
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
@@ -324,9 +336,10 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
 ### Assumptions a reviewer must confirm
 
 - `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
-  queue longer and break sooner than a GA image, and `xcode-27-xlarge` is the
-  only other size. The iOS lane is worth that because Swift compilation caching
-  cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
+  queue longer and break sooner than a GA image, and its larger size,
+  `xcode-27-xlarge`, is billed per minute even on public repositories, so no
+  workflow uses it. The iOS lane is worth the preview risk because Swift
+  compilation caching cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
 - The image's Xcode still has to suit the RN/Expo template the fixture creates,
   and this is now the likelier failure: `xcode-27` ships only the iOS 27 SDK and
   the iOS 27 simulator runtimes, with no older runtime to fall back to. A

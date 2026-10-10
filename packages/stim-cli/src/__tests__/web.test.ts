@@ -24,6 +24,7 @@ import { captureProcessToken, inspectProcessIdentity } from '../process-identity
 import { environmentState, withWebFacts } from '../status.ts';
 import { runWeb } from '../commands/web.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
+import { groupRunsProfile } from '../web/profile.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
 import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
@@ -732,5 +733,72 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
       cdpEndpoint: 'http://127.0.0.1:8950',
       url: 'http://localhost:8900/',
     });
+  });
+
+  async function lingeringChrome(
+    workspace: string,
+    memberArgs: (profile: string) => string[],
+  ): Promise<{ member: number }> {
+    const record = await ownedBrowser();
+    const script = `const m = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', ...JSON.parse(process.argv[1])], { stdio: 'ignore' }); console.log(m.pid); setTimeout(() => process.exit(0), 600);`;
+    const leader = spawn(process.execPath, ['-e', script, JSON.stringify(memberArgs(record.profile))], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    children.push(leader);
+    const member = await new Promise<number>((resolve) =>
+      leader.stdout!.once('data', (chunk) => resolve(Number(String(chunk).trim()))),
+    );
+    const chromeProcess = { pid: leader.pid!, processToken: captureProcessToken(leader.pid!)! };
+    await new Promise((resolve) => leader.once('exit', resolve));
+    expect(inspectProcessIdentity(chromeProcess)).toBe('gone');
+    rmSync(join(record.profile, 'SingletonLock'), { force: true });
+    writeWebRecord(workspace, { ...record, chromeProcess });
+    return { member };
+  }
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test('stop signals a lingering Chrome group whose member still runs on the profile', async () => {
+    const workspace = realpathSync(root);
+    const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}`]);
+    expect(alive(member)).toBe(true);
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(alive(member)).toBe(false);
+    expect(readWebRecord(workspace)).toBeNull();
+  });
+
+  test('stop does not signal a process group that is not running on the profile, and clears the record', async () => {
+    const workspace = realpathSync(root);
+    const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}-other`]);
+    expect(alive(member)).toBe(true);
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(alive(member)).toBe(true);
+    expect(readWebRecord(workspace)).toBeNull();
+  });
+});
+
+describe('groupRunsProfile', () => {
+  const listing = [
+    '  100 /Applications/Chrome --user-data-dir=/p/web --remote-debugging-port=9222',
+    '  200 /Applications/Chrome Helper --type=gpu --user-data-dir=/p/web',
+    '  300 /Applications/Chrome --user-data-dir=/p/web-2',
+  ].join('\n');
+
+  test.each([
+    [100, '/p/web', true],
+    [200, '/p/web', true],
+    [300, '/p/web', false],
+    [999, '/p/web', false],
+    [300, '/p/web-2', true],
+  ])('group %i on %s -> %s', (pgid, profile, expected) => {
+    expect(groupRunsProfile(listing, pgid, profile)).toBe(expected);
   });
 });

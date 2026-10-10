@@ -914,6 +914,28 @@ describe('macOS resource staging', () => {
     },
   );
 
+  it('refuses a symlinked Info.plist before any plist is read or rewritten', () => {
+    const outside = join(dir, 'outside.plist');
+    writeFileSync(outside, 'outside');
+    symlinkSync(outside, join(root, 'Linked.plist'));
+    expect(() => stageBundle(root, 'Sample', 'Linked.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
+      /macos.infoPlist.*stim guide macos/,
+    );
+    expect(calls).toEqual([]);
+    expect(existsSync(bundle)).toBe(false);
+    expect(readFileSync(outside, 'utf8')).toBe('outside');
+  });
+
+  it('refuses an Info.plist reached through a symlinked directory that leaves the project', () => {
+    mkdirSync(join(dir, 'elsewhere'));
+    writeFileSync(join(dir, 'elsewhere', 'Info.plist'), '{}');
+    symlinkSync(join(dir, 'elsewhere'), join(root, 'config'));
+    expect(() => stageBundle(root, 'Sample', 'config/Info.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
+      /macos.infoPlist/,
+    );
+    expect(calls).toEqual([]);
+  });
+
   it.each(['icon', 'branding', 'absent.xcassets'])('refuses an invalid asset catalog %s', (source) => {
     expect(() => resolveBundleExtras(root, root, {}, source)).toThrow(/macos.assetCatalog.*stim guide macos/);
   });

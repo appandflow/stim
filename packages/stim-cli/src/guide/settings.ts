@@ -298,7 +298,11 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         android project carries -- the right default, because
                         what this signs is a local emulator install and never
                         anything distributed. Set it only when the release
-                        variant must be signed with the repo's own key.
+                        variant must be signed with the repo's own key. A
+                        value in the committed .stim.json must resolve
+                        inside the repository (symlinks included); an
+                        absolute path outside it needs --scope workspace
+                        or repo.
   android.keystorePassword
                         the password for it. apksigner's SCHEMED form is
                         passed through unchanged (\`env:MY_KS_PASS\`,

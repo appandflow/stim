@@ -232,6 +232,7 @@ export function signalProcessTree(
   signal: NodeJS.Signals = 'SIGTERM',
   { group = false, platform = process.platform }: { group?: boolean; platform?: NodeJS.Platform } = {},
 ): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error(`Refusing to signal pid ${pid}.`);
   if (platform !== 'win32') return process.kill(group ? -pid : pid, signal);
   return getExecutor().runFileQuiet('taskkill', ['/PID', String(pid), '/T', '/F']) !== null;
 }

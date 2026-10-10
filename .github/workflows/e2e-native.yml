@@ -82,11 +82,6 @@ on:
         type: choice
         default: fixture
         options: [fixture, food-truck]
-      native_ios_runner:
-        description: 'Native Xcode fixture host and toolchain'
-        type: choice
-        default: preview
-        options: [preview, ga-large]
 
       native_gradle:
         description: Run only native Gradle provider validation
@@ -621,9 +616,9 @@ jobs:
           retention-days: 7
 
   native-xcode:
-    name: native Xcode acceptance (${{ inputs.native_ios_runner || 'preview' }})
+    name: native Xcode acceptance
     if: github.event_name == 'workflow_dispatch' && !inputs.hosted_native_android && (inputs.native_ios_only || (!inputs.native_gradle && inputs.suite == 'all'))
-    runs-on: ${{ inputs.native_ios_runner == 'ga-large' && 'macos-26-xlarge' || 'xcode-27' }}
+    runs-on: xcode-27
     timeout-minutes: 45
     env:
       CI: '1'
@@ -631,7 +626,7 @@ jobs:
       LC_ALL: en_US.UTF-8
       STIM_NATIVE_XCODE_EVIDENCE: ${{ github.workspace }}/artifacts/native-xcode
       STIM_NATIVE_XCODE_PROJECT: ${{ inputs.native_ios_project || 'fixture' }}
-      NATIVE_XCODE_VERSION: ${{ inputs.native_ios_runner == 'ga-large' && '26.6' || '27.0' }}
+      NATIVE_XCODE_VERSION: '27.0'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim

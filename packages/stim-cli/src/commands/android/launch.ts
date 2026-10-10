@@ -433,6 +433,7 @@ interface FinishAndroidRunArgs {
   bootDuration: () => string;
   apkPath: string | null;
   androidPackage: string | null;
+  androidPackageProblem?: string | null;
   record: AndroidRecord;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
@@ -620,6 +621,7 @@ export async function finishAndroidRun({
   bootDuration,
   apkPath,
   androidPackage: initialPackage,
+  androidPackageProblem,
   record,
   waitedForBuild,
   ccache,
@@ -718,6 +720,9 @@ export async function finishAndroidRun({
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
   androidPackage = packageFromApk || androidPackage || readProjectPackage();
+  if (!androidPackage && androidPackageProblem) {
+    return fail(LAUNCH_FAILED, androidPackageProblem, packageRemedy, { lastBuildStatus: true });
+  }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
   if (adopting) {

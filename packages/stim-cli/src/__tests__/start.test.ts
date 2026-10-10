@@ -26,7 +26,7 @@ import {
   workspaceLogsDir,
   workspaceMetadataFile,
 } from '../workspace/paths.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -38,10 +38,18 @@ import {
   registerStart,
   startFacts,
   supervisorEntry,
+  supervisorSignalable,
   tailLines,
   wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import { IMPOSSIBLE_PID, asProcessExit, makeChildProcess } from './_factories.ts';
+import {
+  IMPOSSIBLE_PID,
+  asProcessExit,
+  goneClaimOwner,
+  liveClaimOwner,
+  makeChildProcess,
+  recycledClaimOwner,
+} from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
@@ -456,6 +464,22 @@ describe('liveSupervisor', () => {
   test('no record at all is null, not a throw', () => {
     expect(liveSupervisor({ port: 8082 })).toBe(null);
     expect(liveSupervisor()).toBe(null);
+  });
+});
+
+describe('supervisorSignalable', () => {
+  test('a child this process spawned is signalled without a recorded identity', () => {
+    expect(supervisorSignalable({})).toBe(true);
+  });
+
+  test('a recorded supervisor is signalled only while its identity still matches', () => {
+    expect(supervisorSignalable({ recordedIdentity: liveClaimOwner() })).toBe(true);
+    expect(supervisorSignalable({ recordedIdentity: recycledClaimOwner() })).toBe(false);
+    expect(supervisorSignalable({ recordedIdentity: goneClaimOwner() })).toBe(false);
+  });
+
+  test('a recorded supervisor without a verifiable token is not signalled', () => {
+    expect(supervisorSignalable({ recordedIdentity: { pid: process.pid } })).toBe(false);
   });
 });
 
@@ -1624,6 +1648,106 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
     expect(alive).toBe(false);
     expect(readMetroTunnel(root)).toMatchObject({ pid: 4343 });
+  });
+
+  test.each([
+    {
+      identity: 'recycled',
+      owner: recycledClaimOwner,
+      terminated: false,
+      remedy: `Unmanaged supervisor pid ${process.pid} may still be running. Stop it with \`stim stop\`, or \`taskkill /PID ${process.pid} /T /F\` before retrying.`,
+    },
+    {
+      identity: 'live',
+      owner: liveClaimOwner,
+      terminated: true,
+      remedy: 'The supervisor process was stopped.',
+    },
+  ])(
+    'win32 handoff failure with a $identity recorded supervisor terminates it: $terminated',
+    async ({ owner, terminated, remedy }) => {
+      const recorded = owner();
+      let handoff: unknown;
+      const { server, port } = await metroListener();
+      const exec = metroExecutor({ listeners: {} });
+      exec.spawn = (cmd, args, opts) => {
+        exec.calls.spawn.push({ cmd, args, opts });
+        const shell = makeChildProcess({ pid: 777 });
+        setTimeout(() => {
+          writeWorkspaceState(root, {
+            supervisor: { ...recorded, port, mode: 'bare-inproc', startedAt: new Date().toISOString() },
+          });
+          shell.emit('exit', 0, null);
+          shell.emit('close', 0, null);
+        }, 20);
+        return shell;
+      };
+      setExecutor(exec);
+      upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+      const terminate = vi.fn<(child: unknown) => Promise<boolean>>(async () => true);
+
+      const result = await runAction({ json: true, wait: '10', remote: true }, (cmd) =>
+        registerStart(cmd, {
+          platform: 'win32',
+          providers: () => ['ngrok'],
+          startTunnelSequence: async () => ({
+            provider: 'ngrok',
+            url: 'https://ready.ngrok.app',
+            pid: 4343,
+            processToken: 'linux:100',
+            cleanup: successfulTunnelCleanup,
+          }),
+          isTunnelAlive: () => true,
+          writeSupervisorRecord: (_root, patch) => {
+            handoff = patch.supervisor;
+            clearWorkspaceStateKeys(root, ['supervisor']);
+            throw new Error('disk full');
+          },
+          terminateSupervisorChild: terminate,
+        }),
+      ).finally(() => server.close());
+
+      expect(result.exitCode).toBe(1);
+      const failure = JSON.parse(result.logs[0] ?? '');
+      expect(failure.code).toBe('STIM_SUPERVISOR_EXITED');
+      expect(handoff).toMatchObject({ pid: recorded.pid, processToken: recorded.processToken });
+      expect(terminate).toHaveBeenCalledTimes(terminated ? 1 : 0);
+      expect(failure.remedy).toContain(remedy);
+    },
+    30_000,
+  );
+
+  test('a failed supervisor cleanup names the kill command for the platform', async () => {
+    const port = 8189;
+    const exec = metroExecutor({ listeners: {} });
+    exec.spawn = (cmd, args, opts) => {
+      exec.calls.spawn.push({ cmd, args, opts });
+      return Object.assign(makeChildProcess(), { pid: IMPOSSIBLE_PID });
+    };
+    setExecutor(exec);
+    upsertProject(root, { metroPort: port, settings: { metro: { tunnel: 'ngrok' } } });
+
+    const result = await runAction({ json: true, wait: '1', remote: true }, (cmd) =>
+      registerPosixStart(cmd, {
+        providers: () => ['ngrok'],
+        startTunnelSequence: async () => ({
+          provider: 'ngrok',
+          url: 'https://ready.ngrok.app',
+          pid: 4343,
+          processToken: 'linux:100',
+          cleanup: successfulTunnelCleanup,
+        }),
+        isTunnelAlive: () => true,
+        writeSupervisorRecord: () => {
+          throw new Error('disk full');
+        },
+        terminateSupervisorChild: async () => false,
+      }),
+    );
+
+    expect(JSON.parse(result.logs[0] ?? '').remedy).toContain(
+      `Stop it with \`stim stop\`, or \`kill ${IMPOSSIBLE_PID}\` before retrying.`,
+    );
   });
 
   test('a failed managed tunnel acquisition releases the concurrency lock', async () => {
