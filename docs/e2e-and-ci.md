@@ -399,8 +399,8 @@ Metro, build the app, or populate the native artifact cache. Stock fixtures
 and Android do not take this preparation path.
 
 The loop still asserts three distinct simulators are booted simultaneously. The
-Windows Android loop runs two emulators at once, without the third slot, because
-the 4-vCPU runner starves the adb server at three (#3086).
+Windows Android loop runs one emulator at a time and skips the named-slot proof, because
+the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
 Cache suites still require a cold artifact miss and race two commands against
 one empty cache. The preparation reduces overlapping first-boot work; it does
 not establish that host memory caused earlier failures or guarantee enough

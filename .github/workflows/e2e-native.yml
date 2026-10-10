@@ -20,7 +20,7 @@
 #   all     loop, caches and pool, as separate parallel matrix jobs.
 #
 # Per platform: iOS runs smoke, loop, caches and pool; Linux Android smoke,
-# loop and caches; Windows Android smoke and loop (two concurrent emulators).
+# loop and caches; Windows Android smoke and loop (one emulator at a time, no named slots).
 #
 # WHAT RUNS WHEN. A cold native build is ~10-20 minutes and occasionally flaky
 # (device boot, toolchain), so nothing native runs on an unlabeled pull request:

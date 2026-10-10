@@ -117,6 +117,11 @@ async function main() {
     return;
   }
 
+  if (SINGLE_EMULATOR) {
+    cleanup.recordWorkspace(wt1);
+    stop(wt1);
+  }
+
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode: ${start2.mode}`);
   const build2 = buildAndAssert(wt2, { expectCacheHit: true });
@@ -131,21 +136,24 @@ async function main() {
 
   cleanup.recordWorkspace(wt2);
   stop(wt2);
-  verifyDeviceSlots(wt1, build1, flags);
-  cleanup.recordWorkspace(wt1);
-  stop(wt1);
+  if (!SINGLE_EMULATOR) {
+    verifyDeviceSlots(wt1, build1, flags);
+    cleanup.recordWorkspace(wt1);
+    stop(wt1);
+  }
   worktreeRemove(wt2);
   worktreeRemove(wt1);
   await verifyCleanup({ h, cleanup, appDir, created });
 }
 
+// GitHub's 4-vCPU windows-latest runner starves the adb server and the package verifier with two
+// or more concurrent emulators, so Windows runs one at a time and skips the named-slot proof:
+// https://github.com/appandflow/stim/issues/3086
+const SINGLE_EMULATOR = process.platform === 'win32';
+
 function stop(cwd) {
   cli(['stop'], { cwd, env: { ...ENV, STIM_DEBUG: '1' } });
 }
-
-// GitHub's 4-vCPU windows-latest runner starves the adb server at three concurrent emulators:
-// https://github.com/appandflow/stim/issues/3086
-const THIRD_SLOT = process.platform !== 'win32';
 
 function verifyDeviceSlots(cwd, original, thirdFlags) {
   banner('named slots: distinct devices, cached installs, reuse and scoped stop');
@@ -171,12 +179,8 @@ function verifyDeviceSlots(cwd, original, thirdFlags) {
   assert(deviceId(second) !== deviceId(original), 'two same-model slots shared a device');
   const repeated = runSlot('second');
   assert(deviceId(repeated) === deviceId(second), 'repeated slot did not reuse its device');
-  const third = THIRD_SLOT ? runSlot('third', thirdFlags) : null;
-  const slotFacts = [original, second, third].filter(Boolean);
-  assert(
-    new Set(slotFacts.map(deviceId)).size === slotFacts.length,
-    `${slotFacts.length} slots did not get distinct devices`,
-  );
+  const third = runSlot('third', thirdFlags);
+  assert(new Set([original, second, third].map(deviceId)).size === 3, 'three slots did not get distinct devices');
   if (PLATFORM === 'ios') {
     const inventory = JSON.parse(sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
     const booted = new Set(
@@ -186,28 +190,26 @@ function verifyDeviceSlots(cwd, original, thirdFlags) {
         .map((device) => device.udid),
     );
     assert(
-      slotFacts.every((facts) => booted.has(facts.udid)),
-      'all slots must be booted simultaneously',
+      [original, second, third].every((facts) => booted.has(facts.udid)),
+      'all three slots must be booted simultaneously',
     );
   }
   const status = () =>
     cliJson(['status', '--json'], { cwd }).environments.find((environment) => environment.path === cwd);
   const before = status();
-  assert(before?.slots?.length === (third ? 2 : 1), 'status omitted named slots');
+  assert(before?.slots?.length === 2, 'status omitted named slots');
   const stopped = cliJson(['stop', '--slot', 'second', '--json'], { cwd });
   assert(stopped.ok && stopped.port.status === 'kept', 'slot stop failed or released the shared port');
   const after = status();
   assert(after?.metro?.running && after.metro.port === before.metro.port, 'slot stop disturbed Metro');
-  if (third) {
-    const sibling = after.slots.find((slot) => slot.slot === 'third');
-    assert(
-      PLATFORM === 'ios' ? sibling?.ios?.state === 'Booted' : sibling?.android?.serial === third.serial,
-      'slot stop disturbed its sibling',
-    );
-  }
+  const sibling = after.slots.find((slot) => slot.slot === 'third');
+  assert(
+    PLATFORM === 'ios' ? sibling?.ios?.state === 'Booted' : sibling?.android?.serial === third.serial,
+    'slot stop disturbed its sibling',
+  );
   const resumed = runSlot('second');
   assert(deviceId(resumed) === deviceId(second), 'stopped slot lost its assignment');
-  log(`SLOT PROOF: ${slotFacts.length} assignments, reuse, cache hits, attributed logs and isolated stop.`);
+  log('SLOT PROOF: three assignments, reuse, cache hits, attributed logs and isolated stop.');
 }
 
 function worktreeCreate(name, sourceDir) {
