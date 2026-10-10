@@ -1,4 +1,3 @@
-import { reactNativeAndroidProject } from '../../integrations/react-native-android.ts';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildCacheKey, fingerprintProject } from '../../cache/build-cache.ts';
@@ -17,6 +16,7 @@ import { planEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { planPrebuild } from '../../engine/prebuild.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote } from '../../engine/remote-cache.ts';
 import { statsProjectKey } from '../../engine/stats.ts';
+import { reactNativeAndroidProject } from '../../integrations/react-native-android.ts';
 import { getProject } from '../../workspace/config.ts';
 import { projectProblem, findProjectRoot, NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import {

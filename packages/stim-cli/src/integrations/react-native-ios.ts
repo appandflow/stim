@@ -78,7 +78,6 @@ export function reactNativeIosProject(
 ): IosProject {
   const d: ReactNativeIosDependencies = { ...DEFAULT_DEPS, ...dependencies };
   const isExpo = d.detectIsExpo(root);
-
   return {
     isExpo,
     bundleId: () => d.detectBundleId(root),
