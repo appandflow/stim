@@ -275,7 +275,7 @@ PATH).
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
   | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
-  | nightly schedule    | loop on iOS and Linux Android; the Windows loop is off until #3086 is fixed                         |
+  | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
 
@@ -284,7 +284,7 @@ PATH).
   `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
   turns event, labels and input into one suite list per platform, filtered by
   what the platform supports: iOS smoke, loop, caches, pool; Linux Android
-  smoke, loop, caches; Windows Android smoke (loop off until #3086). Each
+  smoke, loop, caches; Windows Android smoke and loop. Each
   platform job reads its list as the `suite` matrix axis and is skipped when
   the list is empty. The
   smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
@@ -385,7 +385,9 @@ and profile reconciliation, then shuts it down through Stim. It does not start
 Metro, build the app, or populate the native artifact cache. Stock fixtures
 and Android do not take this preparation path.
 
-The loop still asserts three distinct simulators are booted simultaneously.
+The loop still asserts three distinct simulators are booted simultaneously. The
+Windows Android loop runs two emulators at once, without the third slot, because
+the 4-vCPU runner starves the adb server at three (#3086).
 Cache suites still require a cold artifact miss and race two commands against
 one empty cache. The preparation reduces overlapping first-boot work; it does
 not establish that host memory caused earlier failures or guarantee enough
