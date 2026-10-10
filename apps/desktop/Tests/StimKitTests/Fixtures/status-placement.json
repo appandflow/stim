@@ -13,7 +13,12 @@
           "machine": "janics-mac-mini",
           "session": "ios-session",
           "selected": "auto",
-          "reason": "load 3.1/core here"
+          "reason": "load 3.1/core here",
+          "agent": {
+            "driver": "none",
+            "setting": "hosting.agentDriver"
+          },
+          "device": null
         },
         "devicePlacement": {
           "decision": "hosted",
@@ -30,14 +35,20 @@
           "machine": "janics-mac-mini",
           "session": "android-session",
           "selected": "janics-mac-mini",
-          "reason": "selected janics-mac-mini"
+          "reason": "selected janics-mac-mini",
+          "agent": {
+            "driver": "none",
+            "setting": "hosting.agentDriver"
+          },
+          "device": null
         },
         "devicePlacement": {
           "decision": "hosted",
           "reason": "selected janics-mac-mini",
           "machine": "janics-mac-mini"
         }
-      }
+      },
+      "memoryMb": 0
     },
     {
       "path": "/local",
@@ -62,7 +73,16 @@
           "decision": "waited-locally",
           "reason": "waited for room here"
         }
-      }
+      },
+      "memoryMb": 0
     }
-  ]
+  ],
+  "capacity": {
+    "liveCount": 2,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
 }

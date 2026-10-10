@@ -19,8 +19,17 @@
       "logs": {
         "dir": "/Users/example/stim-state/logs",
         "errorsSinceMarker": 0
-      }
+      },
+      "memoryMb": 0
     }
   ],
-  "archived": []
+  "archived": [],
+  "capacity": {
+    "liveCount": 1,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
 }
