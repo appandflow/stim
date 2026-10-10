@@ -872,7 +872,14 @@ export interface BuildStartParams {
   scheme?: string | null;
   runtime?: string | null;
   fingerprint: string;
-  native?: { provider: 'xcode'; sourceDigest: string; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
+  native?: {
+    provider: 'xcode';
+    sourceDigest: string;
+    cacheKey: string;
+    arch: 'arm64' | 'x86_64' | null;
+    /** The non-file parameters of the client's artifact identity, so the machine can name what differs. */
+    parameters: Record<string, unknown>;
+  };
   packageName?: string | null;
   isExpo?: boolean;
   optimizations?: Record<string, unknown> | null;

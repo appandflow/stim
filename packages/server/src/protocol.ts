@@ -1498,13 +1498,17 @@ export function protocolJsonSchema(): JsonSchema {
               fingerprint: { type: 'string', minLength: 1 },
               native: {
                 type: 'object',
-                required: ['provider', 'sourceDigest', 'cacheKey', 'arch'],
+                required: ['provider', 'sourceDigest', 'cacheKey', 'arch', 'parameters'],
                 additionalProperties: false,
                 properties: {
                   provider: { const: 'xcode' },
                   sourceDigest: sha256,
                   cacheKey: { type: 'string', minLength: 1 },
                   arch: { enum: ['arm64', 'x86_64', null] },
+                  parameters: {
+                    type: 'object',
+                    description: 'The non-file parameters of the client artifact identity, to name what differs.',
+                  },
                 },
               },
               packageName: { type: ['string', 'null'] },

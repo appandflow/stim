@@ -48,13 +48,39 @@ operations as the CLI. It does not parse Commander arguments. The importing
 process keeps its working directory, environment, output and signal handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
-`StimRunOptions`, `StimRunResult`, `StimStopOptions`, `StimStopResult`,
-`StimDiagnosticsOptions`, `StimDiagnostics`, `StimProgress`, and `StimPlatform`.
+`StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
+`StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
+`StimDiagnostics`, `StimProgress`, and `StimPlatform`.
+
+## Build only
+
+```ts
+const result = await stim.build({ platform: 'ios', configuration: 'Debug' });
+console.log(result.facts.appPath);
+```
+
+`build` uses the selected project's compiler recipe and normal build/cache
+coordination. It does not create or boot a device, launch an app, start Metro,
+or stop a session. Results are inferred from `platform`, just like `run`.
+
+| Platform  | Options                                                                                            | Returned artifact                        |
+| --------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `ios`     | `scheme`, `configuration`, `arch` (`arm64`, `x86_64`, `all`), `buildCache`, `remoteBuild`          | `facts.appPath`, a simulator app         |
+| `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild` | `facts.apkPath`                          |
+| `macos`   | `remoteBuild`                                                                                      | `facts.bundle`, the configured Debug app |
+
+A Debug build targets the host architecture by default; on Android only while
+`optimizations.android.targetAbiOnly` is on, which is the default. Release uses
+all architectures. Each result points to a separate owned copy retained until
+`stim worktree remove` removes this workspace; a later build does not overwrite
+it. A build does not replace a running app's last build record or build log; it
+writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
+distribution archives or infer a web compilation pipeline.
 
 ## Run
 
 `run` builds, installs and launches with the same requirements and configuration
-as the corresponding CLI command. There is no build-only method yet.
+as the corresponding CLI command.
 
 | Platform  | Project              | Options                                            |
 | --------- | -------------------- | -------------------------------------------------- |

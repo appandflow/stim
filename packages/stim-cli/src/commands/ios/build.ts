@@ -14,23 +14,17 @@ import { checkEasAuth, resolveRemote, uploadRemote } from '../../engine/remote-c
 import { createRunRecorder, readRunEstimates, recordRunStats, statsProjectKey } from '../../engine/stats.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
-import { artifactCachePolicy, optimizationBuildProfile, resolveOptimizations } from '../../optimizations.ts';
-import { resolveBuildPlacement } from '../../offload/selection.ts';
+import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizations.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
 import { getConcurrencyLimits } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
-import {
-  resolveCacheProviderConfig,
-  resolveSettings,
-  settingShapeErrors,
-  SETTING_SHAPE_REMEDY,
-} from '../../workspace/settings.ts';
+import { resolveCacheProviderConfig, resolveSettings } from '../../workspace/settings.ts';
 import { recordWorkspaceUse } from '../../workspace/workspace-state.ts';
 import { gitCommonDir, repoRoot } from '../../workspace/worktree.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
 import { lastBuildRecord } from './result.ts';
-import { isReleaseConfiguration, resolveConfiguration } from './support.ts';
+import { resolveConfiguration, resolveIosBuildSetup, simulatorBuildArch } from './support.ts';
 
 export interface IosBuildOptions {
   configuration?: string;
@@ -70,11 +64,14 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
   const integration = await selected.load();
   const context = { projectPath: root, gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) };
   const settings = resolveSettings(context);
-  const [shape] = settingShapeErrors(settings);
-  if (shape) throw Object.assign(new Error(`${shape} ${SETTING_SHAPE_REMEDY}`), { code: 'STIM_BAD_ARG' });
-  const optimizations = resolveOptimizations(settings);
-  const placement = resolveBuildPlacement(options.remoteBuild);
-  if (placement.failure) throw Object.assign(new Error(placement.failure.message), placement.failure);
+  const setup = resolveIosBuildSetup(options.remoteBuild, settings, (label, message) =>
+    note(phaseLine(label, message)),
+  );
+  if (!setup.ok) {
+    const { failure } = setup;
+    throw Object.assign(new Error(failure.message ?? failure.code), failure, { details: failure });
+  }
+  const { buildMachine, optimizations } = setup;
   const configuration = resolveConfiguration(options.configuration, settings);
   const problem = integration.schemeProblem(options.scheme, configuration);
   if (problem) throw Object.assign(new Error(problem.message ?? problem.code), problem);
@@ -83,7 +80,8 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
   const arch =
     options.arch === 'all'
       ? null
-      : (options.arch ?? (isReleaseConfiguration(configuration) ? null : hostSimulatorArch()));
+      : (options.arch ??
+        simulatorBuildArch({ physical: false, remoteArch: null, hostArch: hostSimulatorArch(), configuration }));
   const cache = artifactCachePolicy(
     optimizations,
     options.buildCache !== false,
@@ -100,7 +98,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       const startedAt = new Date(started).toISOString();
       const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
       const logs = workspaceLogsDir(root);
-      const logFile = join(logs, 'build-ios.ndjson');
+      const logFile = join(logs, 'build-artifact-ios.ndjson');
       const writer = tapBuildLog(
         createNdjsonWriter(logFile, { truncate: true, fields: { platform: 'ios' } }),
         progress,
@@ -135,12 +133,12 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
             cacheHit: artifact?.cache.hit,
             cacheSkipped: artifact ? !artifact.cache.readEnabled : !cache.read,
             bundleId: artifact?.bundleId,
-            buildMachine: placement.selected,
+            buildMachine,
             builtOn: artifact?.cache.builtOn,
             offloadedTo: artifact?.cache.offloadedTo,
             offloadFallback: artifact?.cache.offloadFallback,
           }),
-          { preserveRuntime: true },
+          { artifactOnly: true },
         );
       try {
         const acquired = await acquireIosArtifact(
@@ -148,7 +146,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
             root,
             logFile,
             configuration,
-            buildMachine: placement.selected,
+            buildMachine,
             physical: false,
             recipe: integration.artifact({
               root,
@@ -244,7 +242,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           cacheKey: artifact.cache.identity?.key ?? null,
           cacheHit: artifact.cache.hit,
           cacheSkipped: !artifact.cache.readEnabled,
-          buildMachine: placement.selected,
+          buildMachine,
           builtOn: artifact.cache.builtOn ?? null,
           compilationCache: artifact.cache.compilation,
           durationMs: Date.now() - started,

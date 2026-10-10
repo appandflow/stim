@@ -62,7 +62,6 @@ export function reactNativeAndroidProject(
   dependencies: ReactNativeAndroidDependencies = {},
 ): AndroidProject {
   const isExpo = detectIsExpo(root);
-
   return {
     plan: (options) => planReactNativeAndroid(root, options, runtimeKind, dependencies.plan),
     isExpo,
