@@ -14,8 +14,7 @@ process.on('warning', (warning) => {
 });
 const tokens = await import('../../mobile/src/design/tokens.ts');
 const { AGENT_PROMPTS, TRY_THIS_PROMPTS } = await import('../../mobile/src/lib/agent-prompts.ts');
-const { TUTORIAL_STEPS, TUTORIAL_RESTART_PROMPT, TUTORIAL_ASKS } =
-  await import('../../../packages/stim-cli/src/guide/tutorial-data.ts');
+const { TUTORIAL_STEPS, TUTORIAL_ASKS } = await import('../../../packages/stim-cli/src/guide/tutorial-data.ts');
 const { TUTORIAL_VERSION } = await import('../../../packages/core/state/status.ts');
 
 const weights = { regular: '.regular', medium: '.medium', semibold: '.semibold', bold: '.bold' };
@@ -145,7 +144,6 @@ public struct TutorialStep: Sendable {
 
 public enum TutorialSteps {
   public static let supportedVersions: Set<Int> = [${TUTORIAL_VERSION}]
-  public static let restartPrompt = ${swiftString(TUTORIAL_RESTART_PROMPT)}
   public static let retryAsk = ${swiftString(TUTORIAL_ASKS.retry)}
   public static let all: [TutorialStep] = [
 ${TUTORIAL_STEPS.map(

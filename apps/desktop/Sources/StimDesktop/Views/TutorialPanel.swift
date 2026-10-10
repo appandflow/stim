@@ -7,8 +7,7 @@ struct TutorialPanel: View {
   #if DEBUG
     var fixtureRendering = false
   #endif
-  var restarting = false
-  var message: String? = nil
+  var message: TutorialNotice? = nil
   var issues: [StatusIssue] = []
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
   var machineState = TutorialMachineState.none
@@ -77,9 +76,6 @@ struct TutorialPanel: View {
 
   private var stepList: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      if restarting {
-        TutorialPromptBox(prompt: TutorialSteps.restartPrompt, onCopy: copied)
-      }
       if snapshot.isComplete {
         Label("Tutorial Complete", systemImage: "checkmark.circle.fill")
           .font(.stim(.headline)).foregroundStyle(Palette.success)
@@ -132,7 +128,7 @@ struct TutorialPanel: View {
         .contentShape(Rectangle())
       }
       .buttonStyle(.plain)
-      .accessibilityLabel("\(step.title), \(current ? message ?? stateLabel(state.state) : stateLabel(state.state))")
+      .accessibilityLabel("\(step.title), \(current ? message?.text ?? stateLabel(state.state) : stateLabel(state.state))")
       .accessibilityValue(open ? "Expanded" : "Collapsed")
       if open {
         VStack(alignment: .leading, spacing: Space.md) {
@@ -148,21 +144,23 @@ struct TutorialPanel: View {
           if step.id == "phone", snapshot.record.phonePairedAtStart == true {
             Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
           }
-          let detail = current ? message ?? state.detail : state.detail
+          let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
+          let detail = notice.text
           if !detail.isEmpty, detail != explanation(step.id), current || ["build", "parallel", "phone"].contains(step.id) {
             Text(detail).foregroundStyle(color(state.state)).textSelection(.enabled)
           }
-          if detail.contains("Update Stim Desktop") {
+          switch notice.action {
+          case .updateDesktop:
             Button("Check for Updates", action: updater.checkForUpdates)
               .buttonStyle(.stim()).disabled(!updater.canCheckForUpdates)
               .accessibilityLabel("Check for Stim Desktop updates")
-          } else if detail.contains("Stim CLI") {
+          case .updateCLI:
             Button("Update Stim CLI", action: updateCLI).buttonStyle(.stim())
               .accessibilityLabel("Open the setup guide to update Stim CLI")
-          }
-          if detail.contains("Restart") || detail.hasPrefix("No tutorial workspace") {
+          case .restart:
             Button("Restart Tutorial", action: restart).buttonStyle(.stim())
               .accessibilityLabel("Restart the Stim tutorial")
+          case nil: EmptyView()
           }
           ForEach(state.ticks, id: \.id) { tick in
             Label(
