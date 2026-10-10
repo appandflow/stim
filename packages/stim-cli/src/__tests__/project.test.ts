@@ -24,7 +24,8 @@ test('owned device labels distinguish worktrees and apps, collapse equal basenam
   const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'stim-labels-')));
   const main = join(tmp, 'My.App');
   const worktree = join(tmp, 'pr6460');
-  const git = (cwd: string, ...args: string[]) => getExecutor().runFile('git', ['-C', cwd, ...args]);
+  const git = (cwd: string, ...args: string[]) =>
+    getExecutor().runFile('git', ['-C', cwd, ...args], { timeoutMs: 60_000 });
   try {
     mkdirSync(main);
     git(main, 'init');
@@ -345,7 +346,7 @@ test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', 
 test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.module names', () => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-root-')));
   try {
-    getExecutor().runFile('git', ['init', '-q', repo]);
+    getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
     const app = join(repo, 'packages', 'tester');
     mkdirSync(join(app, 'android', 'app'), { recursive: true });
     writeFileSync(join(repo, 'settings.gradle.kts'), '');

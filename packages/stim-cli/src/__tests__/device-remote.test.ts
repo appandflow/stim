@@ -58,7 +58,7 @@ function mockExec({
   const calls: Call[] = [];
   const exec: Executor & { calls: Call[] } = {
     calls,
-    runFile(file: string, args: string[] = [], opts = {}) {
+    runFile(file: string, args: string[] = [], opts: object = {}) {
       const o = opts as { env?: Record<string, string>; cwd?: string; omitEnv?: readonly string[]; timeoutMs?: number };
       calls.push({ file, args, env: o.env, cwd: o.cwd, omitEnv: o.omitEnv, timeoutMs: o.timeoutMs });
       const key = [file, ...args].join(' ');

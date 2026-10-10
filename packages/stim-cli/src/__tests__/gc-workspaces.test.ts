@@ -747,6 +747,7 @@ describe('linked worktree sweep classification', () => {
     ['unpushed commits', linked({ unpushed: ['abc1234 wip'] }), 'unpushed', /unpushed: 1 commit/],
     ['an unknown unpushed state', linked({ unpushed: null }), 'unpushed-unchecked', /could not be checked/],
     ['initialized submodules', linked({ submodules: true }), 'submodules', /submodules/],
+    ['an unchecked submodule state', linked({ submodules: null }), 'submodules', /could not be checked/],
     ['a worktree in use', linked({ inUse: ['its dev server supervisor (pid 1) is running'] }), 'in-use', /^in use: /],
     ['a recently used worktree', linked({ idleDays: 2 }), 'recently-used', /recently used 2d ago/],
     ['a worktree whose last use is unknown', linked({ idleDays: null }), 'last-use-unknown', /recently used/],
@@ -982,6 +983,40 @@ function answerGh(pullsOf: (branch: string) => object[], calls: { cwd?: string; 
   });
   return calls;
 }
+
+test.each([
+  ['status', 'status-unreadable', /could not be read/],
+  ['--not', 'unpushed-unchecked', /could not be checked/],
+  ['--stage', 'submodules', /could not be checked/],
+])(
+  'gc keeps an idle worktree whose %s check times out and says it could not run',
+  async (marker, reason, detail) => {
+    const { repo, worktrees } = gitRepoWithWorktrees(['slow']);
+    const slow = realpathSync.native(worktrees.slow!);
+    upsertProject(slow, { metroPort: null });
+    recordWorkspaceUse(slow, new Date(Date.now() - 10 * DAY_MS));
+    upsertProject(repo, { metroPort: null });
+    const real = getExecutor();
+    setExecutor({
+      ...real,
+      runFile: (file, args: string[], opts) => {
+        if (file === 'git' && args.includes(slow) && args.includes(marker)) {
+          throw Object.assign(new Error(`Command timed out after 60000ms: git ${args.join(' ')}`), {
+            code: 'ETIMEDOUT',
+          });
+        }
+        return real.runFile(file, args, opts);
+      },
+    });
+
+    const { payload } = await gcJson({ worktrees: true, delete: true });
+
+    const entry = payload.sections.linkedWorktrees.find((w: { path: string }) => realpathSync.native(w.path) === slow);
+    expect(entry).toMatchObject({ willRemove: false, reason, detail: expect.stringMatching(detail) });
+    expect(existsSync(slow)).toBe(true);
+  },
+  60_000,
+);
 
 test('gc --worktrees reports each linked worktree, and --delete removes only the clean idle ones', async () => {
   const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'fresh', 'dirty', 'racing']);

@@ -3,6 +3,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
+import { isTimeoutError } from '../exec.ts';
 import {
   resolveIosProjectDir,
   resolveProjectSettings,
@@ -792,6 +793,7 @@ interface RemovalInspection {
   cookies: string[];
   unpushed: string[] | null;
   blockers: string[];
+  timedOut?: boolean;
 }
 
 export function removalPath(target: string | undefined): string {
@@ -815,15 +817,31 @@ function canonicalExistingPath(target: string): string {
 }
 
 function inspectRemoval(path: string, mergedHead?: string): RemovalInspection {
+  try {
+    return inspectGit(path, mergedHead);
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    return timedOutInspection(error);
+  }
+}
+
+function timedOutInspection(error: unknown): RemovalInspection {
+  const blocker = `a git safety check timed out: ${(error as Error).message}`;
+  return { dirtyLines: [], podChurn: [], cookies: [], unpushed: null, blockers: [blocker], timedOut: true };
+}
+
+function inspectGit(path: string, mergedHead?: string): RemovalInspection {
   const gitAnswered = hasUncommittedWork(path);
   const allDirty = gitAnswered ? dirtyPaths(path, { limit: Infinity }) : [];
-  const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty);
+  const { lines: withoutCookies, cookies } = excludeWatchmanCookies(allDirty ?? []);
   const { lines: dirtyLines, restore: podChurn } = excludePodChurn(withoutCookies, customIosDirs(path));
-  const dirty = gitAnswered === null ? null : dirtyLines.length > 0;
+  const dirty = gitAnswered === null || allDirty === null ? null : dirtyLines.length > 0;
   const unpushed = unpushedCommits(path);
-  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD') === mergedHead;
+  const merged = Boolean(mergedHead) && resolveFullRef(path, 'HEAD', { removal: true }) === mergedHead;
   const blockers = removalBlockers({ dirty, unpushed: merged && unpushed ? [] : unpushed });
-  if (hasPopulatedSubmodules(path)) blockers.push('initialized submodules, which git removes only with --force');
+  const submodules = hasPopulatedSubmodules(path);
+  if (submodules === null) blockers.push('could not check for initialized submodules; re-run with --force to override');
+  else if (submodules) blockers.push('initialized submodules, which git removes only with --force');
   return { dirtyLines, podChurn, cookies, unpushed, blockers };
 }
 
@@ -831,6 +849,14 @@ function printRemovalRefusal(path: string, inspection: RemovalInspection): void 
   const { blockers, dirtyLines, unpushed } = inspection;
   console.error(chalk.red(`Refusing to remove ${path}:`));
   for (const blocker of blockers) console.error(chalk.red(`  - ${blocker}`));
+  if (inspection.timedOut) {
+    console.error(
+      chalk.dim('Git did not answer in time, so Stim cannot tell whether the worktree holds unsaved work.'),
+    );
+    console.error(chalk.dim(`Retry once git responds; check with: git -C ${path} status`));
+    process.exitCode = 1;
+    return;
+  }
   if (unpushed && unpushed.length && !hasRemote(path)) {
     console.error(
       chalk.dim(
@@ -901,6 +927,15 @@ export async function removeWorktreeTarget(target: string | undefined, opts: Rem
 }
 
 async function runRemove(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
+  try {
+    await removeOrRefuse(target, opts, onRemoved);
+  } catch (error) {
+    if (!isTimeoutError(error)) throw error;
+    printRemovalRefusal(removalPath(target), timedOutInspection(error));
+  }
+}
+
+async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, onRemoved: () => void): Promise<void> {
   const poolError = parkedMaxSetting('ios').error || parkedMaxSetting('android').error;
   if (poolError) {
     console.error(chalk.red(poolError));
@@ -926,14 +961,14 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         process.exitCode = 1;
         return;
       }
-      if (!branchExists(mainRoot, branch)) {
+      if (!branchExists(mainRoot, branch, { removal: true })) {
         removeProject(path);
         console.error(
           chalk.dim(phaseLine('branch', `${branch} is already absent; cleared its pending cleanup record`)),
         );
         return;
       }
-      const checkedOutAt = listWorktrees(mainRoot).find(
+      const checkedOutAt = listWorktrees(mainRoot, { removal: true }).find(
         (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
       )?.path;
       if (checkedOutAt) {
@@ -942,7 +977,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         process.exitCode = 1;
         return;
       }
-      const currentSha = resolveFullRef(mainRoot, branch);
+      const currentSha = resolveFullRef(mainRoot, branch, { removal: true });
       if (currentSha !== pending.worktreePendingBranchSha) {
         console.error(
           chalk.red(
@@ -969,10 +1004,10 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     return;
   }
 
-  const worktrees = listWorktrees(path);
+  const worktrees = listWorktrees(path, { removal: true });
   const entry = matchWorktreeEntry(worktrees, path);
   if (!entry) {
-    if (!opts.linkedOnly && gitCommonDir(path) === null && hasRegisteredProjectUnder(path)) {
+    if (!opts.linkedOnly && gitCommonDir(path, { removal: true }) === null && hasRegisteredProjectUnder(path)) {
       await reclaimEnvironment(path, 'it is not a git repository');
       return;
     }
@@ -1054,7 +1089,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   const project = getProject(path);
   const branch = entry.branch;
   const ownsBranch = Boolean(branch && project?.worktreeBranchOwned === true && project.worktreeBranch === branch);
-  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD') : null;
+  const approvedBranchSha = ownsBranch ? resolveFullRef(path, 'HEAD', { removal: true }) : null;
   let mergedHead = opts.mergedHead;
   let inspection = inspectRemoval(path, mergedHead);
   if (
@@ -1065,7 +1100,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
     inspection.unpushed?.length &&
     !inspection.dirtyLines.length
   ) {
-    const head = resolveFullRef(path, 'HEAD');
+    const head = resolveFullRef(path, 'HEAD', { removal: true });
     const pr = head ? endedPullRequest(pullRequestLookup()(path, branch, head)) : null;
     if (head && pr?.state === 'merged') {
       mergedHead = head;
@@ -1095,7 +1130,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
   await withManagedRemoteWorktreeRemovalLock(path, () =>
     withReclaimLocks(path, async (lockedKeys) => {
       if (opts.guard?.(lockedKeys).length) return;
-      const inspectedHead = resolveFullRef(path, 'HEAD');
+      const inspectedHead = resolveFullRef(path, 'HEAD', { removal: true });
       const current = inspectRemoval(path, mergedHead);
       if (current.blockers.length && !opts.force) {
         printRemovalRefusal(path, current);
@@ -1109,7 +1144,7 @@ async function runRemove(target: string | undefined, opts: RemoveOptions, onRemo
         reportRetainedResources(path, result);
         return;
       }
-      if (!opts.force && resolveFullRef(path, 'HEAD') !== inspectedHead) {
+      if (!opts.force && resolveFullRef(path, 'HEAD', { removal: true }) !== inspectedHead) {
         console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
         console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);

@@ -147,7 +147,7 @@ function resolveAppPid(
 ): number | null {
   const e = exec || getExecutor();
   try {
-    return parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName]));
+    return parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', '-s', packageName], { timeoutMs: 10_000 }));
   } catch {
     return null;
   }

@@ -107,11 +107,11 @@ export function copyAppAside(
   const tmpDir = mkdtemp();
   const copy = join(tmpDir, basename(appPath));
   try {
-    e.runFile('cp', ['-c', '-R', appPath, copy]);
+    e.runFile('cp', ['-c', '-R', appPath, copy], { timeoutMs: 'unbounded' });
   } catch {
     try {
       removeTemporaryEntry(copy);
-      e.runFile('cp', ['-R', appPath, copy]);
+      e.runFile('cp', ['-R', appPath, copy], { timeoutMs: 'unbounded' });
     } catch (error) {
       removeTemporaryEntry(tmpDir);
       throw error;

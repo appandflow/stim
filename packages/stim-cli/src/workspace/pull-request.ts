@@ -1,4 +1,5 @@
 import { getExecutor } from '../exec.ts';
+import { gitAsync, gitQuiet } from './git.ts';
 
 const GH_TIMEOUT_MS = 20_000;
 const GH_ENV = { GH_PROMPT_DISABLED: '1', GH_NO_UPDATE_NOTIFIER: '1', NO_COLOR: '1' };
@@ -182,9 +183,7 @@ function ghFailure(error: unknown, command: string): { unavailable: string; stic
 }
 
 function ancestry(cwd: string): (ancestor: string, descendant: string) => boolean {
-  const exec = getExecutor();
-  return (ancestor, descendant) =>
-    exec.runFileQuiet('git', ['-C', cwd, 'merge-base', '--is-ancestor', ancestor, descendant]) !== null;
+  return (ancestor, descendant) => gitQuiet(cwd, ['merge-base', '--is-ancestor', ancestor, descendant]) !== null;
 }
 
 const REMOTE_URL_RE =
@@ -202,7 +201,7 @@ export function parseRemoteRepo(url: string): string | null {
 
 // `git remote -v`, not `git config --get-regexp`, so a pushurl and an `insteadOf` rewrite both count.
 function localRemoteRepos(cwd: string): ReadonlySet<string> {
-  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'remote', '-v']);
+  const out = gitQuiet(cwd, ['remote', '-v']);
   const repos = new Set<string>();
   for (const line of out ? out.split('\n') : []) {
     const url = /^\S+\s+(\S+)\s+\((?:fetch|push)\)$/.exec(line)?.[1];
@@ -344,12 +343,11 @@ export function worktreePullRequests(): (
 ) => Promise<Map<string, PullRequestFact | null>> {
   const lookup = pullRequestLookups();
   return async (worktrees) => {
-    const exec = getExecutor();
     const repos = new Map<string, PullRequestQuery[]>();
     for (const { path, branch, repository } of worktrees) {
       let head: string;
       try {
-        head = (await exec.runFileAsync('git', ['-C', path, 'rev-parse', 'HEAD'], { timeoutMs: 5000 })).trim();
+        head = (await gitAsync(path, ['rev-parse', 'HEAD'], { timeoutMs: 5000 })).trim();
       } catch {
         continue;
       }
