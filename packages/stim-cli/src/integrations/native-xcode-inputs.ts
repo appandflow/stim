@@ -233,7 +233,7 @@ export function nativeXcodeInputSnapshot(
           reasons.add(`Unresolved source tree ${tree}`);
           return;
         }
-        include(path, `reference:${projectIndex}:${id}`, entry.isa !== 'PBXGroup');
+        include(path, `reference:${projectIndex}:${id}`, entry.isa !== 'PBXGroup' && raw !== '');
         if (entry.isa === 'PBXFileSystemSynchronizedRootGroup') {
           synchronizedRoots.push(
             inside(sourceRoot, path)
