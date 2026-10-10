@@ -1,6 +1,7 @@
 import { plural, t } from '@lingui/core/macro';
 
 import type { AttentionMachine } from '@/lib/attention';
+import { isGitHubPullUrl } from '@/lib/github';
 import {
   DEFAULT_STUCK_MINUTES,
   inQuietHours,
@@ -241,8 +242,6 @@ export type NotificationRoute =
   | { pathname: '/mac/[id]/build'; params: { id: string; path: string; platform: 'ios' | 'android' } }
   | { url: string };
 
-const GITHUB_PULL = /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+$/;
-
 // Expo Notifications reports notification.date in seconds on iOS and milliseconds on Android.
 export function notificationTimeMs(date: number): number {
   return date < 1e11 ? date * 1000 : date;
@@ -259,7 +258,7 @@ export function notificationRoute(data: unknown, macIds: readonly string[], at?:
     value.platform === 'ios' || value.platform === 'android' || value.platform === 'web' || value.platform === 'macos'
       ? value.platform
       : null;
-  if (value.target === 'url' && typeof value.url === 'string' && GITHUB_PULL.test(value.url)) return { url: value.url };
+  if (value.target === 'url' && typeof value.url === 'string' && isGitHubPullUrl(value.url)) return { url: value.url };
   if (value.target === 'device' && platform) {
     const slot = typeof value.slot === 'string' ? value.slot : 'default';
     return {

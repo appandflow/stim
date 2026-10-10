@@ -1,4 +1,4 @@
-import { manualPairing, parsePairingCode } from '@/lib/pairing';
+import { endpointHost, isExpectedHost, manualPairing, parsePairingCode } from '@/lib/pairing';
 
 const code = (fields: Record<string, unknown>) =>
   JSON.stringify({ v: 1, name: 'Mac', endpoint: 'wss://mac.tail1234.ts.net', pairingToken: 't0k', ...fields });
@@ -32,5 +32,19 @@ describe('manualPairing', () => {
       ok: true,
       payload: { v: 1, name: '', endpoint: 'wss://mac.tail1234.ts.net', pairingToken: 't0k' },
     });
+  });
+});
+
+describe('isExpectedHost', () => {
+  it.each(['mac.tail1234.ts.net', 'localhost', '127.0.0.1', '[::1]'])('accepts %s', (host) => {
+    expect(isExpectedHost(endpointHost(`wss://${host}:7443`))).toBe(true);
+  });
+
+  it.each(['evil.example.com', 'ts.net.evil.com', 'evilts.net', '192.168.1.4'])('flags %s', (host) => {
+    expect(isExpectedHost(endpointHost(`wss://${host}`))).toBe(false);
+  });
+
+  it('lowercases the host it shows', () => {
+    expect(endpointHost('wss://Mac.Tail1234.TS.net:7443/x')).toBe('mac.tail1234.ts.net');
   });
 });
