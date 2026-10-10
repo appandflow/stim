@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
 import { join } from 'path';
 import { readProjectConfig } from '../engine/remote-cache.ts';
 import { readAppConfigText, readAppJson } from './project.ts';
+import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout } from './settings.ts';
 
 interface AppIds {
   bundleId: string | null;
@@ -38,24 +39,33 @@ function idsFromConfig(projectRoot: string): AppIds {
   };
 }
 
-export function detectAppIds(projectRoot: string): AppIds {
+export function detectAppIds(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+): AppIds {
   const ids = idsFromConfig(projectRoot);
   return {
-    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(projectRoot),
-    androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(projectRoot),
+    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
+    androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(androidModuleDir),
   };
 }
 
-export function detectBundleId(projectRoot: string): string | null {
-  return detectAppIds(projectRoot).bundleId;
+export function detectBundleId(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+): string | null {
+  return detectAppIds(projectRoot, iosDir).bundleId;
 }
 
-export function detectAndroidPackage(projectRoot: string): string | null {
-  return detectAppIds(projectRoot).androidPackage;
+export function detectAndroidPackage(
+  projectRoot: string,
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+): string | null {
+  return detectAppIds(projectRoot, undefined, androidModuleDir).androidPackage;
 }
 
-function detectBundleIdFromPbxproj(projectRoot: string): string | null {
-  const iosDir = join(projectRoot, 'ios');
+function detectBundleIdFromPbxproj(iosDir: string): string | null {
   if (!existsSync(iosDir)) return null;
   let entries: Dirent[];
   try {
@@ -93,19 +103,21 @@ function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   return null;
 }
 
-function detectAndroidPackageFromGradle(projectRoot: string): string | null {
-  const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
-  if (!existsSync(gradle)) return null;
+function detectAndroidPackageFromGradle(moduleDir: string): string | null {
+  const gradle = [join(moduleDir, 'build.gradle'), join(moduleDir, 'build.gradle.kts')].find((file) =>
+    existsSync(file),
+  );
+  if (!gradle) return null;
   let text: string;
   try {
     text = readFileSync(gradle, 'utf-8');
   } catch {
     return null;
   }
-  const ns = text.match(/namespace\s+["']([^"']+)["']/);
+  const ns = text.match(/namespace\s*=?\s*["']([^"']+)["']/);
   const nsId = ns?.[1];
   if (nsId) return nsId;
-  const app = text.match(/applicationId\s+["']([^"']+)["']/);
+  const app = text.match(/applicationId\s*=?\s*["']([^"']+)["']/);
   const appId = app?.[1];
   if (appId) return appId;
   return null;

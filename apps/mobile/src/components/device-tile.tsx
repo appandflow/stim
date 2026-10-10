@@ -110,7 +110,7 @@ export function DeviceTile({
         {header}
         {device.host ? (
           <View style={styles.stateLine}>
-            <HostLabel host={device.host} />
+            <HostLabel host={device.host} mode="placed" />
           </View>
         ) : null}
         <Text variant="footnote" tone="tertiary" style={styles.stateLine}>
@@ -161,7 +161,7 @@ export function DeviceTile({
       {header}
       {device.host ? (
         <View style={styles.stateLine}>
-          <HostLabel host={device.host} />
+          <HostLabel host={device.host} mode={device.running ? 'running' : 'placed'} />
         </View>
       ) : null}
       {pills.length ? <View style={styles.badges}>{pills}</View> : null}

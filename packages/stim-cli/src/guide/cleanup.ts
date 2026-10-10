@@ -35,7 +35,9 @@ Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Memory pressure is recorded only; stopping devices, dev servers
-and helpers is not automatic.
+and helpers is not automatic. While the level is warning or critical, the
+check also names abnormally large processes (guide lifecycle simslim) in
+status's maintenance block and the maintenance log.
 
 In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
@@ -417,11 +419,11 @@ STALE STATUS CACHE ENTRIES
   if it comes back.
 
 NAMED SERVER PORTS
-  worktree remove stops TCP listeners on each named allocation and releases
-  the ports. gc reports named allocations for missing workspaces; gc --delete
-  stops their listeners and releases them. Unmounted or unresolved paths stay
-  registered. Failed stops retain their allocations for a later retry.
-  stim stop does not touch named ports. See guide ports.
+  worktree remove, gc --delete and automatic maintenance release named
+  allocations without signalling their listeners. gc reports named
+  allocations for missing workspaces; gc --delete releases them. Unmounted or
+  unresolved paths stay registered. Only ports stop stops a named listener,
+  and stim stop does not touch named ports. See guide ports.
 
 ON THE SOURCE CHECKOUT
   git cannot remove a repository's main working tree, and deleting the source

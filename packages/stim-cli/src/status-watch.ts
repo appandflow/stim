@@ -1,6 +1,7 @@
 import { type FSWatcher, readdirSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
 import { join } from 'node:path';
+import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
 import { easMachineStateRoot } from './engine/eas-session-ledger.ts';
@@ -9,6 +10,8 @@ import { parseSimctlList } from './devices/ios.ts';
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
 export const WATCH_LIGHT_INTERVAL_MS = 15_000;
+export const WATCH_MEMORY_STEP_MB = 16;
+export const WATCH_CPU_STEP_PERCENT = 5;
 const WATCH_SIMCTL_INTERVAL_MS = 5_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
@@ -308,4 +311,55 @@ function trackAdbDevices(onChange: () => void): { stop(): void } {
       child?.kill('SIGTERM');
     },
   };
+}
+
+function ownerKey(owner: MachineOwner): string {
+  return JSON.stringify([owner.kind, owner.name, owner.workspace, owner.slot ?? null, owner.id, owner.owned]);
+}
+
+function ownerSteady(before: MachineOwner, after: MachineOwner): boolean {
+  return (
+    Math.abs(after.cpuPercent - before.cpuPercent) < WATCH_CPU_STEP_PERCENT &&
+    Math.abs(after.memoryMb - before.memoryMb) < WATCH_MEMORY_STEP_MB
+  );
+}
+
+/**
+ * The payload `status --watch --json` prints. A usage figure keeps its value from the `previous` printed payload until it moves by a step: an owner's `cpuPercent`
+ * and `memoryMb`, an environment's `memoryMb` and `capacity.committedMb`. An owner's row is kept whole, `residentMb`
+ * and `processes` included, until one of its two figures moves, so a Mac whose processes only jitter prints no new line.
+ */
+export function watchPayload(previous: StatusPayload | null, next: StatusPayload): StatusPayload {
+  const payload: StatusPayload = { ...next };
+  if (!previous) return payload;
+
+  if (previous.machine && next.machine && previous.machine.memorySource === next.machine.memorySource) {
+    const before = new Map(previous.machine.owners.map((owner) => [ownerKey(owner), owner]));
+    payload.machine = {
+      ...next.machine,
+      owners: next.machine.owners.map((owner) => {
+        const old = before.get(ownerKey(owner));
+        return old && ownerSteady(old, owner) ? old : owner;
+      }),
+    };
+  }
+
+  const memory = new Map(previous.environments.map((env) => [env.path, env]));
+  payload.environments = payload.environments.map((env) => {
+    const old = memory.get(env.path);
+    return old && old.memorySource === env.memorySource && Math.abs(env.memoryMb - old.memoryMb) < WATCH_MEMORY_STEP_MB
+      ? { ...env, memoryMb: old.memoryMb }
+      : env;
+  });
+
+  const { capacity } = previous;
+  if (
+    capacity.overCapacity === next.capacity.overCapacity &&
+    capacity.liveCount === next.capacity.liveCount &&
+    capacity.totalMemoryMb === next.capacity.totalMemoryMb &&
+    Math.abs(next.capacity.committedMb - capacity.committedMb) < WATCH_MEMORY_STEP_MB
+  ) {
+    payload.capacity = capacity;
+  }
+  return payload;
 }

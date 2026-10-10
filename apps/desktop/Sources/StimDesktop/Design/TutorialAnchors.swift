@@ -31,7 +31,7 @@ struct TutorialHint {
     case "device": return .deviceTile
     case "logs", "refresh": return .logsTab
     case "agent": return .agentActions
-    case "finish", "done": return .archivedFilter
+    case "finish", "delete", "done": return .archivedFilter
     default: return nil
     }
   }
@@ -44,7 +44,7 @@ struct TutorialHint {
     case "device": return "Open the live view, then tap Log an error."
     case "logs", "refresh": return "Open Logs"
     case "agent": return "Watch Agent actions and Replay"
-    case "finish", "done": return "Find the run in Archived"
+    case "finish", "delete", "done": return "Find the run in Archived"
     default: return "Follow the tutorial workspace"
     }
   }

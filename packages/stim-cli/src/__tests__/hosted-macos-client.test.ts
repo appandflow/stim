@@ -43,12 +43,12 @@ vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../offload/tailnet.ts')>();
   return {
     ...actual,
-    pinnedEndpoint: (credential: { machine: string; nodeId: string }) => {
+    pinnedEndpoint: async (credential: { machine: string; nodeId: string }) => {
       const status = {
         BackendState: 'Running',
         Peer: { mini: { ID: tailnet.nodeId, DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
       };
-      const target = actual.pinnedEndpoint(credential, () => status);
+      const target = await actual.pinnedEndpoint(credential, () => status);
       return typeof target === 'string'
         ? target
         : { url: `ws://127.0.0.1:${tailnet.port}`, servername: target.servername, host: target.host };
@@ -269,7 +269,7 @@ test('macos rejects reserved remote backends and the retired option before state
   rmSync(process.env.STIM_HOME!, { recursive: true });
   writeFileSync(join(root, 'package.json'), '{}');
   rmSync(join(root, 'Package.swift'));
-  const resolve = vi.spyOn(settings, 'resolveSettings').mockImplementation(() => {
+  const resolve = vi.spyOn(settings, 'resolveProjectSettings').mockImplementation(() => {
     throw new Error('unexpected settings access');
   });
   const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));

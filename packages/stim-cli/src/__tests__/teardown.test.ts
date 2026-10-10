@@ -800,7 +800,7 @@ test.each(['emulator -list-avds', 'adb devices'])(
       try {
         return real.runFile(
           process.execPath,
-          ['-e', `process.on('SIGTERM', () => {}); setTimeout(() => console.log(${JSON.stringify(output)}), 15000)`],
+          ['-e', `process.on('SIGTERM', () => {}); setTimeout(() => console.log(${JSON.stringify(output)}), 60000)`],
           options,
         );
       } catch (error) {
@@ -816,7 +816,9 @@ test.each(['emulator -list-avds', 'adb devices'])(
       },
       runFile: inventory,
     });
+    const started = Date.now();
     const result = teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
+    expect(Date.now() - started).toBeLessThan(25_000);
     expect(result.status).toBe('failed');
     expect(result.reason).toMatch(/Command timed out/);
     expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
@@ -829,8 +831,42 @@ test.each(['emulator -list-avds', 'adb devices'])(
     expect(teardownOwnedAvd('stim-app', { waitForShutdown: shutdown }).status).toBe('torn-down');
     expect(shutdown).toHaveBeenCalledOnce();
   },
-  20000,
+  30000,
 );
+
+test('teardown waits out an adb devices inventory that answers after 8 s', () => {
+  const real = getExecutor();
+  const listing = 'List of devices attached\nemulator-5554\tdevice\n';
+  const fake = androidExecutor({ avds: ['stim-app'], adb: listing, avdName: 'stim-app' });
+  const onRemoved = vi.fn<() => void>();
+  let stalled = false;
+  const inventory = (file: string, args: string[] = [], options?: Parameters<typeof real.runFile>[2]) => {
+    if (stalled || [file, ...args].join(' ') !== 'adb devices') return fake.runFile(file, args);
+    stalled = true;
+    return real.runFile(
+      process.execPath,
+      ['-e', `setTimeout(() => process.stdout.write(${JSON.stringify(listing)}), 8000)`],
+      options,
+    );
+  };
+  setExecutor({
+    ...fake,
+    findExecutable: () => null,
+    run: (command, options) => {
+      const [file, ...args] = command.split(' ');
+      return inventory(file!, args, options);
+    },
+    runFile: inventory,
+  });
+  const result = teardownOwnedAvd('stim-app', {
+    onRemoved,
+    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
+  });
+  expect(stalled).toBe(true);
+  expect(result).toMatchObject({ status: 'torn-down', serial: 'emulator-5554' });
+  expect(onRemoved).toHaveBeenCalledOnce();
+  expect(fake.calls).toContain('adb -s emulator-5554 emu kill');
+}, 30000);
 
 test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', () => {
   const real = getExecutor();

@@ -137,6 +137,7 @@ export interface BuildRunOptions {
   arch?: string;
   configuration?: string;
   scheme?: string;
+  gradleProject?: string;
   buildConfiguration?: string;
   isSimulator?: boolean;
   device?: string | boolean | null;
@@ -189,7 +190,11 @@ export function buildCacheKey(platform: string, fingerprintHash: string, options
     platform === 'ios' && typeof opts.scheme === 'string' && opts.scheme
       ? createHash('sha256').update(opts.scheme).digest('hex')
       : '';
-  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}`;
+  const gradleProject =
+    platform === 'android' && typeof opts.gradleProject === 'string' && opts.gradleProject
+      ? createHash('sha256').update(opts.gradleProject).digest('hex')
+      : '';
+  return `${fingerprintHash}-${buildVariant(platform, opts)}-${target}${abi ? `-${abi}` : ''}${allArch}${compiler ? `-${compiler}` : ''}${profile ? `-${profile}` : ''}${scheme ? `-scheme-${scheme}` : ''}${gradleProject ? `-gradle-${gradleProject}` : ''}`;
 }
 
 export interface RegisterOptions {

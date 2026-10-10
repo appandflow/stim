@@ -103,6 +103,15 @@ KEYS STIM READS
                         The \`--runtime\` flag overrides this per invocation,
                         and an uninstalled version refuses the same way,
                         naming the layer the value came from
+  ios.scheme            e.g. "RNTester" -- the shared Xcode scheme to build
+                        when the workspace lists several and none matches
+                        its name, which otherwise refuses with
+                        STIM_NO_SCHEME. The \`--scheme\` flag overrides it
+                        per invocation; an \`--eas-profile\` build reads only
+                        the flag. Part of the cache key, like the flag, so
+                        it also skips the older Expo buildCacheProvider tier,
+                        which may key only on the fingerprint. Workspace or
+                        committed scope.
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
@@ -115,6 +124,19 @@ KEYS STIM READS
                         "auto" places on an approved Mac when this Mac is full or
                         busy. Unset runs here; "local" runs here even when a
                         lower layer says otherwise. See lifecycle hosted-ios.
+  ios.projectPath       directory under the app holding a bare React Native
+                        app's Xcode project and Podfile; default "ios". "."
+                        is the app directory itself (RNTester's layout).
+                        Detection, pod install, xcodebuild, the bundle id,
+                        doctor, worktree warm and remove, and remote builds
+                        all use it. A subdirectory is fingerprinted the way
+                        ios/ is; "." hashes every top-level entry except
+                        node_modules, Pods, build, android, .stim.json and
+                        anything git ignores, so a JS edit misses the build
+                        cache instead of risking a stale build. Workspace or committed scope. ios refuses
+                        with STIM_BAD_ARG a path that escapes the app or
+                        holds no .xcworkspace or .xcodeproj, and any value
+                        on an Expo app, whose prebuild writes ios/.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -225,6 +247,26 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         and hw.audioOutput for that headless launch. With
                         androidEmulatorApp "stim-desktop" on macOS, -gpu host
                         overrides hw.gpu.mode the same way.
+  android.gradleRoot    directory holding gradlew and settings.gradle(.kts),
+                        relative to the app; default "android". It may sit
+                        outside the app but not outside the repository:
+                        RNTester in the React Native monorepo uses "../..".
+  android.module        the app's Gradle project path; default ":app", e.g.
+                        ":packages:rn-tester:android:app". Its directory is
+                        Gradle's default mapping from the root and must hold
+                        a build.gradle(.kts). With either set, Gradle runs
+                        from the root with qualified tasks such as
+                        <module>:assembleDebug; both values join the cache
+                        key and the remote build job, and the root's
+                        settings, build script, gradle.properties and
+                        gradle/ are fingerprinted. Native sources Gradle
+                        builds from elsewhere in the repository are not:
+                        list them in fingerprint.config.js extraSources.
+                        android refuses with STIM_BAD_ARG a root outside the
+                        repository or without settings.gradle, a module
+                        without a build script, and either value on an Expo
+                        app, whose prebuild writes android/. Workspace or
+                        committed scope.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with
@@ -240,6 +282,16 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
+  android.offloadInputs a native Gradle build-worker declaration:
+                        {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
+                        complete confirms Git-visible source plus the exact
+                        repository-relative ignored files suffice for this
+                        build. outputs names generated directories reported
+                        by AGP; recorded outputs can survive worker sync.
+                        Omitted optional inputs can change build results.
+                        Stim artifact caching remains unavailable. See
+                        \`stim guide lifecycle native-android\` for input,
+                        privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
                         absolute or relative to the project root. Unset means
                         android/app/debug.keystore, which every RN and Expo
@@ -658,7 +710,7 @@ simulator sessions on, by MagicDNS name with an optional serve port (default
   stim doctor --fix
 
 Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Automatic builds and Automatic simulators for this Mac or a configured remote.
+use Builds enabled and Simulators enabled for this Mac or a configured remote.
 The equivalent machine settings list the excluded members; both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'

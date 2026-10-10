@@ -9,6 +9,7 @@ import {
   type HostedNativePlacement,
   type HostedIosDevice,
   type HostedAndroidDevice,
+  type HostedAppOffer,
 } from '@stim-cli/core/state';
 import { peekBudget } from '../budget.ts';
 import { namedBuildMachine, resolveBuildMachine } from '../offload/selection.ts';
@@ -16,7 +17,7 @@ import { readHostMemoryPressure } from '../host-memory.ts';
 import { peekDeviceSlots } from '../engine/device-capacity.ts';
 import { getProject, loadConfig } from '../workspace/config.ts';
 import { hostingMachines } from './machines.ts';
-import { call, connectHost, type HostConnection } from './hosted-client.ts';
+import { call, connectHost, requireHostedAppMode, type HostConnection } from './hosted-client.ts';
 import { prepareHostedNative, type HostedNativeTarget } from './hosted-native.ts';
 import { readHostedNative, writeHostedNative } from './ios-state.ts';
 import {
@@ -31,11 +32,13 @@ export async function probeHost(
   machine: string,
   platform: 'ios' | 'android',
   selectors: HostedDeviceSelectors,
+  appMode?: HostedAppOffer['mode'],
 ): Promise<{ probe: PlacementProbe; target?: HostedNativeTarget }> {
   let host: HostConnection | undefined;
   const deadline = Date.now() + 3000;
   try {
     host = await connectHost(machine, 3000, true);
+    requireHostedAppMode(host, platform, appMode);
     const offer = await call(host, 'device-host.offer', { platform, ...selectors }, Math.max(1, deadline - Date.now()));
     const resources = isJsonObject(offer.resources) ? offer.resources : {};
     const parsed = parseHostedNativeOffer({
@@ -114,6 +117,7 @@ export async function automaticDevicePlacement(
     slot,
     platform,
     selectors,
+    appMode,
     buildMachine,
     noWait,
     eas,
@@ -122,6 +126,7 @@ export async function automaticDevicePlacement(
     slot: string;
     platform: 'ios' | 'android';
     selectors: HostedDeviceSelectors;
+    appMode?: HostedAppOffer['mode'];
     buildMachine?: string;
     noWait: boolean;
     eas?: () => Promise<EasFallbackCheck>;
@@ -158,7 +163,7 @@ export async function automaticDevicePlacement(
     slot
   ];
   if (recorded) {
-    const target = await resume(recorded.machine, selectors, recorded, platform, true);
+    const target = await resume(recorded.machine, selectors, recorded, platform, true, appMode);
     if (target)
       return {
         target,
@@ -200,7 +205,7 @@ export async function automaticDevicePlacement(
   const probes =
     early.kind === 'local' && early.skipped.length === 0
       ? []
-      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors)));
+      : await Promise.all(entries.map((machine) => probe(machine, platform, selectors, appMode)));
   const offers = probes.length ? probes.map((each) => each.probe) : notProbed;
   let decision = decideDevicePlacement(inputs(offers));
   if ((decision.kind === 'local' || decision.kind === 'refused') && decision.atCapacity && eas)

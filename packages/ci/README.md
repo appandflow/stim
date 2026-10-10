@@ -10,6 +10,39 @@ its own checkout. The run stops that checkout's workspace, including resources
 started before a build failure; an explicit API `run.slot` limits cleanup to
 that slot. Do not point CI at a developer's active checkout.
 
+## Build only
+
+```sh
+npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app --artifacts ./build-results
+```
+
+This compiles or restores an artifact without starting a simulator, emulator,
+Metro server, or app. It does not stop an existing workspace session. iOS builds
+target the simulator; archives, device distribution and web compilation are
+not supported. By default, iOS and Android builds use the same native artifact
+cache as `run`. A later `run` in the same job validates that cache normally; its
+`run.json` reports `cacheKey` and `cacheHit`, which show whether it reused the
+build. Android reuse requires the run's emulator system image to have the host's
+ABI; a configured `android.systemImage` with another ABI, or a physical device,
+misses. An iOS Debug build with `--arch all` is keyed without an architecture,
+so a later Debug `run` misses. macOS builds are not cached, so a later macOS
+`run` builds again.
+
+The result has `stage: "build"`, `build`, `buildPath`, and `artifactPath`.
+The results directory contains `build.json`, `result.json`, `diagnostics.json`,
+and `app.apk` for Android or `app.tar.gz` for iOS/macOS. iOS and macOS also
+keep the archive command's output in `artifact.stdout.log` and
+`artifact.stderr.log`. The archive preserves app
+executable permissions and symlinks when uploaded through an artifact service.
+Extract it with `tar -xzf app.tar.gz`. Importing a downloaded artifact into a
+Stim run is not part of this command.
+
+The library exports `buildCI({ projectRoot, build: { platform: "ios" }, ... })`.
+It accepts the same home/cache, timeout, cancellation and progress options as
+`runCI`. Build cancellation waits for the owned build operation to finish
+cleanup and retains diagnostics; it never calls workspace `stop()`. A cancel or timeout after the artifact is exported does not fail the build
+stage.
+
 ## Command line
 
 Without installing:
@@ -27,8 +60,22 @@ stim-ci run --platform android --project ./app --artifacts ./test-results --time
 `--platform` accepts `ios`, `android`, `macos`, or `web`. `--project` defaults
 to the current directory. `--home` and `--build-cache` explicitly select the
 Stim home and native artifact cache; leaving them unset preserves normal Stim
-configuration. The CLI uses each project's normal build settings. The library
-also accepts the public API's platform-specific run options.
+configuration.
+
+Without selectors, the CLI uses each project's normal build settings. `build`
+and `run` accept the same selectors as the public API, so a run can match a
+build:
+
+| Option                   | Platform | Stage      | Selects                                                 |
+| ------------------------ | -------- | ---------- | ------------------------------------------------------- |
+| `--scheme <name>`        | iOS      | build, run | Xcode scheme                                            |
+| `--configuration <name>` | iOS      | build, run | Xcode configuration                                     |
+| `--variant <name>`       | Android  | build, run | Gradle variant                                          |
+| `--arch <name>`          | iOS      | build      | Architecture: `arm64`, `x86_64`, `all`                  |
+| `--abi <name>`           | Android  | build      | ABI: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all` |
+
+The library also accepts the public API's other platform-specific build and run
+options.
 
 Everything after `--` is an argument vector. No shell is inferred. To use shell
 syntax, pass a shell explicitly: `-- bash -e -o pipefail -c 'pnpm test:e2e'`.

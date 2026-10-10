@@ -13,12 +13,11 @@ public struct TutorialStep: Sendable {
 
 public enum TutorialSteps {
   public static let supportedVersions: Set<Int> = [2]
-  public static let restartPrompt = "Restart the Stim tutorial."
   public static let retryAsk = "The first iOS build of the tutorial app in {tour} failed. Find out why and run it on iOS again."
   public static let all: [TutorialStep] = [
     TutorialStep(
       id: "begin", title: "Get the Test App", who: "agent", optional: false,
-      ask: "Clone appandflow/stim-tutorial into {base} and install its dependencies, then run stim doctor for iOS there so Stim registers it. Use a fresh folder: if {base} already exists or is inside another git repository, stop and ask me for another folder, and never git add in my own repo. Follow stim guide tutorial run.", section: "run",
+      ask: "Clone appandflow/stim-tutorial into {base} and follow stim guide tutorial run.", section: "run",
       commands: [
 
       ]),
@@ -65,13 +64,6 @@ public enum TutorialSteps {
 
       ]),
     TutorialStep(
-      id: "machine", title: "Build on Another Mac", who: "both", optional: true,
-      ask: "Build the app for iOS on {machine} with stim instead of on this Mac. Do not approve or pair anything.", section: nil,
-      commands: [
-        "cd \"{tour}\"",
-        "stim ios --remote local --remote-build \"{machine}\" --no-build-cache",
-      ]),
-    TutorialStep(
       id: "share", title: "Share Your Finish", who: "you", optional: true,
       ask: "Open a pull request to appandflow/stim-tutorial with my title color change, and include a screenshot of it running in the simulator. See stim guide tutorial share.", section: "share",
       commands: [
@@ -93,6 +85,18 @@ public enum TutorialSteps {
         "cd \"{base}\"",
         "stim worktree remove \"{tour}\"",
         "stim worktree remove \"{second}\"",
+      ]),
+    TutorialStep(
+      id: "delete", title: "Delete the Test App", who: "agent", optional: true,
+      ask: "Remove the Stim tutorial: remove its worktrees and the clone at {base} with stim worktree remove, then delete {base}. Follow stim guide tutorial delete.", section: "delete",
+      commands: [
+        "cd \"{base}\"",
+        "grep stimTutorial app.json",
+        "git worktree list",
+        "stim stop",
+        "stim worktree remove \"{base}\"",
+        "cd ..",
+        "rm -rf \"{base}\"",
       ]),
   ]
 }

@@ -51,16 +51,32 @@ export interface TailnetMachineIo {
   hello: (endpoint: Endpoint, auth: Record<string, string>) => Promise<HelloReply>;
 }
 
+function parseTailscaleStatus(output: string): unknown {
+  try {
+    const status = JSON.parse(output) as unknown;
+    return isJsonObject(status) && status.BackendState === 'Running' ? status : null;
+  } catch {
+    return null;
+  }
+}
+
 function tailscaleStatus(): unknown {
   for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
     const output = getExecutor().runFileQuiet(binary, ['status', '--json'], { timeoutMs: 5000 });
-    if (output === null) continue;
+    if (output !== null) return parseTailscaleStatus(output);
+  }
+  return null;
+}
+
+async function tailscaleStatusAsync(): Promise<unknown> {
+  for (const binary of ['tailscale', MAC_APP_TAILSCALE]) {
+    let output: string;
     try {
-      const status = JSON.parse(output) as unknown;
-      return isJsonObject(status) && status.BackendState === 'Running' ? status : null;
+      output = await getExecutor().runFileAsync(binary, ['status', '--json'], { timeoutMs: 5000 });
     } catch {
-      return null;
+      continue;
     }
+    return parseTailscaleStatus(output);
   }
   return null;
 }
@@ -102,9 +118,9 @@ function hello({ url, servername, host }: Endpoint, auth: Record<string, string>
 
 export const realIo: TailnetMachineIo = { status: tailscaleStatus, hello };
 
-export function pinnedEndpoint(
+export async function pinnedEndpoint(
   credential: { machine: string; nodeId: string },
-  status: () => unknown = tailscaleStatus,
-): Endpoint | string {
-  return corePinnedEndpoint(credential, parseMachine(credential.machine) ? status() : null);
+  status: () => unknown = tailscaleStatusAsync,
+): Promise<Endpoint | string> {
+  return corePinnedEndpoint(credential, parseMachine(credential.machine) ? await status() : null);
 }

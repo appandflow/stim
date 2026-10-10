@@ -1,4 +1,4 @@
-import { hostedIosStatus, type HostedDeviceSelectors } from '@stim-cli/core/state';
+import { hostedIosStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import type { HostedIosTarget } from '../../device-host/hosted-ios.ts';
 import type { IosDeps } from './dependencies.ts';
 import type { PreparedIosArtifact } from './artifact.ts';
@@ -16,6 +16,7 @@ export async function finishHostedIosRun({
   root,
   slot,
   release,
+  appMode,
   isExpo,
   metroCheck,
   metroPort,
@@ -24,6 +25,7 @@ export async function finishHostedIosRun({
   note,
   enterPhase,
   selectors,
+  projectBundleId,
   ...report
 }: Pick<
   ReportIosResultArgs,
@@ -48,13 +50,15 @@ export async function finishHostedIosRun({
   d: IosDeps;
   artifact: PreparedIosArtifact;
   isExpo: boolean;
+  appMode: HostedAppOffer['mode'];
   slot: string;
   fail: (failure: FailArgs) => null;
   note: (line: string) => void;
   enterPhase: (phase: BuildPhase) => void;
   selectors: HostedDeviceSelectors;
+  projectBundleId: () => string | null;
 }): Promise<IosRunCompletion | null> {
-  const bundleId = artifact.bundleId ?? (d.readBundleId(artifact.path) || d.detectBundleId(root));
+  const bundleId = artifact.bundleId ?? (d.readBundleId(artifact.path) || projectBundleId());
   if (!bundleId) return fail({ code: 'STIM_INSTALL_FAILED', message: 'The built app has no bundle identifier.' });
   const launchedAt = d.now();
   let run;
@@ -67,7 +71,10 @@ export async function finishHostedIosRun({
       bundleId,
       selectors,
       release,
-      ...(!release && isExpo ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined } : {}),
+      mode: appMode,
+      ...(appMode === 'development' && isExpo
+        ? { devClientScheme: d.devClientScheme(root, artifact.path) ?? undefined }
+        : {}),
       reserved: (placement) => d.writeHostedIos(root, slot, placement),
       note,
       enterPhase,
@@ -91,12 +98,13 @@ export async function finishHostedIosRun({
       deviceId: run.placement.session,
       metroPort,
       release,
+      ...(appMode === 'process' ? { runtime: 'process' as const } : {}),
       launchedAt: new Date(launchedAt).toISOString(),
     },
     slot,
   );
   let launched: true | 'unverified' | 'bundling' = run.launched;
-  if (!release && metroCheck) {
+  if (appMode === 'development' && metroCheck) {
     const evidence = await d.verifyLaunch({
       requireBundleResponse: true,
       platform: 'ios',
@@ -124,6 +132,7 @@ export async function finishHostedIosRun({
   const uploadsAbandoned = await artifact.completeUploads();
   const facts = reportIosResult({
     ...report,
+    ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),
     root,
     slot,
     release,

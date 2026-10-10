@@ -217,7 +217,10 @@ merged into the default branch. In `--json` that is the `git` object on each
 `changed`, `untracked`, `upstream`, `ahead`, `behind`, and `mergedInto`. The
 merge check is the one `stim gc` uses, applied to the refs already fetched;
 status never fetches. `git` is `null` when git fails or does not answer within
-3 seconds.
+3 seconds. One-shot `stim status` reads git only for the worktrees of live
+environments, at most six `git` calls at a time, so `git` is also `null` for the
+worktree of an environment that is not live and for every unprovisioned worktree;
+`stim status --watch` reads all of them.
 `stim status --watch` rereads a worktree's git state when a commit, checkout,
 staging change, push or fetch touches its git files, and at least once a
 minute, so a file edit, creation or deletion that is not staged can take up
@@ -289,9 +292,9 @@ another process was started from inside the worktree; `adb kill-server`
 releases the server.
 
 Named ports allocated by `stim ports get <label>` belong to the workspace.
-`worktree remove` stops their TCP listeners and releases the allocations;
-`gc --delete` does the same for missing workspaces. `stim stop` leaves them
-alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
+`worktree remove` releases the allocations without signalling their listeners;
+`gc --delete` does the same for missing workspaces. Run `stim ports stop` first
+to stop a server. `stim stop` leaves them alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
 
 ## Remove finished worktrees in bulk
 

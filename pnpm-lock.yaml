@@ -440,6 +440,9 @@ importers:
       '@stim-cli/metro':
         specifier: workspace:^
         version: link:../metro
+      '@xmldom/xmldom':
+        specifier: 0.9.12
+        version: 0.9.12
       chalk:
         specifier: ^6.0.0
         version: 6.0.0
@@ -455,6 +458,9 @@ importers:
       ws:
         specifier: ^8.21.3
         version: 8.21.3
+      xcode:
+        specifier: 3.0.1
+        version: 3.0.1
     devDependencies:
       '@stim-cli/expo-build-cache':
         specifier: workspace:*
