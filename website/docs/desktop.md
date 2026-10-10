@@ -94,8 +94,8 @@ device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflo
 a tiny Expo app, and shows:
 
 - **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step and **Restart Tutorial** remove it. An existing `~/stim-tutorial` that is a clean clone of the tutorial repository is reused; any other existing folder makes your agent ask for another one. **Restart Tutorial** asks before it deletes the folder and its tutorial worktrees through `stim worktree remove`, then moves the folder to the Trash; a folder without the tutorial marker is left alone. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
-- **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes.
-- **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
+- **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes; the step moves on as soon as it starts.
+- **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit. The step moves on as soon as that build starts. The completion card's build times fill in when the builds finish, and a build that fails after its step moved on shows a warning under that step.
 - **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow points at the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
 - **Agent Actions and Replay (optional):** see what your agent did on the first change's simulator, then replay it. A glow points at its live view, then its Agent Actions list, then the replay's Play button. The step ticks **Agent actions viewed** and **Replay played** and stays open so you can keep watching; **Next** then records it done. When no agent actions were recorded on that simulator, the step says so.
 - **App Logs (optional):** read the app's output and any errors in Logs. The step ticks **Logs opened** and completes when you show the Logs of either tutorial worktree, or press **Show me**, while the step is current.
@@ -120,8 +120,9 @@ grant access, and it runs no builds itself.
 
 A soft glow with a short label points at the control a step needs, without
 covering the app with a dimming layer, and fades after a few seconds; it shows
-again when the step or page changes. On **Make a Change**, it points at the
-**Show** button of the "launched for" notice for your first change's worktree;
+again when the step or page changes. On **Make a Change** and **Change It Again in
+Parallel**, it points at the **Show** button of the "New workspace" notice for
+your first change's worktree, which reads "Building iOS" while its build runs;
 if that notice is gone, **Open the build** in the step does the same. **Show
 me** selects the tutorial workspace when the control is not on the page.
 
@@ -552,6 +553,10 @@ contents are not logged. Older compatible payloads and extra fields remain
 supported. Binary video uses its existing stream format.
 
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
+
+When an agent creates a workspace while Desktop is open, a "New workspace"
+card appears at the bottom left with **Show**, once per workspace. It reads
+"Building iOS" or "Building Android" while that workspace's build runs.
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to

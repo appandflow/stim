@@ -142,7 +142,7 @@ struct TutorialPanel: View {
         VStack(alignment: .leading, spacing: Space.md) {
           Text(explanation(step.id)).foregroundStyle(Palette.secondary)
           if let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
-          if step.id == "build", current, let openBuild {
+          if ["build", "parallel"].contains(step.id), current, let openBuild {
             HStack(spacing: Space.sm) {
               Text("Click Show to watch the build.")
               Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
@@ -196,6 +196,9 @@ struct TutorialPanel: View {
           }
         }
         .padding(.leading, Space.xl)
+      } else if state.state == .done, let warning = state.warning {
+        Label(warning, systemImage: "exclamationmark.triangle.fill").font(.stim(.caption))
+          .foregroundStyle(Palette.warning).padding(.leading, Space.xl)
       } else if state.state == .done, ["build", "parallel"].contains(step.id), !state.detail.isEmpty {
         Text(state.detail).font(.stim(.caption)).foregroundStyle(Palette.tertiary).padding(.leading, Space.xl)
       }

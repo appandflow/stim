@@ -2,7 +2,7 @@ import StimKit
 import SwiftUI
 
 enum TutorialAnchorID: Hashable {
-  case launchNoticeShow, deviceControl, viewerScreen, logsTab, agentActions, replay, archivedFilter
+  case workspaceNoticeShow, deviceControl, viewerScreen, logsTab, agentActions, replay, archivedFilter
 }
 
 struct TutorialAnchorKey: Hashable {
@@ -31,7 +31,8 @@ struct TutorialHint {
   /// The controls this step points at, most specific first; the first one on screen glows.
   var targets: [(anchor: TutorialAnchorID, callout: String)] {
     switch step {
-    case "build": return [(.launchNoticeShow, "Click Show to watch the build")]
+    case "build": return [(.workspaceNoticeShow, "Click Show to watch the build")]
+    case "parallel": return [(.workspaceNoticeShow, "Click Show to watch the first build")]
     case "device":
       return [(.viewerScreen, "Tap the Tap me button and watch the counter"), (.deviceControl, "Open the live view")]
     case "agent":
@@ -93,7 +94,7 @@ private struct TutorialHighlights: ViewModifier {
               })
             else { return nil }
             let rect = geometry[anchor.value]
-            let global = [.archivedFilter, .launchNoticeShow].contains(target.anchor)
+            let global = [.archivedFilter, .workspaceNoticeShow].contains(target.anchor)
             guard global || onPage, rect.intersects(bounds) else { return nil }
             return (target.anchor, target.callout, rect)
           }.first

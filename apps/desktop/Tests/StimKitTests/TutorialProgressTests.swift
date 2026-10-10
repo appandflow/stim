@@ -130,7 +130,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("parallel", in: result).detail.contains("Local cache"))
 }
 
-@Test func tutorialParallelStaysOnACompiledSecondBuildAndIgnoresOtherRepositories() throws {
+@Test func tutorialParallelCompletesOnACompiledSecondBuildAndIgnoresOtherRepositories() throws {
   var base = try environment()
   base.repository = "/Users/example/stim-tutorial"
   var miss = try sibling()
@@ -140,7 +140,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   let result = progress.update(
     TutorialInput(environment: base, siblings: [foreign, miss], now: afterRebuild, record: saved(at: "parallel")))
   #expect(result.record.secondPath == secondPath)
-  #expect(result.currentStep == "parallel")
+  #expect(result.currentStep == "device")
   #expect(state("parallel", in: result).detail.contains("Cache miss"))
   var other = TutorialProgress()
   let none = other.update(
@@ -520,7 +520,7 @@ private func disk(_ bytes: Double) throws -> WorkspaceDisk {
   var progress = TutorialProgress()
   let opened = progress.update(TutorialInput(environment: env, now: tourStart.addingTimeInterval(120)))
   #expect(opened.record.startedAt == env.build?.startedDate)
-  #expect(opened.currentStep == "build")
+  #expect(opened.currentStep == "parallel")
   let result = progress.update(TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild))
   #expect(result.currentStep == "parallel")
 }
@@ -829,4 +829,66 @@ private func clone(_ path: String, doctorRanAt: Date? = nil) throws -> TutorialE
   let stale = progress.update(
     TutorialInput(environment: nil, newCloneFolder: TutorialCloneFolder(created: tourStart.addingTimeInterval(-10)), now: late))
   #expect(state("begin", in: stale).detail == "No tutorial workspace yet. Ask your agent what failed")
+}
+
+private func running(_ startedAt: String) throws -> Build {
+  try JSONDecoder().decode(
+    Build.self,
+    from: Data(
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"compile",
+      "startedAt":"\(startedAt)","phaseStartedAt":"\(startedAt)","basis":0}
+      """.utf8))
+}
+
+@Test func tutorialAdvancesAtEachBuildStartAndFillsStatsWhenTheBuildsFinish() throws {
+  var first = try environment("01-started")
+  first.repository = "/Users/example/stim-tutorial"
+  first.build = try running("2026-10-07T04:57:09.000Z")
+  var progress = TutorialProgress()
+  let building = progress.update(
+    TutorialInput(environment: first, now: tourStart.addingTimeInterval(80), record: saved(at: "build")))
+  #expect(building.currentStep == "parallel")
+  #expect(state("build", in: building).state == .done)
+  #expect(building.record.stats?.firstBuild == nil)
+
+  var second = try environment("01-started")
+  second.path = secondPath
+  second.repository = "/Users/example/stim-tutorial"
+  second.build = try running("2026-10-07T04:58:30.000Z")
+  let both = progress.update(TutorialInput(environment: first, siblings: [second], now: tourStart.addingTimeInterval(160)))
+  #expect(both.currentStep == "device")
+  #expect(state("parallel", in: both).state == .done)
+  #expect(state("device", in: both).detail == "Waiting for the build to launch the app")
+  #expect(both.record.stats?.secondBuild == nil)
+
+  var finished = try environment("02-after-ios1")
+  finished.repository = "/Users/example/stim-tutorial"
+  let done = progress.update(TutorialInput(environment: finished, siblings: [try sibling()], now: afterRebuild))
+  #expect(done.currentStep == "device")
+  #expect(state("build", in: done).detail.contains("no earlier build"))
+  #expect(done.record.stats?.firstBuild?.cache == "none")
+  #expect(done.record.stats?.secondBuild?.cache == "local")
+}
+
+@Test func tutorialBuildThatFailsAfterTheStepAdvancedWarnsOnThatStep() throws {
+  var env = try environment("01-started")
+  env.build = try running("2026-10-07T04:57:09.000Z")
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: env, now: tourStart.addingTimeInterval(80), record: saved(at: "build")))
+  env.build = nil
+  env.lastBuild = try JSONDecoder().decode(
+    LastBuild.self,
+    from: Data(
+      """
+      {"platform":"ios","status":"failed","cacheHit":false,"startedAt":"2026-10-07T04:57:09.000Z",
+      "cause":{"key":"App.swift:12","file":"App.swift","line":12},"diagnostics":[{"message":"Unknown symbol"}]}
+      """.utf8))
+  let failed = progress.update(TutorialInput(environment: env, now: afterBuild))
+  #expect(failed.currentStep == "parallel")
+  #expect(state("build", in: failed).state == .done)
+  #expect(state("build", in: failed).warning == "App.swift:12: Unknown symbol")
+  env.build = try running("2026-10-07T05:01:00.000Z")
+  let retrying = progress.update(TutorialInput(environment: env, now: afterBuild))
+  #expect(state("build", in: retrying).warning == nil)
 }

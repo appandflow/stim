@@ -19,7 +19,7 @@ struct Notice: Identifiable {
   }
   var secondaryAction: Action?
 
-  var launchedWorkspace: String? { key?.hasPrefix("device-launch:") == true ? workspacePath : nil }
+  var newWorkspace: String? { key == workspacePath.map(WorkspaceArrivals.cardKey) ? workspacePath : nil }
 }
 
 @MainActor
@@ -63,6 +63,11 @@ final class NoticeCenter: ObservableObject {
     let onDismiss = notices.first { $0.id == id }?.onDismiss
     remove(id)
     onDismiss?()
+  }
+
+  func update(key: String, detail: String) {
+    guard let position = notices.firstIndex(where: { $0.key == key }), notices[position].detail != detail else { return }
+    notices[position].detail = detail
   }
 
   func remove(key: String) {
@@ -160,8 +165,8 @@ private struct NoticeCard: View {
     }
     .buttonStyle(.stim(.primary))
     .fixedSize()
-    if let path = notice.launchedWorkspace {
-      button.tutorialAnchor(.launchNoticeShow, workspace: path)
+    if let path = notice.newWorkspace {
+      button.tutorialAnchor(.workspaceNoticeShow, workspace: path)
     } else {
       button
     }
