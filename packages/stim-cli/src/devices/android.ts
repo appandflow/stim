@@ -432,7 +432,9 @@ export function parseAdbDevices(text: string): AdbDevices {
 }
 
 export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
-  return parseAvdList(getExecutor().run(`${androidTool('emulator')} -list-avds`, { timeoutMs }));
+  return parseAvdList(
+    getExecutor().runFile(androidToolPath('emulator'), ['-list-avds'], { timeoutMs, killSignal: 'SIGKILL' }),
+  );
 }
 
 /**
@@ -452,7 +454,11 @@ export function listAdbDevices({
   platform = process.platform,
 }: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
   return parseAdbDevices(
-    getExecutor().run(`${androidTool('adb')} devices`, { timeoutMs, cwd: androidToolCwd(platform) }),
+    getExecutor().runFile(androidToolPath('adb'), ['devices'], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      cwd: androidToolCwd(platform),
+    }),
   );
 }
 
