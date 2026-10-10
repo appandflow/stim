@@ -342,12 +342,16 @@ export function parseBundleId(plistJson: unknown): string | null {
 export function readBundleId(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
   const executor = exec || getExecutor();
   try {
-    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
     const id = parseBundleId(json);
     if (id) return id;
   } catch {}
   try {
-    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleIdentifier']);
+    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleIdentifier'], {
+      timeoutMs: 10_000,
+    });
     const trimmed = String(value).trim();
     return trimmed === '' ? null : trimmed;
   } catch {
@@ -371,12 +375,16 @@ export function parseBundleExecutable(plistJson: unknown): string | null {
 export function readBundleExecutable(appPath: string, { exec = null }: { exec?: Executor | null } = {}): string | null {
   const executor = exec || getExecutor();
   try {
-    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    const json = executor.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], {
+      timeoutMs: 10_000,
+    });
     const name = parseBundleExecutable(json);
     if (name) return name;
   } catch {}
   try {
-    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable']);
+    const value = executor.runFile('defaults', ['read', join(appPath, 'Info'), 'CFBundleExecutable'], {
+      timeoutMs: 10_000,
+    });
     const trimmed = String(value).trim();
     return trimmed === '' ? null : trimmed;
   } catch {

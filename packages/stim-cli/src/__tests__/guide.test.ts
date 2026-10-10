@@ -579,7 +579,7 @@ test('the run section names the marker version the status payload reports and on
 
 test('the run section checks each change on the tutorial app with agent-device', () => {
   const run = flat('run');
-  for (const testID of ['tap-button', 'dark-accent-switch', 'name-input']) expect(run).toContain(testID);
+  for (const testID of ['tap-button', 'dark-accent-switch', 'size-m']) expect(run).toContain(testID);
   expect(run).toContain('agent-device open dev.stim.tutorial --platform ios --udid <ios.udid>');
   expect(run).toMatch(/snapshot -i before every action/);
 });
@@ -946,6 +946,9 @@ test('the macos guide covers the declared command flags and project settings', (
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
+  const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
+  expect(agentActions.indexOf('lsappinfo find bundleid=<bundleId> pid=<app.pid>')).toBeGreaterThan(-1);
+  expect(agentActions.indexOf('lsappinfo find')).toBeLessThan(agentActions.indexOf('agent-device open <bundleId>'));
 });
 
 test.each([registerIos, registerAndroid, macosCommand])(

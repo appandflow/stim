@@ -4,6 +4,7 @@ import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { gitQuiet } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
@@ -186,21 +187,19 @@ function hasLinkedWorktree(projectRoot: string): boolean {
 }
 
 function headBranch(root: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const ref = gitQuiet(root, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
 }
 
 function mainOperation(root: string): 'rebase' | 'merge' | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
   return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
 function dirtyTrackedPaths(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  const out = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
   return (out ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -215,9 +214,7 @@ function resolveDefaultBranch(root: string): string | null {
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
@@ -1495,8 +1492,7 @@ export async function detectFingerprintParity(
     iosProjectPath?: string;
   } = {},
 ): Promise<Finding | null> {
-  const exec = getExecutor();
-  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+  if (gitQuiet(projectRoot, ['rev-parse', '--git-dir']) == null) {
     return null;
   }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
@@ -1526,10 +1522,10 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet(
-    'git',
-    ['-C', projectRoot, '-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
-    { timeoutMs: 60000 },
+  const added = gitQuiet(
+    projectRoot,
+    ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+    { write: true, timeoutMs: 60000 },
   );
   if (added == null) {
     rmSync(base, { recursive: true, force: true });
@@ -1562,8 +1558,8 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
+    gitQuiet(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
     rmSync(base, { recursive: true, force: true });
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
+    gitQuiet(projectRoot, ['worktree', 'prune'], { write: true });
   }
 }

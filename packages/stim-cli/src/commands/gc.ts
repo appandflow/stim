@@ -64,6 +64,7 @@ import {
   type StaleProjectDevice,
   type UnverifiedDevice,
 } from './gc/devices.ts';
+import { findStaleEasLedgerEntries, forgetStaleEasLedgerEntries } from './gc/eas-ledger.ts';
 import {
   collectEasSessionSweep,
   deleteEasSessions,
@@ -248,6 +249,7 @@ export async function collectGcReport(
       staleDevices: [],
       staleDeviceRecords: [],
       staleLedgerEntries: [],
+      staleEasLedgerEntries: [],
       staleStatusCaches: [],
       buildLocks: { stale: [], live: [], unresolved: [] },
       buildSlots: { stale: [], live: [], unresolved: [] },
@@ -450,6 +452,7 @@ export async function collectGcReport(
     staleDevices,
     staleDeviceRecords,
     staleLedgerEntries,
+    staleEasLedgerEntries: findStaleEasLedgerEntries(mountedVolumes, deps),
     staleStatusCaches: statusCaches.stale,
     buildLocks: {
       stale: locks.filter((l) => !l.alive && !l.unresolved),
@@ -771,7 +774,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
       orphanedDevices.length > 0 ||
       staleDevices.length > 0 ||
       staleDeviceRecords.length > 0 ||
-      report.staleLedgerEntries.length > 0 ||
+      report.staleLedgerEntries.length + report.staleEasLedgerEntries.length > 0 ||
       report.staleStatusCaches.length > 0 ||
       buildLocks.stale.length > 0 ||
       buildSlots.stale.length > 0 ||
@@ -831,6 +834,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
 
   deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
+  deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
 
   for (const lock of buildLocks.stale) {

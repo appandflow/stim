@@ -744,7 +744,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     repos: {},
   });
   const sized: string[] = [];
-  const sizeTimeouts: Array<number | undefined> = [];
+  const sizeTimeouts: Array<number | 'unbounded'> = [];
   setExecutor({
     run(cmd) {
       if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
@@ -772,7 +772,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       avdDirectory: (name) => `/avds/${name}.avd`,
       directorySize: (dir, options) => {
         sized.push(dir);
-        sizeTimeouts.push(options?.timeoutMs);
+        sizeTimeouts.push(options.timeoutMs);
         if (dir.includes('unreadable')) throw new Error('timed out');
         return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
       },
@@ -1384,6 +1384,46 @@ describe('EAS orphan session sweep', () => {
 
     expect(output).not.toMatch(/Stopped EAS session drs_home_b/);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('gc lists a fixture-looking ledger entry whose workspace is gone and --delete forgets it', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    const gone = join(fakeHome, 'deleted-fixture');
+    mkdirSync(project, { recursive: true });
+    ensureWorkspaceStorage(project);
+    writeEasLedger(ledgerRoot, [
+      {
+        sessionId: 'drs_2',
+        name: 'stim-fixture',
+        platform: 'ios',
+        workspaceRoot: gone,
+        stateFile: workspaceStateFile(gone),
+      },
+      {
+        sessionId: 'drs_live',
+        name: 'stim-live',
+        platform: 'ios',
+        workspaceRoot: project,
+        stateFile: workspaceStateFile(project),
+      },
+    ]);
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList([]) });
+    const deps = { ...harness.deps, detectIsExpo: () => false, easLedgerRoot: ledgerRoot };
+    const ids = () => {
+      const ledger: { claims: object } = JSON.parse(readFileSync(join(ledgerRoot, 'sessions.json'), 'utf-8'));
+      return Object.keys(ledger.claims);
+    };
+
+    const preview = await captureLog(() => runGc({}, deps));
+    expect(preview).toMatch(/Stale EAS ledger entries \(1\)/);
+    expect(preview).toMatch(/drs_2/);
+    expect(ids()).toEqual(['drs_2', 'drs_live']);
+
+    await captureLog(() => runGc({ delete: true }, deps));
+    expect(ids()).toEqual(['drs_live']);
+    expect(harness.calls).toEqual([]);
   });
 
   test('a missing config never authorizes an unclaimed session stop', async () => {
@@ -3643,6 +3683,7 @@ describe('gc --json', () => {
       'staleDevices',
       'staleDeviceRecords',
       'staleLedgerEntries',
+      'staleEasLedgerEntries',
       'staleStatusCaches',
       'idleDevices',
       'orphanedEasSessions',

@@ -469,6 +469,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Days to keep archived agent-device sessions; 0 keeps none',
   },
   {
+    key: 'workspace.hidden',
+    type: BOOLEAN,
+    scopes: ['workspace'],
+    default: false,
+    description: 'Hide this workspace in Stim Desktop and the phone app; the next command that uses it unhides it',
+  },
+  {
     key: 'worktree.exclude',
     type: { kind: 'strings' },
     scopes: ['repo', 'committed'],
