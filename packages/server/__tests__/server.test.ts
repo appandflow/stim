@@ -5814,8 +5814,12 @@ describe('frames.subscribe', () => {
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     const { session } = begun.result as { session: string };
     const pending = client.request('input.simulator', { session, action: 'slow-animations', enabled: true });
-    await until(() => existsSync(`${toolCalls}.option-started`));
-    const pid = Number(readFileSync(`${toolCalls}.option-started`, 'utf8'));
+    let pid = 0;
+    await until(() => {
+      if (!existsSync(`${toolCalls}.option-started`)) return false;
+      pid = Number(readFileSync(`${toolCalls}.option-started`, 'utf8'));
+      return Number.isSafeInteger(pid) && pid > 0;
+    });
     expect(await client.request('control.end', { session })).toMatchObject({ result: {} });
     expect(await pending).toMatchObject({ error: { code: 'action-failed' } });
     expect(() => process.kill(pid, 0)).toThrow('ESRCH');

@@ -505,6 +505,77 @@ func tutorialArchiveDisabledRelaunchDoesNotCompleteBeforeFinish(step: String) {
   #expect(after.record.tourPath == nil)
 }
 
+private func clone(_ path: String, doctorRanAt: Date? = nil) throws -> TutorialEnvironment {
+  var env = try environment("01-started")
+  env.path = path
+  env.repository = path
+  env.iosDoctorRanAt = doctorRanAt
+  return env
+}
+
+@Test func tutorialBeginCompletesForACloneRecreatedAtABaselinePath() throws {
+  let path = "/Users/example/stim-tutorial"
+  var progress = TutorialProgress()
+  let before = progress.update(
+    TutorialInput(
+      environment: nil, siblings: [try clone(path, doctorRanAt: afterBuild.addingTimeInterval(-3600))], now: afterBuild))
+  #expect(before.currentStep == "begin")
+  #expect(before.record.baselineClones == [path])
+  let stale = progress.update(
+    TutorialInput(
+      environment: nil, siblings: [try clone(path, doctorRanAt: afterBuild.addingTimeInterval(-3600))],
+      now: afterBuild.addingTimeInterval(30)))
+  #expect(stale.currentStep == "begin")
+  let recloned = progress.update(
+    TutorialInput(
+      environment: nil, siblings: [try clone(path, doctorRanAt: afterBuild.addingTimeInterval(60))],
+      now: afterBuild.addingTimeInterval(90)))
+  #expect(state("begin", in: recloned).state == .done)
+  #expect(recloned.currentStep == "build")
+  #expect(recloned.record.clonePath == path)
+}
+
+@Test func tutorialReleasesAPinnedCloneThatDisappearsBeforeAnyWorktree() throws {
+  let first = "/Users/example/clone-a"
+  let second = "/Users/example/clone-b"
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: nil, siblings: [], now: afterBuild))
+  let pinned = progress.update(
+    TutorialInput(
+      environment: nil, siblings: [try clone(first, doctorRanAt: afterBuild.addingTimeInterval(10))],
+      now: afterBuild.addingTimeInterval(20)))
+  #expect(pinned.record.clonePath == first)
+  let released = progress.update(TutorialInput(environment: nil, siblings: [], now: afterBuild.addingTimeInterval(30)))
+  #expect(released.record.clonePath == nil)
+  let adopted = progress.update(
+    TutorialInput(
+      environment: nil, siblings: [try clone(second, doctorRanAt: afterBuild.addingTimeInterval(40))],
+      now: afterBuild.addingTimeInterval(50)))
+  #expect(adopted.record.clonePath == second)
+}
+
+@Test func tutorialCloneHintOnlyAppliesToThePinnedClone() throws {
+  let pinnedPath = "/Users/example/clone-a"
+  let otherPath = "/Users/example/clone-b"
+  let built = try environment("03-after-rebuild")
+  func hint(pinnedBuilt: Bool, otherBuilt: Bool) throws -> String {
+    var pinned = try clone(pinnedPath, doctorRanAt: afterBuild.addingTimeInterval(20))
+    var other = try clone(otherPath, doctorRanAt: afterBuild.addingTimeInterval(10))
+    if pinnedBuilt { pinned.lastBuild = built.lastBuild }
+    if otherBuilt { other.lastBuild = built.lastBuild }
+    var record = TutorialRecord(version: 2, startedAt: tourStart, step: "build", done: ["begin"])
+    record.stepSince = tourStart
+    record.clonePath = pinnedPath
+    record.baselineClones = []
+    var progress = TutorialProgress()
+    let result = progress.update(
+      TutorialInput(environment: nil, siblings: [other, pinned], now: afterRebuild, record: record))
+    return state("build", in: result).detail
+  }
+  #expect(try hint(pinnedBuilt: false, otherBuilt: true) == "Waiting for the iOS build")
+  #expect(try hint(pinnedBuilt: true, otherBuilt: false).hasPrefix("Ask your agent to make the change"))
+}
+
 @Test func tutorialTourOnlyComesFromTheClonePinnedByBegin() throws {
   var mine = try linked(fixture("01-started").environments[0], repository: "/Users/example/clone-a")
   mine.phaseSince = "2026-10-07T05:10:00.000Z"
