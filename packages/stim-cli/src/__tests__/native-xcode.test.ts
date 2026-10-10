@@ -17,7 +17,7 @@ import { projectRegistry } from '../integrations/projects.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeInputSnapshot } from '../integrations/native-xcode-inputs.ts';
 import { nativeXcodeIosProject } from '../integrations/native-xcode-ios.ts';
-import type { IosArtifactContext } from '../integrations/ios-project.ts';
+import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-project.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
@@ -729,6 +729,19 @@ test('stim ios, the build API and --plan share one native artifact key for the s
   expect(run).toHaveProperty('key');
   expect(await identity(host)).toEqual(run);
   expect(await nativeXcodeIosProject(root).plan!({})).toMatchObject({ cacheKey: (run as { key: string }).key });
+});
+
+test('a native project removed after recipe selection refuses instead of escaping as an unexpected error', async () => {
+  const project = writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
+  const recipe = nativeXcodeIosProject(root).artifact({
+    root,
+    configuration: 'Debug',
+    target: { udid: null, destination: null, sdk: 'iphonesimulator', arch: null, keyArch: null },
+    optimizations: resolveOptimizations({}, {}).ios,
+  } as unknown as IosArtifactContext);
+  rmSync(project, { recursive: true });
+  await expect(recipe.identity()).rejects.toBeInstanceOf(IosRecipeRefusal);
 });
 
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {

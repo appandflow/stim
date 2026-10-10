@@ -91,9 +91,16 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       ...(context.target.keyArch ? { arch: context.target.keyArch } : {}),
     }),
   });
+  const reselect = () => {
+    try {
+      selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+    } catch (error) {
+      throw new IosRecipeRefusal(refusal(error));
+    }
+  };
   const read = () => {
     if (!tools) return { cacheIneligible: ineligible ?? 'Xcode toolchain identity is unavailable' };
-    selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+    reselect();
     return nativeXcodeInputSnapshot(
       root,
       selected,
@@ -142,7 +149,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
           });
         context.setPodsMs(result.durationMs ?? 0);
         mutations.push('pod install');
-        selected = selectNativeXcodeProject(root, context.buildScheme, configuration);
+        reselect();
       }
       if (nativeXcodeHasPackages(selected)) {
         beforePrepare();
