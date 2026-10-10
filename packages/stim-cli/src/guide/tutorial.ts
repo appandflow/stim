@@ -66,8 +66,14 @@ For commands to type yourself, read stim guide tutorial manual.`,
 
 ${paths}
 
-Folder safety: use a fresh folder. If {base} exists, stop and ask the user for
-another folder; never overwrite or delete it. First check the parent folder:
+Folder safety: if {base} does not exist, clone into it. If it exists, reuse it
+only when all of these hold: app.json has expo.extra.stimTutorial equal to
+${TUTORIAL_VERSION}, git remote get-url origin names ${TUTORIAL_REPO}, git
+rev-parse --show-toplevel equals {base}, and git status --porcelain prints
+nothing. Then skip the clone, install its dependencies (npm ci), run stim doctor
+--platform ios there, and continue at PAUSE. For any other existing folder (another
+repository, local changes, no tutorial marker), stop and ask the user for
+another folder; never overwrite or delete it. Before cloning, check the parent folder:
 create it if absent, then run git -C <parent> rev-parse --is-inside-work-tree.
 If that succeeds, the folder is inside another repository: stop and ask the
 user for another folder. Never git add in the user's repo.

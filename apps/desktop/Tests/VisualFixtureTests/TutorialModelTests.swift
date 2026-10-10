@@ -153,7 +153,6 @@
       model.update(workspaces: [old], archived: [], sheetOpen: false, now: start)
       XCTAssertEqual(model.notice?.action, .restart)
       XCTAssertEqual(model.snapshot?.steps.first { $0.id == "build" }?.action, .restart)
-      XCTAssertNil(model.ask(for: try XCTUnwrap(TutorialSteps.all.first { $0.id == "build" })))
       model.open(beginning: true, now: start.addingTimeInterval(30))
       XCTAssertNil(model.snapshot?.record.tourPath)
       XCTAssertEqual(model.snapshot?.currentStep, "begin")

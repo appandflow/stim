@@ -10,7 +10,6 @@ struct TutorialPanel: View {
   var message: TutorialNotice? = nil
   var issues: [StatusIssue] = []
   var phoneState = TutorialPhoneState(pairedPhoneCount: nil)
-  var canRunIOS = false
   var agentDeviceMissing = false
   var asks: (TutorialStep) -> String? = { $0.ask }
   var commands: (TutorialStep) -> String
@@ -18,7 +17,6 @@ struct TutorialPanel: View {
   var skip: () -> Void = {}
   var markDone: () -> Void = {}
   var restart: () -> Void = {}
-  var runIOS: () -> Void = {}
   var close: () -> Void = {}
   var openArchived: () -> Void = {}
   var pairPhone: () -> Void = {}
@@ -167,19 +165,6 @@ struct TutorialPanel: View {
               Text("\(issue.code): \(issue.message) \(issue.remedy)").foregroundStyle(Palette.warning)
                 .textSelection(.enabled)
             }
-            if step.id == "build" {
-              Button {
-                runIOS()
-              } label: {
-                Label("Run iOS", systemImage: "play.fill")
-              }
-              .buttonStyle(.stim(.primary)).disabled(!canRunIOS)
-              .help(
-                "stim ios --remote local --remote-build local: builds here if needed, installs and launches in this "
-                  + "workspace"
-              )
-              .accessibilityLabel("Run the tutorial app on iOS")
-            }
             if step.id == "phone", phoneState != .paired {
               Button(phoneState.buttonTitle, action: pairPhone).buttonStyle(.stim(.primary))
             }
@@ -291,7 +276,7 @@ struct TutorialPanel: View {
         "Watch two agents make two changes at once, each in its own worktree with its own simulator and dev server, checking its own work on the device. First, clone the test app."
     case "build":
       return
-        "Ask your agent for a visual change in your own words, for example: \"Make the title purple and check it on the simulator.\" It works in its own worktree with its own simulator and Metro, and checks the result on the device. Stim waited until the app said it was ready, not just launched, so the agent knows the app works before it checks the change: look for the readiness phase in the build details. On a fresh Mac this build is usually a cache miss and takes a few minutes. Watch it in Desktop."
+        "Ask your agent for a visual change. It builds in its own worktree and simulator, and checks the result on the device. The first build can take a few minutes."
     case "parallel":
       return
         "While that runs, ask for another change, for example: \"Try a dark background and check it on the simulator.\" Two worktrees run side by side with no port or simulator clash, and the second build is a cache hit, so isolation is cheap and it finishes much faster. Look at the cache badge and both simulators."

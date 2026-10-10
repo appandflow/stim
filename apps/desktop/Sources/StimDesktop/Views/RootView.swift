@@ -125,20 +125,10 @@ struct RootView: View {
           TutorialPanel(
             snapshot: snapshot, message: tutorial.notice,
             issues: tutorial.workspace?.issues ?? [], phoneState: tutorial.phoneState,
-            canRunIOS: tutorial.workspace.map { $0.build?.isRunning != true && actions.active(for: $0.path) == nil } ?? false,
             agentDeviceMissing: tutorial.workspace?.agentDevice?.installed == false,
             asks: tutorial.ask, commands: tutorial.commands,
             copied: { tutorial.copiedPrompt() }, skip: tutorial.skip, markDone: tutorial.markDone,
-            restart: { tutorial.open(beginning: true) },
-            runIOS: {
-              if let workspace = tutorial.workspace {
-                actions.run(
-                  "Run \(workspace.names.title) on iOS",
-                  steps: [
-                    StimCommand(["ios", "--remote", "local", "--remote-build", "local"], cwd: workspace.path)
-                  ], present: false)
-              }
-            },
+            restart: tutorial.restart,
             close: tutorial.close,
             openArchived: openTutorialArchive,
             pairPhone: { openRequests.pairsPhone = true },
@@ -290,6 +280,7 @@ struct RootView: View {
       NativeViewerPermissionsView(
         permissions: nativePermissions, relaunch: onboarding.canRelaunch ? { onboarding.relaunch() } : nil)
     }
+    .modifier(TutorialRestartDialogs(tutorial: tutorial))
     .onAppear {
       navigation.resolves = resolves
       navigation.apply = show
