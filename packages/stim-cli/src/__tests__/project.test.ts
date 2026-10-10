@@ -91,17 +91,14 @@ test('appProjectProblem names the package.json of a directory that is not an app
   }
 });
 
-test('appProjectProblem accepts a package that starts its dev server through metro.command', () => {
+test('appProjectProblem accepts a package that declares react-native only as a peer dependency', () => {
   const tmp = mkdtempSync(join(tmpdir(), 'stim-app-'));
   try {
-    writeFileSync(
-      join(tmp, 'package.json'),
-      JSON.stringify({ name: '@react-native/tester', peerDependencies: { 'react-native': '*' } }),
-    );
+    writeFileSync(join(tmp, 'package.json'), JSON.stringify({ name: 'tester', peerDependencies: { react: '*' } }));
     expect(appProjectProblem(tmp)?.kind).toBe('not-an-app');
     writeFileSync(
-      join(tmp, '.stim.json'),
-      JSON.stringify({ metro: { command: ['node', '../react-native/cli.js', 'start', '--port', '{port}'] } }),
+      join(tmp, 'package.json'),
+      JSON.stringify({ name: 'tester', peerDependencies: { react: '*', 'react-native': '*' } }),
     );
     expect(appProjectProblem(tmp)).toBe(null);
   } finally {

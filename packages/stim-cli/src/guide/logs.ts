@@ -216,7 +216,8 @@ THE RECORD
     clockOffsetMs the offset added to deviceTs; absent if the query failed.
              A collector_clock warning then says timestamps retain device time.
     raw      true when the level was inferred from a line of text rather than
-             reported by the producer (every expo-child record)
+             reported by the producer (every expo-child and command-child
+             record)
     context  --errors --json only: the code frame and stack lines Expo
              printed after this error, as an array of strings. Absent when
              there are none. Stim adds it at query time; it is not in the

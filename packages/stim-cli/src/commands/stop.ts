@@ -840,6 +840,9 @@ async function stopSupervisor(
   report(
     chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
   );
+  if (target.mode === MODE_COMMAND) {
+    report(chalk.dim(phaseLine('', 'metro.command runs in its own process group; run stim stop again to stop it')));
+  }
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 

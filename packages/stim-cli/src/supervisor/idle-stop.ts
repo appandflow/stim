@@ -29,7 +29,7 @@ export function trackDevServerActivity(now: () => number): DevServerActivity {
         if (typeof requestId === 'string') open.add(requestId);
       } else if (event === 'bundle_response_finished' || event === 'bundle_response_failed') {
         if (typeof requestId === 'string') open.delete(requestId);
-      } else if (event !== 'expo_stdout' && event !== 'command_stdout' && event !== 'command_stderr') {
+      } else if (event !== 'expo_stdout' && event !== 'command_stdout') {
         return;
       }
       last = now();
