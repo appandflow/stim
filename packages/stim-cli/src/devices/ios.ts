@@ -615,7 +615,7 @@ export function listUserApps(udid: string): string[] {
   const plist = join(dir, 'apps.plist');
   try {
     writeFileSync(plist, exec.runFile('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }));
-    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist]));
+    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist], { timeoutMs: 10_000 }));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

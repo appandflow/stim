@@ -20,7 +20,7 @@ export function readBundleSchemes(
   const e = exec || getExecutor();
   let out;
   try {
-    out = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')]);
+    out = e.runFile('plutil', ['-convert', 'json', '-o', '-', join(appPath, 'Info.plist')], { timeoutMs: 10_000 });
   } catch {
     return [];
   }

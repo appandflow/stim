@@ -276,7 +276,7 @@ export function dumpApkManifest(
       ? ['dump', 'xmltree', '--file', 'AndroidManifest.xml', apkPath]
       : ['dump', 'xmltree', apkPath, 'AndroidManifest.xml'];
   try {
-    const out = e.runFile(tool.path, args);
+    const out = e.runFile(tool.path, args, { timeoutMs: 30_000 });
     return typeof out === 'string' && out.includes('E: manifest') ? out : null;
   } catch {
     return null;

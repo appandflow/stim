@@ -11,6 +11,7 @@ import {
 } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor } from '../exec.ts';
+import { git, gitQuiet } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj']);
@@ -30,12 +31,12 @@ function nativePath(path: string): string {
 }
 
 export function gitCommonDir(cwd: string): string | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir']);
+  const out = gitQuiet(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
   return out ? nativePath(out.trim()) : null;
 }
 
 export function repoRoot(cwd: string): string | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'rev-parse', '--show-toplevel']);
+  const out = gitQuiet(cwd, ['rev-parse', '--show-toplevel']);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -47,15 +48,10 @@ export interface UpstreamState {
 
 export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
   try {
-    const name = getExecutor().runFile(
-      'git',
-      ['-C', projectRoot, 'rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'],
-      { timeoutMs: 5000 },
-    );
-    const counts = getExecutor()
-      .runFile('git', ['-C', projectRoot, 'rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
-        timeoutMs: 5000,
-      })
+    const name = git(projectRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    const counts = git(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { timeoutMs: 5000 })
       .trim()
       .split(/\s+/)
       .map(Number);
@@ -135,7 +131,7 @@ function canonicalPath(path: string): string {
 function nestedWorktreePaths(root: string): string[] {
   const source = canonicalPath(root);
   const paths = new Set<string>();
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'worktree', 'list', '--porcelain']);
+  const out = gitQuiet(root, ['worktree', 'list', '--porcelain']);
   if (out === null) {
     throw new Error('Could not list Git worktrees. Refusing to carry ignored files.');
   }
@@ -155,7 +151,7 @@ function overlapsNestedWorktree(rel: string, nestedPaths: string[]): boolean {
 }
 
 export function listTrackedPaths(dir: string): string[] | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', dir, 'ls-files', '-z']);
+  const out = gitQuiet(dir, ['ls-files', '-z']);
   if (out === null) return null;
   return out.split('\0').filter(Boolean);
 }
@@ -200,18 +196,11 @@ interface CarryResult {
 }
 
 export function listGitignoredEntries(root: string): string[] {
-  const args = [
-    '-C',
+  const out = git(
     root,
-    'ls-files',
-    '--others',
-    '--ignored',
-    '--exclude-standard',
-    '--directory',
-    '--no-empty-directory',
-    '-z',
-  ];
-  const out = getExecutor().runFile('git', args);
+    ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '--no-empty-directory', '-z'],
+    { timeoutMs: 'unbounded' },
+  );
   if (!out) return [];
   return out
     .split('\0')
@@ -291,10 +280,10 @@ export function cloneIgnoredEntries({
       }
       mkdirSync(dirname(to), { recursive: true });
       try {
-        getExecutor().runFile('cp', ['-Rc', from, to]);
+        getExecutor().runFile('cp', ['-Rc', from, to], { timeoutMs: 'unbounded' });
       } catch {
         removeTemporaryEntry(to);
-        getExecutor().runFile('cp', ['-R', from, to]);
+        getExecutor().runFile('cp', ['-R', from, to], { timeoutMs: 'unbounded' });
         cloned = false;
       }
       if (lstatSync(to).isDirectory()) removeCopiedExclusions(to, rel);
@@ -455,14 +444,7 @@ export function depsOutOfSync(
 const FINGERPRINT_INPUT_FILES = ['app.json', 'app.config.ts', 'app.config.js', 'app.config.mjs', 'package.json'];
 
 export function dirtyFingerprintFiles(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', [
-    '-C',
-    root,
-    'status',
-    '--porcelain',
-    '--',
-    ...FINGERPRINT_INPUT_FILES,
-  ]);
+  const out = gitQuiet(root, ['status', '--porcelain', '--', ...FINGERPRINT_INPUT_FILES]);
   if (out === null || out.trim() === '') return [];
   return out
     .split('\n')
@@ -473,13 +455,13 @@ export function dirtyFingerprintFiles(root: string): string[] {
 }
 
 export function hasUncommittedWork(dir: string): boolean | null {
-  const out = getExecutor().runFileQuiet('git', ['--no-optional-locks', '-C', dir, 'status', '--porcelain']);
+  const out = gitQuiet(dir, ['status', '--porcelain']);
   if (out === null) return null;
   return out.trim().length > 0;
 }
 
 export function dirtyPaths(dir: string, { limit = 10 }: { limit?: number } = {}): string[] {
-  const out = getExecutor().runFileQuiet('git', ['--no-optional-locks', '-C', dir, 'status', '--porcelain']);
+  const out = gitQuiet(dir, ['status', '--porcelain']);
   if (out === null) return [];
   const lines = out
     .split('\n')
@@ -494,7 +476,7 @@ function normalizePorcelainLine(line: string): string {
 }
 
 export function restoreFile(dir: string, file: string): boolean {
-  return getExecutor().runFileQuiet('git', ['-C', dir, 'checkout', '--', file]) !== null;
+  return gitQuiet(dir, ['checkout', '--', file], { write: true }) !== null;
 }
 
 export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
@@ -505,15 +487,14 @@ export function isPodInstallChurn(paths: string[] | null | undefined): boolean {
 const SAFE_BRANCH_NAME = /^[A-Za-z0-9@._/-]+$/;
 
 export function unpushedCommits(dir: string): string[] | null {
-  const exec = getExecutor();
-  const branch = exec.runFileQuiet('git', ['-C', dir, 'symbolic-ref', '--quiet', '--short', 'HEAD']);
+  const branch = gitQuiet(dir, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
   const own = branch === null ? '' : branch.trim();
   const protection =
     own && SAFE_BRANCH_NAME.test(own) ? ['--remotes', `--exclude=${own}`, '--branches'] : ['--remotes'];
-  if (!own && exec.runFileQuiet('git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
+  if (!own && gitQuiet(dir, ['rev-parse', '--abbrev-ref', 'HEAD']) === 'HEAD') {
     protection.push('--branches');
   }
-  const out = exec.runFileQuiet('git', ['-C', dir, 'log', '--oneline', 'HEAD', '--not', ...protection]);
+  const out = gitQuiet(dir, ['log', '--oneline', 'HEAD', '--not', ...protection]);
   if (out === null) return null;
   return out
     .split('\n')
@@ -522,33 +503,18 @@ export function unpushedCommits(dir: string): string[] | null {
 }
 
 export function hasRemote(dir: string): boolean {
-  const out = getExecutor().runFileQuiet('git', ['-C', dir, 'remote']);
+  const out = gitQuiet(dir, ['remote']);
   return Boolean(out && out.trim().length > 0);
 }
 
 export function branchExists(cwd: string, branch: string): boolean {
-  const out = getExecutor().runFileQuiet('git', [
-    '-C',
-    cwd,
-    'rev-parse',
-    '--verify',
-    '--quiet',
-    `refs/heads/${branch}`,
-  ]);
+  const out = gitQuiet(cwd, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]);
   return Boolean(out);
 }
 
 export function resolveFullRef(cwd: string, ref: string): string | null {
   try {
-    const out = getExecutor().runFile('git', [
-      '-C',
-      cwd,
-      'rev-parse',
-      '--verify',
-      '--quiet',
-      '--end-of-options',
-      `${ref}^{commit}`,
-    ]);
+    const out = git(cwd, ['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`]);
     return out && out.trim() ? out.trim() : null;
   } catch {
     return null;
@@ -565,22 +531,20 @@ export function removeWorktree(
 ): void {
   const args = [
     ...(platform === 'win32' ? ['-c', 'core.longpaths=true'] : []),
-    '-C',
-    from,
     'worktree',
     'remove',
     ...(force ? ['--force'] : []),
     '--',
     path,
   ];
-  getExecutor().runFile('git', args);
+  git(from, args, { write: true, timeoutMs: 'unbounded' });
 }
 
 export function deleteBranch(cwd: string, branch: string, expectedSha: string): void {
   if (!SAFE_BRANCH_NAME.test(branch) || branch.startsWith('-')) {
     throw new Error(`Refusing branch ${JSON.stringify(branch)}: it is not a safe local branch name.`);
   }
-  getExecutor().runFile('git', ['-C', cwd, 'update-ref', '-d', `refs/heads/${branch}`, expectedSha]);
+  git(cwd, ['update-ref', '-d', `refs/heads/${branch}`, expectedSha], { write: true });
 }
 
 export interface WorktreeEntry {
@@ -613,9 +577,9 @@ function parseWorktrees(out: string): WorktreeEntry[] {
 }
 
 export function hasPopulatedSubmodules(worktree: string): boolean {
-  const modules = getExecutor().runFileQuiet('git', ['-C', worktree, 'rev-parse', '--git-path', 'modules']);
+  const modules = gitQuiet(worktree, ['rev-parse', '--git-path', 'modules']);
   if (modules && existsSync(resolve(worktree, nativePath(modules)))) return true;
-  const staged = getExecutor().runFileQuiet('git', ['-C', worktree, 'ls-files', '--stage', '-z']) ?? '';
+  const staged = gitQuiet(worktree, ['ls-files', '--stage', '-z']) ?? '';
   return staged
     .split('\0')
     .some(
@@ -624,7 +588,7 @@ export function hasPopulatedSubmodules(worktree: string): boolean {
 }
 
 export function listWorktrees(cwd: string): WorktreeEntry[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', cwd, 'worktree', 'list', '--porcelain']);
+  const out = gitQuiet(cwd, ['worktree', 'list', '--porcelain']);
   return out ? parseWorktrees(out) : [];
 }
 
@@ -730,7 +694,7 @@ export function selectSourceCheckout(entries: WorktreeEntry[], bareHead: string 
 }
 
 function bareHeadBranch(bare: string): string | null {
-  const out = getExecutor().runFileQuiet('git', ['-C', bare, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const out = gitQuiet(bare, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return out?.startsWith('refs/heads/') ? out.slice('refs/heads/'.length) : null;
 }
 

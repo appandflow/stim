@@ -94,6 +94,7 @@ test('unpushedCommits excludes only the worktree own branch from the local-branc
   expect(unpushedCommits('/wt')).toEqual(['abc123 own-work']);
   const log = calls.find((args) => args.includes('log'));
   expect(log).toEqual([
+    '--no-optional-locks',
     '-C',
     '/wt',
     'log',
@@ -350,7 +351,7 @@ test('removeWorktree runs git via runFile (no shell) from another checkout, with
   expect(calls).toEqual([
     ['git', '-C', from, 'worktree', 'remove', '--', path],
     ['git', '-C', from, 'worktree', 'remove', '--force', '--', path],
-    ['git', '-c', 'core.longpaths=true', '-C', from, 'worktree', 'remove', '--', path],
+    ['git', '-C', from, '-c', 'core.longpaths=true', 'worktree', 'remove', '--', path],
   ]);
 });
 
@@ -709,6 +710,7 @@ test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and pa
   });
   expect(dirtyFingerprintFiles('/p')).toEqual(['app.json', 'package.json']);
   expect(calls[0]).toEqual([
+    '--no-optional-locks',
     '-C',
     '/p',
     'status',

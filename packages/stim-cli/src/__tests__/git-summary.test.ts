@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inPrivacyProtectedFolder, parseGitStatus, readWorktreeGit } from '../workspace/git-summary.ts';
 
 const oid = 'a'.repeat(40);
@@ -77,16 +77,16 @@ describe('readWorktreeGit', () => {
     mergeCalls = 0;
     mergeTimesOut = false;
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) => {
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
         if (args.includes('status')) statusReads++;
         return realExecutor.runFileAsync(file, args, opts);
       },
-      runFile: (file: string, args: string[], opts: object) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         mergeCalls++;
         if (mergeTimesOut) throw Object.assign(new Error('git timed out'), { code: 'ETIMEDOUT' });
         return realExecutor.runFile(file, args, opts);
       },
-      runFileQuiet: (file: string, args: string[], opts: object) => realExecutor.runFileQuiet(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFileQuiet(file, args, opts),
     });
   });
 
@@ -179,8 +179,8 @@ describe('readWorktreeGit', () => {
         inFlight--;
         return `# branch.oid ${oid}\n# branch.head main\n? a.txt`;
       },
-      runFile: (file: string, args: string[], opts: object) => realExecutor.runFile(file, args, opts),
-      runFileQuiet: (file: string, args: string[], opts: object) => realExecutor.runFileQuiet(file, args, opts),
+      runFile: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFile(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFileQuiet(file, args, opts),
     });
     const worktrees = Array.from({ length: 40 }, (_, i) => ({ path: join(base, `wt-${i}`) }));
 

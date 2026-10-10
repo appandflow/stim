@@ -847,7 +847,11 @@ test('teardown waits out an adb devices inventory that answers after 8 s', () =>
   const fake = androidExecutor({ avds: ['stim-app'], adb: listing, avdName: 'stim-app' });
   const onRemoved = vi.fn<() => void>();
   let stalled = false;
-  const inventory = (file: string, args: string[] = [], options?: Parameters<typeof real.runFile>[2]) => {
+  const inventory = (
+    file: string,
+    args: string[] = [],
+    options: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 },
+  ) => {
     if (stalled || [file, ...args].join(' ') !== 'adb devices') return fake.runFile(file, args);
     stalled = true;
     return real.runFile(
@@ -889,7 +893,11 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   const onRemoved = vi.fn<() => void>();
   let stopped = false;
   let childPid: number | undefined;
-  const inventory = (file: string, args: string[] = [], options?: Parameters<typeof real.runFile>[2]) => {
+  const inventory = (
+    file: string,
+    args: string[] = [],
+    options: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 },
+  ) => {
     if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
     if (stopped && file === 'adb' && args[0] === 'devices') {
       try {

@@ -25,7 +25,7 @@ const TIMED_OUT = Symbol('timed-out');
 
 type ProjectConfig = Record<string, unknown>;
 
-type ExecFileFn = (file: string, args: string[], opts?: { timeoutMs?: number }) => string;
+type ExecFileFn = (file: string, args: string[], opts: { timeoutMs: number }) => string;
 
 interface ReadProjectConfigResult {
   config?: ProjectConfig | null;
@@ -434,7 +434,7 @@ function probeEasAuth({
   owner?: string | null;
   run?: ExecFileFn | null;
   resolveBin?: ((root: string) => { file: string; source: 'project' | 'path' } | null) | null;
-  timeoutMs?: number;
+  timeoutMs: number;
 }): EasAuthResult {
   const bin = (resolveBin || resolveEasCliBin)(projectRoot);
   if (!bin) {

@@ -49,7 +49,9 @@ export function swiftpmMacosProject(root: string): MacosProject {
         validateFetched(bundle, id, displayName) {
           const executable = join(bundle, 'Contents', 'MacOS', product);
           const plist = JSON.parse(
-            getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', join(bundle, 'Contents', 'Info.plist')]),
+            getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', join(bundle, 'Contents', 'Info.plist')], {
+              timeoutMs: 10_000,
+            }),
           );
           if (plist.CFBundleIdentifier !== id || plist.CFBundleExecutable !== product || !existsSync(executable))
             throw new Error('The fetched macOS bundle does not match the requested identity and executable.');
@@ -62,9 +64,9 @@ export function swiftpmMacosProject(root: string): MacosProject {
           }
           if (displayName !== undefined) {
             setBundleName(join(bundle, 'Contents', 'Info.plist'), displayName);
-            getExecutor().runFile('codesign', ['--force', '--sign', '-', bundle]);
+            getExecutor().runFile('codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
           }
-          getExecutor().runFile('codesign', ['--verify', '--strict', bundle]);
+          getExecutor().runFile('codesign', ['--verify', '--strict', bundle], { timeoutMs: 'unbounded' });
         },
         offload: {
           target: () => ({ platform: 'macos', local: macosToolchain() }),

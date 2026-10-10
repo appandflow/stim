@@ -7,7 +7,7 @@ import { ownedAvdSerialResolver } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { getExecutor } from '../../exec.ts';
+import { gitQuiet } from '../../workspace/git.ts';
 import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
@@ -321,9 +321,7 @@ function logFiles(key: string): { path: string; basis: string }[] | null {
 }
 
 function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['--no-optional-locks', '-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+  const gitDir = gitQuiet(path, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   const paths = [
     { path: join(gitDir, 'index'), basis: 'a git index write' },

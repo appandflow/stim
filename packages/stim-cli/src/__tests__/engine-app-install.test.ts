@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Executor } from '../exec.ts';
+import type { ExecOptions, Executor } from '../exec.ts';
 import { debugLog } from '../debug-log.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
@@ -946,12 +946,12 @@ describe('android: install and launch', () => {
   });
 
   test('adb install is bounded by the same five minutes devicectl install gets', () => {
-    const options: Array<Record<string, unknown> | undefined> = [];
+    const options: Array<ExecOptions | undefined> = [];
     const exec = recordingExec();
     const runFile = exec.runFile.bind(exec);
-    exec.runFile = (file: string, args: string[] = [], opts?: Record<string, unknown>) => {
+    exec.runFile = (file: string, args: string[], opts: ExecOptions) => {
       options.push(opts);
-      return runFile(file, args);
+      return runFile(file, args, opts);
     };
 
     installAndroidApp({ serial: 'emulator-5554', apkPath: '/tmp/app-debug.apk' }, { exec });

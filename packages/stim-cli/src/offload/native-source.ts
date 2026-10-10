@@ -3,7 +3,7 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import { manifestDigest } from './manifest.ts';
-import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 
 export interface NativeTransferFile {
@@ -122,7 +122,7 @@ export function sourceManifest(repoRoot: string, strict = false): NativeTransfer
 }
 
 export function gitVisiblePaths(repoRoot: string): Set<string> {
-  const listed = getExecutor().runFile('git', ['-C', repoRoot, 'ls-files', '-z', '-co', '--exclude-standard'], {
+  const listed = git(repoRoot, ['ls-files', '-z', '-co', '--exclude-standard'], {
     untrimmed: true,
     timeoutMs: 120_000,
   });

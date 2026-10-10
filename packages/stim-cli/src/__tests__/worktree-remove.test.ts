@@ -266,7 +266,7 @@ function makeExecutor({
         const udid = spawnMatch[1] ?? '';
         return occupied[udid] ? '082a\t0\tUIKitApplication:com.example.MyAppUITests.xctrunner[082a][rb-legacy]' : '';
       }
-      if (args.includes('symbolic-ref') && bare && args[1] === bare.path) {
+      if (args.includes('symbolic-ref') && bare && args[args.indexOf('-C') + 1] === bare.path) {
         return bare.head ? `refs/heads/${bare.head}` : null;
       }
       if (/status --porcelain/.test(cmd)) return dirty;
@@ -1536,10 +1536,10 @@ function realGitFakeSimctl(simctlList: string) {
   const exec = {
     run: fake,
     runQuiet: fake,
-    runFile(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+    runFile(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
       return file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' '));
     },
-    runFileQuiet(file: string, args: string[] = [], opts?: Parameters<typeof real.runFile>[2]) {
+    runFileQuiet(file: string, args: string[] = [], opts: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 }) {
       return file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' '));
     },
     spawn() {

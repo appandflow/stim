@@ -1,5 +1,5 @@
 import { statSync } from 'node:fs';
-import { getExecutor } from '../exec.ts';
+import { git as runGit, gitQuiet } from './git.ts';
 
 const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_FRESH_MS = 10 * 60_000;
@@ -25,9 +25,7 @@ function failure(error: unknown): string {
 }
 
 function fetchedRecently(repo: string, now: number): boolean {
-  const path = getExecutor()
-    .runFileQuiet('git', ['-C', repo, 'rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])
-    ?.trim();
+  const path = gitQuiet(repo, ['rev-parse', '--path-format=absolute', '--git-path', 'FETCH_HEAD'])?.trim();
   try {
     return Boolean(path) && now - statSync(path!).mtimeMs < FETCH_FRESH_MS;
   } catch {
@@ -40,27 +38,17 @@ function fetchedRecently(repo: string, now: number): boolean {
  * prompting for credentials. It skips the fetch when the checkout fetched anything in the last 10 minutes.
  */
 export function fetchDefaultBranch(repo: string, now: number = Date.now()): DefaultBranch | { error: string } {
-  const exec = getExecutor();
-  const ref = exec.runFileQuiet('git', ['-C', repo, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
+  const ref = gitQuiet(repo, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'])?.trim();
   if (!ref?.startsWith(REMOTE_PREFIX)) {
     return { error: `origin/HEAD is not set; run \`git -C ${repo} remote set-head origin --auto\`` };
   }
   const branch = ref.slice(REMOTE_PREFIX.length);
   if (fetchedRecently(repo, now)) return { ref, name: `origin/${branch}` };
   try {
-    exec.runFile(
-      'git',
-      [
-        '-C',
-        repo,
-        'fetch',
-        '--quiet',
-        '--no-tags',
-        '--no-recurse-submodules',
-        'origin',
-        `+refs/heads/${branch}:${ref}`,
-      ],
-      { timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
+    runGit(
+      repo,
+      ['fetch', '--quiet', '--no-tags', '--no-recurse-submodules', 'origin', `+refs/heads/${branch}:${ref}`],
+      { write: true, timeoutMs: FETCH_TIMEOUT_MS, env: { GIT_TERMINAL_PROMPT: '0' } },
     );
   } catch (error) {
     return { error: `git fetch origin ${branch} failed: ${failure(error)}` };
@@ -73,32 +61,25 @@ function notMerged(detail: string): MergeState {
 }
 
 function currentBranch(path: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', path, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const ref = gitQuiet(path, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref : null;
 }
 
 function upstreamGone(path: string, branch: string | null): boolean {
   if (!branch) return false;
-  const track = getExecutor().runFileQuiet('git', [
-    '-C',
-    path,
-    'for-each-ref',
-    '--format=%(upstream)%00%(upstream:track)',
-    branch,
-  ]);
+  const track = gitQuiet(path, ['for-each-ref', '--format=%(upstream)%00%(upstream:track)', branch]);
   const [upstream, state] = (track ?? '').trim().split('\0');
   return Boolean(upstream) && state === '[gone]';
 }
 
 function committedOn(path: string, branch: string | null, head: string): boolean {
   if (!branch) return false;
-  const exec = getExecutor();
-  const entries = exec.runFileQuiet('git', ['-C', path, 'reflog', 'show', '--format=%H %gs', branch]) ?? '';
+  const entries = gitQuiet(path, ['reflog', 'show', '--format=%H %gs', branch]) ?? '';
   return entries.split('\n').some((entry) => {
     const [sha = '', ...subject] = entry.split(' ');
     return (
       /^(commit|cherry-pick|rebase|revert)\b/.test(subject.join(' ')) &&
-      exec.runFileQuiet('git', ['-C', path, 'merge-base', '--is-ancestor', sha, head]) !== null
+      gitQuiet(path, ['merge-base', '--is-ancestor', sha, head]) !== null
     );
   });
 }
@@ -126,9 +107,9 @@ export function mergeState(
   }: { timeoutMs?: number; maxCommits?: number } = {},
 ): MergeState {
   const git = (args: string[], input?: string): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input });
+    runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input });
   const patch = (args: string[], input?: string): string =>
-    getExecutor().runFile('git', ['--literal-pathspecs', '-C', path, ...args], { timeoutMs, input, untrimmed: true });
+    runGit(path, ['--literal-pathspecs', ...args], { timeoutMs, input, untrimmed: true });
   const patchIdCommits = (text: string): Map<string, string> =>
     new Map(
       text
