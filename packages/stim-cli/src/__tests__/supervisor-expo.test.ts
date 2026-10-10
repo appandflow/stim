@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseNdjsonText } from '../ndjson.ts';
+import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import {
   expoProxyEnv,
   cleanLine,
@@ -22,6 +22,7 @@ import {
   metroStoreConfirmedRoot,
   metroStoreRoot,
 } from '../supervisor/metro-store.ts';
+import { trackDevServerActivity } from '../supervisor/idle-stop.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
@@ -258,6 +259,48 @@ describe('startExpoServer', () => {
       (r) => !String(r.event).startsWith('cache_store_'),
     );
     expect(records.map((r) => r.msg)).toEqual(['PluginError: Failed to resolve plugin', 'a different line']);
+  });
+
+  test('bundle responses that start and finish within a second are all logged and leave the idle tracker with no open request', async () => {
+    fakeBin();
+    const child = fakeChild();
+    let clock = 1_000_000;
+    const activity = trackDevServerActivity(() => clock);
+    const written: Record<string, unknown>[] = [];
+    const writer = {
+      file: join(root, 'metro.ndjson'),
+      write(record: unknown) {
+        activity.record(record);
+        written.push(record as Record<string, unknown>);
+        return true;
+      },
+    } as unknown as NdjsonWriter;
+    await startExpoServer({ root, port: 8115, logsDir: join(root, 'logs'), writer, spawnFn: () => child });
+    const line = (stage: 'started' | 'finished', requestId: string) =>
+      `stim-bundle-response: ${JSON.stringify({
+        ts: clock,
+        src: 'metro',
+        level: 'debug',
+        event: `bundle_response_${stage}`,
+        platform: 'ios',
+        requestId,
+        msg: `ios bundle response ${stage}`,
+      })}\n`;
+    for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('started', id));
+    for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('finished', id));
+
+    const bundle = written.filter((r) => String(r.event).startsWith('bundle_response_'));
+    expect(bundle.map((r) => `${r.event}:${r.requestId}`)).toEqual([
+      'bundle_response_started:a',
+      'bundle_response_started:b',
+      'bundle_response_started:c',
+      'bundle_response_finished:a',
+      'bundle_response_finished:b',
+      'bundle_response_finished:c',
+    ]);
+    const quietSince = clock;
+    clock += 3_600_000;
+    expect(activity.lastActivityAt()).toBe(quietSince);
   });
 
   test('the child inherits the supervisor process environment (#33)', async () => {
