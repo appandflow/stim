@@ -75,6 +75,7 @@ import {
   deviceLabel,
   resolveConfiguration,
   resolveDeviceType,
+  resolveSchemeSelection,
   resolveRuntime,
   resolveSimulatorAppFlag,
   resolveIosWait,
@@ -546,7 +547,7 @@ async function runIos(
 
   const configuration = opts.easProfile !== undefined ? null : resolveConfiguration(opts.configuration, settings);
   builtConfiguration = configuration ?? 'Debug';
-  const buildScheme = opts.scheme;
+  const buildScheme = resolveSchemeSelection(opts, settings);
   const release = isReleaseConfiguration(configuration);
   const appMode = ({ metro: 'development', process: 'process', 'embedded-js': 'release' } as const)[
     integration.runtimeKind(configuration)
