@@ -548,7 +548,7 @@ test('resolveOwnedAvdSerial asks healthy emulators first and bounds every consol
       if (cmd === 'adb devices') return 'List of devices attached\nemulator-5556\toffline\nemulator-5554\tdevice\n';
       return '';
     },
-    runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+    runFileQuiet: (file: string, args: string[] = [], opts) => {
       const cmd = [file, ...args].join(' ');
       const serial = /adb -s (\S+) emu avd name/.exec(cmd)?.[1];
       if (!serial) return null;
@@ -1222,7 +1222,7 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
   vi.setSystemTime(0);
   const calls: { cmd: string; at: number; timeoutMs: number }[] = [];
   setExecutor({
-    runFileQuiet: (file: string, args: string[] = [], opts?: { timeoutMs?: number }) => {
+    runFileQuiet: (file: string, args: string[] = [], opts) => {
       const cmd = [file, ...args].join(' ');
       const at = Date.now();
       const timeoutMs = opts?.timeoutMs ?? Infinity;
