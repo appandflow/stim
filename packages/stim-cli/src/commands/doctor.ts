@@ -209,7 +209,8 @@ export default function doctorCommand(
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const machineSettings = readMachineSettings(projectSettingsContext(root));
+      const settingsContext = projectSettingsContext(root);
+      const machineSettings = readMachineSettings(settingsContext);
       const settings = machineSettings.corrupt ? null : machineSettings.settings;
 
       const selected = registry.selectDoctor(root, opts.platform);
@@ -220,7 +221,7 @@ export default function doctorCommand(
         for (const doctor of doctors) {
           if (!doctor.repair) continue;
           try {
-            const repair = doctor.repair(opts.platform, settings);
+            const repair = doctor.repair(opts.platform, settings, settingsContext.repoRoot);
             for (const path of repair.removed)
               console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
             for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
@@ -272,6 +273,7 @@ export default function doctorCommand(
           platforms: selected.platforms,
           host,
           machineSettings,
+          repoRoot: settingsContext.repoRoot,
         },
         doctors.map((doctor) => doctor.inspect),
       );

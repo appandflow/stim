@@ -126,17 +126,21 @@ const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
 const GRADLE_NAME = /^[A-Za-z0-9_-]{1,100}$/;
+const GRADLE_ROOT = /^[A-Za-z0-9._/ -]{1,200}$/;
+const GRADLE_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+){1,20}$/;
 
 /** The Gradle choices of an Android `build.start`, or null when they are malformed. */
 function androidOptions(value: unknown): BuildAndroidOptions | null {
   if (!isJsonObject(value)) return null;
-  const { variant, abi, gradleBuildCache, pch, compilerCache } = value;
+  const { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot = null, module = null } = value;
   if (variant !== null && !(typeof variant === 'string' && GRADLE_NAME.test(variant))) return null;
   if (abi !== null && !(typeof abi === 'string' && GRADLE_NAME.test(abi))) return null;
   if (typeof gradleBuildCache !== 'boolean') return null;
   if (pch !== 'auto' && pch !== 'on' && pch !== 'off') return null;
   if (compilerCache !== 'ccache' && compilerCache !== 'none') return null;
-  return { variant, abi, gradleBuildCache, pch, compilerCache };
+  if (gradleRoot !== null && !(typeof gradleRoot === 'string' && GRADLE_ROOT.test(gradleRoot))) return null;
+  if (module !== null && !(typeof module === 'string' && GRADLE_MODULE.test(module))) return null;
+  return { variant, abi, gradleBuildCache, pch, compilerCache, gradleRoot, module };
 }
 
 function freeBytes(path: string): number | null {

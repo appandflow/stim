@@ -64,17 +64,32 @@ afterEach(() => {
 
 test('RN admission is independent of advertised platforms and composes with SwiftPM and configured web', () => {
   packageAt(dir);
-  expect(projectRegistry.detectPlatforms(dir, {})).toEqual([]);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual([]);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
   write(join(dir, 'Package.swift'));
   const settings = { macos: { product: 'App', infoPlist: 'Info.plist' }, web: { url: 'http://localhost:8000' } };
-  expect(projectRegistry.detectPlatforms(dir, settings)).toEqual(['macos', 'web']);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: settings,
+    }),
+  ).toEqual(['macos', 'web']);
   expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
 
   write(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
   write(join(dir, 'app.json'), JSON.stringify({ expo: { platforms: ['web'] } }));
-  expect(projectRegistry.detectPlatforms(dir, {})).toEqual(['web']);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual(['web']);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
 });
@@ -89,7 +104,9 @@ test('adding test integrations discovers the nearest independent app without cha
   expect(findCoreProjectRoot(nested)).toBe(dir);
   expect(projectRegistry.findProjectRoot(nested)).toBe(dir);
   expect(registry.findProjectRoot(nested)).toBe(app);
-  expect(registry.detectPlatforms(app, {})).toEqual(['ios', 'android']);
+  expect(
+    registry.detectPlatforms(app, { context: { projectPath: app, gitCommonDir: null, repoRoot: null }, settings: {} }),
+  ).toEqual(['ios', 'android']);
   expect(registry.projectProblem(app, 'ios')).toBeNull();
   expect(registry.projectProblem(app, 'android')).toBeNull();
   expect(registry.projectProblem(app, 'dev-server')?.kind).toBe('not-an-app');

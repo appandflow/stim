@@ -111,6 +111,8 @@ Explicit machine project/repository overrides keep their existing precedence.
 | `android.dataPartitionSizeGb` | AVD data partition size                                                                                                           |
 | `android.avdConfigFile`       | Additional AVD config file                                                                                                        |
 | `android.avdConfig`           | Validated AVD config values                                                                                                       |
+| `android.gradleRoot`          | Directory of `gradlew` and `settings.gradle`, relative to the app; default `android`                                              |
+| `android.module`              | The app's Gradle project path; default `:app`                                                                                     |
 | `android.variant`             | Gradle build variant                                                                                                              |
 | `android.keystore`            | Release keystore path                                                                                                             |
 | `android.keystorePassword`    | Release keystore password source                                                                                                  |

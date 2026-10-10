@@ -6,7 +6,7 @@ import type { IosProject } from './ios-project.ts';
 import type { MacosProject } from './macos-project.ts';
 import type { WebProject } from './web-project.ts';
 import type { ProjectDoctor } from './project-doctor.ts';
-import type { SettingsObject } from '../workspace/settings.ts';
+import type { ResolvedProjectSettings, SettingsObject } from '../workspace/settings.ts';
 
 export type ProjectPlatform = 'ios' | 'android' | 'macos' | 'web';
 type ProjectOperation = 'ios' | 'android' | 'macos' | 'dev-server' | 'web';
@@ -21,8 +21,8 @@ interface ProjectMatch {
   root: 'explicit' | 'candidate' | false;
   application: boolean;
   ownedRoots?: readonly string[];
-  platforms(settings: SettingsObject): ProjectPlatform[];
-  android?(): Promise<AndroidProject>;
+  platforms(resolved: ResolvedProjectSettings): ProjectPlatform[];
+  android?(resolved: ResolvedProjectSettings): Promise<AndroidProject>;
   ios?(settings: SettingsObject): Promise<IosProject>;
   macos?(): Promise<MacosProject>;
   web?(): Promise<WebProject>;
@@ -38,7 +38,9 @@ export interface ProjectIntegration {
 export interface ProjectRegistry {
   findProjectRoot(startDir: string): string | null;
   projectProblem(root: string, operation: ProjectOperation): ProjectProblem | null;
-  selectAndroid(root: string): { load: () => Promise<AndroidProject> } | { problem: ProjectProblem };
+  selectAndroid(
+    root: string,
+  ): { load: (resolved: ResolvedProjectSettings) => Promise<AndroidProject> } | { problem: ProjectProblem };
   selectIos(
     root: string,
   ): { id: string; load: (settings: SettingsObject) => Promise<IosProject> } | { problem: ProjectProblem };
@@ -54,7 +56,7 @@ export interface ProjectRegistry {
   };
   isMobileProject(root: string): boolean;
   keepsWorkspace(root: string): boolean;
-  detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[];
+  detectPlatforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[];
 }
 
 function canonicalPath(path: string): string {
@@ -262,8 +264,8 @@ export function createProjectRegistry(integrations: readonly ProjectIntegration[
     );
   }
 
-  function detectPlatforms(root: string, settings: SettingsObject): ProjectPlatform[] {
-    const platforms = new Set(inspect(root).flatMap((match) => match.platforms(settings)));
+  function detectPlatforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[] {
+    const platforms = new Set(inspect(root).flatMap((match) => match.platforms(resolved)));
     const ordered: ProjectPlatform[] = ['ios', 'android', 'macos', 'web'];
     return ordered.filter((platform) => platforms.has(platform));
   }

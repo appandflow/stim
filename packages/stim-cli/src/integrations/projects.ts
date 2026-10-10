@@ -13,7 +13,13 @@ import {
   readAppJson,
   readPackageJson,
 } from '../workspace/project-files.ts';
-import { resolveIosProjectDir, settingValueAt, webSettings, type SettingsObject } from '../workspace/settings.ts';
+import {
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  settingValueAt,
+  webSettings,
+  type ResolvedProjectSettings,
+} from '../workspace/settings.ts';
 import { nativeXcodeProjectIntegration } from './native-xcode-project.ts';
 
 import {
@@ -24,7 +30,7 @@ import {
 } from './project-registry.ts';
 
 interface NativeProjectIntegration {
-  platforms(root: string, settings: SettingsObject): ProjectPlatform[];
+  platforms(root: string, resolved: ResolvedProjectSettings): ProjectPlatform[];
   mode: typeof MODE_BARE | typeof MODE_EXPO;
   loadDevServer(): Promise<ServerStarter>;
 }
@@ -52,7 +58,7 @@ const expo: NativeProjectIntegration = {
 const reactNative: NativeProjectIntegration = {
   mode: MODE_BARE,
   loadDevServer: async () => (await import('../supervisor/server-bare.ts')).startBareServer,
-  platforms(root, settings) {
+  platforms(root, { context, settings }) {
     if (!declaresAppDependency(readPackageJson(root))) return [];
     const platforms: ProjectPlatform[] = [];
     let ios: string[] = [];
@@ -60,10 +66,13 @@ const reactNative: NativeProjectIntegration = {
       ios = readdirSync(resolveIosProjectDir(settings, root).dir);
     } catch {}
     if (ios.some((name) => name.endsWith('.xcodeproj') || name.endsWith('.xcworkspace'))) platforms.push('ios');
+    const android = resolveAndroidLayout(settings, root, context.repoRoot ?? root);
     if (
-      ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].some((name) =>
-        existsSync(join(root, 'android', name)),
-      )
+      android.custom
+        ? existsSync(android.moduleDir)
+        : ['build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'].some((name) =>
+            existsSync(join(android.gradleRoot, name)),
+          )
     )
       platforms.push('android');
     return platforms;
@@ -79,11 +88,12 @@ const reactNativeProject: ProjectIntegration = {
       root: existsSync(join(root, 'package.json')) ? 'explicit' : false,
       application: problem === null,
       ownedRoots: problem === null ? [join(root, 'ios'), join(root, 'android')] : [],
-      platforms: (settings) => nativeProjectIntegration(root).platforms(root, settings),
+      platforms: (resolved) => nativeProjectIntegration(root).platforms(root, resolved),
       validate: (operation) =>
         operation === 'ios' || operation === 'android' || operation === 'dev-server' ? problem : undefined,
       ios: async (settings) => (await import('./react-native-ios.ts')).reactNativeIosProject(root, settings),
-      android: async () => (await import('./react-native-android.ts')).reactNativeAndroidProject(root),
+      android: async (resolved) =>
+        (await import('./react-native-android.ts')).reactNativeAndroidProject(root, resolved),
       doctor: async () => (await import('./react-native-doctor.ts')).reactNativeProjectDoctor(root),
     };
   },
@@ -96,7 +106,7 @@ const swiftPackage: ProjectIntegration = {
     return {
       root: 'explicit',
       application: true,
-      platforms: (settings) =>
+      platforms: ({ settings }) =>
         settingValueAt(settings, 'macos.product') && settingValueAt(settings, 'macos.infoPlist') ? ['macos'] : [],
       validate: (operation) => (operation === 'macos' ? null : undefined),
       macos: async () => (await import('./swiftpm-macos.ts')).swiftpmMacosProject(root),
@@ -120,7 +130,7 @@ const browserWeb: ProjectIntegration = {
     return {
       root: false,
       application: false,
-      platforms: (settings) => (webSettings(settings).url !== null ? ['web'] : []),
+      platforms: ({ settings }) => (webSettings(settings).url !== null ? ['web'] : []),
       validate: (operation) => (operation === 'web' ? null : undefined),
       web: async () => (await import('./browser-web.ts')).browserWebProject(root),
     };

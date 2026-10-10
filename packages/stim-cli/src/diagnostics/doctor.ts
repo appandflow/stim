@@ -49,7 +49,10 @@ import {
 } from '../engine/remote-cache.ts';
 import {
   DEFAULT_IOS_PROJECT_PATH,
+  defaultAndroidLayout,
+  resolveAndroidLayout,
   resolveIosProjectDir,
+  type AndroidLayout,
   iosSimSlimProfileSetting,
   projectSettingsContext,
   remoteAndroidSetting,
@@ -310,6 +313,7 @@ export function checkMainCheckout(
     platform,
     localIos = platform !== 'android',
     iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = defaultAndroidLayout(projectRoot),
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
@@ -318,9 +322,15 @@ export function checkMainCheckout(
     platform?: DoctorPlatform;
     localIos?: boolean;
     iosProjectPath?: string;
+    androidLayout?: AndroidLayout;
   } = {},
 ): Finding[] {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
+  const mainAndroid = {
+    ...androidLayout,
+    gradleRoot: join(mainRoot, relative(projectRoot, androidLayout.gradleRoot)),
+    moduleDir: join(mainRoot, relative(projectRoot, androidLayout.moduleDir)),
+  };
   const findings: Finding[] = [];
   const dependencies = dependencyState(mainRoot);
 
@@ -394,9 +404,9 @@ export function checkMainCheckout(
   const coldPlatforms = [
     localIos && existsSync(iosRoot) && !hasIosWarmOutput(mainRoot, iosRoot) ? 'iOS' : null,
     platform !== 'ios' &&
-    existsSync(join(mainRoot, 'android')) &&
-    !existsSync(join(mainRoot, 'android', 'build')) &&
-    !existsSync(join(mainRoot, 'android', 'app', 'build'))
+    hasAndroidProject(mainAndroid) &&
+    !existsSync(join(mainAndroid.gradleRoot, 'build')) &&
+    !existsSync(join(mainAndroid.moduleDir, 'build'))
       ? 'Android'
       : null,
   ].filter((coldPlatform): coldPlatform is string => coldPlatform !== null);
@@ -900,6 +910,7 @@ export interface DoctorInspectionOptions {
   host?: NodeJS.Platform;
   platforms?: readonly DoctorPlatform[];
   machineSettings?: MachineSettings;
+  repoRoot?: string | null;
 }
 
 export interface DoctorContext {
@@ -908,6 +919,7 @@ export interface DoctorContext {
   settings: SettingsObject;
   optimizations: Optimizations | null;
   platforms: readonly DoctorPlatform[];
+  repoRoot: string | null;
 }
 
 export function runDoctor(
@@ -936,6 +948,7 @@ export function runDoctor(
     settings: projectSettings,
     optimizations: null,
     platforms,
+    repoRoot: options.repoRoot ?? null,
   };
   if (machineSettings.corrupt) return { findings: [machineSettings.corrupt], context };
 
@@ -1028,7 +1041,9 @@ export function reactNativeDoctorFindings({
   settings: projectSettings,
   optimizations,
   options,
+  repoRoot,
 }: DoctorContext): Finding[] {
+  const androidLayout = resolveAndroidLayout(projectSettings, projectRoot, repoRoot ?? projectRoot);
   const {
     readFile = readFileSync,
     xcodeMajor = null,
@@ -1112,17 +1127,23 @@ export function reactNativeDoctorFindings({
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
-    ...checkMainCheckout(projectRoot, { platform, localIos, iosProjectPath: iosProject.relative }),
+    ...checkMainCheckout(projectRoot, { platform, localIos, iosProjectPath: iosProject.relative, androidLayout }),
     ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot), iosProject.relative) : []),
-    ...checkStorageLayout(projectRoot, { platform, host, scope: 'native', iosProjectPath: iosProject.relative }),
+    ...checkStorageLayout(projectRoot, {
+      platform,
+      host,
+      scope: 'native',
+      iosProjectPath: iosProject.relative,
+      androidLayout,
+    }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
-      : androidCcacheFindings(projectRoot, platform, lookupCcache)),
+      : androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
     checkAndroidPathRoom(projectRoot, platform, host),
-    checkAndroidSdk(projectRoot, platform),
+    checkAndroidSdk(projectRoot, platform, androidLayout),
     checkChrome({
       usesWeb: () =>
         !platform &&
@@ -1161,15 +1182,23 @@ export function checkAndroidPathRoom(
   };
 }
 
-export function checkAndroidSdk(projectRoot: string, platform: DoctorPlatform | undefined): Finding | null {
-  const androidDir = join(projectRoot, 'android');
+function hasAndroidProject(layout: AndroidLayout): boolean {
+  return existsSync(layout.custom ? layout.moduleDir : layout.gradleRoot);
+}
+
+export function checkAndroidSdk(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  layout: AndroidLayout = defaultAndroidLayout(projectRoot),
+): Finding | null {
+  const androidDir = layout.gradleRoot;
   if (platform === 'ios' || (platform !== 'android' && !existsSync(androidDir))) return null;
   const sdkPath = androidHome();
   const refusal = androidSdkRefusal({
     sdkPath,
     sdkExists: existsSync(sdkPath),
     hasLocalProperties: existsSync(join(androidDir, 'local.properties')),
-    localPropertiesPath: 'android/local.properties',
+    localPropertiesPath: `${relative(projectRoot, androidDir) || '.'}/local.properties`,
   });
   if (!refusal) return null;
   return {
@@ -1187,12 +1216,13 @@ function androidCcacheFindings(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   lookupCcache: (() => boolean) | null,
+  layout: AndroidLayout,
 ): (Finding | null)[] {
-  if (platform !== 'android' && !existsSync(join(projectRoot, 'android'))) return [];
+  if (platform !== 'android' && !hasAndroidProject(layout)) return [];
   const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
   let cxx: Finding | null;
   try {
-    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot), ccacheOnPath: onPath });
+    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
   } catch (error) {
     cxx = finding(
       'cost',

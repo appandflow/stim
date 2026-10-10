@@ -113,6 +113,36 @@ test('a plan binds build selectors and cache policy to the selected emulator', (
   });
 });
 
+test('build planning refuses a custom Gradle layout on an Expo app and passes it to the compiler cache', () => {
+  mkdirSync(join(root, 'native', 'app'), { recursive: true });
+  writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
+  const settings = { android: { gradleRoot: 'native' } };
+  const refused = resolveAndroidBuildPlan(inputs({ settings }), {
+    ...inspection([]),
+    variantProblem: () => null,
+    detectExpo: () => true,
+  });
+  assert(!refused.ok);
+  expect(refused).toMatchObject({
+    code: 'STIM_BAD_ARG',
+    message: expect.stringContaining('bare React Native apps only'),
+  });
+
+  const layouts: unknown[] = [];
+  const planned = resolveAndroidBuildPlan(inputs({ settings }), {
+    ...inspection([]),
+    variantProblem: () => null,
+    detectExpo: () => false,
+    resolveCompilerCache: ({ optimizations, layout }) => {
+      layouts.push(layout);
+      return { cas: null, optimizations, warning: null };
+    },
+  });
+  assert(planned.ok);
+  expect(layouts).toEqual([expect.objectContaining({ gradleRoot: realpathSync(join(root, 'native')), custom: true })]);
+});
+
 test('build planning needs no installed image, emulator profile, device lease or Expo project', () => {
   const calls: string[] = [];
   const result = resolveAndroidBuildPlan(
@@ -286,8 +316,8 @@ describe('planAndroid', () => {
               return 'problem' in selected
                 ? selected
                 : {
-                    load: async () =>
-                      reactNativeAndroidProject(path, {
+                    load: async (resolved) =>
+                      reactNativeAndroidProject(path, resolved, {
                         plan: {
                           fingerprint: async () => ({ hash: HASH, sources: [] }),
                           listSystemImages: () => [ARM, X86],

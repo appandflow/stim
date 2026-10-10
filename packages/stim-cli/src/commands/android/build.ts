@@ -57,12 +57,17 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const integration = await selected.load();
   const { context: settingsContext, settings } = resolveProjectSettings(root);
+  const integration = await selected.load({ context: settingsContext, settings });
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   const plan = resolveAndroidBuildPlan(
     { settings, settingsContext, variant: options.variant ?? null, buildCache: options.buildCache !== false },
-    { warn: phase, runtimeKind: integration.runtimeKind, variantProblem: integration.variantProblem },
+    {
+      warn: phase,
+      runtimeKind: integration.runtimeKind,
+      variantProblem: integration.variantProblem,
+      detectExpo: () => integration.isExpo,
+    },
   );
   if (!plan.ok) throw Object.assign(new Error(plan.message), plan, { details: { lines: plan.lines } });
   const placement = resolveBuildPlacement(options.remoteBuild);

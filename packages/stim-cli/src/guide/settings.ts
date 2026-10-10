@@ -247,6 +247,26 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         and hw.audioOutput for that headless launch. With
                         androidEmulatorApp "stim-desktop" on macOS, -gpu host
                         overrides hw.gpu.mode the same way.
+  android.gradleRoot    directory holding gradlew and settings.gradle(.kts),
+                        relative to the app; default "android". It may sit
+                        outside the app but not outside the repository:
+                        RNTester in the React Native monorepo uses "../..".
+  android.module        the app's Gradle project path; default ":app", e.g.
+                        ":packages:rn-tester:android:app". Its directory is
+                        Gradle's default mapping from the root and must hold
+                        a build.gradle(.kts). With either set, Gradle runs
+                        from the root with qualified tasks such as
+                        <module>:assembleDebug; both values join the cache
+                        key and the remote build job, and the root's
+                        settings, build script, gradle.properties and
+                        gradle/ are fingerprinted. Native sources Gradle
+                        builds from elsewhere in the repository are not:
+                        list them in fingerprint.config.js extraSources.
+                        android refuses with STIM_BAD_ARG a root outside the
+                        repository or without settings.gradle, a module
+                        without a build script, and either value on an Expo
+                        app, whose prebuild writes android/. Workspace or
+                        committed scope.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with

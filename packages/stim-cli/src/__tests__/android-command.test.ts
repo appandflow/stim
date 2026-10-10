@@ -549,7 +549,9 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
                     ...integration,
                     inspect: (path) => {
                       const match = integration.inspect(path);
-                      return match ? { ...match, android: async () => reactNativeAndroidProject(path, options) } : null;
+                      return match
+                        ? { ...match, android: async (resolved) => reactNativeAndroidProject(path, resolved, options) }
+                        : null;
                     },
                   },
             ),
@@ -562,6 +564,18 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       }),
   };
 }
+
+test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
+  mkdirSync(join(root, 'native', 'app'), { recursive: true });
+  writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
+  const h = harness({ resolveSettingsFor: () => ({ android: { gradleRoot: 'native' } }) });
+  await h.run();
+  expect(h.calls.build[0]).toMatchObject({
+    layout: { gradleRoot: realpathSync(join(root, 'native')), module: ':app', custom: true },
+  });
+  expect(String(h.calls.resolveCached[0]?.[1])).toContain('-gradle-');
+});
 
 test('an invalid Android pool bound refuses before device creation and emits one JSON error', async () => {
   process.env.STIM_POOL_ANDROID_PARKED_MAX = '-1';
@@ -4651,7 +4665,10 @@ describe('the release APK swap', () => {
   test('a release build with no fallback stores WITHOUT overwriting, and carries its captured manifest', async () => {
     const h = harness({ variant: 'productionRelease', swapApk: never('the APK swap') });
     await h.run();
-    expect(h.calls.captureAssets[0]).toEqual([root, { variant: 'productionRelease' }]);
+    expect(h.calls.captureAssets[0]).toEqual([
+      root,
+      { variant: 'productionRelease', layout: expect.objectContaining({ module: ':app', custom: false }) },
+    ]);
     expect(h.calls.storeCached[0]?.[3]).toEqual({
       overwrite: false,
       sources: [],
@@ -7851,8 +7868,8 @@ describe('registered Android project recipes', () => {
           return match
             ? {
                 ...match,
-                android: async () => {
-                  const project = await match.android!();
+                android: async (resolved) => {
+                  const project = await match.android!(resolved);
                   return {
                     ...project,
                     artifact(context) {

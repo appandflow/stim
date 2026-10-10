@@ -2,7 +2,7 @@ import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
 import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
-import type { ProjectBuildPlanner } from './project-plan.ts';
+import type { ProjectPlanResult } from './project-plan.ts';
 import type { AndroidRuntimeKind, AndroidRuntimePlan } from '../commands/android/launch.ts';
 import type { AndroidWriter, FailExtra } from '../commands/android/types.ts';
 import type { BuildAndroidResult } from '../engine/gradle.ts';
@@ -10,7 +10,7 @@ import type { LoadProjectProviderResult } from '../engine/remote-cache.ts';
 import type { BuildPhase } from '../engine/build-progress.ts';
 import type { RunEstimates } from '../engine/stats.ts';
 import type { chooseBuildMachine, offloadBuild } from '../offload/client.ts';
-import type { SettingsObject } from '../workspace/settings.ts';
+import type { ResolvedProjectSettings, SettingsObject } from '../workspace/settings.ts';
 
 interface AndroidBuildTarget {
   abi: string | null;
@@ -64,7 +64,7 @@ export interface AndroidArtifactContext {
 }
 
 export interface AndroidProject {
-  plan?: ProjectBuildPlanner<AndroidPlanOptions>;
+  plan?(options: AndroidPlanOptions, resolved: ResolvedProjectSettings): Promise<ProjectPlanResult>;
   isExpo: boolean;
   packageRemedy: string;
   appIds(): { bundleId: string | null; androidPackage: string | null };
