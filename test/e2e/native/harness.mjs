@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { launchEvidenceMessage } from './assertions.mjs';
 import {
@@ -19,6 +20,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // npx, npm and bundle are .cmd wrappers on Windows, and Node refuses to spawn a
 // .cmd without a shell (child_process, since 18.20.2).
 const WRAPPER_SHELL = process.platform === 'win32';
+const require = createRequire(import.meta.url);
 
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
@@ -365,7 +367,12 @@ export function ensureGitignore({ appDir, framework }) {
   }
 }
 
-export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 }) {
+export function createCleanupTracker({
+  h,
+  platform,
+  processExitTimeoutMs = 5000,
+  processStart = process.platform === 'darwin' ? darwinProcessStart : null,
+}) {
   const devices = new Set();
   const processes = new Map();
 
@@ -406,6 +413,7 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
     const live = processSnapshot(
       h,
       records.map((record) => record.pid),
+      processStart,
     );
     for (const record of records) {
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
@@ -439,6 +447,7 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
         processSnapshot(
           h,
           records.map((record) => record.pid),
+          processStart,
         ).values(),
       );
       const leaked = records.map((record) => record.identity).filter((identity) => live.has(identity));
@@ -457,9 +466,23 @@ function inspect(h, file, argv, timeout = 5000) {
   return result.stdout;
 }
 
-function processSnapshot(h, candidates) {
-  // macOS ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
+function darwinProcessStart(pid) {
+  return require('../../../packages/core/dist/process-identity.mjs').processStartMicros(pid);
+}
+
+function processSnapshot(h, candidates, processStart) {
   const pids = [...new Set([...candidates, process.pid])];
+  if (processStart) {
+    const live = new Map();
+    for (const pid of pids) {
+      const observed = processStart(pid);
+      assert(observed.status !== 'unknown', `could not inspect process birth for pid ${pid}`);
+      if (observed.status === 'running') live.set(pid, `${pid} ${observed.startedAtMicros}`);
+    }
+    assert(live.has(process.pid), 'process inspection did not include the live harness');
+    return live;
+  }
+  // ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
   const filter = pids.map((pid) => `ProcessId = ${pid}`).join(' OR ');
   const out =
     process.platform === 'win32'
