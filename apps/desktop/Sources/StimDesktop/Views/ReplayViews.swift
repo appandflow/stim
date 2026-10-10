@@ -161,6 +161,7 @@ struct ReplayBar: View {
   var running: Bool
   var replayOff: Bool
   var onSeek: () -> Void = {}
+  @State private var showsLegend = false
 
   var body: some View {
     let timeline = replayOff || controller.replayable == false ? nil : controller.timeline
@@ -185,6 +186,7 @@ struct ReplayBar: View {
           TimelineView(.periodic(from: .now, by: 1)) { context in
             captionView(caption(timeline, now: context.date))
           }
+          legendButton(isLive: isLive)
         }
         Spacer(minLength: 0)
         if replayOff {
@@ -330,6 +332,19 @@ struct ReplayBar: View {
     .fixedSize()
   }
 
+  private func legendButton(isLive: Bool) -> some View {
+    Button {
+      showsLegend.toggle()
+    } label: {
+      Image(systemName: "info.circle").frame(width: Self.iconWidth)
+    }
+    .buttonStyle(.stim())
+    .fixedSize()
+    .help("What the timeline shows")
+    .accessibilityLabel("Timeline legend")
+    .popover(isPresented: $showsLegend, arrowEdge: .bottom) { ReplayLegend(isLive: isLive) }
+  }
+
   private func seek(_ at: Double, rate: Int, action: Double? = nil) {
     controller.stepped = action
     onSeek()
@@ -404,7 +419,7 @@ struct ReplayTrack: View {
       }
       ForEach(markers, id: \.self) { marker in
         RoundedRectangle(cornerRadius: 1)
-          .fill(color(marker))
+          .fill(Self.markerColor(marker.kind))
           .frame(width: 3, height: 16)
           .offset(x: track.position(of: marker.at) * width - 1.5, y: 6)
       }
@@ -513,8 +528,8 @@ struct ReplayTrack: View {
       .min { $0.1 < $1.1 }?.0
   }
 
-  private func color(_ marker: ReplayMarker) -> Color {
-    switch marker.kind {
+  fileprivate static func markerColor(_ kind: String) -> Color {
+    switch kind {
     case "action": return Palette.accent
     case "crash": return Palette.error
     default: return Palette.warning
@@ -539,6 +554,67 @@ struct ReplayTrack: View {
     return gap.map { Self.stoppedText($0) } ?? time
   }
 
+}
+
+/// The scrubber's key, drawn with the shapes, sizes and colours `ReplayTrack` uses.
+private struct ReplayLegend: View {
+  var isLive: Bool
+
+  private static let swatchWidth: CGFloat = 28
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: Space.md) {
+      row("Recorded footage", detail: "Filled") {
+        RoundedRectangle(cornerRadius: Radius.small).fill(Palette.accent.opacity(Opacity.track)).frame(height: 16)
+      }
+      row("Stopped or not recording", detail: "Dotted gap") { dash([2, 3]) }
+      row("Stopped for over a minute", detail: "Longer dashes, drawn one minute wide") { dash([4, 3]) }
+      row("No footage this early", detail: "Plain line before the oldest footage") {
+        Capsule().fill(Palette.border).frame(height: 2)
+      }
+      row("Agent action", detail: "Tick") { tick(ReplayTrack.markerColor("action")) }
+      row("Crash", detail: "Tick") { tick(ReplayTrack.markerColor("crash")) }
+      row("Error", detail: "Tick") { tick(ReplayTrack.markerColor("error")) }
+      row("Playhead", detail: isLive ? "Grey while live" : "The frame shown") {
+        ZStack {
+          Rectangle().frame(width: 2, height: 24)
+          Circle().frame(width: 10, height: 10).offset(y: -12)
+        }
+        .foregroundStyle(isLive ? Palette.tertiary : Palette.text)
+        .frame(height: 24)
+      }
+    }
+    .frame(width: 300, alignment: .leading)
+    .padding(Space.lg)
+    .accessibilityElement(children: .contain)
+    .accessibilityLabel("Timeline legend")
+  }
+
+  private func row<Swatch: View>(
+    _ title: String, detail: String, @ViewBuilder swatch: () -> Swatch
+  ) -> some View {
+    HStack(spacing: Space.md) {
+      swatch().frame(width: Self.swatchWidth).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: 0) {
+        Text(title).font(.stim(.caption)).foregroundStyle(Palette.text)
+        Text(detail).font(.stim(.caption2)).foregroundStyle(Palette.tertiary)
+      }
+      .accessibilityElement(children: .combine)
+    }
+  }
+
+  private func dash(_ pattern: [CGFloat]) -> some View {
+    Path { path in
+      path.move(to: CGPoint(x: 0, y: 1))
+      path.addLine(to: CGPoint(x: Self.swatchWidth, y: 1))
+    }
+    .stroke(Palette.tertiary, style: StrokeStyle(lineWidth: 2, dash: pattern))
+    .frame(height: 2)
+  }
+
+  private func tick(_ color: Color) -> some View {
+    RoundedRectangle(cornerRadius: 1).fill(color).frame(width: 3, height: 16)
+  }
 }
 
 /// Where the pointer hovers over a `ReplayTrack`, passed to `onChange` at most `interval` apart and last where the
