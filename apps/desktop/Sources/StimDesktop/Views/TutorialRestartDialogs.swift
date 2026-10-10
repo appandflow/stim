@@ -25,10 +25,12 @@ struct TutorialRestartDialogs: ViewModifier {
         }
         Button("Cancel", role: .cancel) {}
       } message: { dialog in
-        if case .confirm(let base, _) = dialog {
+        if case .confirm(let base, let worktrees) = dialog {
+          let names = worktrees.map { ($0 as NSString).abbreviatingWithTildeInPath }
           Text(
-            "Restart deletes \((base as NSString).abbreviatingWithTildeInPath) and its tutorial worktrees. "
-              + "The folder moves to the Trash.")
+            "Restart deletes \((base as NSString).abbreviatingWithTildeInPath)"
+              + (names.isEmpty ? "" : " and its worktrees \(names.joined(separator: ", "))")
+              + ". The folder moves to the Trash.")
         }
       }
       .alert("Tutorial Not Restarted", isPresented: blocked) {

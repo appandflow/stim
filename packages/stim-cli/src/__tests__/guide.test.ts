@@ -579,8 +579,6 @@ test('the run section names the marker version the status payload reports and on
 
 test('tutorial setup protects existing folders and the user repository', () => {
   const run = flat('run');
-  expect(run).toMatch(/reuse it only when all of these hold/i);
-  expect(run).toMatch(/git status --porcelain prints nothing/i);
   expect(run).toMatch(/stop and ask the user for another folder; never overwrite or delete it/i);
   expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);

@@ -37,6 +37,7 @@ final class TutorialModel: ObservableObject {
     case blocked(String)
   }
   @Published var restartDialog: RestartDialog?
+  private var restarting = false
 
   private let cloneBase: String
 
@@ -186,8 +187,11 @@ final class TutorialModel: ObservableObject {
 
   func restart() {
     guard let cli else { return open(beginning: true) }
+    guard !restarting, restartDialog == nil else { return }
+    restarting = true
     let base = records.record?.clonePath ?? cloneBase
     Task {
+      defer { restarting = false }
       let cleanup = TutorialCleanup(cli: await cli.value)
       do {
         guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
@@ -200,9 +204,11 @@ final class TutorialModel: ObservableObject {
   }
 
   func confirmRestart(base: String, worktrees: [String]) {
-    guard let cli else { return }
+    guard let cli, !restarting else { return }
     restartDialog = nil
+    restarting = true
     Task {
+      defer { restarting = false }
       do {
         try await TutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
         open(beginning: true)

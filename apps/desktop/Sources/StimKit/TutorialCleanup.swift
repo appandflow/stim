@@ -30,21 +30,31 @@ public struct TutorialCleanup: Sendable {
     guard marker else { return tutorialCleanupPlan(base: base, hasMarker: false, linkedWorktrees: []) }
     let list = try await ProcessRequest("/usr/bin/git", ["worktree", "list", "--porcelain"], cwd: base, timeout: 30).run()
     guard list.succeeded else { throw Failure(message: "git worktree list failed in \(base).") }
-    let paths = list.stdoutText.split(separator: "\n").compactMap { line -> String? in
-      line.hasPrefix("worktree ") ? String(line.dropFirst("worktree ".count)) : nil
-    }
+    let paths = Self.worktreePaths(list.stdoutText)
+    guard let first = paths.first,
+      URL(fileURLWithPath: first).resolvingSymlinksInPath() == URL(fileURLWithPath: base).resolvingSymlinksInPath()
+    else { return .refuse("\(base) is not the root of its own git repository, so Restart leaves it alone.") }
     return tutorialCleanupPlan(base: base, hasMarker: true, linkedWorktrees: Array(paths.dropFirst()))
   }
 
-  /// The tutorial worktrees, then the clone, through `stim worktree remove` without `--force`; then the folder to the Trash.
   public func remove(base: String, worktrees: [String]) async throws {
-    for path in worktrees {
-      if FileManager.default.fileExists(atPath: path) { _ = try await cli.run(["stop"], cwd: path) }
+    for path in worktrees where FileManager.default.fileExists(atPath: path) {
+      _ = try await cli.run(["stop"], cwd: path)
       _ = try await cli.run(["worktree", "remove", path], cwd: base)
     }
     _ = try await cli.run(["stop"], cwd: base)
     _ = try await cli.run(["worktree", "remove", base], cwd: base)
-    try FileManager.default.trashItem(at: URL(fileURLWithPath: base), resultingItemURL: nil)
+    try Self.moveToTrash(base)
+  }
+
+  static func worktreePaths(_ porcelain: String) -> [String] {
+    porcelain.split(separator: "\n").compactMap { line in
+      line.hasPrefix("worktree ") ? String(line.dropFirst("worktree ".count)) : nil
+    }
+  }
+
+  static func moveToTrash(_ path: String) throws {
+    try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)
   }
 
   static func hasMarker(at base: String) -> Bool {
@@ -52,6 +62,6 @@ public struct TutorialCleanup: Sendable {
       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let extra = (json["expo"] as? [String: Any])?["extra"] as? [String: Any]
     else { return false }
-    return extra["stimTutorial"] != nil
+    return (extra["stimTutorial"] as? Int).map(TutorialSteps.supportedVersions.contains) ?? false
   }
 }
