@@ -9,31 +9,8 @@ For a native Xcode app without React Native or Expo, read
 \`stim guide lifecycle native-ios\`. The Metro and JavaScript steps below
 apply to React Native and Expo.
 
-Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
-no Metro, npm install or React Native dependency is required. The directory must
-contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
-one application module and the exact variant (debug by default). Stim installs
-one signed universal or matching-ABI APK on an owned emulator or leased phone.
-Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
-must support native Android process mode. Multiple application modules,
-density/split APK sets and EAS/proxy targets are unsupported. Set
-org.gradle.configureondemand=false; configuration cache remains supported. Stim verifies the existing APK signature; it does not sign it.
-Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
-tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
-\`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
-Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
-Paths are exact repository-relative paths. complete affirms that Git-visible
-source plus the listed ignored files suffice, including optional files; Gradle
-DSL can read undeclared input without failing. Never list secrets or user Gradle
-homes. External inputs, directory links, submodules and custom local.properties
-refuse; an SDK-only local.properties stays local. Only declared directories
-reported by AGP and previously produced by this worker remain warm, along with
-worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
-incremental, task-cache and configuration-cache reuse; transfer digests never
-become reusable APK cache keys. Older hosts refuse before source upload.
-Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
-prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
-\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.
+For a native Android Gradle app without React Native or Expo, read
+\`stim guide lifecycle native-android\`.
 
 Two workflows share steps 2 through 6.
 
@@ -394,6 +371,38 @@ not share a writable filesystem cache because its claims live in the home.
 The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
+    'native-android': {
+      summary: 'native Gradle app selection, hosted emulators, build-worker inputs and current limits',
+      body: () => `NATIVE ANDROID GRADLE APPS
+Native Android Gradle apps run directly with \`stim android [--variant freeDebug]\`:
+no Metro, npm install or React Native dependency is required. The directory must
+contain a Gradle wrapper and settings.gradle or settings.gradle.kts. AGP resolves
+one application module and the exact variant (debug by default). Stim installs
+one signed universal or matching-ABI APK on an owned emulator or leased phone.
+Use \`--remote <approved-mac>\` or \`--remote auto\` for a hosted emulator; the host
+must support native Android process mode. Multiple application modules,
+density/split APK sets and EAS/proxy targets are unsupported. Set
+org.gradle.configureondemand=false; configuration cache remains supported.
+Stim verifies the existing APK signature; it does not sign it.
+
+Stim artifact caching is unavailable because arbitrary Gradle inputs are not fully
+tracked. Build workers require a project-scoped \`android.offloadInputs\` declaration:
+\`{"complete":true,"ignored":["app/src/main/assets/generated.json"],"outputs":["build","app/build"]}\`.
+Use \`stim android --remote-build <approved-mac>\` after reviewing this declaration.
+Paths are exact repository-relative paths. complete affirms that Git-visible
+source plus the listed ignored files suffice, including optional files; Gradle
+DSL can read undeclared input without failing. Never list secrets or user Gradle
+homes. External inputs, directory links, submodules and custom local.properties
+refuse; an SDK-only local.properties stays local. Only declared directories
+reported by AGP and previously produced by this worker remain warm, along with
+worker project .gradle/.kotlin state. Undeclared bytes are removed. Gradle owns
+incremental, task-cache and configuration-cache reuse; transfer digests never
+become reusable APK cache keys. Older hosts refuse before source upload.
+
+Native Android \`--plan\` refuses without executing Gradle; \`doctor\` reports native
+prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
+\`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
+    },
     'hosted-android': {
       summary: 'Android on a named approved Mac: strict placement, private Metro, status and stop',
       body: () => `ANDROID ON A HOSTING MAC
@@ -443,7 +452,7 @@ Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
 Native EAS/proxy targets remain unsupported. Build offload requires the complete
-android.offloadInputs declaration described in the android guide.
+android.offloadInputs declaration; see stim guide lifecycle native-android.
 
 Status adds android.host { machine, session, selected, agent, device: { name,
 systemImage, api }, state } per slot. The public name is the profile and API
