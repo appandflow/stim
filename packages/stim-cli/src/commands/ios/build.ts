@@ -119,28 +119,33 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       let artifact: PreparedIosArtifact | undefined;
       let directory: string | undefined;
       let succeeded = false;
-      const finish = (status: string, appPath?: string, errorCode?: string) =>
-        recordFinishedBuild(
-          root,
-          lastBuildRecord({
-            startedAt,
-            status,
-            appPath,
-            errorCode,
-            configuration,
-            durationMs: Date.now() - started,
-            fingerprint: artifact?.cache.identity?.fingerprint,
-            cacheKey: artifact?.cache.identity?.key,
-            cacheHit: artifact?.cache.hit,
-            cacheSkipped: artifact ? !artifact.cache.readEnabled : !cache.read,
-            bundleId: artifact?.bundleId,
-            buildMachine,
-            builtOn: artifact?.cache.builtOn,
-            offloadedTo: artifact?.cache.offloadedTo,
-            offloadFallback: artifact?.cache.offloadFallback,
-          }),
-          { artifactOnly: true },
-        );
+      const finish = (status: string, appPath?: string, errorCode?: string) => {
+        try {
+          recordFinishedBuild(
+            root,
+            lastBuildRecord({
+              startedAt,
+              status,
+              appPath,
+              errorCode,
+              configuration,
+              durationMs: Date.now() - started,
+              fingerprint: artifact?.cache.identity?.fingerprint,
+              cacheKey: artifact?.cache.identity?.key,
+              cacheHit: artifact?.cache.hit,
+              cacheSkipped: artifact ? !artifact.cache.readEnabled : !cache.read,
+              bundleId: artifact?.bundleId,
+              buildMachine,
+              builtOn: artifact?.cache.builtOn,
+              offloadedTo: artifact?.cache.offloadedTo,
+              offloadFallback: artifact?.cache.offloadFallback,
+            }),
+            { artifactOnly: true },
+          );
+        } catch (error) {
+          note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
+        }
+      };
       try {
         const acquired = await acquireIosArtifact(
           {

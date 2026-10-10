@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
+import * as buildProgress from '../engine/build-progress.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
@@ -192,6 +193,14 @@ test.each(['failure', 'cancellation'])(
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
   },
 );
+
+test('a build whose record cannot be written still returns its retained app', async () => {
+  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementation(() => {
+    throw new Error('disk full');
+  });
+  const built = await buildIosOperation(root, { remoteBuild: 'local' });
+  expect(existsSync(join(built.appPath, 'Native'))).toBe(true);
+});
 
 test('an unusable optimizations setting is refused as a setting error before the build', async () => {
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { buildCache: 'yes' } }));
