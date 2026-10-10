@@ -248,13 +248,14 @@ struct BuildMachinesContent<ThisMac: View>: View {
       Section {
         HStack(alignment: .top, spacing: Space.lg) {
           Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
-            .accessibilityHidden(true)
-          VStack(alignment: .leading, spacing: Space.md) {
+            .frame(width: 24).accessibilityHidden(true)
+          VStack(alignment: .leading, spacing: Space.lg) {
             Text(verbatim: thisMacName).font(.stim(.body, weight: .semibold)).lineLimit(1)
             poolToggles("local")
           }
+          Spacer(minLength: 0)
         }
-        .padding(.vertical, Space.xxs)
+        .padding(.vertical, Space.sm)
       } header: {
         Text("This Machine")
       }
@@ -263,18 +264,24 @@ struct BuildMachinesContent<ThisMac: View>: View {
 
   @ViewBuilder private func poolToggles(_ machine: String) -> some View {
     if let poolDisabled {
-      HStack(spacing: Space.lg) {
+      HStack(spacing: Space.xxxl) {
         ForEach(["build", "device"], id: \.self) { role in
-          Toggle(
-            role == "build" ? "Builds enabled" : "Simulators enabled",
-            isOn: Binding(
-              get: { !(poolDisabled[role] ?? []).contains(machine) },
-              set: { setPool(role, machine, $0) })
-          )
-          .toggleStyle(.switch)
-          .controlSize(.small)
+          let title = role == "build" ? "Builds enabled" : "Simulators enabled"
+          HStack(spacing: Space.md) {
+            Text(title).font(.stim(.callout)).foregroundStyle(Palette.secondary)
+            Toggle(
+              title,
+              isOn: Binding(
+                get: { !(poolDisabled[role] ?? []).contains(machine) },
+                set: { setPool(role, machine, $0) })
+            )
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+          }
           .disabled(refreshing)
         }
+        Spacer(minLength: 0)
       }
     }
   }
@@ -286,17 +293,14 @@ struct BuildMachinesContent<ThisMac: View>: View {
       Section {
         ForEach(entries, id: \.self) { entry in
           let status = statuses?.first { $0.machine == entry }
-          VStack(alignment: .leading, spacing: Space.md) {
-            BuildMachineRow(
-              entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
-              failed: canAsk && failure != nil && status == nil,
-              refreshing: canAsk && refreshing && status != nil && working != entry,
-              capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
-              progress: working == entry ? progress : nil,
-              canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
-              showDetails: { showDetails(entry) }, remove: { remove(entry) })
-            poolToggles(entry)
-          }
+          BuildMachineRow(
+            entry: entry, status: status, checking: canAsk && (statuses == nil || (status == nil && refreshing)),
+            failed: canAsk && failure != nil && status == nil,
+            refreshing: canAsk && refreshing && status != nil && working != entry,
+            capabilities: buildMachineCapabilities(entry, hosts: hosts), working: working == entry,
+            progress: working == entry ? progress : nil,
+            canAsk: canAsk, update: updates[entry], ask: { ask(entry) }, startUpdate: { update(entry) },
+            showDetails: { showDetails(entry) }, remove: { remove(entry) }, toggles: poolToggles(entry))
         }
       } header: {
         HStack {
@@ -323,7 +327,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   }
 }
 
-private struct BuildMachineRow: View {
+private struct BuildMachineRow<Toggles: View>: View {
   var entry: String
   var status: BuildMachineStatus?
   var checking: Bool
@@ -338,11 +342,13 @@ private struct BuildMachineRow: View {
   var startUpdate: () -> Void
   var showDetails: () -> Void
   var remove: () -> Void
+  var toggles: Toggles
 
   var body: some View {
     HStack(alignment: .top, spacing: Space.lg) {
       Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
-      VStack(alignment: .leading, spacing: Space.xs) {
+        .frame(width: 24).accessibilityHidden(true)
+      VStack(alignment: .leading, spacing: Space.lg) {
         HStack(spacing: Space.sm) {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
@@ -357,40 +363,50 @@ private struct BuildMachineRow: View {
             Pill("Couldn\u{2019}t check", tone: .warning, size: .small)
           }
         }
-        if let status {
-          if !status.rowDetail.isEmpty {
+        VStack(alignment: .leading, spacing: Space.md) {
+          if let status, !status.rowDetail.isEmpty {
             Text(verbatim: status.rowDetail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
               .fixedSize(horizontal: false, vertical: true)
           }
-          if let resources = status.capacity?.resources, !resources.isEmpty {
+          if let resources = status?.capacity?.resources, !resources.isEmpty {
             RemoteResourceSummary(resources: resources)
           }
-          ForEach(Array(status.problemLines.enumerated()), id: \.offset) { _, line in
-            VStack(alignment: .leading, spacing: Space.xxs) {
-              Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).lineLimit(1)
-                .textSelection(.enabled)
-              switch line.fix {
-              case .command(let command)?: CopyableCommand(command: command)
-              case .advice(let advice)? where update?.isDone ?? true:
-                Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-              default: EmptyView()
-              }
+          HStack(spacing: Space.xs) {
+            ForEach(capabilities, id: \.self) { name in
+              Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) }
             }
           }
         }
-        HStack(spacing: Space.xs) {
-          ForEach(capabilities, id: \.self) { name in Pill(tone: .neutral, size: .small, outlined: true) { Text(verbatim: name) }
+        let problems = status?.problemLines ?? []
+        let needed = status.map(needsStimUpdate) ?? false
+        if !problems.isEmpty || update != nil || needed {
+          VStack(alignment: .leading, spacing: Space.sm) {
+            ForEach(Array(problems.enumerated()), id: \.offset) { _, line in
+              VStack(alignment: .leading, spacing: Space.xs) {
+                Text(verbatim: line.reason).font(.stim(.footnote)).foregroundStyle(Palette.warning).lineLimit(1)
+                  .textSelection(.enabled)
+                switch line.fix {
+                case .command(let command)?: CopyableCommand(command: command)
+                case .advice(let advice)? where update?.isDone ?? true:
+                  Text(verbatim: advice).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+                default: EmptyView()
+                }
+              }
+            }
+            MachineUpdateLine(phase: update, needed: needed, update: startUpdate)
           }
         }
         if let command = status?.approvalCommand, let status {
-          Text(verbatim: "\(status.approvalPrompt), or runs this there:")
-            .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
-          CopyableCommand(command: command)
-          Text(verbatim: status.lapseLine()).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          VStack(alignment: .leading, spacing: Space.xs) {
+            Text(verbatim: "\(status.approvalPrompt), or runs this there:")
+              .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+            CopyableCommand(command: command)
+            Text(verbatim: status.lapseLine()).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+          }
         }
-        MachineUpdateLine(phase: update, needed: status.map(needsStimUpdate) ?? false, update: startUpdate)
+        toggles
       }
-      Spacer()
+      Spacer(minLength: 0)
       if working {
         if let progress { Text(verbatim: progress).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
         ProgressView().controlSize(.small)
@@ -410,7 +426,7 @@ private struct BuildMachineRow: View {
       .fixedSize()
       .accessibilityLabel("More actions for \(entry)")
     }
-    .padding(.vertical, Space.xxs)
+    .padding(.vertical, Space.sm)
   }
 }
 
