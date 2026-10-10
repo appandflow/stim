@@ -224,7 +224,7 @@ export class BuildHost {
   >();
   private closed = false;
   private draining: string | null = null;
-  private readonly toolchains = new Map<string | null, { at: number; value: Promise<BuildToolchain | null> }>();
+  private readonly toolchains = new Map<string, { at: number; value: Promise<BuildToolchain | null> }>();
   private readonly options: BuildHostOptions;
   private sweeping: Promise<void> = Promise.resolve();
   private queued: Promise<void> | null = null;
@@ -285,15 +285,17 @@ export class BuildHost {
     return join(this.root(), client);
   }
 
-  toolchain(rubyVersion: string | null = null): Promise<BuildToolchain | null> {
+  toolchain(rubyVersion: string | null = null, native?: 'xcode'): Promise<BuildToolchain | null> {
+    const key = JSON.stringify([native ?? null, native ? null : rubyVersion]);
     const now = Date.now();
     for (const [context, entry] of this.toolchains) {
       if (now - entry.at >= this.limits.toolchainTtlMs) this.toolchains.delete(context);
     }
-    const cached = this.toolchains.get(rubyVersion);
+    const cached = this.toolchains.get(key);
     if (cached) return cached.value;
     const value = new Promise<BuildToolchain | null>((resolve) => {
-      const child = spawn(process.execPath, [this.options.worker, 'offer', ...(rubyVersion ? [rubyVersion] : [])], {
+      const args = native ? ['offer-native-xcode'] : ['offer', ...(rubyVersion ? [rubyVersion] : [])];
+      const child = spawn(process.execPath, [this.options.worker, ...args], {
         env: this.options.env,
         stdio: ['ignore', 'pipe', 'ignore'],
       });
@@ -312,9 +314,9 @@ export class BuildHost {
         }
       });
     });
-    this.toolchains.set(rubyVersion, { at: now, value });
+    this.toolchains.set(key, { at: now, value });
     void value.then((result) => {
-      if (!result && this.toolchains.get(rubyVersion)?.value === value) this.toolchains.delete(rubyVersion);
+      if (!result && this.toolchains.get(key)?.value === value) this.toolchains.delete(key);
       return undefined;
     });
     return value;
@@ -330,7 +332,9 @@ export class BuildHost {
     ) {
       return refusal('bad-request', 'build.offer needs a Ruby installation name without path separators.');
     }
-    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null);
+    if (params.native !== undefined && params.native !== 'xcode')
+      return refusal('bad-request', 'build.offer supports only the native Xcode toolchain.');
+    const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
     if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
@@ -908,7 +912,7 @@ export class BuildSession {
         return refusal('bad-request', `The blob of ${file.path} is missing; sync again.`);
       }
     }
-    const toolchain = await this.host.toolchain();
+    const toolchain = await this.host.toolchain(null, native?.provider);
     if (this.closed) return refusal('build-refused', 'The connection closed.');
     if (!toolchain || toolchain.stimBuild !== params.stimBuild) {
       return refusal('build-refused', `This Mac runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);

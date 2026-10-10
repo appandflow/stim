@@ -778,13 +778,14 @@ async function compileAndroid(job: WorkerJob, root: string, log: NdjsonWriter, t
 async function main(): Promise<void> {
   const mode = process.argv[2];
   if (mode === 'offer') return emit(workerToolchain(process.argv[3] ?? null));
+  if (mode === 'offer-native-xcode') return emit(workerToolchain(null, 'xcode'));
   if (mode === 'build') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const job = JSON.parse(Buffer.concat(chunks).toString('utf8')) as WorkerJob;
     return emit({ type: 'result', ...(await build(job)) });
   }
-  process.stderr.write('usage: offload-worker offer | build < job.json\n');
+  process.stderr.write('usage: offload-worker offer | offer-native-xcode | build < job.json\n');
   process.exitCode = 2;
 }
 

@@ -1191,7 +1191,11 @@ closes its connections and cancels its builds.
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
   `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
-  every offer.
+  every offer. With the `native-xcode-toolchain` feature, an offer can set
+  `native: "xcode"` to collect only Stim, CPU, Xcode, iPhoneSimulator SDK and
+  simulator-runtime facts. Unused report fields are null. This report has its own
+  cache, ignores Ruby selection, and is reused for native Xcode build admission.
+  Clients use the complete report on older native-build-capable hosts.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next
