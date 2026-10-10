@@ -17,7 +17,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 BRANDING = ROOT / 'website' / 'static' / 'img' / 'branding'
-CHANGE_EFFECT = 1
 W, H, FPS = 288, 168, 30
 S = 0.58
 SW = 2.0
@@ -38,11 +37,9 @@ LIN = ({'x': [1], 'y': [1]}, {'x': [0], 'y': [0]})
 
 PALETTES = {
     'light': {'stroke': '#5521FF', 'jar': '#FFFFFF', 'side': '#DDD3FF', 'top': '#5521FF', 'muted': '#BDB2E6',
-              'tint': '#B49CFF', 'accent': '#5521FF', 'screen': '#1B1530', 'ok': '#0F6C31', 'okfg': '#FFFFFF',
-              'bolt': '#FFB020'},
+              'accent': '#5521FF', 'ok': '#0F6C31', 'okfg': '#FFFFFF'},
     'dark': {'stroke': '#FFFFFF', 'jar': '#5521FF', 'side': '#210092', 'top': '#FFFFFF', 'muted': '#6B55C4',
-             'tint': '#7A55FF', 'accent': '#B39CFF', 'screen': '#0C0A11', 'ok': '#4ADE80', 'okfg': '#0E0C13',
-             'bolt': '#FFC24D'},
+             'accent': '#B39CFF', 'ok': '#4ADE80', 'okfg': '#0E0C13'},
 }
 
 OFF = 0
@@ -109,10 +106,10 @@ def fl(c, o=100):
     return {'ty': 'fl', 'c': color(c), 'o': val(o), 'r': 1}
 
 
-def stk(c, w, gap=None, o=100, dash=None):
+def stk(c, w, gap=None, o=100):
     s = {'ty': 'st', 'c': color(c), 'o': val(o), 'w': st(w), 'lc': 2, 'lj': 2, 'ml': 4}
     if gap is not None:
-        d = dash or (DASH if w == SW else LDASH)
+        d = DASH if w == SW else LDASH
         if isinstance(gap, list):
             s['d'] = [{'n': 'd', 'v': kf([(k[0], 2 * d - k[1], *k[2:]) for k in gap])}, {'n': 'g', 'v': kf(gap)},
                       {'n': 'o', 'v': st(0)}]
@@ -169,8 +166,8 @@ class Timeline:
 GAP = 4
 
 
-def jar_right(cx, scale=1):
-    return cx + (RX * S * scale) + SW / 2
+def jar_right(cx):
+    return cx + RX * S + SW / 2
 
 
 def box_edges(cx, w):
@@ -190,29 +187,18 @@ def rig(tl, nm, p, s=100, r=0):
     return tl.add(nm, null=True, p=p, s=s, r=r)
 
 
-def jar(tl, pal, parent, nm='jar', trim=None, gap=None, fill_op=100, o=100, liquid=None, rim_fill=None):
+def jar(tl, pal, parent, nm='jar', trim=None, gap=None, fill_op=100, o=100):
     k = 0.5522847498
     def body(closed):
         return sh([[-RX, RIM_Y], [-RX, BASE_Y], [0, BASE_Y + RY], [RX, BASE_Y], [RX, RIM_Y]], closed=closed,
                   ins=[[0, 0], [0, 0], [-k * RX, 0], [0, k * RY], [0, 0]],
                   outs=[[0, 0], [0, k * RY], [k * RX, 0], [0, 0], [0, 0]])
     extra = [tm(trim)] if trim else []
-    rim_op = fill_op if rim_fill is None else rim_fill
     tl.add(f'{nm}-rim', [gr([el(0, RIM_Y, 2 * RX, 2 * RY)] + extra + [stk(pal['stroke'], LSW, gap),
-                                                                      fl(pal['jar'], rim_op)])],
+                                                                      fl(pal['jar'], fill_op)])],
            parent=parent, o=o)
     tl.add(f'{nm}-base', [gr([el(0, BASE_Y, 2 * RX, 2 * RY)] + extra + [stk(pal['stroke'], LSW, gap)])],
            parent=parent, o=o)
-    if liquid:
-        level, tint, op = liquid
-        tl.add(f'{nm}-surface', [gr([el(0, 0, 2 * RX - LSW, 2 * RY - LSW), fl(tint)])], parent=parent,
-               p=kf([(t, [0, v], *e) for t, v, *e in level]), o=op)
-        def well(top):
-            return {'c': True, 'v': [[-RX, top], [-RX, BASE_Y], [0, BASE_Y + RY], [RX, BASE_Y], [RX, top]],
-                    'i': [[0, 0], [0, 0], [-k * RX, 0], [0, k * RY], [0, 0]],
-                    'o': [[0, 0], [0, k * RY], [k * RX, 0], [0, 0], [0, 0]]}
-        tl.add(f'{nm}-liquid', [gr([{'ty': 'sh', 'ks': kf([(t, well(v), *e) for t, v, *e in level])}, fl(tint)])],
-               parent=parent, o=op)
     tl.add(f'{nm}-body', [gr([body(False)] + extra + [stk(pal['stroke'], LSW, gap)]),
                           gr([body(True), fl(pal['jar'], fill_op)])], parent=parent, o=o)
 
@@ -231,13 +217,17 @@ def lid(tl, pal, parent, p=(0, 0), o=100, trim=None, gap=None, fill_op=100):
            parent=parent, p=p, o=o)
 
 
-def phone(tl, pal, parent, nm='phone', header='#000000', screen_op=0, o=100, trim=None, gap=None, fill_op=100,
+TITLE = (0, -21, 38, 12, 4)
+BUTTON = (0, 24, 30, 12, 6)
+
+
+def phone(tl, pal, parent, nm='phone', header='#000000', button=None, o=100, trim=None, gap=None, fill_op=100,
           p=(0, 0), s=100):
     outline = [rc(0, 0, 52, 96, 13)]
     extra = [tm(trim)] if trim else []
     detail = [gr([rc(0, -40, 18, 6, 3), fl(pal['top'])]),
-              gr([rc(0, 4, 42, 70, 7), fl(pal['screen'], screen_op)]),
-              gr([rc(0, -21, 38, 12, 4), fl(header)]),
+              gr([rc(*TITLE), fl(header)]),
+              gr([rc(*BUTTON), fl(button or pal['muted'])]),
               gr([rc(-4, -2, 30, 5, 2.5), rc(-8, 8, 22, 5, 2.5), fl(pal['muted'])])]
     tl.add(f'{nm}-detail', [gr(detail, o=fill_op)], parent=parent, o=o, p=p, s=s)
     tl.add(f'{nm}-body', [gr(outline + extra + [stk(pal['stroke'], LSW, gap), fl(pal['side'], fill_op)])],
@@ -248,11 +238,6 @@ def check_badge(tl, pal, parent, pos, scale):
     tl.add('check', [gr([sh([[-10, 0], [-3, 8], [11, -8]], closed=False), stk(pal['okfg'], LSW)]),
                      gr([el(0, 0, 44, 44), stk(pal['stroke'], LSW), fl(pal['ok'])])],
            parent=parent, p=pos, s=scale)
-
-
-def bolt_shape(pal):
-    return [gr([sh([[4, -22], [-12, 3], [-1, 3], [-5, 22], [12, -4], [1, -4], [6, -22]]), stk(pal['stroke'], SW),
-                fl(pal['bolt'])])]
 
 
 def sparkle(tl, pal, parent, t0, center=(0, RIM_Y), rx=RX, ry=RY, sw=LSW, gap=10, length=16):
@@ -281,7 +266,7 @@ def burst(tl, pal, center, t0, radius=26, length=9, parent=None, sw=SW):
            o=kf([(t0 - 1, 0, 'hold'), (t0, 100), (t0 + 14, 100)]))
 
 
-def repo_card(pal, o=100):
+def repo_card(pal):
     return branch_glyph(pal) + [gr([rc(0, 0, 48, 48, 12), stk(pal['stroke'], SW), fl(pal['side'])])]
 
 
@@ -297,48 +282,15 @@ def package(pal):
                 fl(pal['top'])])]
 
 
-def changed_phone(tl, pal, parent, t0, end=80, nm='phone', screen_op=0, gap=None, fill_op=100, o=100):
-    head, new = pal['muted'], pal['accent']
-    c = CHANGE_EFFECT
-    if c == 1:
-        tl.add(f'{nm}-title', [gr([rc(0, -21, 38, 12, 4),
-                                   tm(kf([(t0 + 8, 100, UNTRACE), (t0 + 14, 0), (t0 + 16, 0, OUTE), (t0 + 26, 100)])),
-                                   stk(pal['stroke'], LSW, gap=[(t0, 0), (t0 + 6, LDASH), (t0 + 26, LDASH, SMOOTH),
-                                                                (t0 + 32, 0), (end, 0), (end + 8, 0)]),
-                                   fl(ckf([(t0 + 15, head, 'hold'), (t0 + 16, new), (end, new), (end + 8, head)]),
-                                      kf([(t0, 100, SMOOTH), (t0 + 6, 0), (t0 + 28, 0, SMOOTH), (t0 + 36, 100)]))])],
-               parent=parent, o=o)
-        phone(tl, pal, parent, nm=nm, header=pal['side'], screen_op=screen_op, gap=gap, fill_op=fill_op, o=o)
-    elif c == 2:
-        copy_o = kf([(t0 - 1, 0, 'hold'), (t0, 55), (t0 + 20, 55), (t0 + 28, 100), (end, 100), (end + 8, 0)])
-        phone(tl, pal, parent, nm=f'{nm}-copy', header=new, screen_op=screen_op, gap=gap, fill_op=fill_op,
-              o=copy_o, p=kf([(t0, [0, -150]), (t0 + 20, [0, 0], POP)]))
-        old_o = kf([(t0 + 18, 100), (t0 + 28, 0), (end, 0), (end + 8, 100)])
-        phone(tl, pal, parent, nm=nm, header=head, screen_op=screen_op, gap=gap, fill_op=fill_op, o=old_o)
-    elif c == 3:
-        phone(tl, pal, parent, nm=nm, header=ckf([(t0 + 14, head), (t0 + 24, new), (end, new), (end + 8, head)]),
-              screen_op=screen_op, gap=gap, fill_op=fill_op, o=o)
-    else:
-        flip = kf([(t0, [100, 100, 100]), (t0 + 10, [0, 100, 100], 'hold'), (t0 + 11, [0, 100, 100]),
-                   (t0 + 22, [100, 100, 100], POP)])
-        phone(tl, pal, parent, nm=nm, header=ckf([(t0 + 10, head, 'hold'), (t0 + 11, new), (end, new),
-                                                  (end + 8, head)]),
-              screen_op=screen_op, gap=gap, fill_op=fill_op, o=o, s=flip)
-
-
-def poured(pal, t0, end=80, start_full=True):
-    if CHANGE_EFFECT != 3:
-        return None
-    if start_full:
-        level = [(t0, RIM_Y, UNTRACE), (t0 + 12, BASE_Y, 'hold'), (t0 + 14, BASE_Y, OUTE), (t0 + 28, RIM_Y)]
-        tint = ckf([(t0 + 12, pal['side'], 'hold'), (t0 + 13, pal['tint']), (end, pal['tint']),
-                    (end + 8, pal['side'])])
-        op = kf([(t0 + 10, 100), (t0 + 12, 0), (t0 + 14, 100)])
-    else:
-        level = [(t0, BASE_Y, OUTE), (t0 + 20, RIM_Y), (end, RIM_Y, SMOOTH), (end + 8, BASE_Y)]
-        tint = pal['tint']
-        op = kf([(t0, 0), (t0 + 3, 100), (end, 100), (end + 8, 0)])
-    return level, tint, op
+def rebuilt(tl, pal, parent, t0, box, new, end=80, nm='rebuilt', o=100):
+    old = pal['muted']
+    tl.add(nm, [gr([rc(*box),
+                    tm(kf([(t0 + 8, 100, UNTRACE), (t0 + 14, 0), (t0 + 16, 0, OUTE), (t0 + 26, 100)])),
+                    stk(pal['stroke'], LSW, gap=[(t0, 0), (t0 + 6, LDASH), (t0 + 26, LDASH, SMOOTH), (t0 + 32, 0)],
+                        o=kf([(t0, 0), (t0 + 4, 100), (t0 + 34, 100), (t0 + 42, 0)])),
+                    fl(ckf([(t0 + 15, old, 'hold'), (t0 + 16, new), (end, new), (end + 8, old)]),
+                       kf([(t0, 100, SMOOTH), (t0 + 6, 0), (t0 + 28, 0, SMOOTH), (t0 + 36, 100)]))])],
+           parent=parent, o=o)
 
 
 def build(pal):
@@ -370,36 +322,33 @@ def build(pal):
     check_badge(tl, pal, j, st([60, -76]), kf([(58, [0, 0, 100]), (68, [100, 100, 100]), (82, [100, 100, 100]),
                                               (88, [0, 0, 100])], POP))
     sparkle(tl, pal, j, 50)
-    changed_phone(tl, pal, j, 10)
-    jar(tl, pal, j, liquid=poured(pal, 10), rim_fill=0 if CHANGE_EFFECT == 3 else None)
+    rebuilt(tl, pal, j, 10, TITLE, pal['accent'])
+    phone(tl, pal, j, header=pal['side'])
+    jar(tl, pal, j)
 
     tl.segment('build>parallel', TRANS)
     j = rig(tl, 'jar', kf([(0, HOME + [0]), (18, LEFT + [0])]))
     k = rig(tl, 'jar2', st(RIGHT + [0]))
-    phone(tl, pal, j, header=HEAD)
+    phone(tl, pal, j, header=ckf([(0, HEAD), (18, pal['accent'])]))
     jar(tl, pal, j)
-    jar(tl, pal, k, nm='jar2', trim=kf([(6, 0), (22, 100)], OUTE), gap=LDASH, fill_op=0)
+    jar(tl, pal, k, nm='jar2', trim=kf([(2, 0), (14, 100)], OUTE), gap=[(12, LDASH, SMOOTH), (18, 0)],
+        fill_op=kf([(16, 0, SMOOTH), (22, 100)]))
 
-    tl.segment('parallel', LOOP, still=56)
+    tl.segment('parallel', 110, still=86)
     j = rig(tl, 'jar', st(LEFT + [0]))
-    k = rig(tl, 'jar2', st(RIGHT + [0]), s=kf([(40, [100, 100, 100]), (44, [104, 104, 100]),
-                                               (52, [100, 100, 100])]))
-    tl.add('bolt', bolt_shape(pal), p=kf([(32, [RIGHT[0] + 4, 2]), (42, [RIGHT[0] + 4, 30])], OUTE),
-           o=kf([(32, 0), (36, 100), (44, 100), (50, 0)]))
-    tl.add('bolt-badge', [gr(bolt_shape(pal), s=60)], p=st([RIGHT[0] + 30, 52]),
-           s=kf([(48, [0, 0, 100]), (56, [100, 100, 100]), (78, [100, 100, 100]), (86, [0, 0, 100])], POP))
-    sparkle(tl, pal, k, 46)
-    solid = [(0, LDASH), (40, LDASH, SMOOTH), (44, 0), (80, 0, SMOOTH), (88, LDASH)]
-    changed_phone(tl, pal, k, 4, nm='phone2', screen_op=kf([(40, 0), (44, 100), (80, 100), (88, 0)]), gap=solid,
-                  fill_op=kf([(0, 30), (40, 30, SMOOTH), (44, 100), (80, 100), (88, 30)]),
-                  o=kf([(0, 0), (4, 100), (82, 100), (89, 0)]) if CHANGE_EFFECT != 2 else 100)
-    jar(tl, pal, k, nm='jar2', gap=[(36, LDASH, SMOOTH), (42, 0), (80, 0), (88, LDASH)],
-        fill_op=kf([(0, 0), (36, 0, SMOOTH), (42, 100), (80, 100), (88, 0)]),
-        liquid=poured(pal, 6, start_full=False), rim_fill=0 if CHANGE_EFFECT == 3 else None)
-    tl.add('progress', [gr([rc(0, 0, 44, 6, 3), stk(pal['stroke'], SW)]),
-                        gr([sh([[-20, 0], [20, 0]], closed=False), tm(kf([(0, 0), (89, 100)], LIN)),
-                            stk(pal['accent'], 3)])], p=st([LEFT[0], 160]))
-    phone(tl, pal, j, header=ckf([(50, HEAD), (60, pal['accent']), (80, pal['accent']), (89, HEAD)]))
+    k = rig(tl, 'jar2', st(RIGHT + [0]), s=kf([(70, [100, 100, 100]), (74, [104, 104, 100]), (82, [100, 100, 100])]))
+    landing = ({'x': [0.3], 'y': [1]}, {'x': [0.5], 'y': [0]})
+    c = rig(tl, 'copy', kf([(4, LEFT + [0]), (12, [LEFT[0] + 20, 40]), (22, [RIGHT[0] - 20, 40]),
+                            (32, RIGHT + [0], landing)]),
+            s=kf([(32, [100, 100, 100]), (35, [106, 94, 100]), (40, [100, 100, 100])]))
+    check_badge(tl, pal, k, st([60, -76]), kf([(78, [0, 0, 100]), (88, [100, 100, 100]), (100, [100, 100, 100]),
+                                              (106, [0, 0, 100])], POP))
+    sparkle(tl, pal, k, 70)
+    shown = kf([(3, 0, 'hold'), (4, 0), (8, 100), (100, 100), (108, 0)])
+    rebuilt(tl, pal, c, 36, BUTTON, pal['accent'], end=100, o=shown)
+    phone(tl, pal, c, nm='phone2', header=pal['accent'], button=pal['side'], o=shown)
+    jar(tl, pal, k, nm='jar2')
+    phone(tl, pal, j, header=pal['accent'])
     jar(tl, pal, j)
 
     tl.segment('device', LOOP, still=40)
@@ -493,23 +442,18 @@ def build(pal):
 
     tl.segment('share', LOOP, still=64)
     j = rig(tl, 'jar', st(LEFT + [0]))
-    cx, cy, cw, ch = 212, 94, 120, 88
-    left = box_edges(cx, cw)[0]
-    sparkle(tl, pal, None, 46, center=(cx, cy - ch / 2), rx=cw / 2 - 6, ry=8, sw=SW, gap=4, length=8)
-    tl.add('glyph', [gr(branch_glyph(pal, sw=SW * 2), p=(left + 16, cy - ch / 2 + 14), s=50)],
+    cx, cy, cw, ch = 196, 94, 66, 96
+    left, top = box_edges(cx, cw)[0], cy - ch / 2
+    sparkle(tl, pal, None, 46, center=(cx, top), rx=cw / 2 - 4, ry=8, sw=SW, gap=4, length=8)
+    tl.add('glyph', [gr(branch_glyph(pal, sw=SW * 2), p=(left + 15, top + 14), s=50)],
            o=kf([(34, 0), (40, 100), (80, 100), (88, 0)]))
-    for n, (title, x) in enumerate((('muted', cx - 26), ('accent', cx + 26))):
-        t = 8 + n * 6
-        mini = [gr([rc(0, -12, 14, 4, 2), fl(pal['muted'] if title == 'muted' else pal['accent'])]),
-                gr([rc(0, 0, 22, 38, 5), stk(pal['stroke'], SW), fl(pal['side'])])]
-        tl.add(f'mini{n}', mini,
-               p=kf([(t, LEFT + [0]), (t + 12, [(LEFT[0] + x) / 2, 40]), (t + 22, [x, cy + 12], OUTE)]),
-               s=kf([(t, [40, 40, 100]), (t + 22, [100, 100, 100])]),
-               o=kf([(t - 1, 0, 'hold'), (t, 0), (t + 4, 100), (80, 100), (88, 0)]))
-    tl.add('card', [gr([sh([[cx, cy - ch / 2 + 28], [cx, cy + ch / 2 - 8]], closed=False),
-                        sh([[cx - cw / 2, cy - ch / 2 + 26], [cx + cw / 2, cy - ch / 2 + 26]], closed=False),
-                        stk(pal['muted'], 1.5)]),
-                    gr([rc(cx + 12, cy - ch / 2 + 14, 60, 4, 2), fl(pal['muted'])]),
+    mini = [gr([rc(0, -14, 16, 5, 2.5), fl(pal['accent'])]),
+            gr([rc(0, 0, 26, 46, 6), stk(pal['stroke'], SW), fl(pal['side'])])]
+    tl.add('mini', mini, p=kf([(8, LEFT + [0]), (20, [(LEFT[0] + cx) / 2, 36]), (30, [cx, cy + 14], OUTE)]),
+           s=kf([(8, [40, 40, 100]), (30, [100, 100, 100])]),
+           o=kf([(7, 0, 'hold'), (8, 0), (12, 100), (80, 100), (88, 0)]))
+    tl.add('card', [gr([sh([[cx - cw / 2, top + 26], [cx + cw / 2, top + 26]], closed=False), stk(pal['muted'], 1.5)]),
+                    gr([rc(cx + 9, top + 14, 26, 4, 2), fl(pal['muted'])]),
                     gr([rc(cx, cy, cw, ch, 12), stk(pal['stroke'], SW), fl(pal['jar'])])])
     phone(tl, pal, j, header=pal['accent'])
     jar(tl, pal, j)
@@ -532,14 +476,18 @@ def build(pal):
     gap = [(14, 0, SMOOTH), (24, LDASH)]
     lid(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(26, 100, UNTRACE), (40, 0)]))
     jar(tl, pal, j, fill_op=fill, gap=gap, trim=kf([(30, 100, UNTRACE), (46, 0)]))
-    bar_x, bar_y, bar_w, bar_h = HOME[0], 104, 128, 16
-    chip = [bar_x + 40, bar_y - 30]
-    sparkle(tl, pal, None, 88, center=chip, rx=22, ry=10, sw=SW, gap=3, length=7)
-    tl.add('freed', [gr([sh([[0, -5], [0, 4]], closed=False), sh([[-4, 0], [0, 4], [4, 0]], closed=False),
-                         sh([[-6, 7], [6, 7]], closed=False), stk(pal['stroke'], SW)], p=(-8, 0)),
-                     gr([sh([[0, 0], [10, 0]], closed=False), stk(pal['muted'], 3)], p=(2, 0)),
-                     gr([rc(0, 0, 44, 22, 11), stk(pal['stroke'], SW), fl(pal['jar'])])],
-           p=st(chip), s=kf([(80, [0, 0, 100]), (88, [100, 100, 100], POP)]))
+    disk_w, disk_h, space = 28, 20, 10
+    bar_w, bar_h = 112, 16
+    bar_x, bar_y = HOME[0] + (disk_w + space) / 2, 100
+    disk_x = bar_x - bar_w / 2 - space - disk_w / 2
+    sparkle(tl, pal, None, 84, center=(bar_x, bar_y), rx=bar_w / 2, ry=bar_h / 2, sw=SW, gap=4, length=8)
+    draw = tm(kf([(48, 0), (58, 100)], OUTE))
+    tl.add('disk', [gr([el(disk_w / 2 - 7, disk_h / 4, 3, 3), fl(pal['stroke'])], o=kf([(56, 0), (60, 100)])),
+                    gr([sh([[-disk_w / 2, 0], [disk_w / 2, 0]], closed=False), draw,
+                        stk(pal['stroke'], SW, gap=[(56, DASH, SMOOTH), (62, 0)])]),
+                    gr([rc(0, 0, disk_w, disk_h, 5), draw, stk(pal['stroke'], SW, gap=[(56, DASH, SMOOTH), (62, 0)]),
+                        fl(pal['side'], kf([(58, 0), (62, 100)]))])],
+           p=st([disk_x, bar_y]))
     tl.add('used', [gr([rc(0, 0, bar_w - 8, bar_h - 8, 4), fl(pal['accent'])],
                        p=(-(bar_w - 8) / 2, 0), a=(-(bar_w - 8) / 2, 0),
                        s=kf([(62, [80, 100]), (80, [28, 100], SMOOTH)]))],
