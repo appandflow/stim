@@ -83,7 +83,7 @@ function gitVisibility(sourceRoot: string) {
   const listing = getExecutor().runFileQuiet(
     'git',
     ['-C', sourceRoot, 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-    { untrimmed: true },
+    { untrimmed: true, omitEnv: ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'] },
   );
   if (listing === null) return null;
   const listed = new Set<string>();
