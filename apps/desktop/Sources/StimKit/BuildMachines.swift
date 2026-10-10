@@ -296,8 +296,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
     return MachineReadiness(title: reasons?.first ?? "Cannot take builds", remedy: nil, tone: .error, reasons: all)
   }
 
-  /// The one pill a row of the remote Mac list shows: Approved, Waiting for approval, Unreachable or Not
-  /// offloading for the states that matter most, else the readiness title (Busy, Revoked, Not asked, ...).
+  /// The one pill a row of the remote Mac list shows: Approved, Waiting for approval, Unreachable, Needs update or
+  /// the first problem's short title for the states that matter most, else the readiness title (Busy, Revoked, ...).
   public var listStatus: MachineListStatus {
     let ready = readiness
     switch state {
@@ -306,7 +306,8 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
       let code = problems?.first?.code
       if code == "unreachable" { return MachineListStatus(title: "Unreachable", tone: .warning) }
       if code == "busy" { return MachineListStatus(title: ready.title, tone: ready.tone) }
-      return MachineListStatus(title: "Not offloading", tone: .warning)
+      if code == "stim-build" { return MachineListStatus(title: "Needs update", tone: .warning) }
+      return MachineListStatus(title: code.flatMap { MachineReadiness.problems[$0]?.0 } ?? "Not offloading", tone: .warning)
     case .pending: return MachineListStatus(title: "Waiting for approval", tone: .warning)
     default: return MachineListStatus(title: state.title, tone: state.readinessTone)
     }

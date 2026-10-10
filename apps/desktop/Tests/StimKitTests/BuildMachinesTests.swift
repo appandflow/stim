@@ -184,10 +184,14 @@ import Testing
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"r"}]}"#,
-        "Not offloading", .warning
+        "Needs update", .warning
       ),
       (
         #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"disk","reason":"r"}]}"#,
+        "Low on disk", .warning
+      ),
+      (
+        #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"new-code","reason":"r"}]}"#,
         "Not offloading", .warning
       ),
       (

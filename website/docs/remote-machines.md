@@ -284,7 +284,7 @@ this fallback is usually redundant on the worker.
 
 Open **Stim > Settings > Remote Macs** on your main Mac. It lists your
 remote Macs, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable** or **Not offloading**, with the reason and a fix under it), what it does and a **...** menu with
+**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and a **...** menu with
 **Details** and **Remove**. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
 commands to run on that Mac: `stim-server devices revoke <id>` for each

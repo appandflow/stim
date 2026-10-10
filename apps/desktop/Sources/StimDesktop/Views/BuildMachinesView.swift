@@ -347,7 +347,9 @@ private struct BuildMachineRow: View {
           Text(verbatim: entry).font(.stim(.body, weight: .semibold)).lineLimit(1)
           if let status {
             let listed = status.listStatus
-            Pill(listed.title, tone: listed.tone, size: .small).help(status.readiness.reasons ?? status.detail)
+            let updating = update.map { !$0.isDone } == true && needsStimUpdate(status)
+            Pill(updating ? "Updating" : listed.title, tone: updating ? .warning : listed.tone, size: .small)
+              .help(status.readiness.reasons ?? status.detail)
             if refreshing { ProgressView().controlSize(.mini).help("Checking again") }
           } else if checking {
             Pill("Checking\u{2026}", size: .small)

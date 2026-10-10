@@ -1224,8 +1224,10 @@ shows the Mac's name, one status pill, a detail line, what it does (**Builds**, 
 approval** (the row keeps the approval command to copy and says when the
 request lapses, such as "Waiting for approval until 21:05", in local time),
 **Unreachable**,
-**Not offloading** (doctor reports the approved machine as not offloadable, for
-any reason but load or an unanswered server), or the machine's other readiness or
+**Needs update** (it runs another Stim build; **Updating** while an update runs),
+the short title of doctor's first reason the approved machine is not offloadable,
+such as **CocoaPods differs** or **Low on disk** (**Not offloading** for a reason
+this Desktop does not know), or the machine's other readiness or
 pairing state, such as **Busy**, **Not asked**, **Revoked** (revoked or
 denied), **Request lapsed** (nobody on the remote Mac approved it in time;
 **Ask Again** is available), **Different Mac** (the name now belongs to another
