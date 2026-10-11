@@ -16,7 +16,6 @@ enum TutorialEntry { case resume, begin }
 @MainActor
 final class OpenRequests: ObservableObject {
   static let shared = OpenRequests()
-  @Published var device: DeviceOpenRequest?
   @Published var viewer: ViewedDevice?
   @Published var workspaceLink: WorkspaceLink?
   @Published var workspacePath: String?
@@ -81,9 +80,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainWindow.show()
       }
     }
-    guard let request = urls.lazy.compactMap(deviceOpenRequest(fromOpenURL:)).last else { return }
+    guard urls.contains(where: { deviceOpenRequest(fromOpenURL: $0) != nil }) else { return }
     MainActor.assumeIsolated {
-      OpenRequests.shared.device = request
       if !MainWindow.isOpen { MainWindow.show() }
     }
   }
