@@ -278,6 +278,23 @@ test('pruneCache trims only the listed files when a cache does not own its direc
   }
 });
 
+test('pruneCache skips a cache whose directory is the home directory, however old its entries are', () => {
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-prune-home-')));
+  for (const key of ['HOME', 'USERPROFILE']) vi.stubEnv(key, fakeHome);
+  const documents = join(fakeHome, 'Documents');
+  mkdirSync(documents);
+  age(documents);
+  try {
+    const r = pruneCache(makeCacheDescriptor({ dir: fakeHome, prune: 'entries' }), { olderThanDays: 30 });
+    expect(r.skipped).toMatch(/not a directory this cache owns/);
+    expect(r.removed).toBe(0);
+    expect(existsSync(documents)).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
 test('discoverCaches marks a project registration as registered', () => {
   const registeredDir = mkdtempSync(join(tmpdir(), 'stim-src-reg-'));
   try {
