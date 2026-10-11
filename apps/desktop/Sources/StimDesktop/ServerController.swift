@@ -94,8 +94,14 @@ final class ServerController: ObservableObject {
       } else {
         hasDeviceList = false
       }
+      syncAdoption()
     }
   }
+  /// True while `state` comes from a server adopted before the login environment arrived; see `ServerAdoption`.
+  @Published private(set) var provisional = false {
+    didSet { syncAdoption() }
+  }
+  let adoption = ServerAdoptionGate()
   @Published private(set) var devices: [PairedDevice] = []
   private var hasDeviceList = false
   @Published private(set) var devicesError: String?
@@ -105,6 +111,8 @@ final class ServerController: ObservableObject {
   @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
+  private var loginEnvironment: [String: String]?
+  private var provisionalHome = StimHome.path(environment: [:])
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -179,8 +187,16 @@ final class ServerController: ObservableObject {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
   }
 
-  func configure(environment: Task<[String: String], Never>) {
+  func configure(environment: Task<[String: String], Never>, provisionalHome: String) {
     self.environment = environment
+    self.provisionalHome = provisionalHome
+    Task {
+      let login = await environment.value
+      loginEnvironment = login
+      UserDefaults.standard.set(StimHome.path(environment: login), forKey: AppPreferences.Key.lastLoginStimHome)
+      LaunchMilestones.reach("login-environment")
+      await verifyAdoption()
+    }
     start()
     devicesPoller.start()
     NotificationCenter.default.addObserver(
@@ -195,9 +211,13 @@ final class ServerController: ObservableObject {
     }
   }
 
+  /// Waits for the login environment and for a provisional adoption to be confirmed or dropped.
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
-    if case .running(let health, _) = state { environment["STIM_HOME"] = health.stimHome }
+    await adoption.settled()
+    if case .running(let health, _) = state, adoption.allowsWrites(home: health.stimHome) {
+      environment["STIM_HOME"] = health.stimHome
+    }
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
     let plain = StimServerCLI(environment: environment, override: override)
     let stale = serverLauncher.map { $0.launcher?.script == nil && Date().timeIntervalSince($0.resolved) > 60 } ?? true
@@ -216,6 +236,7 @@ final class ServerController: ObservableObject {
     }
     generation += 1
     let current = generation
+    provisional = false
     state = .starting
     retriesFailure = true
     missedProbes = 0
@@ -223,6 +244,12 @@ final class ServerController: ObservableObject {
       await waitForExiting()
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
+        guard current == generation else { return }
+        if loginEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
+          provisional = true
+          state = .running(health, owned: false)
+          return
+        }
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
         guard current == generation else { return }
         state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
@@ -274,6 +301,38 @@ final class ServerController: ObservableObject {
     generation += 1
     terminate()
     state = .off
+    provisional = false
+  }
+
+  /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
+  /// for again from the start, now with the login environment's Stim home.
+  private func verifyAdoption() async {
+    guard provisional, case .running(let adopted, owned: false) = state, let login = loginEnvironment else { return }
+    let current = generation
+    let probe = await StimServerCLI.health(port: port)
+    guard current == generation, provisional else { return }
+    if let health = ServerAdoption.confirmed(
+      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: login))
+    {
+      state = .running(health, owned: false)
+      provisional = false
+      LaunchMilestones.reach("server-adoption-verified")
+      return
+    }
+    DebugLog.warning(.server, "dropped the provisionally adopted stim-server for \(adopted.stimHome)")
+    generation += 1
+    state = .off
+    provisional = false
+    start()
+  }
+
+  private func syncAdoption() {
+    switch state {
+    case .running(let health, _):
+      adoption.set(provisional ? .provisional(home: health.stimHome) : .verified(home: health.stimHome))
+    case .off, .starting, .notReady, .failed:
+      adoption.set(.none)
+    }
   }
 
   /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
@@ -358,7 +417,7 @@ final class ServerController: ObservableObject {
     Task {
       let probe = await StimServerCLI.health(port: port)
       let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
-      guard current == generation, isResponding else { return }
+      guard current == generation, isResponding, !provisional else { return }
       switch probe {
       case .notReady(let startup, let stimHome)
       where owned || (stimHome.map { StimHome.adopts(serverHome: $0, resolved: resolved) } ?? true):
@@ -391,6 +450,7 @@ final class ServerController: ObservableObject {
     let health: ServerHealth? = if case .running(let health, _) = state { health } else { nil }
     Task {
       let cli = await cli()
+      guard epoch == devicesEpoch, current == generation else { return }
       let result = await Result.awaiting { try await cli.devices() }
       guard epoch == devicesEpoch, current == generation else { return }
       switch result {

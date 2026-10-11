@@ -46,24 +46,31 @@ struct LocalServerCredential: Codable, Equatable {
 /// Stim Desktop's own connection to the stim-server `ServerController` runs or found on this Mac, over loopback.
 /// It pairs with control through `stim-server pair --control` the first time, and once more when the server no longer
 /// knows its token, then stops until the server restarts. A read-only pairing gets control through
-/// `stim-server devices grant`, once per server.
+/// `stim-server devices grant`, once per server. While `ServerController` holds a provisional adoption, the session
+/// connects only with a stored token, does not pair, grant or delete a token, and serves only the status feed.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
   static let deviceName = LocalServerCredential.isRelease ? PairedDevice.desktopName : PairedDevice.devDesktopName
 
+  /// The connection, once the adoption it was made for is verified.
   @Published private(set) var client: ServerClient?
   @Published private(set) var state = ServerClient.State.idle
 
   private let controller: ServerController
+  private var connection: ServerClient?
   private var watch: AnyCancellable?
+  private var adoptionWatch: AnyCancellable?
   private var key: String?
   private var repaired = false
   private var granted = false
 
   init(controller: ServerController) {
     self.controller = controller
-    watch = controller.$state.sink { [weak self] state in
-      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(state) } }
+    watch = controller.$state.sink { [weak self] _ in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
+    }
+    adoptionWatch = controller.$provisional.sink { [weak self] _ in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
     }
   }
 
@@ -75,10 +82,16 @@ struct LocalServerCredential: Codable, Equatable {
   var isOpen: Bool { client?.isOpen == true }
 
   var statsConnection: (client: ServerClient, home: String)? {
-    guard let client, case .running(let health, _) = controller.state,
+    guard let client, let feed = feedConnection, feed.client === client else { return nil }
+    return feed
+  }
+
+  /// The connection for the status feed, which reads only, so it is offered while the adoption is provisional.
+  var feedConnection: (client: ServerClient, home: String)? {
+    guard let connection, case .running(let health, _) = controller.state,
       key == "\(controller.port) \(health.stimHome) \(health.version)"
     else { return nil }
-    return (client, health.stimHome)
+    return (connection, health.stimHome)
   }
 
   var link: ServerLink {
@@ -104,11 +117,17 @@ struct LocalServerCredential: Codable, Equatable {
       return
     }
     let key = "\(controller.port) \(health.stimHome) \(health.version)"
-    if key != self.key { replace(key: key, health: health) }
+    let verified = controller.adoption.allowsWrites(home: health.stimHome)
+    if key != self.key || (verified && client == nil && connection?.isOpen != true) {
+      replace(key: key, health: health)
+    } else if verified, client !== connection {
+      client = connection
+    }
   }
 
   private func replace(key: String?, health: ServerHealth?) {
-    client?.stop()
+    connection?.stop()
+    connection = nil
     client = nil
     self.key = key
     self.state = .idle
@@ -126,13 +145,16 @@ struct LocalServerCredential: Codable, Equatable {
           return .device(token: credential.deviceToken)
         }
         let cli = await controller.cli()
+        guard controller.adoption.allowsWrites(home: home) else {
+          throw ServerError(code: "not-connected", message: "The adopted stim-server was not confirmed.")
+        }
         let port = controller.port
         let code = try await cli.pair(port: port, control: true)
         pairing = true
         return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
       })
     client.onState = { [weak self, weak client] state in
-      guard let self, let client, client === self.client else { return }
+      guard let self, let client, client === self.connection else { return }
       self.state = state
       switch state {
       case .open(let hello):
@@ -145,21 +167,24 @@ struct LocalServerCredential: Codable, Equatable {
           self.granted = true
           Task {
             let cli = await self.controller.cli()
-            guard (try? await cli.grant(id, control: true)) != nil,
-              client === self.client
+            guard self.controller.adoption.allowsWrites(home: home), client === self.connection,
+              (try? await cli.grant(id, control: true)) != nil, client === self.connection
             else { return }
             client.stop()
             client.start()
           }
         }
-      case .refused(let error) where error.code == "unauthorized" && !pairing && !self.repaired:
+      case .refused(let error)
+      where error.code == "unauthorized" && !pairing && !self.repaired
+        && self.controller.adoption.allowsWrites(home: home):
         self.repaired = true
         LocalServerCredential.delete(home: home)
         client.start()
       default: break
       }
     }
-    self.client = client
+    connection = client
+    if controller.adoption.allowsWrites(home: home) { self.client = client }
     client.start()
   }
 }

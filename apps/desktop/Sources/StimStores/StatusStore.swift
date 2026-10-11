@@ -53,17 +53,22 @@ public final class StatusStore: ObservableObject {
   private static let doctorTimeout: TimeInterval = 10 * 60
   private static let doctorCheckInterval: TimeInterval = 60
 
-  init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
+  init(
+    cli: Task<StimCLI, Never>, stimHome expected: String? = nil,
+    fetch: @escaping @Sendable () async throws -> StatusPayload
+  ) {
     self.cli = cli
     self.fetch = fetch
+    if let expected { self.stimHome = expected }
     Task {
       stimHome = await cli.value.stimHome
       LaunchMilestones.reach("cli-ready")
     }
   }
 
-  public convenience init(cli: Task<StimCLI, Never>) {
-    self.init(cli: cli, fetch: { try await cli.value.status() })
+  /// `stimHome` is the Stim home to expect until the CLI resolves its own, so a server feed for it can show first.
+  public convenience init(cli: Task<StimCLI, Never>, stimHome: String? = nil) {
+    self.init(cli: cli, stimHome: stimHome, fetch: { try await cli.value.status() })
   }
 
   public func start() {

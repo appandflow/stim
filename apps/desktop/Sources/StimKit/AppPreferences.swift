@@ -43,6 +43,8 @@ public enum AppPreferences {
     public static let stimServerExecutable = "stimServerExecutable"
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
+    /// The Stim home the login shell's environment resolved on the last launch, for `ServerAdoption.provisionalHome`.
+    public static let lastLoginStimHome = "lastLoginStimHome"
     public static let showsInspector = "showsInspector"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
