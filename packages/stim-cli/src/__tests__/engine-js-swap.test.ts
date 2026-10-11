@@ -296,9 +296,9 @@ describe('swapJsBundle', () => {
       const real = getExecutor();
       const exec = {
         ...real,
-        runFile: (file: string, args: string[], opts: ExecOptions) => {
+        runFileAsync: async (file: string, args: string[], opts: ExecOptions) => {
           if (file === 'plutil') throw new Error('Command failed: plutil\nNo value at that key path');
-          return real.runFile(file, args, opts);
+          return real.runFileAsync(file, args, opts);
         },
       };
       try {

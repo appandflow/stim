@@ -129,23 +129,23 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
 }
 
 // plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
-function readPlistKey(e: Executor, plist: string, key: string, format: 'raw' | 'json'): string | null {
+async function readPlistKey(e: Executor, plist: string, key: string, format: 'raw' | 'json'): Promise<string | null> {
   try {
-    return e.runFile('plutil', ['-extract', key, format, '-o', '-', plist], { timeoutMs: 10_000 });
+    return await e.runFileAsync('plutil', ['-extract', key, format, '-o', '-', plist], { timeoutMs: 10_000 });
   } catch (err) {
     if (/No value at that key path/.test(describe(err))) return null;
     throw err;
   }
 }
 
-function readAssetCatalogTarget(e: Executor, plist: string): AssetCatalogTarget | null {
-  const flag = readPlistKey(e, plist, 'RCTUseAssetCatalog', 'raw');
+async function readAssetCatalogTarget(e: Executor, plist: string): Promise<AssetCatalogTarget | null> {
+  const flag = await readPlistKey(e, plist, 'RCTUseAssetCatalog', 'raw');
   if (flag === null) return null;
-  const families = readPlistKey(e, plist, 'UIDeviceFamily', 'json');
+  const families = await readPlistKey(e, plist, 'UIDeviceFamily', 'json');
   return assetCatalogTarget({
     RCTUseAssetCatalog: flag,
-    DTPlatformName: readPlistKey(e, plist, 'DTPlatformName', 'raw'),
-    MinimumOSVersion: readPlistKey(e, plist, 'MinimumOSVersion', 'raw'),
+    DTPlatformName: await readPlistKey(e, plist, 'DTPlatformName', 'raw'),
+    MinimumOSVersion: await readPlistKey(e, plist, 'MinimumOSVersion', 'raw'),
     UIDeviceFamily: families === null ? undefined : JSON.parse(families),
   });
 }
@@ -289,10 +289,10 @@ export async function swapJsBundle({
     tmp = mkdtemp();
     appCopy = join(tmp, basename(cachedAppPath));
     try {
-      e.runFile('cp', ['-c', '-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
+      await e.runFileAsync('cp', ['-c', '-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     } catch {
       removeTemporaryEntry(appCopy);
-      e.runFile('cp', ['-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
+      await e.runFileAsync('cp', ['-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     }
   } catch (err) {
     return fail('copy', `could not copy ${cachedAppPath} aside: ${describe(err)}`);
@@ -301,7 +301,7 @@ export async function swapJsBundle({
   let catalogTarget: AssetCatalogTarget | null;
   const infoPlistPath = join(appCopy, 'Info.plist');
   try {
-    catalogTarget = readAssetCatalogTarget(e, infoPlistPath);
+    catalogTarget = await readAssetCatalogTarget(e, infoPlistPath);
   } catch (err) {
     return fail('catalog', `could not read ${infoPlistPath}: ${describe(err)}`);
   }
@@ -394,8 +394,8 @@ export async function swapJsBundle({
     } else {
       const hbc = join(tmp, `${JS_BUNDLE_NAME}.hbc`);
       try {
-        e.runFile(hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }), { timeoutMs: 'unbounded' });
-        e.runFile('mv', [hbc, bundleOutput], { timeoutMs: 30_000 });
+        await e.runFileAsync(hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }), { timeoutMs: 'unbounded' });
+        await e.runFileAsync('mv', [hbc, bundleOutput], { timeoutMs: 30_000 });
         hermes = true;
       } catch (err) {
         return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
@@ -404,8 +404,8 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)], { timeoutMs: 'unbounded' });
-    e.runFile('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`], { timeoutMs: 'unbounded' });
+    await e.runFileAsync('cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)], { timeoutMs: 'unbounded' });
+    await e.runFileAsync('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('replace', `could not replace the JS bundle inside ${appCopy}: ${describe(err)}`);
   }
@@ -416,7 +416,7 @@ export async function swapJsBundle({
       rmSync(catalogBundle, { recursive: true, force: true });
       if (readdirSync(catalogDir).some((name) => name.endsWith('.imageset'))) {
         mkdirSync(catalogBundle);
-        const output = e.runFile(
+        const output = await e.runFileAsync(
           'xcrun',
           actoolArgs({ catalog: catalogDir, out: catalogBundle, target: catalogTarget }),
           { timeoutMs: 'unbounded' },
@@ -455,7 +455,7 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('codesign', ['--force', '--sign', '-', appCopy], { timeoutMs: 'unbounded' });
+    await e.runFileAsync('codesign', ['--force', '--sign', '-', appCopy], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('codesign', `codesign --force --sign - ${appCopy} failed: ${describe(err)}`);
   }

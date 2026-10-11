@@ -287,7 +287,7 @@ export async function swapApkBundle({
     const base = basename(cachedApkPath);
     work = join(tmp, `unaligned-${base}`);
     final = join(tmp, base);
-    copyApk(e, cachedApkPath, work, platform);
+    await copyApk(e, cachedApkPath, work, platform);
   } catch (err) {
     return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
   }
@@ -373,7 +373,9 @@ export async function swapApkBundle({
     } else {
       const hbc = `${bundleOutput}.hbc`;
       try {
-        e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }), { timeoutMs: 'unbounded' });
+        await e.runFileAsync(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }), {
+          timeoutMs: 'unbounded',
+        });
         renameSync(hbc, bundleOutput);
         hermes = true;
       } catch (err) {
@@ -405,7 +407,7 @@ export async function swapApkBundle({
   const jar = jarPath();
   const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
   try {
-    e.runFile(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {
+    await e.runFileAsync(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {
       cwd: stage,
       timeoutMs: 'unbounded',
     });
@@ -419,7 +421,9 @@ export async function swapApkBundle({
     // runtime can mmap it straight out of the APK, and a deflated entry fails to
     // load. jar --update keeps every other entry's method and replaces the
     // staged assets/ entries in place.
-    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets'], { timeoutMs: 'unbounded' });
+    await e.runFileAsync(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets'], {
+      timeoutMs: 'unbounded',
+    });
   } catch (err) {
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
@@ -432,7 +436,7 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(tools.path, zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }), {
+    await e.runFileAsync(tools.path, zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }), {
       timeoutMs: 'unbounded',
     });
   } catch (err) {
@@ -449,7 +453,7 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(
+    await e.runFileAsync(
       signer.path,
       apksignerArgs({ keystore, apkPath: final }),
       keystore.password === null
@@ -477,10 +481,10 @@ export async function swapApkBundle({
 
 // libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFileSync reads
 // and writes every byte, while cp -c clones the APK on APFS in constant time.
-function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): void {
+async function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): Promise<void> {
   if (platform === 'darwin') {
     try {
-      e.runFile('cp', ['-c', from, to], { timeoutMs: 'unbounded' });
+      await e.runFileAsync('cp', ['-c', from, to], { timeoutMs: 'unbounded' });
       return;
     } catch {}
   }
