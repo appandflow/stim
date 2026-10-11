@@ -6,10 +6,14 @@ import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
 import { easMachineStateRoot } from './engine/eas-session-ledger.ts';
 import { parseSimctlList } from './devices/ios.ts';
+import { pidExists } from './metro.ts';
 
 export const WATCH_DEBOUNCE_MS = 250;
 export const WATCH_FALLBACK_MS = 30_000;
-export const WATCH_LIGHT_INTERVAL_MS = 15_000;
+export const WATCH_LIGHT_INTERVAL_MS = 1_000;
+export const WATCH_TABLES_INTERVAL_MS = 5_000;
+export const WATCH_MACHINE_INTERVAL_MS = 15_000;
+const WATCH_PROCESS_INTERVAL_MS = 2_000;
 export const WATCH_MEMORY_STEP_MB = 16;
 export const WATCH_CPU_STEP_PERCENT = 5;
 const WATCH_SIMCTL_INTERVAL_MS = 5_000;
@@ -123,6 +127,22 @@ export function statusChange(dir: WatchedDir, name: string | null): RefreshKind 
   }
 }
 
+/**
+ * Whether a change to `name`, relative to a repository's git common directory, can change a worktree's git summary:
+ * its HEAD, index or a ref, in the main worktree or a linked one. Objects, logs and lock files cannot on their own.
+ */
+export function gitChange(name: string | null): boolean {
+  if (name === null) return true;
+  const path = name.replaceAll('\\', '/');
+  if (path.endsWith('.lock')) return false;
+  return (
+    /^(HEAD|index|packed-refs|FETCH_HEAD)$/.test(path) ||
+    path.startsWith('refs/') ||
+    /^worktrees\/[^/]+(\/(HEAD|index))?$/.test(path) ||
+    path === 'worktrees'
+  );
+}
+
 /** A stable summary of every simulator's state, or null when the listing is unreadable. */
 function simulatorSignature(simctlJson: string): string | null {
   try {
@@ -138,6 +158,10 @@ function simulatorSignature(simctlJson: string): string | null {
 export interface StatusSources {
   /** Re-reads the workspace list and watches the directories that exist now. */
   reconcile(): void;
+  /** Watches these repositories' git common directories, and no others. */
+  watchRepositories(commonDirs: readonly string[]): void;
+  /** Reports a change when one of these processes exits; replaces the previous set. */
+  watchProcesses(pids: readonly number[]): void;
   /**
    * The output of the simulator poller's last readable listing, or null when that poll started more than two poll
    * intervals ago or before the last Stim state write: Stim creates, boots and shuts down simulators as it writes state.
@@ -148,8 +172,10 @@ export interface StatusSources {
 
 /**
  * Calls `onChange` when anything `stim status` reports may have changed:
- * `$STIM_HOME` files, adb device arrivals and departures, and simulator
- * state. simctl has no push API reachable from Node, so it is polled.
+ * `$STIM_HOME` files, git HEADs, indexes and refs of the watched repositories,
+ * exits of the watched processes, adb device arrivals and departures, and
+ * simulator state. simctl has no push API reachable from Node, so it is
+ * polled, and so is process liveness, with a signal 0 that spawns nothing.
  */
 export function watchStatusSources({
   home,
@@ -216,6 +242,39 @@ export function watchStatusSources({
     }
   };
 
+  const repositories = new Map<string, FSWatcher>();
+  const watchRepositories = (commonDirs: readonly string[]) => {
+    if (stopped) return;
+    const wanted = new Set(commonDirs);
+    for (const [dir, watcher] of repositories) {
+      if (wanted.has(dir)) continue;
+      watcher.close();
+      repositories.delete(dir);
+    }
+    for (const dir of wanted) {
+      if (repositories.has(dir)) continue;
+      try {
+        const watcher = watch(dir, { recursive: true }, (_event, name) => {
+          if (gitChange(name === null ? null : String(name))) onChange('full');
+        });
+        watcher.on('error', () => {
+          watcher.close();
+          repositories.delete(dir);
+        });
+        repositories.set(dir, watcher);
+      } catch {}
+    }
+  };
+
+  let processes: number[] = [];
+  const processTimer = setInterval(() => {
+    if (processes.some((pid) => !pidExists(pid))) {
+      processes = [];
+      onChange('full');
+    }
+  }, WATCH_PROCESS_INTERVAL_MS);
+  processTimer.unref();
+
   const adb = trackAdbDevices(() => onChange('full'));
 
   let simctl: ChildProcess | null = null;
@@ -255,6 +314,10 @@ export function watchStatusSources({
 
   return {
     reconcile,
+    watchRepositories,
+    watchProcesses(pids) {
+      processes = [...new Set(pids)];
+    },
     simulatorListing: () =>
       listing && listing.at > listingStaleBefore && Date.now() - listing.at <= 2 * simctlIntervalMs
         ? listing.json
@@ -263,6 +326,9 @@ export function watchStatusSources({
       stopped = true;
       for (const watcher of watchers.values()) watcher.close();
       watchers.clear();
+      for (const watcher of repositories.values()) watcher.close();
+      repositories.clear();
+      clearInterval(processTimer);
       if (simTimer) clearInterval(simTimer);
       simctl?.kill('SIGKILL');
       adb.stop();

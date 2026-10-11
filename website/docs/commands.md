@@ -1205,10 +1205,14 @@ its value from the previous line until it moves by 5 percentage points or 16 MB;
 resident memory and process counts follow their owner's row, and `capacity.committedMb` is held on its own, so it can differ from the sum of the environments' `memoryMb`.
 A change in only a bookkeeping timestamp (each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and `durationMs`, `maintenance.running.startedAt`) prints no line; a line that prints carries the current values.
 It reacts to changes in
-`$STIM_HOME` state and the EAS session ledger, adb device arrivals and
-departures, and simulator state, and recomputes every 30 seconds as a
-fallback. A log append updates only the log error count and device activity,
-no sooner than 15 seconds after the previous refresh. With `--json`, while
+`$STIM_HOME` state and the EAS session ledger, git HEAD, index and ref changes
+in the worktrees' repositories, the exit of a recorded supervisor, Metro,
+build, browser or macOS app process (checked every 2 seconds), adb device
+arrivals and departures, and simulator state (polled every 5 seconds), and
+recomputes every 30 seconds as a fallback. A log append updates the
+log-derived facts within about a second; device activity follows at most every
+5 seconds. The first line does not wait for git: worktree git summaries can be
+`null` in it, and the next line carries them. With `--json`, while
 `machine` is not `null`, it rereads the process table every 15 seconds so
 `machine` stays current. It exits with status 0
 on Ctrl+C, SIGTERM, or when its stdout closes. On Linux it also exits when the

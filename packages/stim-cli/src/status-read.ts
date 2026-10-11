@@ -172,6 +172,8 @@ export interface StatusSnapshot {
   leaseNow: number;
   orphanWorktrees: WorktreeFacts[];
   worktrees: WorktreeFacts[];
+  /** The git common directories of the repositories `worktrees` belong to. */
+  gitCommonDirs: string[];
   simsAvailable: boolean;
   simctlError: string | null;
   cwdRoot: string | null;
@@ -235,18 +237,20 @@ export function liveProbes({
   };
 }
 
+type GitScope = 'all' | 'live' | 'none';
+
 /**
  * Reads the status of every environment. With `git: 'all'` it reads the git summary of every worktree before
- * composing; with `'live'` only those of live environments, after composing.
+ * composing; with `'live'` only those of live environments, after composing; with `'none'` no git summary.
  */
 export function readStatus({
   probes = liveProbes(),
   git = 'live',
-}: { probes?: StatusProbes; git?: 'all' | 'live' } = {}): Promise<StatusSnapshot> {
+}: { probes?: StatusProbes; git?: GitScope } = {}): Promise<StatusSnapshot> {
   return withStateReadCache(() => readStatusFacts(probes, git));
 }
 
-async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): Promise<StatusSnapshot> {
+async function readStatusFacts(probes: StatusProbes, gitScope: GitScope): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const iosReads = projects.map(([path]) => probes.hostedIos(hostedIosPlacements(readWorkspaceState(path))));
@@ -255,7 +259,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): 
   );
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
-  const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
+  const { worktrees, commonDirs } = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
     projects.map(([p]) => p),
@@ -486,6 +490,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): 
     roots,
     simNames,
     probes,
+    gitCommonDirs: commonDirs,
   };
 }
 
@@ -577,22 +582,28 @@ async function readMachineUsage({
 }
 
 /**
- * Rereads only the error counts, device activity and machine usage. With `machine`, and when the snapshot measured
- * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
+ * Rereads the log-derived facts and the cached measures. With `tables` it also rereads the process tables and the
+ * device activity they show; with `machine` as well, and when the snapshot measured machine usage, the host process
+ * table and machine usage. It reuses every other subprocess fact of the full read.
  */
-export async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Promise<void> {
-  const fresh = snapshot.probes.deviceTables();
-  snapshot.tables = {
-    host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
-    android: snapshot.tables.android,
-    tcpConnections: fresh.tcpConnections,
-    clients: fresh.host,
-  };
+export async function refreshLightFacts(
+  snapshot: StatusSnapshot,
+  { tables, machine }: { tables: boolean; machine: boolean },
+): Promise<void> {
+  if (tables) {
+    const fresh = snapshot.probes.deviceTables();
+    snapshot.tables = {
+      host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
+      android: snapshot.tables.android,
+      tcpConnections: fresh.tcpConnections,
+      clients: fresh.host,
+    };
+  }
   withStateReadCache(() => {
     for (const state of snapshot.states) state.logs = logFacts(state.path);
     applyStatusMeasures(snapshot.states, snapshot.worktrees);
     readLogDerivedFacts(snapshot.states);
-    readDeviceProcesses(snapshot.states, snapshot.tables, null);
+    if (tables) readDeviceProcesses(snapshot.states, snapshot.tables, null);
   });
   if (machine && snapshot.machine) {
     snapshot.machine = await readMachineUsage({ ...snapshot, busy: true });
@@ -671,12 +682,13 @@ function readMetroReverses(
   }
 }
 
-function linkedWorktrees(paths: string[]): WorktreeFacts[] {
-  const commonDirs = new Set(paths.flatMap((path) => gitCommonDirOnDisk(path) ?? []));
-  return [...commonDirs].flatMap((common) => {
+function linkedWorktrees(paths: string[]): { worktrees: WorktreeFacts[]; commonDirs: string[] } {
+  const commonDirs = [...new Set(paths.flatMap((path) => gitCommonDirOnDisk(path) ?? []))];
+  const worktrees = commonDirs.flatMap((common) => {
     const repository = basename(common) === '.git' ? dirname(common) : common;
     return linkedWorktreesOnDisk(common).map((entry) => Object.assign(entry, { repository }));
   });
+  return { worktrees, commonDirs };
 }
 
 function workspaceBuilds(
