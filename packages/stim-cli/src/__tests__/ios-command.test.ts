@@ -8976,7 +8976,7 @@ describe('registered iOS project recipes', () => {
           getProject: () => getProject(root),
           readBrowser: () => null,
           resolveIos: () => ({ sim: makeIosSim({ udid: UDID, state: 'Booted' }) }),
-          iosProcess: () => ({ state: 'running', pid: 4242 }),
+          iosProcess: async () => ({ state: 'running', pid: 4242 }),
           resolveMetro: async () => {
             throw new Error('native reload must not probe Metro');
           },

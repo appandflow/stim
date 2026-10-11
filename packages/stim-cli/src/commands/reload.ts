@@ -141,14 +141,16 @@ async function reloadBrowser(
   };
 }
 
-function processFailure(
+async function processFailure(
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   d: ReloadDeps,
   slot = 'default',
-): ReloadFailure | null {
+): Promise<ReloadFailure | null> {
   const { state } =
-    platform === 'ios' ? d.iosProcess(record.deviceId, record.appId) : d.androidProcess(record.deviceId, record.appId);
+    platform === 'ios'
+      ? await d.iosProcess(record.deviceId, record.appId)
+      : await d.androidProcess(record.deviceId, record.appId);
   if (state === 'unknown') {
     const probe =
       platform === 'ios'
@@ -170,13 +172,13 @@ function processFailure(
   return null;
 }
 
-function inspectTarget(
+async function inspectTarget(
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,
   project: ProjectRecord,
   d: ReloadDeps,
   slot = 'default',
-): LiveTarget | TargetFailure {
+): Promise<LiveTarget | TargetFailure> {
   const runCommand = nativeRunCommand(platform, slot);
   if (platform === 'ios') {
     const configured = project.platforms?.ios;
@@ -213,7 +215,7 @@ function inspectTarget(
         ),
       };
     }
-    const stopped = processFailure(platform, record, d, slot);
+    const stopped = await processFailure(platform, record, d, slot);
     if (stopped) return { platform, error: stopped };
     return { platform, slot, record, deviceName: resolved.sim.name };
   }
@@ -252,7 +254,7 @@ function inspectTarget(
       ),
     };
   }
-  const stopped = processFailure(platform, record, d, slot);
+  const stopped = await processFailure(platform, record, d, slot);
   if (stopped) return { platform, error: stopped };
   return { platform, slot, record, deviceName: configured.avdName };
 }
@@ -336,43 +338,47 @@ export async function runReload({
     ),
   );
   const launches = d.readLaunches(root);
-  const inspected = Object.entries(launches).flatMap(([key, record]) => {
-    const parsed = parseDeviceSlotKey(key);
-    if (!parsed || (platform && parsed.platform !== platform)) return [];
-    if (hostedFailures[`${parsed.platform}:${parsed.slot}`]) return [];
-    const placement = hosted[parsed.platform][parsed.slot];
-    if (placement) {
-      const probe = hostedProbes[`${parsed.platform}:${parsed.slot}`]!;
-      return [
-        probe.state === 'ready' && record.deviceId === placement.session
-          ? {
-              platform: parsed.platform,
-              slot: parsed.slot,
-              record,
-              hosted: true,
-              ...(parsed.platform === 'android' ? { hostedAndroid: placement as HostedAndroidPlacement } : {}),
-              deviceName: `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${parsed.platform} device`} on ${placement.machine}`,
-            }
-          : {
-              platform: parsed.platform,
-              error: failure(
-                'STIM_RELOAD_PROBE_FAILED',
-                `The ${parsed.platform} session on ${placement.machine} is ${probe.state}.`,
-                `Run stim ${parsed.platform} --remote ${placement.machine} or stim stop to reconcile it.`,
-              ),
-            },
-      ];
-    }
-    return [
-      inspectTarget(
-        parsed.platform,
-        record,
-        { ...project, platforms: deviceSlotPlatforms(project, parsed.slot) },
-        d,
-        parsed.slot,
-      ),
-    ];
-  });
+  const inspected = (
+    await Promise.all(
+      Object.entries(launches).map(async ([key, record]) => {
+        const parsed = parseDeviceSlotKey(key);
+        if (!parsed || (platform && parsed.platform !== platform)) return [];
+        if (hostedFailures[`${parsed.platform}:${parsed.slot}`]) return [];
+        const placement = hosted[parsed.platform][parsed.slot];
+        if (placement) {
+          const probe = hostedProbes[`${parsed.platform}:${parsed.slot}`]!;
+          return [
+            probe.state === 'ready' && record.deviceId === placement.session
+              ? {
+                  platform: parsed.platform,
+                  slot: parsed.slot,
+                  record,
+                  hosted: true,
+                  ...(parsed.platform === 'android' ? { hostedAndroid: placement as HostedAndroidPlacement } : {}),
+                  deviceName: `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${parsed.platform} device`} on ${placement.machine}`,
+                }
+              : {
+                  platform: parsed.platform,
+                  error: failure(
+                    'STIM_RELOAD_PROBE_FAILED',
+                    `The ${parsed.platform} session on ${placement.machine} is ${probe.state}.`,
+                    `Run stim ${parsed.platform} --remote ${placement.machine} or stim stop to reconcile it.`,
+                  ),
+                },
+          ];
+        }
+        return [
+          await inspectTarget(
+            parsed.platform,
+            record,
+            { ...project, platforms: deviceSlotPlatforms(project, parsed.slot) },
+            d,
+            parsed.slot,
+          ),
+        ];
+      }),
+    )
+  ).flat();
   inspected.push(...Object.values(hostedFailures));
   const live = inspected.filter((target): target is LiveTarget => !isTargetFailure(target));
 
@@ -466,7 +472,7 @@ export async function runReload({
       ),
     };
   }
-  const stopped = target.hosted ? null : processFailure(target.platform, target.record, d, target.slot);
+  const stopped = target.hosted ? null : await processFailure(target.platform, target.record, d, target.slot);
   if (stopped) return { ok: false, error: stopped };
 
   const reverseRestored: string[] = [];
@@ -519,7 +525,9 @@ export async function runReload({
   }
   const reloaded = await d.reloadMetro(port, request);
   if (!reloaded.ok) {
-    const stoppedAfterMetro = target.hosted ? null : processFailure(target.platform, target.record, d, target.slot);
+    const stoppedAfterMetro = target.hosted
+      ? null
+      : await processFailure(target.platform, target.record, d, target.slot);
     if (stoppedAfterMetro) return { ok: false, error: stoppedAfterMetro };
     if (target.hosted)
       return {

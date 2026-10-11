@@ -281,9 +281,9 @@ async function verifyIosMetroRun({
           ? null
           : physical
             ? deviceProcess
-            : () => {
+            : async () => {
                 if (launched?.pid) return d.pidExists(launched.pid);
-                const running = iosAppProcess(udid, bundleId);
+                const running = await iosAppProcess(udid, bundleId);
                 return running.state === 'unknown' ? null : running.state === 'running';
               },
       })

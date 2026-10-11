@@ -7966,7 +7966,7 @@ describe('registered Android project recipes', () => {
           findWorkspace: () => root,
           getProject: () => getProject(root),
           resolveAndroid: () => ({ serial: 'emulator-5584' }),
-          androidProcess: () => ({ state: 'running', pid: 4242 }),
+          androidProcess: async () => ({ state: 'running', pid: 4242 }),
           readBrowser: () => null,
           resolveMetro: never('a native reload Metro probe'),
           reloadMetro: never('a native reload Metro command'),

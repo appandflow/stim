@@ -34,29 +34,30 @@ function recordingExec({
   fail = null,
 }: { outputs?: Record<string, string>; fail?: string | null } = {}): RecordingExec {
   const calls: string[][] = [];
+  const record = (file: string, args: string[] = []) => {
+    calls.push([file, ...args]);
+    const key = [file, ...args].join(' ');
+    if (fail && key.includes(fail)) throw new Error(`Command failed: ${key}`);
+    for (const [match, value] of Object.entries(outputs)) if (key.includes(match)) return value;
+    return '';
+  };
   return {
     calls,
-    runFile(file: string, args: string[] = []) {
-      calls.push([file, ...args]);
-      const key = [file, ...args].join(' ');
-      if (fail && key.includes(fail)) throw new Error(`Command failed: ${key}`);
-      for (const [match, value] of Object.entries(outputs)) if (key.includes(match)) return value;
-      return '';
-    },
+    runFileAsync: async (file: string, args: string[] = []) => record(file, args),
     run: () => {
-      throw new Error('the identity check must use runFile, not the shell');
+      throw new Error('the identity check must use runFileAsync, not the shell');
     },
     runQuiet: () => {
-      throw new Error('the identity check must use runFile, not the shell');
+      throw new Error('the identity check must use runFileAsync, not the shell');
+    },
+    runFile: () => {
+      throw new Error('the identity check must use runFileAsync, not runFile');
     },
     runFileQuiet: () => {
-      throw new Error('the identity check must use runFile, not runFileQuiet');
-    },
-    runFileAsync: () => {
-      throw new Error('the identity check must use runFile, not runFileAsync');
+      throw new Error('the identity check must use runFileAsync, not runFileQuiet');
     },
     runFileQuietAsync: () => {
-      throw new Error('the identity check must use runFile, not runFileQuietAsync');
+      throw new Error('the identity check must use runFileAsync, not runFileQuietAsync');
     },
     spawn: () => {
       throw new Error('the identity check does not spawn');
@@ -193,7 +194,7 @@ describe('deviceHoldsApk', () => {
     return path;
   }
 
-  test('an identical APK on the device is a match, asked for by pm path then sha256sum', () => {
+  test('an identical APK on the device is a match, asked for by pm path then sha256sum', async () => {
     const apkPath = localApk();
     const exec = recordingExec({
       outputs: {
@@ -201,54 +202,64 @@ describe('deviceHoldsApk', () => {
         sha256sum: `${hashFile(apkPath)}  /data/app/a/base.apk\n`,
       },
     });
-    expect(deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(true);
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      true,
+    );
     expect(exec.calls).toEqual([
       ['adb', '-s', 'emulator-5584', 'shell', 'pm', 'path', 'com.example.app'],
       ['adb', '-s', 'emulator-5584', 'shell', 'sha256sum', '/data/app/a/base.apk'],
     ]);
   });
 
-  test('a different APK on the device is not a match', () => {
+  test('a different APK on the device is not a match', async () => {
     const exec = recordingExec({
       outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: `${SHA}  /data/app/a/base.apk\n` },
     });
     const apkPath = localApk();
-    expect(deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(false);
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      false,
+    );
   });
 
-  test('a device with no sha256sum is unknown, so it never matches', () => {
+  test('a device with no sha256sum is unknown, so it never matches', async () => {
     const exec = recordingExec({
       outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: 'sha256sum: not found' },
     });
     const apkPath = localApk();
-    expect(deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(false);
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      false,
+    );
   });
 
-  test('a package that is not installed is asked once and never hashed', () => {
+  test('a package that is not installed is asked once and never hashed', async () => {
     const exec = recordingExec();
     const apkPath = localApk();
-    expect(deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(false);
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      false,
+    );
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5584', 'shell', 'pm', 'path', 'com.example.app']]);
   });
 
-  test('an adb that fails is unknown, so it never matches', () => {
+  test('an adb that fails is unknown, so it never matches', async () => {
     const apkPath = localApk();
     const failPath = recordingExec({ fail: 'pm path' });
     expect(
-      deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec: failPath }),
+      await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec: failPath }),
     ).toBe(false);
     const failHash = recordingExec({ outputs: { 'pm path': 'package:/data/app/a/base.apk\n' }, fail: 'sha256sum' });
     expect(
-      deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec: failHash }),
+      await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec: failHash }),
     ).toBe(false);
   });
 
-  test('a local APK that cannot be read is unknown, so it never matches', () => {
+  test('a local APK that cannot be read is unknown, so it never matches', async () => {
     const exec = recordingExec({
       outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: `${SHA}  /data/app/a/base.apk\n` },
     });
     const apkPath = join(dir, 'gone.apk');
-    expect(deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(false);
+    expect(await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example.app', apkPath }, { exec })).toBe(
+      false,
+    );
   });
 });
 
@@ -260,28 +271,28 @@ describe('deviceHoldsBundle', () => {
     return root;
   }
 
-  test('an identical .app in the simulator container is a match', () => {
+  test('an identical .app in the simulator container is a match', async () => {
     const installed = bundleAt('installed.app', 'macho');
     const appPath = bundleAt('built.app', 'macho');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    expect(deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec })).toBe(true);
+    expect(await deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec })).toBe(true);
     expect(exec.calls).toEqual([['xcrun', 'simctl', 'get_app_container', 'BF2A', 'com.example.app']]);
   });
 
-  test('a different .app in the container is not a match', () => {
+  test('a different .app in the container is not a match', async () => {
     const installed = bundleAt('installed.app', 'macho');
     const appPath = bundleAt('built.app', 'macho with fresh js');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    expect(deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec })).toBe(false);
+    expect(await deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec })).toBe(false);
   });
 
-  test('an app that is not installed, or a simctl that fails, is unknown', () => {
+  test('an app that is not installed, or a simctl that fails, is unknown', async () => {
     const appPath = bundleAt('built.app', 'macho');
-    expect(deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec: recordingExec() })).toBe(
-      false,
-    );
     expect(
-      deviceHoldsBundle(
+      await deviceHoldsBundle({ udid: 'BF2A', bundleId: 'com.example.app', appPath }, { exec: recordingExec() }),
+    ).toBe(false);
+    expect(
+      await deviceHoldsBundle(
         { udid: 'BF2A', bundleId: 'com.example.app', appPath },
         { exec: recordingExec({ fail: 'get_app_container' }) },
       ),

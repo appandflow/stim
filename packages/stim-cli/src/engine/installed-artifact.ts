@@ -97,15 +97,17 @@ export function hashBundle(dir: string): string | null {
   return walk(dir, '') ? digest.digest('hex') : null;
 }
 
-export function deviceHoldsApk(
+export async function deviceHoldsApk(
   { serial, packageName, apkPath }: { serial: string; packageName: string; apkPath: string },
   { exec = null }: { exec?: Executor | null } = {},
-): boolean {
+): Promise<boolean> {
   const e = exec || getExecutor();
   let path: string | null;
   try {
     path = parseInstalledApkPath(
-      e.runFile('adb', ['-s', serial, 'shell', 'pm', 'path', packageName], { timeoutMs: DEVICE_PATH_TIMEOUT_MS }),
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'path', packageName], {
+        timeoutMs: DEVICE_PATH_TIMEOUT_MS,
+      }),
     );
   } catch {
     return false;
@@ -114,7 +116,7 @@ export function deviceHoldsApk(
   let installed: string | null;
   try {
     installed = parseDeviceSha256(
-      e.runFile('adb', ['-s', serial, 'shell', 'sha256sum', path], { timeoutMs: DEVICE_HASH_TIMEOUT_MS }),
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'sha256sum', path], { timeoutMs: DEVICE_HASH_TIMEOUT_MS }),
     );
   } catch {
     return false;
@@ -123,15 +125,17 @@ export function deviceHoldsApk(
   return artifactsMatch(hashFile(apkPath), installed);
 }
 
-export function deviceHoldsBundle(
+export async function deviceHoldsBundle(
   { udid, bundleId, appPath }: { udid: string; bundleId: string; appPath: string },
   { exec = null }: { exec?: Executor | null } = {},
-): boolean {
+): Promise<boolean> {
   const e = exec || getExecutor();
   let container: string | null;
   try {
     container = parseAppContainerPath(
-      e.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId], { timeoutMs: DEVICE_PATH_TIMEOUT_MS }),
+      await e.runFileAsync('xcrun', ['simctl', 'get_app_container', udid, bundleId], {
+        timeoutMs: DEVICE_PATH_TIMEOUT_MS,
+      }),
     );
   } catch {
     return false;

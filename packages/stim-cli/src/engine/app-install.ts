@@ -121,7 +121,8 @@ export async function installIosApp(
 ): Promise<IosInstallResult> {
   const e = exec || getExecutor();
   const artifactStartedAt = now?.();
-  const skipped = bundleId && proveInstalled ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
+  const skipped =
+    bundleId && proveInstalled ? await deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
       await e.runFileAsync('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
@@ -267,13 +268,17 @@ export function appProcessFromPid(pid: number | null): AppProcessProbe {
   return pid === null ? { state: 'stopped' } : { state: 'running', pid };
 }
 
-export function iosAppProcess(udid: string, bundleId: string, { exec = null }: ExecOpt = {}): AppProcessProbe {
+export async function iosAppProcess(
+  udid: string,
+  bundleId: string,
+  { exec = null }: ExecOpt = {},
+): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   const started = performance.now();
   let probe: AppProcessProbe = { state: 'unknown' };
   let failure: { code?: string; exit?: number } = {};
   try {
-    const out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
+    const out = await e.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
     const label = `UIKitApplication:${bundleId}[`;
     probe = { state: 'stopped' };
     for (const line of out.split('\n')) {
@@ -304,14 +309,19 @@ export function iosAppProcess(udid: string, bundleId: string, { exec = null }: E
   }
 }
 
-function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: string, exec: Executor): number | null {
+async function launchedIosAppAfterNoHandle(
+  error: unknown,
+  udid: string,
+  bundleId: string,
+  exec: Executor,
+): Promise<number | null> {
   const stderr = String((error as { stderr?: unknown })?.stderr ?? '');
   if (
     !stderr.includes('domain=NSPOSIXErrorDomain, code=3') ||
     !stderr.includes(`Application launch for '${bundleId}' did not return a process handle nor launch error.`)
   )
     return null;
-  const probe = iosAppProcess(udid, bundleId, { exec });
+  const probe = await iosAppProcess(udid, bundleId, { exec });
   return probe.state === 'running' ? probe.pid : null;
 }
 
@@ -334,7 +344,7 @@ export async function launchIosApp(
   { exec = null }: ExecOpt = {},
 ): Promise<IosLaunchResult> {
   const e = exec || getExecutor();
-  const running = iosAppProcess(udid, bundleId, { exec: e });
+  const running = await iosAppProcess(udid, bundleId, { exec: e });
   const stateUnknown = running.state === 'unknown';
   const launchArgs = [
     'simctl',
@@ -406,7 +416,7 @@ export async function launchIosApp(
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
         const pid =
-          launchedWithInitialUrl && !stateUnknown ? launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
+          launchedWithInitialUrl && !stateUnknown ? await launchedIosAppAfterNoHandle(err, udid, bundleId, e) : null;
         if (pid && pid !== restart.restartedPid)
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         return {
@@ -424,7 +434,7 @@ export async function launchIosApp(
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;
   } catch (err) {
-    const pid = stateUnknown ? null : launchedIosAppAfterNoHandle(err, udid, bundleId, e);
+    const pid = stateUnknown ? null : await launchedIosAppAfterNoHandle(err, udid, bundleId, e);
     if (pid && pid !== restart.restartedPid) {
       const result: IosLaunchResult = { ok: true, mode: 'launch', pid, ...restart };
       if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
@@ -466,7 +476,7 @@ export async function installAndroidApp(
   { exec = null }: ExecOpt = {},
 ): Promise<AndroidInstallResult> {
   const e = exec || getExecutor();
-  if (packageName && deviceHoldsApk({ serial, packageName, apkPath }, { exec: e })) {
+  if (packageName && (await deviceHoldsApk({ serial, packageName, apkPath }, { exec: e }))) {
     return { ok: true, apkPath, skipped: true };
   }
   const install = async () => {
@@ -716,7 +726,7 @@ async function stopRunningAndroidApp(
   packageName: string,
   exec: Executor,
 ): Promise<{ restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string }> {
-  const running = androidAppProcess(serial, packageName, { exec });
+  const running = await androidAppProcess(serial, packageName, { exec });
   if (running.state === 'stopped') return {};
   if (running.state !== 'running') return { stopOnStart: true };
   try {
@@ -888,15 +898,21 @@ export function parsePsPid(text: unknown, packageName: string): number | null {
   return null;
 }
 
-export function androidAppProcess(serial: string, packageName: string, { exec = null }: ExecOpt = {}): AppProcessProbe {
+export async function androidAppProcess(
+  serial: string,
+  packageName: string,
+  { exec = null }: ExecOpt = {},
+): Promise<AppProcessProbe> {
   const e = exec || getExecutor();
   try {
-    const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS));
+    const pid = parsePidof(
+      await e.runFileAsync('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS),
+    );
     if (pid !== null) return { state: 'running', pid };
   } catch {}
   try {
     return appProcessFromPid(
-      parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName),
+      parsePsPid(await e.runFileAsync('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName),
     );
   } catch {
     return { state: 'unknown' };
