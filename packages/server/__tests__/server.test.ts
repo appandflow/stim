@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import {
   cpSync,
   chmodSync,
@@ -2971,10 +2972,12 @@ describe('status views', () => {
     expect(await client.request('workspaces.subscribe')).toMatchObject({ result: { subscription: 's1' } });
     const first = (await client.next()) as WorkspacesEvent;
     expect(first).toMatchObject({ event: 'workspaces', subscription: 's1', seq: 0 });
-    expect(first.snapshot!.workspaces.map((summary) => summary.path)).toEqual(['/work/app', '/work/other']);
-    expect(first.snapshot!.workspaces[0]!.logs).toEqual({ errorsSinceMarker: 0 });
-    expect(first.snapshot!.worktrees).toEqual([{ path: '/work/loose', branch: 'loose', repository: '/work' }]);
-    expect(first.snapshot!.archived).toEqual({
+    const snapshot = first.snapshot;
+    assert(snapshot);
+    expect(snapshot.workspaces.map((summary) => summary.path)).toEqual(['/work/app', '/work/other']);
+    expect(snapshot.workspaces[0]?.logs).toEqual({ errorsSinceMarker: 0 });
+    expect(snapshot.worktrees).toEqual([{ path: '/work/loose', branch: 'loose', repository: '/work' }]);
+    expect(snapshot.archived).toEqual({
       count: 3,
       bytes: 3,
       newest: ['b', 'c', 'a'].map((id) => ({
@@ -2982,7 +2985,7 @@ describe('status views', () => {
         projectRoot: `/work/${id}`,
         project: id,
         workspace: `${id}--0`,
-        removedAt: archived.find((each) => each.id === id)!.removedAt,
+        removedAt: archived.find((each) => each.id === id)?.removedAt,
       })),
     });
     expect(await client.next()).toEqual({
