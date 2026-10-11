@@ -1415,7 +1415,7 @@ Events are `{ "event", "subscription", ... }`.
   right before it, `logs` only `errorsSinceMarker`, a pull request no
   `reviewDecision` or `checkedAt`, and a macOS app no launch `arguments`.
   `worktrees` are the unprovisioned worktrees' `path`, `branch`, `repository`,
-  `gitChip` and pull request `number` and `state`; `archived` is
+  `git`, `gitChip` and pull request `number` and `state`; `archived` is
   `{ "count", "bytes", "newest" }` with the 10 newest archives. Later events
   carry only what changed: `workspaces` and `worktrees` as
   `{ "upsert", "remove" }` (whole entries by `path`, and the paths that are

@@ -275,7 +275,7 @@ describe('status live views stay within their size budget', () => {
 
   test('the workspace list snapshot', () => {
     const list = { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived };
-    expect(bytes(list)).toBeLessThanOrEqual(8 * 1024 + busy * 32 * 1024 + quiet * 3 * 1024 + worktrees * 384);
+    expect(bytes(list)).toBeLessThanOrEqual(8 * 1024 + busy * 32 * 1024 + quiet * 3 * 1024 + worktrees * 512);
   });
 
   test('a list update carries only the workspace that changed', () => {

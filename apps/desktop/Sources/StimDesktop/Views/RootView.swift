@@ -361,6 +361,7 @@ struct RootView: View {
       navigate(previousSelection ?? .overview, .automatic("archived workspace no longer listed"))
     }
     .onChange(of: selection, initial: true) { old, item in
+      if case .environment(let path) = item { store.show(workspace: path) } else { store.show(workspace: nil) }
       let name = item?.logName ?? "none"
       let cause = navigation.takeCause()
       if old == item {

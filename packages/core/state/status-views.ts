@@ -39,7 +39,7 @@ export type WorkspaceSummary = Omit<
 };
 
 /** An unprovisioned worktree as the workspace list shows it. */
-export type WorktreeRow = Pick<WorktreeFacts, 'path' | 'branch' | 'repository' | 'gitChip'> & {
+export type WorktreeRow = Pick<WorktreeFacts, 'path' | 'branch' | 'repository' | 'git' | 'gitChip'> & {
   pullRequest?: { number: number; state: string } | null;
 };
 
@@ -119,10 +119,11 @@ export function workspaceSummary(environment: StatusPayload['environments'][numb
   return summary;
 }
 
-function worktreeRow({ path, branch, repository, gitChip, pullRequest }: WorktreeFacts): WorktreeRow {
+function worktreeRow({ path, branch, repository, git, gitChip, pullRequest }: WorktreeFacts): WorktreeRow {
   const row: WorktreeRow = { path };
   if (branch !== undefined) row.branch = branch;
   if (repository !== undefined) row.repository = repository;
+  if (git !== undefined) row.git = git;
   if (gitChip !== undefined) row.gitChip = gitChip;
   if (pullRequest !== undefined)
     row.pullRequest = pullRequest && { number: pullRequest.number, state: pullRequest.state };

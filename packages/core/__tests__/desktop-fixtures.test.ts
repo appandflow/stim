@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { event, responses } from '../receive-validators.mjs';
 import { statusViews } from '../state/index.ts';
 
@@ -62,4 +62,23 @@ test.each(statusFixtures)('the live views of desktop fixture %s are events the p
     { event: 'machine', subscription: 's3', seq: 0, machine },
   ];
   for (const message of events) expect(issues(event as Validator, message)).toEqual([]);
+});
+
+// Desktop decodes this fixture in StatusViewsTests. Regenerate it with WRITE_DESKTOP_FIXTURES=1 after changing the views.
+test('the desktop live-views fixture is the workspace list and machine view of status.json', () => {
+  const views = statusViews(read(new URL('status.json', stimKitFixtures)));
+  const [detail] = views.details.values();
+  const { workspaces, worktrees, archived, machine } = views;
+  const fixture = `${JSON.stringify(
+    {
+      workspaces: { event: 'workspaces', subscription: 's1', seq: 0, snapshot: { workspaces, worktrees, archived } },
+      workspace: { event: 'workspace', subscription: 's2', seq: 0, environment: detail ?? null },
+      machine: { event: 'machine', subscription: 's3', seq: 0, machine },
+    },
+    null,
+    2,
+  )}\n`;
+  const file = new URL('live-views.json', stimKitFixtures);
+  if (process.env.WRITE_DESKTOP_FIXTURES) writeFileSync(file, fixture);
+  expect(readFileSync(file, 'utf8')).toBe(fixture);
 });

@@ -35,6 +35,7 @@ public final class StatusStore: ObservableObject {
   private var restartTimer: Timer?
   private var serverActive = false
   private var serverConnection: (client: ServerClient, home: String)?
+  private var shownWorkspace: String?
   private lazy var serverFeed = ServerStatusFeed(
     onPayload: { [weak self] in self?.accept($0) },
     onDelivering: { [weak self] in self?.serverDelivering($0) })
@@ -229,6 +230,7 @@ public final class StatusStore: ObservableObject {
           payload.environments[i].project = self.project(ofPath: payload.environments[i].path)
         }
         self.payload = payload
+        self.followShown()
         self.error = nil
         self.updatedAt = Date()
         LaunchMilestones.reach(
@@ -236,6 +238,19 @@ public final class StatusStore: ObservableObject {
         self.checkDoctor()
       }
     }
+  }
+
+  /// Follows the full environment of `path`, the workspace a screen shows, instead of its summary; nil for none.
+  public func show(workspace path: String?) {
+    guard path != shownWorkspace else { return }
+    shownWorkspace = path
+    followShown()
+  }
+
+  private func followShown() {
+    var paths = Set(payload?.environments.filter { $0.tutorial != nil }.map(\.path) ?? [])
+    if let shownWorkspace { paths.insert(shownWorkspace) }
+    serverFeed.follow(paths)
   }
 
   public func project(of env: Workspace) -> Project {

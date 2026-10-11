@@ -265,7 +265,7 @@ export type PhoneStatusPayload = Omit<
   ownLeases?: string[];
 };
 export type PhoneWorkspaceSummary = PhoneEnvironmentState;
-export type PhoneWorktreeRow = Pick<PhoneWorktreeFacts, 'path' | 'branch' | 'repository' | 'gitChip'> & {
+export type PhoneWorktreeRow = Pick<PhoneWorktreeFacts, 'path' | 'branch' | 'repository' | 'git' | 'gitChip'> & {
   pullRequest?: { number: number; state: string } | null;
 };
 export type PhoneArchivedWorkspace = NonNullable<PhoneStatusPayload['archived']>[number];
