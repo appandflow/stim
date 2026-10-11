@@ -174,8 +174,8 @@ struct NowBand: View {
         .accessibilityLabel("CPU, \(formatPercent(owner.cpuPercent))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      Text(Format.memory(Int64(owner.memory) * 1_048_576))
-        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memory) * 1_048_576))")
+      Text(Format.memory(Int64(owner.memoryMb) * 1_048_576))
+        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memoryMb) * 1_048_576))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }

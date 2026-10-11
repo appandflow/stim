@@ -3,8 +3,7 @@
 A macOS app for supervising Stim workspaces: every worktree on the machine,
 grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
-and memory (the physical footprint `stim status` measures, or resident memory
-from an older `stim`).
+and memory (the physical footprint `stim status` measures).
 
 It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stim stats --json`,
 `stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
@@ -453,8 +452,7 @@ serves the same canonical Stim home as the CLI, the app subscribes to the server
 `status --watch`. The app ends its own watcher with the feed's first payload, so one
 `status --watch` runs per Stim home, and starts it again when the server session
 closes, errors or stops reading. At launch the watcher runs until the server delivers. If the watcher exits, the app restarts it after a delay that
-doubles from 1 to 30 seconds. A `stim` without `--watch` makes the app run
-`stim status --json` every 10 seconds instead.
+doubles from 1 to 30 seconds.
 
 A running build's progress bar carries its resolved cache outcome: "Cache hit"
 or "Cold build" / "Cache miss". Historical outcome estimates do not appear as
@@ -718,8 +716,7 @@ Agent (`agent`, what agent-device did on the workspace's devices) sources, a
 slot, a minimum level, a regular expression search (`--grep`), and `--errors`.
 With every source selected no `--source` is passed, so **Errors only** keeps
 the CLI's default scope, which leaves general device logs and agent actions
-out. The Agent source needs a `stim` that has it; an older one refuses
-`--source agent` once any chip is off.
+out.
 Changing a filter or the workspace restarts the command; hiding the logs or
 quitting the app terminates it.
 

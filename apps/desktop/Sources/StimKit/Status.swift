@@ -76,10 +76,9 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   /// Where the workspace is, as `stim` decided it.
   public var stageFacts: StageFacts?
   public var memoryMb: Int?
-  /// How `memoryMb` was obtained; absent from an older `stim`, whose `memoryMb` is the estimate.
+  /// How `memoryMb` was obtained; absent from a payload written before it existed, whose `memoryMb` is the estimate.
   public var memorySource: MemorySource?
   public var warnings: [String]
-  /// Absent from a `stim` that reports only `warnings`.
   public var issues: [StatusIssue]?
   public var ios: IosDevice?
   public var android: AndroidDevice?
@@ -90,21 +89,21 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var logs: Logs?
   public var slots: [Slot]?
   public var remoteDevices: [RemoteDevice]?
-  /// The physical phones and tablets the workspace leases; absent from an older `stim` and when it leases none.
+  /// The physical phones and tablets the workspace leases; absent when it leases none.
   public var physicalDevices: [PhysicalDevice]?
   public var build: Build?
   public var lastBuilds: LastBuilds?
-  /// Each platform's last runs, newest first; absent from an older `stim`.
+  /// Each platform's last runs, newest first.
   public var builds: BuildHistory?
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
   /// The sessions that stopped running in the workspace in the last 3 days, most recently ended first; absent when
-  /// none and from an older `stim`.
+  /// none.
   public var endedAgents: [AgentSession]?
   /// Whether stim-server may record this workspace's device screens; absent from a `stim` without replay.
   public var recording: Recording?
-  /// Disk use as a status watcher last measured it; absent until one has, and from an older `stim`.
+  /// Disk use as a status watcher last measured it; absent until one has.
   public var disk: WorkspaceDisk?
   /// The project Stim Desktop resolved for the workspace; not part of the payload.
   public var project: Project?

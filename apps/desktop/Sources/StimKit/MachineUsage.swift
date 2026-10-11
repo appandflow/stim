@@ -1,9 +1,9 @@
 import Foundation
 
 /// The `machine` section of `stim status --json`: what uses the Mac's CPU and memory now, each process counted in
-/// exactly one owner. Absent from a `stim` that predates it, null when nothing runs.
+/// exactly one owner. Null when nothing runs.
 public struct MachineUsage: Decodable, Hashable, Sendable {
-  /// `footprint` or `rss`: what the owners' `memoryMb` sums. Absent from a `stim` that reports only `residentMb`.
+  /// `footprint` or `rss`: what the owners' `memoryMb` sums.
   public var memorySource: MemorySource?
   public var owners: [MachineOwner]
 
@@ -42,13 +42,13 @@ public struct MachineOwner: Decodable, Hashable, Sendable {
   public var cpuPercent: Double
   /// Summed resident set size, which counts shared pages once per process.
   public var residentMb: Int
-  /// Summed physical footprint, or `residentMb` when `MachineUsage.memorySource` is `rss`; absent from an older `stim`.
-  public var memoryMb: Int?
+  /// Summed physical footprint, or `residentMb` when `MachineUsage.memorySource` is `rss`.
+  public var memoryMb: Int
   public var processes: Int
 
   public init(
     kind: Kind, name: String, workspace: String? = nil, slot: String? = nil, id: String? = nil, owned: Bool = false,
-    cpuPercent: Double = 0, residentMb: Int = 0, memoryMb: Int? = nil, processes: Int = 1
+    cpuPercent: Double = 0, residentMb: Int = 0, memoryMb: Int = 0, processes: Int = 1
   ) {
     self.kind = kind
     self.name = name
@@ -61,9 +61,6 @@ public struct MachineOwner: Decodable, Hashable, Sendable {
     self.memoryMb = memoryMb
     self.processes = processes
   }
-
-  /// The memory to show: the footprint when `stim` reports one, else resident size.
-  public var memory: Int { memoryMb ?? residentMb }
 
   /// A stable identity across refreshes.
   public var key: String { "\(kind.rawValue):\(workspace ?? ""):\(slot ?? ""):\(id ?? name)" }
@@ -91,7 +88,7 @@ extension MachineUsage {
   /// refreshes and a Stop or Shut down button stays under the pointer; CPU swings each refresh.
   public var ranked: [MachineOwner] {
     owners.sorted {
-      ($0.memory, $0.cpuPercent, $1.name) > ($1.memory, $1.cpuPercent, $0.name)
+      ($0.memoryMb, $0.cpuPercent, $1.name) > ($1.memoryMb, $1.cpuPercent, $0.name)
     }
   }
 

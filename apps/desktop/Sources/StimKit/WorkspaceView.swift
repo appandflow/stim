@@ -146,7 +146,7 @@ extension Workspace {
     let owners = machine?.owners(of: path) ?? []
     let memory: Double?
     if !owners.isEmpty {
-      memory = Double(owners.reduce(0) { $0 + $1.memory })
+      memory = Double(owners.reduce(0) { $0 + $1.memoryMb })
     } else if let memoryMb, memoryMb > 0 {
       memory = Double(memoryMb)
     } else {
@@ -175,7 +175,7 @@ extension Workspace {
     let owner = owner(of: device, machine: machine)
     guard owner != nil || device.diskBytes != nil else { return nil }
     return WorkspaceUsage(
-      cpuPercent: owner?.cpuPercent, memoryMb: owner.map { Double($0.memory) }, diskBytes: device.diskBytes)
+      cpuPercent: owner?.cpuPercent, memoryMb: owner.map { Double($0.memoryMb) }, diskBytes: device.diskBytes)
   }
 
   /// The disk the workspace holds, split into parts that add up to `diskBytes`: node_modules, the rest of the
@@ -233,7 +233,7 @@ extension Workspace {
       let (ra, rb) = (order.firstIndex(of: a.element.kind) ?? 99, order.firstIndex(of: b.element.kind) ?? 99)
       return ra != rb ? ra < rb : a.offset < b.offset
     }.map { _, owner in
-      ProcessRow(id: owner.key, label: label(of: owner), cpuPercent: owner.cpuPercent, memoryMb: Double(owner.memory))
+      ProcessRow(id: owner.key, label: label(of: owner), cpuPercent: owner.cpuPercent, memoryMb: Double(owner.memoryMb))
     }
   }
 
@@ -568,7 +568,7 @@ public struct OwnerHistory: Sendable {
       guard let workspace = owner.workspace else { continue }
       var sum = sums[workspace] ?? Sample(at: now, cpuPercent: 0, memoryMb: 0)
       sum.cpuPercent += owner.cpuPercent
-      sum.memoryMb += Double(owner.memory)
+      sum.memoryMb += Double(owner.memoryMb)
       sums[workspace] = sum
     }
     samples = sums.reduce(into: [:]) { out, entry in

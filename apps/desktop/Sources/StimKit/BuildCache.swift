@@ -275,12 +275,9 @@ extension Build {
     }
   }
 
-  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run. An older stim sends
-  /// no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
+  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run.
   public var outcomeLabel: String? {
-    guard let outcome else { return nil }
-    let settled = outcomeKnown ?? !["prepare", "cache-lookup", "wait", "device"].contains(phase)
-    guard settled else { return nil }
+    guard let outcome, outcomeKnown == true else { return nil }
     switch outcome {
     case "hit": return "Cache hit"
     case "cold": return missReason == nil ? "Cold build" : "Cache miss"

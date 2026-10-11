@@ -3,8 +3,6 @@ import StimKit
 
 @MainActor
 public final class StatusStore: ObservableObject {
-  static let pollInterval: TimeInterval = 10
-
   @Published public private(set) var payload: StatusPayload? {
     didSet {
       newestArchiveCache = nil
@@ -42,7 +40,6 @@ public final class StatusStore: ObservableObject {
     onDelivering: { [weak self] in self?.serverDelivering($0) })
   private var watchStderr: [String] = []
   private var backoff = RestartBackoff()
-  private var pollTimer: Timer?
   private var inFlight = false
   private var refreshPending = false
   private var issued = 0
@@ -154,10 +151,6 @@ public final class StatusStore: ObservableObject {
     watcher = nil
     watching = serverActive
     guard !terminating else { return }
-    if StatusWatch.isUnsupported(stderr: watchStderr) {
-      startPolling()
-      return
-    }
     if status != 0 { error = watchStderr.last ?? StimCLI.Failure.exited(status).localizedDescription }
     restartWatch(ranFor: duration)
   }
@@ -191,17 +184,9 @@ public final class StatusStore: ObservableObject {
       return
     }
     watching = watcher != nil
-    guard started, !terminating, pollTimer == nil, watcher == nil else { return }
+    guard started, !terminating, watcher == nil else { return }
     backoff = RestartBackoff()
     startWatch()
-  }
-
-  private func startPolling() {
-    guard pollTimer == nil else { return }
-    refresh()
-    pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.refresh() }
-    }
   }
 
   /// Shows a payload the live watch delivered, which is newer than every refresh started before it.

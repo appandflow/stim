@@ -377,7 +377,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var note: String?
     public var willEmpty: Bool?
     /// What `stim gc --delete --cache <selector>` would do to this cache, reported by an unscoped `stim gc --json`.
-    /// Nil from a `stim` that predates it and from a run scoped by `--cache`.
+    /// Nil from a run scoped by `--cache`.
     public var scopedEmpty: ScopedEmpty?
 
     public struct ScopedEmpty: Decodable, Hashable, Sendable {
@@ -476,14 +476,15 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var agentDevice: AgentDeviceUsage?
     public var swiftpmCache: SwiftpmCacheUsage?
     public var caches: [Cache]?
-    /// Watchman and Gradle/Kotlin daemon processes; nil from a CLI that predates the memory report.
+    /// Watchman and Gradle/Kotlin daemon processes; empty under a `--cache` scope other than watchman or gradle-daemons.
     public var memory: [MemoryProcess]?
     public var watchmanRoots: [WatchmanRoot]?
     public var memoryNotices: [MemoryNotice]?
   }
 
   public var sections: Sections
-  /// Every simulator, AVD, iOS runtime and system image on the machine; nil from a CLI that predates it.
+  /// Every simulator, AVD, iOS runtime and system image on the machine; nil except on a dry run without `--cache` or
+  /// `--idle`.
   public var inventory: Inventory?
 
   public struct Inventory: Decodable, Equatable, Sendable {
