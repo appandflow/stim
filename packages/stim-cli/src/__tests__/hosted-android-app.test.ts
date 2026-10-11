@@ -10,7 +10,13 @@ const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
   runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
 }));
-vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
+vi.mock('../exec.ts', () => ({
+  getExecutor: () => ({
+    ...native,
+    runFileAsync: async (file: string, args?: string[], options?: unknown) => native.runFile(file, args, options),
+    runFileQuietAsync: async (file: string, args?: string[]) => native.runFileQuiet(file, args),
+  }),
+}));
 let root: string;
 let home: string;
 let area: string;

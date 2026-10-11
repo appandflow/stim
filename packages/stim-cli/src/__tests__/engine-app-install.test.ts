@@ -70,6 +70,16 @@ interface RecordingExec extends Executor {
   calls: string[][];
   options: Parameters<Executor['runFile']>[2][];
 }
+function asyncMock(exec: Partial<Executor>): Executor {
+  return {
+    ...exec,
+    runFileAsync: async (file: string, args: string[], opts: ExecOptions) => {
+      if (!exec.runFile) throw new Error('the mock has no runFile');
+      return exec.runFile(file, args, opts);
+    },
+  } as Executor;
+}
+
 function recordingExec({
   fail = null,
   failCode,
@@ -951,7 +961,7 @@ describe('android: install and launch', () => {
   test('installAndroidApp uses adb install -r with the apk as one argv element', async () => {
     const exec = recordingExec();
     const apkPath = '/tmp/out puts/app-debug.apk';
-    expect(installAndroidApp({ serial: 'emulator-5554', apkPath }, { exec })).toEqual({ ok: true, apkPath });
+    expect(await installAndroidApp({ serial: 'emulator-5554', apkPath }, { exec })).toEqual({ ok: true, apkPath });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'install', '-r', apkPath]]);
   });
 
@@ -964,7 +974,7 @@ describe('android: install and launch', () => {
       return runFile(file, args, opts);
     };
 
-    installAndroidApp({ serial: 'emulator-5554', apkPath: '/tmp/app-debug.apk' }, { exec });
+    await installAndroidApp({ serial: 'emulator-5554', apkPath: '/tmp/app-debug.apk' }, { exec });
     expect(ADB_INSTALL_TIMEOUT_MS).toBe(300_000);
     expect(options.at(-1)).toEqual({ timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   });
@@ -974,11 +984,11 @@ describe('android: install and launch', () => {
       fail: 'android.intent.action.VIEW',
       outputs: { 'resolve-activity': ['com.example.app/.MainActivity\n', 'No activity found\n'] },
     });
-    launchAndroidApp(
+    await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
-    launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
+    await launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
     androidAppProcess('emulator-5554', 'com.example.app', { exec });
     expect(exec.calls.map((call) => call.slice(3, 5).join(' '))).toEqual([
       'shell pidof',
@@ -1003,7 +1013,7 @@ describe('android: install and launch', () => {
 
   test('reverseMetroPorts maps only the reserved port to itself', async () => {
     const exec = recordingExec();
-    const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
+    const result = await reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']]);
   });
@@ -1016,19 +1026,19 @@ describe('android: install and launch', () => {
 
   test('ensureMetroReverse leaves a present reverse alone and re-applies a missing one', async () => {
     const present = recordingExec({ outputs: { '--list': 'host-19 tcp:8082 tcp:8082\n' } });
-    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: present })).toEqual({
+    expect(await ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: present })).toEqual({
       restored: false,
     });
     expect(present.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', '--list']]);
 
     const missing = recordingExec({ outputs: { '--list': '' } });
-    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: missing })).toEqual({
+    expect(await ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: missing })).toEqual({
       restored: true,
     });
     expect(missing.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']);
 
     const unreadable = recordingExec({ fail: '--list' });
-    expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: unreadable })).toMatchObject({
+    expect(await ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: unreadable })).toMatchObject({
       failed: true,
     });
     expect(unreadable.calls).toHaveLength(1);
@@ -1036,13 +1046,13 @@ describe('android: install and launch', () => {
 
   test('reverseMetroPorts maps an explicit device port to the reserved one', async () => {
     const exec = recordingExec();
-    reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082, devicePorts: [8081] }, { exec });
+    await reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082, devicePorts: [8081] }, { exec });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082']]);
   });
 
   test('a workspace that actually reserved 8081 gets one reverse, not a duplicate', async () => {
     const exec = recordingExec();
-    reverseMetroPorts({ serial: 'emulator-5554', metroPort: DEFAULT_METRO_PORT }, { exec });
+    await reverseMetroPorts({ serial: 'emulator-5554', metroPort: DEFAULT_METRO_PORT }, { exec });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8081']]);
   });
 
@@ -1050,7 +1060,7 @@ describe('android: install and launch', () => {
     const exec = recordingExec({
       outputs: { 'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1084,7 +1094,7 @@ describe('android: install and launch', () => {
 
   test('falls back to monkey when no launcher activity resolves', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1094,7 +1104,7 @@ describe('android: install and launch', () => {
 
   test('a failed reverse stops the launch', async () => {
     const exec = recordingExec({ fail: 'reverse' });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1107,7 +1117,7 @@ describe('android: install and launch', () => {
     const exec = recordingExec({
       outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1123,7 +1133,7 @@ describe('android: install and launch', () => {
     const exec = recordingExec({
       outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidReleaseApp(
+    const result: LaunchResult = await launchAndroidReleaseApp(
       { serial: 'emulator-5554', packageName: 'com.example.app' },
       { exec },
     );
@@ -1133,7 +1143,7 @@ describe('android: install and launch', () => {
 
   test('a failed force-stop refuses the launch instead of foregrounding the old process', async () => {
     const exec = recordingExec({ fail: 'force-stop', outputs: { pidof: '4242\n' } });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1147,7 +1157,7 @@ describe('android: install and launch', () => {
       fail: ['pidof', 'ps -A', 'force-stop'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1169,7 +1179,7 @@ describe('android: install and launch', () => {
 
   test('an unreadable process list opens a dev client deep link with am start -S', async () => {
     const exec = recordingExec({ fail: ['pidof', 'ps -A'] });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
@@ -1182,7 +1192,7 @@ describe('android: install and launch', () => {
       fail: ['pidof', 'ps -A'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidReleaseApp(
+    const result: LaunchResult = await launchAndroidReleaseApp(
       { serial: 'emulator-5554', packageName: 'com.example.app' },
       { exec },
     );
@@ -1197,7 +1207,7 @@ describe('android: install and launch', () => {
       fail: ['pidof', 'ps -A', 'android.intent.action.VIEW'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
@@ -1212,7 +1222,7 @@ describe('android: install and launch', () => {
       fail: ['pidof', 'ps -A', 'force-stop'],
       outputs: { 'resolve-activity': 'No activity found\n' },
     });
-    const result: LaunchResult = launchAndroidReleaseApp(
+    const result: LaunchResult = await launchAndroidReleaseApp(
       { serial: 'emulator-5554', packageName: 'com.example.app' },
       { exec },
     );
@@ -1230,17 +1240,17 @@ describe('android: install and launch', () => {
     });
     expect(
       (
-        launchAndroidApp(
+        (await launchAndroidApp(
           { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
           { exec },
-        ) as LaunchResult
+        )) as LaunchResult
       ).reason,
     ).toMatch(/am start/);
   });
 
   test('an adb failure while resolving the activity falls through to monkey', async () => {
     const exec = recordingExec({ fail: 'resolve-activity' });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
       { exec },
     );
@@ -1250,13 +1260,13 @@ describe('android: install and launch', () => {
 
 test('writeDebugHttpHost writes host:port via run-as and reports it', async () => {
   const calls: string[][] = [];
-  const exec = {
+  const exec = asyncMock({
     runFile: (cmd: string, args: string[]) => {
       calls.push([cmd, ...args]);
       return '';
     },
-  } as unknown as Executor;
-  const r = writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
+  });
+  const r = await writeDebugHttpHost({ serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 }, { exec });
   expect(r.ok).toBe(true);
   expect(r.host).toBe('127.0.0.1:8082');
   const argv = calls[0];
@@ -1268,7 +1278,7 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', async () =
 });
 
 test('a failed prefs write does not fail the launch', async () => {
-  const exec = {
+  const exec = asyncMock({
     runFile: (_cmd: string, args: string[]) => {
       if (args.includes('run-as')) {
         const e = new Error('run-as: package not debuggable');
@@ -1277,8 +1287,8 @@ test('a failed prefs write does not fail the launch', async () => {
       return '';
     },
     runQuiet: () => 'com.x/.MainActivity',
-  } as unknown as Executor;
-  const r: LaunchResult = launchAndroidApp(
+  });
+  const r: LaunchResult = await launchAndroidApp(
     { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082 },
     { exec },
   );
@@ -2231,7 +2241,7 @@ describe('the Android dev-client deep link', () => {
 
   test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', async () => {
     const exec = recordingExec();
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );
@@ -2282,7 +2292,7 @@ describe('the Android dev-client deep link', () => {
         'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n',
       },
     });
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
       { exec },
     );
@@ -2304,14 +2314,14 @@ describe('the Android dev-client deep link', () => {
 
   test('openAndroidDevClientUrl reports an adb failure rather than throwing', async () => {
     const exec = recordingExec({ fail: 'am start' });
-    const r = openAndroidDevClientUrl({ serial: 'emulator-5554', url: 'exp+app://x' }, { exec });
+    const r = await openAndroidDevClientUrl({ serial: 'emulator-5554', url: 'exp+app://x' }, { exec });
     expect(r.failed).toBe(true);
     expect(r.reason).toMatch(/am start -d exp\+app:\/\/x failed/);
   });
 
   test('openAndroidDevClientUrl can restrict the deep link to the recorded package', async () => {
     const exec = recordingExec();
-    const r = openAndroidDevClientUrl(
+    const r = await openAndroidDevClientUrl(
       { serial: 'emulator-5554', url: 'exp+app://x', packageName: 'com.example.app' },
       { exec },
     );
@@ -2395,7 +2405,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
       run: () => '',
       runQuiet: () => null,
       runFileQuiet: () => null,
-      runFileAsync: async () => '',
+      runFileAsync: async (file, args, opts) => exec.runFile(file, args, opts),
       runFileQuietAsync: async () => null,
       spawn: () => {
         throw new Error('not used');
@@ -2407,7 +2417,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 
   test('a signer conflict uninstalls the package and installs once more, with a note saying why', async () => {
     const { exec, calls, options } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
-    const result = installAndroidApp(
+    const result = await installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
@@ -2426,7 +2436,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 
   test('a version downgrade is the same answer with its own note', async () => {
     const { exec } = conflictingExec('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]');
-    const result = installAndroidApp(
+    const result = await installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
@@ -2436,7 +2446,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 
   test('ONCE: a conflict that survives the uninstall is a plain failure, not a loop', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]', { alsoFailRetry: true });
-    const result = installAndroidApp(
+    const result = await installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
@@ -2448,14 +2458,17 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 
   test('without allowUninstall nothing is ever removed -- the DEBUG flow keeps its app data', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
-    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    const result = await installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app' },
+      { exec },
+    );
     expect(result.failed).toBe(true);
     expect(calls.some((c) => c.includes('uninstall'))).toBe(false);
   });
 
   test('a non-conflict failure never uninstalls, even with allowUninstall', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]');
-    const result = installAndroidApp(
+    const result = await installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
@@ -2467,7 +2480,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 describe('launchAndroidReleaseApp', () => {
   test('a plain am start of the launcher activity: no reverse, no prefs write, no deep link', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' } });
-    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    const result = await launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
     expect(result).toEqual({ ok: true, mode: 'am-start', component: 'com.example.app/.MainActivity' });
     expect(exec.calls.some((c) => c.includes('reverse'))).toBe(false);
     expect(exec.calls.some((c) => c.includes('am') && c.includes('-d'))).toBe(false);
@@ -2485,7 +2498,7 @@ describe('launchAndroidReleaseApp', () => {
 
   test('an unresolvable launcher activity falls through to monkey, as the debug launch does', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
-    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    const result = await launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('monkey');
   });
@@ -2495,7 +2508,7 @@ describe('launchAndroidReleaseApp', () => {
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
       fail: 'am start',
     });
-    const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
+    const result = await launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
     expect(result.failed).toBe(true);
     expect(result.code).toBe(LAUNCH_ERROR);
   });
@@ -3069,13 +3082,13 @@ describe('verifyLaunch: still bundling', () => {
 describe('the Metro host for a physical device', () => {
   test('writeDebugHttpHost points a physical device at localhost, which adb reverse serves', async () => {
     const calls: string[][] = [];
-    const exec = {
+    const exec = asyncMock({
       runFile: (cmd: string, args: string[]) => {
         calls.push([cmd, ...args]);
         return '';
       },
-    } as unknown as Executor;
-    const r = writeDebugHttpHost(
+    });
+    const r = await writeDebugHttpHost(
       { serial: 'RFCR7081Q9L', packageName: 'com.x', metroPort: 8082, physical: true },
       { exec },
     );
@@ -3088,8 +3101,8 @@ describe('the Metro host for a physical device', () => {
   });
 
   test('writeDebugHttpHost points an emulator at adb reverse loopback', async () => {
-    const exec = { runFile: () => '' } as unknown as Executor;
-    const r = writeDebugHttpHost(
+    const exec = asyncMock({ runFile: () => '' });
+    const r = await writeDebugHttpHost(
       { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082, physical: false },
       { exec },
     );
@@ -3107,7 +3120,7 @@ describe('the Metro host for a physical device', () => {
 
   test('launchAndroidApp sends the localhost deep link when the device is physical', async () => {
     const exec = recordingExec();
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       {
         serial: 'RFCR7081Q9L',
         packageName: 'com.example.app',
@@ -3129,21 +3142,21 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
     const calls: string[][] = [];
     return {
       calls,
-      exec: {
+      exec: asyncMock({
         runFile: (cmd: string, args: string[]) => {
           calls.push([cmd, ...args]);
           if (!prefsOk && args.includes('run-as')) throw new Error('run-as: package not debuggable');
           if (args.includes('resolve-activity')) return 'com.example.app/.MainActivity';
           return '';
         },
-      } as unknown as Executor,
+      }),
     };
   }
   const reverses = (calls: string[][]) => calls.filter((c) => c.includes('reverse')).map((c) => c.slice(-2).join(' '));
 
   test('a successful prefs write leaves only the same-port mapping', async () => {
     const { calls, exec } = execRecording(true);
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
       { exec },
     );
@@ -3154,7 +3167,7 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
 
   test('a failed prefs write adds the 8081 fallback so the app still finds Metro', async () => {
     const { calls, exec } = execRecording(false);
-    const result: LaunchResult = launchAndroidApp(
+    const result: LaunchResult = await launchAndroidApp(
       { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
       { exec },
     );
@@ -3166,14 +3179,14 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
 
   test('the same-port mapping is registered before the prefs write, so the app can never race ahead of it', async () => {
     const { calls, exec } = execRecording(true);
-    launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
+    await launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
     const order = calls.map((c) => (c.includes('reverse') ? 'reverse' : c.includes('run-as') ? 'prefs' : 'other'));
     expect(order.indexOf('reverse')).toBeLessThan(order.indexOf('prefs'));
   });
 
   test('a workspace on the default port still gets its one mapping', async () => {
     const { calls, exec } = execRecording(true);
-    launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8081 }, { exec });
+    await launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8081 }, { exec });
     expect(reverses(calls)).toEqual(['tcp:8081 tcp:8081']);
   });
 });
@@ -3210,7 +3223,10 @@ describe('skipping an install the device already holds', () => {
         sha256sum: `${hashFile(apkPath)}  /data/app/a/base.apk\n`,
       },
     });
-    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    const result = await installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app' },
+      { exec },
+    );
     expect(result).toEqual({ ok: true, apkPath, skipped: true });
     expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
   });
@@ -3226,7 +3242,7 @@ describe('skipping an install the device already holds', () => {
         sha256sum: `${hashFile(cachedApk)}  /data/app/a/base.apk\n`,
       },
     });
-    const result = installAndroidApp(
+    const result = await installAndroidApp(
       { serial: 'emulator-5584', apkPath: swappedApk, packageName: 'com.example.app', allowUninstall: true },
       { exec },
     );
@@ -3239,7 +3255,10 @@ describe('skipping an install the device already holds', () => {
     const exec = recordingExec({
       outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: 'sha256sum: not found' },
     });
-    const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
+    const result = await installAndroidApp(
+      { serial: 'emulator-5584', apkPath, packageName: 'com.example.app' },
+      { exec },
+    );
     expect(result).toEqual({ ok: true, apkPath });
     expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', apkPath]);
   });

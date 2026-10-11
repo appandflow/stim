@@ -80,7 +80,7 @@ export async function runHostedAndroidDevice(
           : undefined;
       if (mode === 'reverse') {
         if (!metro) throw new Error('Hosted Android Metro restore needs its bridge and device ports.');
-        restoreHostedAndroidMetro(home, request.session, app.attempt, device, metro);
+        await restoreHostedAndroidMetro(home, request.session, app.attempt, device, metro);
         return { state: 'ready', device };
       }
       const launched = await installHostedAndroidApp(home, request.session, app.attempt, device, metro);

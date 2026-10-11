@@ -43,7 +43,7 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
     reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
     readBrowser: () => null,
-    ensureReverse: () => ({ restored: false }),
+    ensureReverse: async () => ({ restored: false }),
     sleep: async () => {},
     ...overrides,
   };
@@ -133,7 +133,7 @@ describe('the adb reverse for the workspace Metro port', () => {
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
-        ensureReverse: (serial, port) => {
+        ensureReverse: async (serial, port) => {
           checked.push([serial, port]);
           return { restored: false };
         },
@@ -150,7 +150,7 @@ describe('the adb reverse for the workspace Metro port', () => {
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
-        ensureReverse: () => ({ restored: true }),
+        ensureReverse: async () => ({ restored: true }),
         reloadMetro: async (_port, options) => {
           calls.push(options?.peersOnly ?? 'reload');
           if (!options?.peersOnly) return { ok: true, peers: 1, targets: 1 };
@@ -172,7 +172,7 @@ describe('the adb reverse for the workspace Metro port', () => {
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
-        ensureReverse: () => ({ restored: true }),
+        ensureReverse: async () => ({ restored: true }),
         sleep: async (ms) => {
           slept.push(ms);
         },
@@ -195,7 +195,7 @@ describe('the adb reverse for the workspace Metro port', () => {
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
-        ensureReverse: () => ({ restored: true }),
+        ensureReverse: async () => ({ restored: true }),
         sleep: async (ms) => {
           slept.push(ms);
         },
@@ -216,7 +216,7 @@ describe('the adb reverse for the workspace Metro port', () => {
       root: '/project',
       platform: 'android',
       deps: reloadDeps({
-        ensureReverse: () => ({ failed: true, reason: 'adb reverse --list failed on emulator-5554' }),
+        ensureReverse: async () => ({ failed: true, reason: 'adb reverse --list failed on emulator-5554' }),
         reloadMetro: async () => {
           reloaded = true;
           return { ok: true, peers: 1, targets: 1 };
@@ -741,7 +741,7 @@ test('an Android reload restores the reverse on every live slot that lost it', a
         'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
       }),
       resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
-      ensureReverse: (serial) => {
+      ensureReverse: async (serial) => {
         checked.push(serial);
         return { restored: serial === 'emulator-5556' };
       },
@@ -767,7 +767,7 @@ test('with one slot still connected, the reload waits for the restored slot befo
         'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
       }),
       resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
-      ensureReverse: (serial) => ({ restored: serial === 'emulator-5556' }),
+      ensureReverse: async (serial) => ({ restored: serial === 'emulator-5556' }),
       reloadMetro: async (_port, options) => {
         calls.push(options?.peersOnly ?? 'reload');
         if (!options?.peersOnly) return { ok: true, peers: 2, targets: 2 };

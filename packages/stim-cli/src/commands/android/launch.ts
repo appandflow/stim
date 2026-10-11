@@ -533,7 +533,7 @@ async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<s
 async function installOnAdoptedAvd(
   room: AdoptedRoom,
   serial: string,
-  installApk: (serial: string) => InstallResultLike,
+  installApk: (serial: string) => Promise<InstallResultLike>,
 ): Promise<{ serial: string; installed: InstallResultLike }> {
   const neededBytes = 2 * statSync(room.apkPath).size + ADOPTED_INSTALL_HEADROOM_BYTES;
   const roomy = (free: number | null) => free === null || free >= neededBytes;
@@ -550,13 +550,13 @@ async function installOnAdoptedAvd(
       wiped = true;
     }
   }
-  let installed = installApk(target);
+  let installed = await installApk(target);
   if (wiped || !outOfSpace(installed)) return { serial: target, installed };
   room.trimCaches(target, neededBytes);
-  installed = installApk(target);
+  installed = await installApk(target);
   if (!outOfSpace(installed)) return { serial: target, installed };
   target = await wipeAdoptedAvd(room, room.dataFreeBytes(target));
-  return { serial: target, installed: installApk(target) };
+  return { serial: target, installed: await installApk(target) };
 }
 
 async function resolveInstallSerial({
@@ -789,7 +789,7 @@ export async function finishAndroidRun({
         `Run \`${runCommand}\` again; adoption remains pending, so it retries the cleanup.`,
       );
     }
-  } else installed = installApk(serial);
+  } else installed = await installApk(serial);
   if (installed.failed) {
     const installRemedy =
       remoteDevice?.failureRemedy() ??

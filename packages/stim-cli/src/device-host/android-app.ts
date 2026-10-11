@@ -68,7 +68,7 @@ export async function installHostedAndroidApp(
     throw new Error('The APK has no native library slice for the hosted emulator architecture.');
   assertHostedAndroidTarget(home, device);
   const sdkExecutor = hostedAndroidExecutor();
-  const installed = installAndroidApp(
+  const installed = await installAndroidApp(
     { serial: device.serial, apkPath: apk, packageName: record.bundleId },
     { exec: sdkExecutor },
   );
@@ -78,7 +78,7 @@ export async function installHostedAndroidApp(
     throw new Error('Hosted Android development launch requires its Metro bridge.');
   const launched =
     record.mode === 'development' && metro
-      ? launchAndroidApp(
+      ? await launchAndroidApp(
           {
             serial: device.serial,
             packageName: record.bundleId,
@@ -89,7 +89,7 @@ export async function installHostedAndroidApp(
           },
           { exec: sdkExecutor },
         )
-      : launchAndroidReleaseApp({ serial: device.serial, packageName: record.bundleId }, { exec: sdkExecutor });
+      : await launchAndroidReleaseApp({ serial: device.serial, packageName: record.bundleId }, { exec: sdkExecutor });
   if (!launched.ok) throw new Error(launched.reason ?? 'Hosted APK launch was not established.');
   if (record.mode === 'development') return 'unverified';
   for (let tries = 0; tries < 10; tries++) {
@@ -120,31 +120,34 @@ function assertHostedAndroidTarget(home: string, device: HostedAndroidDevice): v
 function hostedAndroidExecutor(): ReturnType<typeof getExecutor> {
   const executor = getExecutor();
   const adb = androidToolPath('adb');
+  const tool = (file: string) => (file === 'adb' ? adb : file);
   return {
     ...executor,
-    runFile: (file, args, options) => executor.runFile(file === 'adb' ? adb : file, args, options),
+    runFile: (file, args, options) => executor.runFile(tool(file), args, options),
+    runFileAsync: (file, args, options) => executor.runFileAsync(tool(file), args, options),
+    runFileQuietAsync: (file, args, options) => executor.runFileQuietAsync(tool(file), args, options),
   };
 }
 
-export function restoreHostedAndroidMetro(
+export async function restoreHostedAndroidMetro(
   home: string,
   session: string,
   attempt: string,
   device: HostedAndroidDevice,
   metro: { bridgePort: number; devicePort: number },
-): void {
+): Promise<void> {
   const record = readHostedApp(session, attempt, home);
   if (record.state !== 'installed' || record.mode !== 'development')
     throw new Error('Metro restore requires an installed development app.');
   assertHostedAndroidTarget(home, device);
   const exec = hostedAndroidExecutor();
-  const reversed = reverseMetroPorts(
+  const reversed = await reverseMetroPorts(
     { serial: device.serial, metroPort: metro.bridgePort, devicePorts: [metro.devicePort] },
     { exec },
   );
   if (reversed.failed) throw new Error(reversed.reason);
   assertHostedAndroidTarget(home, device);
-  writeDebugHttpHost(
+  await writeDebugHttpHost(
     { serial: device.serial, packageName: record.bundleId, metroPort: metro.devicePort, physical: true },
     { exec },
   );

@@ -538,6 +538,9 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     run: () =>
       runAndroid({
         ...options,
+        install: async (args) => options.install(args),
+        launch: async (args) => options.launch(args),
+        launchRelease: async (args) => options.launchRelease(args),
         projectRegistry:
           options.projectRegistry ??
           createProjectRegistry(
