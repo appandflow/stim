@@ -193,7 +193,7 @@ struct TutorialPanel: View {
       VStack(alignment: .leading, spacing: Space.md) {
         Text(explanation(step.id)).foregroundStyle(Palette.secondary)
         if current, let ask = asks(step) { TutorialPromptBox(prompt: ask, onCopy: copied) }
-        if step.id == "build", current, let openBuild {
+        if ["build", "parallel"].contains(step.id), current, let openBuild {
           HStack(spacing: Space.sm) {
             Text("Click Show to watch the build.")
             Button("Open the build", action: openBuild).buttonStyle(.link).foregroundStyle(Palette.primary)
@@ -211,6 +211,10 @@ struct TutorialPanel: View {
         }
         if step.id == "phone", snapshot.record.phonePairedAtStart == true {
           Text(phoneState.buttonTitle).font(.stim(.footnote)).foregroundStyle(Palette.success)
+        }
+        if state.state == .done, let warning = state.warning {
+          Label(warning, systemImage: "exclamationmark.triangle.fill").font(.stim(.caption))
+            .foregroundStyle(Palette.warning)
         }
         let notice = (current ? message : nil) ?? TutorialNotice(state.detail, action: state.action)
         let detail = notice.text
