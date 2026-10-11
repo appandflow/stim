@@ -144,6 +144,9 @@ struct LocalServerCredential: Codable, Equatable {
           pairing = false
           return .device(token: credential.deviceToken)
         }
+        guard !controller.adoption.isProvisional else {
+          throw ServerError(code: "not-connected", message: "The adopted stim-server is not confirmed yet.")
+        }
         let cli = await controller.cli()
         guard controller.adoption.allowsWrites(home: home) else {
           throw ServerError(code: "not-connected", message: "The adopted stim-server was not confirmed.")

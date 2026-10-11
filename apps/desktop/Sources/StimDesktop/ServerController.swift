@@ -193,7 +193,9 @@ final class ServerController: ObservableObject {
     Task {
       let login = await environment.value
       loginEnvironment = login
-      UserDefaults.standard.set(StimHome.path(environment: login), forKey: AppPreferences.Key.lastLoginStimHome)
+      if ProcessInfo.processInfo.environment["STIM_HOME"]?.hasPrefix("/") != true {
+        UserDefaults.standard.set(StimHome.path(environment: login), forKey: AppPreferences.Key.lastLoginStimHome)
+      }
       LaunchMilestones.reach("login-environment")
       await verifyAdoption()
     }
@@ -214,7 +216,7 @@ final class ServerController: ObservableObject {
   /// Waits for the login environment and for a provisional adoption to be confirmed or dropped.
   func cli() async -> StimServerCLI {
     var environment = await environment?.value ?? ProcessInfo.processInfo.environment
-    await adoption.settled()
+    repeat { await adoption.settled() } while adoption.isProvisional
     if case .running(let health, _) = state, adoption.allowsWrites(home: health.stimHome) {
       environment["STIM_HOME"] = health.stimHome
     }
@@ -407,7 +409,7 @@ final class ServerController: ObservableObject {
   }
 
   func refresh() {
-    if case .notReady = state {} else { reloadDevices() }
+    if case .notReady = state {} else if !provisional { reloadDevices() }
     let owned: Bool
     switch state {
     case .running(_, let value), .notReady(_, let value): owned = value

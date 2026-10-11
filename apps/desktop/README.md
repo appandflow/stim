@@ -1051,8 +1051,9 @@ device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
 more) adopts it. A server with another Stim home is not adopted: the sidebar footer
 shows the mismatch and Desktop keeps retrying. Before the login shell's environment arrives,
-Desktop adopts a ready server provisionally when it serves the launch `STIM_HOME`, else the home
-the login shell reported on the last launch, else `~/.stim`, so the sidebar shows its status feed
+Desktop adopts a ready server provisionally when the launch `STIM_HOME`, else the home the login
+shell reported on the last launch (not saved from a launch that set `STIM_HOME`), else `~/.stim`,
+would adopt it, so the sidebar shows its status feed
 right away. A provisional adoption only reads: Desktop connects with a stored token, and does not
 pair, grant, save or delete a token, run `stim-server` commands or send control requests. When the
 login environment arrives, Desktop checks the server again and keeps it only when it still serves
