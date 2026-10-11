@@ -192,40 +192,44 @@ test('the registered native Android provider retains build-only APKs without cla
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
 });
 
+function uncachedOffloadProject(selected: string) {
+  gradle(root);
+  vi.stubEnv('STIM_HOME', join(root, 'state'));
+  vi.stubEnv('STIM_BUILD_CACHE', join(root, 'cache'));
+  write(
+    join(root, '.stim.json'),
+    JSON.stringify({
+      android: { offloadInputs: { complete: true, ignored: [], outputs: ['build'] } },
+      optimizations: { android: { compilerCache: 'none' } },
+    }),
+  );
+  setExecutor(
+    makeExecutor({
+      runFile: (program, args = []) => {
+        if (program === 'git' && args.includes('--show-toplevel')) return root;
+        if (program === 'git' && args.includes('ls-files')) return '.stim.json\0settings.gradle.kts\0gradlew\0';
+        return '';
+      },
+    }),
+  );
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected });
+  vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
+    mode: 'auto',
+    localEnabled: true,
+    machines: [{ machine: 'worker' }],
+  } as ReturnType<typeof offload.buildPlacementCandidates>);
+  vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue({
+    machine: 'worker',
+    offer: { capacity: { loadPerCore: 0.1 } },
+  } as Awaited<ReturnType<typeof offload.chooseBuildMachine>>);
+  vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
+}
+
 test.each([false, true])(
   'an uncached offloaded APK is released after stable export or cancellation (cancelled=%s)',
   async (cancelled) => {
-    gradle(root);
-    vi.stubEnv('STIM_HOME', join(root, 'state'));
-    vi.stubEnv('STIM_BUILD_CACHE', join(root, 'cache'));
-    write(
-      join(root, '.stim.json'),
-      JSON.stringify({
-        android: { offloadInputs: { complete: true, ignored: [], outputs: ['build'] } },
-        optimizations: { android: { compilerCache: 'none' } },
-      }),
-    );
-    setExecutor(
-      makeExecutor({
-        runFile: (program, args = []) => {
-          if (program === 'git' && args.includes('--show-toplevel')) return root;
-          if (program === 'git' && args.includes('ls-files')) return '.stim.json\0settings.gradle.kts\0gradlew\0';
-          return '';
-        },
-      }),
-    );
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected: 'worker' });
-    vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-      mode: 'auto',
-      localEnabled: true,
-      machines: [{ machine: 'worker' }],
-    } as ReturnType<typeof offload.buildPlacementCandidates>);
-    vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue({
-      machine: 'worker',
-      offer: { capacity: { loadPerCore: 0.1 } },
-    } as Awaited<ReturnType<typeof offload.chooseBuildMachine>>);
-    vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
+    uncachedOffloadProject('worker');
     const local = vi.spyOn(gradleEngine, 'buildGradle');
     let staging = '';
     const remote = vi
@@ -288,42 +292,12 @@ test.each([false, true])(
 );
 
 test('a local fallback after a failed uncached offload leaves the staging path to later offloads', async () => {
-  gradle(root);
-  vi.stubEnv('STIM_HOME', join(root, 'state'));
-  vi.stubEnv('STIM_BUILD_CACHE', join(root, 'cache'));
-  write(
-    join(root, '.stim.json'),
-    JSON.stringify({
-      android: { offloadInputs: { complete: true, ignored: [], outputs: ['build'] } },
-      optimizations: { android: { compilerCache: 'none' } },
-    }),
-  );
-  setExecutor(
-    makeExecutor({
-      runFile: (program, args = []) => {
-        if (program === 'git' && args.includes('--show-toplevel')) return root;
-        if (program === 'git' && args.includes('ls-files')) return '.stim.json\0settings.gradle.kts\0gradlew\0';
-        return '';
-      },
-    }),
-  );
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected: 'auto' });
-  vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    mode: 'auto',
-    localEnabled: true,
-    machines: [{ machine: 'worker' }],
-  } as ReturnType<typeof offload.buildPlacementCandidates>);
-  vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue({
-    machine: 'worker',
-    offer: { capacity: { loadPerCore: 0.1 } },
-  } as Awaited<ReturnType<typeof offload.chooseBuildMachine>>);
-  vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
+  uncachedOffloadProject('auto');
   let staging = '';
   vi.spyOn(offload, 'offloadBuild').mockImplementation(async ({ stagingDir }) => {
     staging = stagingDir;
     write(join(stagingDir, 'native.apk'), 'unverified worker artifact');
-    return { ok: false, reason: 'the worker lost the build' } as Awaited<ReturnType<typeof offload.offloadBuild>>;
+    return { ok: false, machine: 'worker', reason: 'the worker lost the build' };
   });
   const compiled = join(root, 'output.apk');
   vi.spyOn(gradleEngine, 'buildGradle').mockImplementation(async () => {

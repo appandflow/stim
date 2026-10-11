@@ -3,7 +3,6 @@ import assert from 'node:assert';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireArtifact, type ArtifactAdapter, type ArtifactRequest } from '../engine/acquire-artifact.ts';
-import type { BuildLockHandle } from '../engine/build-lock.ts';
 import { createCleanupScope } from '../engine/cleanup-scope.ts';
 
 class Refusal extends Error {}
@@ -32,7 +31,7 @@ function fixture(compile: (stage: (name: string) => string) => Promise<string>) 
       acquireBuildLock: () => {
         held.lock = true;
         taken.push('lock');
-        return { acquired: true, path: join(scratch, 'lock') } as BuildLockHandle;
+        return { acquired: true, path: join(scratch, 'lock') };
       },
       releaseBuildLock: () => {
         held.lock = false;
