@@ -476,7 +476,7 @@ public struct GcReport: Decodable, Equatable, Sendable {
     public var agentDevice: AgentDeviceUsage?
     public var swiftpmCache: SwiftpmCacheUsage?
     public var caches: [Cache]?
-    /// Watchman and Gradle/Kotlin daemon processes; nil under a `--cache` scope other than watchman or gradle-daemons.
+    /// Watchman and Gradle/Kotlin daemon processes; empty under a `--cache` scope other than watchman or gradle-daemons.
     public var memory: [MemoryProcess]?
     public var watchmanRoots: [WatchmanRoot]?
     public var memoryNotices: [MemoryNotice]?
