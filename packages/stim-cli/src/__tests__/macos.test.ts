@@ -40,7 +40,7 @@ import { macosDir, macosRuntimeClaim, requiredMacosRecord } from '../macos/state
 import { bundleCandidates, lsofNamesBundleExecutable } from '../macos/instances.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
-import macosCommand, { runMacos } from '../commands/macos.ts';
+import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
@@ -1085,5 +1085,49 @@ describe.skipIf(process.platform !== 'darwin')('read-only macOS plans', () => {
       stdout.mockRestore();
       stderr.mockRestore();
     }
+  });
+});
+
+describe('waitForLaunchServices', () => {
+  afterEach(() => resetExecutor());
+
+  test('returns once lsappinfo lists the recorded pid for the bundle', async () => {
+    const calls: string[][] = [];
+    let listed = false;
+    setExecutor({
+      runFileAsync: async (_file: string, args: string[]) => {
+        calls.push(args);
+        const out = listed ? 'ASN:0x0-0x1:' : '';
+        listed = true;
+        return out;
+      },
+    });
+    const app = { pid: 4242, processToken: 't', startedAtMicros: 1 };
+    await expect(waitForLaunchServices(record({ app }), Date.now() + 5_000)).resolves.toBe('listed');
+    expect(calls).toEqual([
+      ['find', 'bundleid=dev.sample.stim.test', 'pid=4242'],
+      ['find', 'bundleid=dev.sample.stim.test', 'pid=4242'],
+    ]);
+  });
+
+  test('times out when the pid is never listed, including when lsappinfo fails', async () => {
+    setExecutor({ runFileAsync: async () => Promise.reject(new Error('lsappinfo failed')) });
+    const app = { pid: 4242, processToken: 't', startedAtMicros: 1 };
+    await expect(waitForLaunchServices(record({ app }), Date.now() + 300)).resolves.toBe('timeout');
+  });
+
+  test('skips a hosted launch, which has no local pid', async () => {
+    const runFileAsync = vi.fn<() => Promise<string>>();
+    setExecutor({ runFileAsync });
+    const host = {
+      machine: 'mini',
+      session: '12345678-1234-1234-1234-123456789abc',
+      appSlot: 3,
+      appAttempt: 'attempt',
+      bundleId: 'dev.sample.hosted3',
+      agent: { driver: 'none' as const, setting: 'hosting.agentDriver' as const },
+    };
+    await expect(waitForLaunchServices(record({ host }), Date.now() + 5_000)).resolves.toBe('skipped');
+    expect(runFileAsync).not.toHaveBeenCalled();
   });
 });

@@ -192,16 +192,14 @@ affects only this workspace's recorded app and supervisor.
 
 ## Agent actions
 
-Launch the app through `stim macos` first. Use its isolated `bundleId` and
-`app.pid` from the JSON launch record or `stim status --json` when opening it
-with agent-device. `stim macos` returns once the app process exists, which can
-be before macOS LaunchServices lists it as running. `agent-device open` runs
-`open -b <bundleId>`, and until LaunchServices lists the app, that starts a
-second copy without Stim's launch arguments. Wait for `lsappinfo` to list the
-recorded pid, then open:
+Launch the app through `stim macos` first. Use its isolated `bundleId` from the
+JSON launch record or `stim status --json` when opening it with agent-device.
+`stim macos` waits, for up to 20 seconds, until macOS LaunchServices lists the
+app, so `agent-device open` attaches to it instead of starting a second copy. If
+it is still unlisted, `stim macos` warns and returns; wait before opening. A
+`--remote` launch skips the wait:
 
 ```sh
-until lsappinfo find bundleid=<bundleId> pid=<app.pid> | grep -q ASN; do sleep 0.2; done
 agent-device open <bundleId> --platform macos --surface app --foreground
 agent-device click <ref> --settle
 stim logs --source agent
