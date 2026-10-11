@@ -2,6 +2,7 @@ import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
 import { basename } from 'path';
+import { ambientEnv, ambientContext } from '@stim-cli/core';
 import { debugLog } from './debug-log.ts';
 
 export interface ExecOptions {
@@ -109,7 +110,7 @@ const defaultExecutor: Executor = {
     if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
-    if (env) opts.env = { ...process.env, ...env };
+    if (env || ambientContext()) opts.env = { ...ambientEnv(), ...env };
     try {
       return String(execSync(cmd, opts)).trim();
     } catch (error) {
@@ -136,8 +137,8 @@ const defaultExecutor: Executor = {
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (input !== undefined) opts.input = input;
-    if (env || omitEnv?.length) {
-      const childEnv = { ...process.env, ...env };
+    if (env || omitEnv?.length || ambientContext()) {
+      const childEnv = { ...ambientEnv(), ...env };
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
@@ -167,8 +168,8 @@ const defaultExecutor: Executor = {
         ? { stdio: 'ignore', detached: true }
         : { stdio: ['ignore', 'pipe', 'pipe'] };
       if (cwd) opts.cwd = cwd;
-      if (env || omitEnv?.length) {
-        const childEnv = { ...process.env, ...env };
+      if (env || omitEnv?.length || ambientContext()) {
+        const childEnv = { ...ambientEnv(), ...env };
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
@@ -236,7 +237,7 @@ const defaultExecutor: Executor = {
   },
   spawn(cmd, args = [], opts = {}) {
     refuseUnsafeBatchArguments(cmd, args);
-    return spawn(cmd, args, opts);
+    return spawn(cmd, args, opts.env || !ambientContext() ? opts : { ...opts, env: ambientEnv() });
   },
   findExecutable(name) {
     return which.sync(name, { nothrow: true });

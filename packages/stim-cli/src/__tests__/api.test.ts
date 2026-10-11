@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -232,6 +232,34 @@ test('settings reads run in process against each client home and leave the calle
     stdout.mockRestore();
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  "each client's children get its own home and run id instead of the caller's",
+  async () => {
+    const clients = ['children-first', 'children-second'].map((name) => {
+      const item = fixture(name);
+      const bin = join(scratch, `${name}-bin`);
+      const seen = join(scratch, `${name}-seen`);
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, 'git'),
+        `#!${process.execPath}\nrequire('node:fs').appendFileSync(${JSON.stringify(seen)}, process.env.STIM_HOME + ' ' + process.env.STIM_RUN_ID + '\\n');\nprocess.exit(1);\n`,
+      );
+      chmodSync(join(bin, 'git'), 0o755);
+      const env = { PATH: `${bin}:${process.env.PATH}`, HOME: scratch };
+      return { home: item.home, seen, stim: createStim({ projectRoot: item.root, home: item.home, env }) };
+    });
+    await Promise.all(clients.map(({ stim }) => stim.settings()));
+    const runIds = clients.map(({ home, seen }) => {
+      const lines = readFileSync(seen, 'utf8').trim().split('\n');
+      expect(lines.map((line) => line.split(' ')[0])).toEqual(lines.map(() => home));
+      const ids = new Set(lines.map((line) => line.split(' ')[1]));
+      expect(ids.size).toBe(1);
+      return [...ids][0];
+    });
+    expect(runIds[0]).not.toBe(runIds[1]);
+  },
+);
 
 test('a settings refusal rejects with its code and remedy, and an aborted read does not start', async () => {
   const { root, home } = fixture('settings-refusal');

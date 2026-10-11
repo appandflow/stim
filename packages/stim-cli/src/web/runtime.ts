@@ -19,6 +19,7 @@ import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { liveWebRecord, sendToOwnedPage } from './page.ts';
 import { readWebRecord, updateWebRecord, webSupervisorLogFile, type WebLaunchConfig, type WebRecord } from './state.ts';
+import { ambientEnv } from '@stim-cli/core';
 
 const REGISTER_WAIT_MS = 30_000;
 const POLL_MS = 250;
@@ -63,7 +64,7 @@ function startSupervisor(
     return getExecutor().spawn(launcher.file, launcher.args, {
       cwd: root,
       stdio: 'ignore',
-      env: { ...process.env, ...launcher.env },
+      env: { ...ambientEnv(), ...launcher.env },
       windowsHide: true,
     });
   }
@@ -72,7 +73,7 @@ function startSupervisor(
     cwd: root,
     detached: true,
     stdio: ['ignore', fd, fd],
-    env: process.env,
+    env: ambientEnv(),
   });
   child.unref?.();
   return child;

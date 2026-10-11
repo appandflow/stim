@@ -1,4 +1,3 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +5,9 @@ import { createHash } from 'node:crypto';
 
 import { withDirLock } from './dir-lock.ts';
 import { isJsonObject } from './state/json-file.ts';
+import { ambientContext, ambientEnv } from './context.ts';
 export { withDirLock, type DirLockOptions } from './dir-lock.ts';
+export { ambientContext, ambientEnv, withAmbientContext, type StimContext, type StimOutput } from './context.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
@@ -16,7 +17,7 @@ export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro
 const warnedRelative = new Set<string>();
 
 function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CACHE'): string | null {
-  const value = process.env[name];
+  const value = ambientEnv()[name];
   if (!value) return null;
   if (path.isAbsolute(value)) return value;
   if (!warnedRelative.has(name)) {
@@ -26,15 +27,8 @@ function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CA
   return null;
 }
 
-const homeScope = new AsyncLocalStorage<string>();
-
-/** Runs `fn` with `configDir()` returning `home`, including after an `await` inside it, without changing `process.env`. */
-export function withStimHome<T>(home: string, fn: () => T): T {
-  return homeScope.run(home, fn);
-}
-
 export function configDir(): string {
-  return homeScope.getStore() ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
+  return ambientContext()?.home ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
 }
 
 /** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */

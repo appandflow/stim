@@ -73,6 +73,7 @@ import {
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
 import { cancellableSleep } from '../cancellation.ts';
+import { ambientEnv } from '@stim-cli/core';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -684,7 +685,7 @@ export async function startDevServer(
           String(deviceIdleShutdownMinutesSetting(settings)),
         ];
         const childEnv: NodeJS.ProcessEnv = {
-          ...process.env,
+          ...ambientEnv(),
           ...(origin ? { [PUBLIC_METRO_ENV]: origin, EXPO_PACKAGER_PROXY_URL: origin } : {}),
         };
         childEnv[CACHE_PROVIDER_ENV] = cacheProviderEnv(cacheProvider);
