@@ -181,7 +181,7 @@ export async function installHostedApp(
     throw new Error('The executable platform or minimum OS is incompatible with the hosted simulator.');
   assertHostedDeviceLedger(home, device.udid);
   if (readHostedDevice(home).udid !== device.udid) throw new Error('The hosted device identity changed.');
-  const installed = installIosApp({
+  const installed = await installIosApp({
     udid: device.udid,
     appPath: app,
     bundleId: record.bundleId,
@@ -191,7 +191,7 @@ export async function installHostedApp(
   if (!installed.ok) throw new Error(installed.reason ?? 'Hosted app installation was not established.');
   assertHostedDeviceLedger(home, device.udid);
   if (readHostedDevice(home).udid !== device.udid) throw new Error('The hosted device identity changed.');
-  const launched = launchIosApp({
+  const launched = await launchIosApp({
     udid: device.udid,
     bundleId: record.bundleId,
     metroPort: record.mode === 'development' ? (metroPort ?? null) : null,

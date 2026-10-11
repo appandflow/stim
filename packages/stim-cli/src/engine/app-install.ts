@@ -31,9 +31,9 @@ export const IOS_DEV_MENU_OFF_DEFAULTS_PLIST: string = [
   '',
 ].join('\n');
 
-function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): void {
+async function writeIosDevMenuOffDefaults(udid: string, bundleId: string, exec: Executor): Promise<void> {
   for (const key of IOS_DEV_MENU_OFF_KEYS) {
-    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
+    await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, key, '-bool', 'false'], {
       timeoutMs: 60000,
     });
   }
@@ -101,7 +101,7 @@ export type AndroidLaunchResult = {
   reason?: string;
 };
 
-export function installIosApp(
+export async function installIosApp(
   {
     udid,
     appPath,
@@ -118,13 +118,13 @@ export function installIosApp(
     proveInstalled?: boolean;
   },
   { exec = null, now = null }: ExecOpt = {},
-): IosInstallResult {
+): Promise<IosInstallResult> {
   const e = exec || getExecutor();
   const artifactStartedAt = now?.();
   const skipped = bundleId && proveInstalled ? deviceHoldsBundle({ udid, bundleId, appPath }, { exec: e }) : false;
   if (!skipped) {
     try {
-      e.runFile('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
+      await e.runFileAsync('xcrun', ['simctl', 'install', udid, appPath], { timeoutMs: 300000, killSignal: 'SIGKILL' });
     } catch (err) {
       return {
         failed: true,
@@ -154,9 +154,9 @@ export function installIosApp(
   const preparationStartedAt = preparing ? artifactFinishedAt : undefined;
   if (bundleId && preparing) {
     try {
-      if (devMenuKeys.length > 0) writeIosDevMenuOffDefaults(udid, bundleId, e);
+      if (devMenuKeys.length > 0) await writeIosDevMenuOffDefaults(udid, bundleId, e);
       for (const key of missingApprovals) {
-        e.runFile(
+        await e.runFileAsync(
           'xcrun',
           ['simctl', 'spawn', udid, 'defaults', 'write', IOS_SCHEME_APPROVAL_DOMAIN, key, '-string', bundleId],
           { timeoutMs: 60000 },
@@ -315,7 +315,7 @@ function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: str
   return probe.state === 'running' ? probe.pid : null;
 }
 
-export function launchIosApp(
+export async function launchIosApp(
   {
     udid,
     bundleId,
@@ -332,7 +332,7 @@ export function launchIosApp(
     consolePaths?: { stdout: string; stderr: string };
   },
   { exec = null }: ExecOpt = {},
-): IosLaunchResult {
+): Promise<IosLaunchResult> {
   const e = exec || getExecutor();
   const running = iosAppProcess(udid, bundleId, { exec: e });
   const stateUnknown = running.state === 'unknown';
@@ -347,7 +347,7 @@ export function launchIosApp(
   const restart: { restartedPid?: number } = {};
   if (running.state === 'running') {
     try {
-      e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
+      await e.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
       return {
         failed: true,
@@ -359,7 +359,7 @@ export function launchIosApp(
   }
   if (metroPort !== null) {
     try {
-      e.runFile(
+      await e.runFileAsync(
         'xcrun',
         ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)],
         { timeoutMs: 60000 },
@@ -379,7 +379,7 @@ export function launchIosApp(
         // simctl openurl carries no launch arguments, so it needs the
         // dev-menu keys in the persisted defaults instead of DEV_MENU_LAUNCH_ARGS.
         try {
-          writeIosDevMenuOffDefaults(udid, bundleId, e);
+          await writeIosDevMenuOffDefaults(udid, bundleId, e);
         } catch (err) {
           return {
             failed: true,
@@ -396,13 +396,13 @@ export function launchIosApp(
           const initialUrl = new URL(url).searchParams.get('url')!;
           launchedWithInitialUrl = true;
           const pid = parseLaunchedPid(
-            e.runFile('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
+            await e.runFileAsync('xcrun', [...launchArgs, '--initialUrl', initialUrl, ...DEV_MENU_LAUNCH_ARGS], {
               timeoutMs: 60000,
             }),
           );
           return { ok: true, mode: 'launch', url, jsLocation: jsLocationValue(metroPort), pid, ...restart };
         }
-        e.runFile('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
+        await e.runFileAsync('xcrun', ['simctl', 'openurl', udid, url], { timeoutMs: 60000 });
         return { ok: true, mode: 'openurl', url, jsLocation: jsLocationValue(metroPort), ...restart };
       } catch (err) {
         const pid =
@@ -419,7 +419,7 @@ export function launchIosApp(
   }
 
   try {
-    const out = e.runFile('xcrun', launchArgs, { timeoutMs: 60000 });
+    const out = await e.runFileAsync('xcrun', launchArgs, { timeoutMs: 60000 });
     const result: IosLaunchResult = { ok: true, mode: 'launch', pid: parseLaunchedPid(out), ...restart };
     if (metroPort !== null) result.jsLocation = jsLocationValue(metroPort);
     return result;

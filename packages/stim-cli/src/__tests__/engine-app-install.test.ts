@@ -116,8 +116,8 @@ function recordingExec({
     runFileQuiet() {
       throw new Error('app-install must use runFile, not runFileQuiet');
     },
-    runFileAsync() {
-      throw new Error('app-install must use runFile, not runFileAsync');
+    async runFileAsync(file: string, args: string[] = [], opts) {
+      return this.runFile(file, args, opts);
     },
     spawn() {
       throw new Error('app-install does not spawn');
@@ -127,12 +127,12 @@ function recordingExec({
 }
 
 describe('the two pure port-wiring shapes', () => {
-  test('jsLocationValue is host:port', () => {
+  test('jsLocationValue is host:port', async () => {
     expect(jsLocationValue(8082)).toBe('localhost:8082');
     expect(jsLocationValue(8082)).toMatch(/:/);
   });
 
-  test('devClientUrl matches the shape expo-dev-launcher asserts on', () => {
+  test('devClientUrl matches the shape expo-dev-launcher asserts on', async () => {
     expect(devClientUrl('myapp', 8082)).toBe(
       'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
@@ -141,7 +141,7 @@ describe('the two pure port-wiring shapes', () => {
     );
   });
 
-  test('onboarding stays inside the project url and the session-only FAB flag stays outside', () => {
+  test('onboarding stays inside the project url and the session-only FAB flag stays outside', async () => {
     const urls = [
       devClientUrl('myapp', 8082),
       devClientUrl('myapp', 8082, '10.0.0.188'),
@@ -164,7 +164,7 @@ describe('the two pure port-wiring shapes', () => {
     );
   });
 
-  test('with dev-menu params the project url and the outer link each carry what the launcher reads there', () => {
+  test('with dev-menu params the project url and the outer link each carry what the launcher reads there', async () => {
     const link = new URL(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
     expect(link.searchParams.get('disableFab')).toBe('1');
     expect(link.searchParams.get('disableAutoLaunch')).toBe('1');
@@ -179,7 +179,7 @@ describe('the two pure port-wiring shapes', () => {
     });
   });
 
-  test('iOS scheme approvals cover the bundle id and all schemes without duplicates', () => {
+  test('iOS scheme approvals cover the bundle id and all schemes without duplicates', async () => {
     expect(iosSchemeApprovalKeys('com.example.app', ['myapp', 'myapp'])).toEqual([
       'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app',
       'com.apple.CoreSimulator.CoreSimulatorBridge-->myapp',
@@ -191,7 +191,7 @@ describe('the two pure port-wiring shapes', () => {
 });
 
 describe('ios', () => {
-  test('clearOtherUserApps removes every user app except the adopting workspace app', () => {
+  test('clearOtherUserApps removes every user app except the adopting workspace app', async () => {
     const removed: string[] = [];
     expect(
       clearOtherUserApps(
@@ -205,7 +205,7 @@ describe('ios', () => {
     expect(removed).toEqual(['com.example.old', 'com.example.other']);
   });
 
-  test('clearOtherUserApps distinguishes a failed listing from an empty simulator', () => {
+  test('clearOtherUserApps distinguishes a failed listing from an empty simulator', async () => {
     expect(clearOtherUserApps({ udid: 'U1', keep: 'com.example.keep' }, { list: () => [] })).toEqual({
       listed: true,
       kept: false,
@@ -224,7 +224,7 @@ describe('ios', () => {
     ).toEqual({ listed: false, kept: false, removed: [], failed: [] });
   });
 
-  test('clearOtherUserApps reports each uninstall that must be retried', () => {
+  test('clearOtherUserApps reports each uninstall that must be retried', async () => {
     expect(
       clearOtherUserApps(
         { udid: 'U1' },
@@ -238,25 +238,25 @@ describe('ios', () => {
     ).toEqual({ listed: true, kept: false, removed: ['com.example.one'], failed: ['com.example.two'] });
   });
 
-  test('installIosApp passes the .app path as one literal argv element', () => {
+  test('installIosApp passes the .app path as one literal argv element', async () => {
     const exec = recordingExec();
     const appPath = '/tmp/Build Products/My App.app';
-    expect(installIosApp({ udid: 'U1', appPath }, { exec })).toEqual({ ok: true, appPath });
+    expect(await installIosApp({ udid: 'U1', appPath }, { exec })).toEqual({ ok: true, appPath });
     expect(exec.calls).toEqual([['xcrun', 'simctl', 'install', 'U1', appPath]]);
   });
 
-  test('installIosApp reports a simctl failure instead of throwing', () => {
+  test('installIosApp reports a simctl failure instead of throwing', async () => {
     const exec = recordingExec({ fail: 'simctl install' });
-    const result = installIosApp({ udid: 'U1', appPath: '/tmp/a.app' }, { exec });
+    const result = await installIosApp({ udid: 'U1', appPath: '/tmp/a.app' }, { exec });
     expect(result.code).toBe(INSTALL_ERROR);
     expect(result.reason).toMatch(/device not booted/);
   });
 
-  test('installIosApp falls back to the dev-client scheme when plutil fails', () => {
+  test('installIosApp falls back to the dev-client scheme when plutil fails', async () => {
     const exec = recordingExec({ fail: 'plutil' });
     const appPath = '/tmp/My App.app';
     expect(
-      installIosApp(
+      await installIosApp(
         {
           udid: 'U1',
           appPath,
@@ -329,42 +329,45 @@ describe('ios', () => {
     expect(exec.options.slice(3)).toEqual(Array.from({ length: 4 }, () => ({ timeoutMs: 60000 })));
   });
 
-  test.each(['exp+foo', null])('approves all eligible bundle schemes with dev-client scheme %s', (devClientScheme) => {
-    const exec = recordingExec({
-      outputs: {
-        plutil: JSON.stringify({
-          CFBundleURLTypes: [{ CFBundleURLSchemes: ['stim', 'stim-dev', 'fb123456', 'https', 'exp+foo'] }],
-        }),
-      },
-    });
-    const result = installIosApp(
-      { udid: 'U1', appPath: '/tmp/My App.app', bundleId: 'com.example.app', devClientScheme },
-      { exec },
-    );
-    expect(result.schemeApprovals).toEqual([
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim=com.example.app',
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev=com.example.app',
-      'com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo=com.example.app',
-    ]);
-    expect(
-      exec.calls
-        .filter((call) => call.includes('com.apple.launchservices.schemeapproval'))
-        .map((call) => call.slice(7)),
-    ).toEqual([
-      ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app', '-string', 'com.example.app'],
-      ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim', '-string', 'com.example.app'],
-      ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev', '-string', 'com.example.app'],
-      ['com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo', '-string', 'com.example.app'],
-    ]);
-    expect(exec.calls.some((call) => call.includes('EXDevMenuShowsAtLaunch'))).toBe(devClientScheme !== null);
-  });
+  test.each(['exp+foo', null])(
+    'approves all eligible bundle schemes with dev-client scheme %s',
+    async (devClientScheme) => {
+      const exec = recordingExec({
+        outputs: {
+          plutil: JSON.stringify({
+            CFBundleURLTypes: [{ CFBundleURLSchemes: ['stim', 'stim-dev', 'fb123456', 'https', 'exp+foo'] }],
+          }),
+        },
+      });
+      const result = await installIosApp(
+        { udid: 'U1', appPath: '/tmp/My App.app', bundleId: 'com.example.app', devClientScheme },
+        { exec },
+      );
+      expect(result.schemeApprovals).toEqual([
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->stim=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev=com.example.app',
+        'com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo=com.example.app',
+      ]);
+      expect(
+        exec.calls
+          .filter((call) => call.includes('com.apple.launchservices.schemeapproval'))
+          .map((call) => call.slice(7)),
+      ).toEqual([
+        ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app', '-string', 'com.example.app'],
+        ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim', '-string', 'com.example.app'],
+        ['com.apple.CoreSimulator.CoreSimulatorBridge-->stim-dev', '-string', 'com.example.app'],
+        ['com.apple.CoreSimulator.CoreSimulatorBridge-->exp+foo', '-string', 'com.example.app'],
+      ]);
+      expect(exec.calls.some((call) => call.includes('EXDevMenuShowsAtLaunch'))).toBe(devClientScheme !== null);
+    },
+  );
 
-  test('installIosApp times the artifact step separately from dev-client preparation', () => {
+  test('installIosApp times the artifact step separately from dev-client preparation', async () => {
     const exec = recordingExec();
     const times = [0, 500, 1300];
     const appPath = '/tmp/My App.app';
-    const result = installIosApp(
+    const result = await installIosApp(
       {
         udid: 'U1',
         appPath,
@@ -392,11 +395,11 @@ describe('ios', () => {
     });
   });
 
-  test('only the approvals missing from the record are written, and the record grows by them', () => {
+  test('only the approvals missing from the record are written, and the record grows by them', async () => {
     const exec = recordingExec({
       outputs: { plutil: JSON.stringify({ CFBundleURLTypes: [{ CFBundleURLSchemes: ['myapp', 'stim'] }] }) },
     });
-    const result = installIosApp(
+    const result = await installIosApp(
       {
         udid: 'U1',
         appPath: '/tmp/My App.app',
@@ -434,9 +437,9 @@ describe('ios', () => {
 
   test.each([undefined, 'ETIMEDOUT'])(
     'a failed dev-client preference write reports a failed install result (%s)',
-    (failCode) => {
+    async (failCode) => {
       const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch', failCode });
-      const result = installIosApp(
+      const result = await installIosApp(
         {
           udid: 'U1',
           appPath: '/tmp/My App.app',
@@ -451,9 +454,9 @@ describe('ios', () => {
     },
   );
 
-  test('a failed scheme approval reports a failed install result', () => {
+  test('a failed scheme approval reports a failed install result', async () => {
     const exec = recordingExec({ fail: 'schemeapproval' });
-    const result = installIosApp(
+    const result = await installIosApp(
       {
         udid: 'U1',
         appPath: '/tmp/My App.app',
@@ -466,9 +469,9 @@ describe('ios', () => {
     expect(result.reason).toMatch(/prepare the dev client/);
   });
 
-  test('launchIosApp writes RCT_jsLocation before launching, bare RN path', () => {
+  test('launchIosApp writes RCT_jsLocation before launching, bare RN path', async () => {
     const exec = recordingExec();
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('launch');
     expect(exec.calls).toEqual([
@@ -480,14 +483,14 @@ describe('ios', () => {
     expect(result.restartedPid).toBeUndefined();
   });
 
-  test('a running app is terminated before the Metro wiring and launched fresh', () => {
+  test('a running app is terminated before the Metro wiring and launched fresh', async () => {
     const exec = recordingExec({
       outputs: {
         'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
         'simctl launch': 'com.example.app: 5151',
       },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result).toEqual({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242, jsLocation: 'localhost:8082' });
     expect(exec.calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list'],
@@ -498,14 +501,14 @@ describe('ios', () => {
     expect(exec.options[1]?.timeoutMs).toBeGreaterThan(0);
   });
 
-  test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', () => {
+  test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', async () => {
     const exec = recordingExec({
       outputs: {
         'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
         'simctl launch': 'com.example.app: 5151',
       },
     });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       {
         udid: 'U1',
         bundleId: 'com.example.app',
@@ -520,32 +523,32 @@ describe('ios', () => {
     expect(exec.calls.at(-1)).toContain('--initialUrl');
   });
 
-  test('a failed terminate refuses the launch instead of reusing the old process', () => {
+  test('a failed terminate refuses the launch instead of reusing the old process', async () => {
     const exec = recordingExec({
       fail: 'simctl terminate',
       outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/simctl terminate com\.example\.app failed.*pid 4242/);
     expect(exec.calls.some((call) => call.includes('launch'))).toBe(false);
   });
 
-  test('a no-process-handle error after a restart does not count the terminated pid as the new launch', () => {
+  test('a no-process-handle error after a restart does not count the terminated pid as the new launch', async () => {
     const exec = recordingExec({
       fail: 'simctl launch',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
       outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
   });
 
-  test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', () => {
+  test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', async () => {
     const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(result.restartedPid).toBeUndefined();
     expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
@@ -559,9 +562,9 @@ describe('ios', () => {
     ]);
   });
 
-  test('an unreadable process list relaunches a dev client without console paths instead of an openurl into it', () => {
+  test('an unreadable process list relaunches a dev client without console paths instead of an openurl into it', async () => {
     const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
@@ -579,9 +582,9 @@ describe('ios', () => {
     expect(exec.calls.at(-1)?.[6]).toBe('--initialUrl');
   });
 
-  test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
+  test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', async () => {
     const exec = recordingExec();
-    const result = launchIosApp(
+    const result = await launchIosApp(
       { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
@@ -630,9 +633,9 @@ describe('ios', () => {
     ]);
   });
 
-  test('the openurl fallback stops the launch when it cannot turn off the dev menu first', () => {
+  test('the openurl fallback stops the launch when it cannot turn off the dev menu first', async () => {
     const exec = recordingExec({ fail: 'EXDevMenuShowsAtLaunch' });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
       { exec },
     );
@@ -642,9 +645,9 @@ describe('ios', () => {
     expect(exec.calls.some((call) => call.includes('openurl'))).toBe(false);
   });
 
-  test('a failed defaults write stops the launch rather than launching unwired', () => {
+  test('a failed defaults write stops the launch rather than launching unwired', async () => {
     const exec = recordingExec({ fail: 'defaults write' });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/RCT_jsLocation/);
     expect(exec.calls.length).toBe(2);
@@ -653,9 +656,9 @@ describe('ios', () => {
 
   test.each(['defaults write', 'simctl openurl', 'simctl launch'])(
     'a timed-out %s keeps the launch refusal and adds simulator recovery advice',
-    (fail) => {
+    async (fail) => {
       const exec = recordingExec({ fail, failCode: 'ETIMEDOUT' });
-      const result = launchIosApp(
+      const result = await launchIosApp(
         {
           udid: 'U1',
           bundleId: 'com.example.app',
@@ -671,9 +674,9 @@ describe('ios', () => {
     },
   );
 
-  test('a cold Expo launch attaches console capture and passes its project URL without launching two React hosts', () => {
+  test('a cold Expo launch attaches console capture and passes its project URL without launching two React hosts', async () => {
     const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       {
         udid: 'U1',
         bundleId: 'com.example.app',
@@ -702,9 +705,9 @@ describe('ios', () => {
     expect(exec.calls).toHaveLength(3);
   });
 
-  test('a cold launch of a launcher that reads the dev-menu params passes them on its project URL', () => {
+  test('a cold launch of a launcher that reads the dev-menu params passes them on its project URL', async () => {
     const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       {
         udid: 'U1',
         bundleId: 'com.example.app',
@@ -726,14 +729,14 @@ describe('ios', () => {
     expect(result.url).toBe(devClientUrl('myapp', 8082, 'localhost', { devMenuParams: true }));
   });
 
-  test('a cold Expo launch recovers a no-process-handle error when its app started', () => {
+  test('a cold Expo launch recovers a no-process-handle error when its app started', async () => {
     const exec = recordingExec({
       fail: 'simctl launch',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
       outputs: { 'launchctl list': ['', '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n'] },
     });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       {
         udid: 'U1',
         bundleId: 'com.example.app',
@@ -747,60 +750,60 @@ describe('ios', () => {
     expect(exec.calls.filter((call) => call.includes('launchctl'))).toHaveLength(2);
   });
 
-  test('a failed launch is reported, not thrown', () => {
+  test('a failed launch is reported, not thrown', async () => {
     const exec = recordingExec({ fail: 'simctl launch' });
-    expect(launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec }).reason).toMatch(
+    expect((await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec })).reason).toMatch(
       /simctl launch/,
     );
   });
 
-  test('a no-process-handle error succeeds when the target app is running', () => {
+  test('a no-process-handle error succeeds when the target app is running', async () => {
     const exec = recordingExec({
       fail: 'simctl launch',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
       outputs: { 'launchctl list': ['', '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n'] },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result).toEqual({ ok: true, mode: 'launch', pid: 4242, jsLocation: 'localhost:8082' });
     expect(exec.calls.at(-1)).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
-  test('a no-process-handle error still fails when the target app is absent', () => {
+  test('a no-process-handle error still fails when the target app is absent', async () => {
     const exec = recordingExec({
       fail: 'simctl launch',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/did not return a process handle/);
   });
 
-  test('a no-process-handle error is not recovered when the process list could not be read', () => {
+  test('a no-process-handle error is not recovered when the process list could not be read', async () => {
     const exec = recordingExec({
       fail: 'simctl',
       failStderr:
         "An error was encountered processing the command (domain=NSPOSIXErrorDomain, code=3):\nApplication launch for 'com.example.app' did not return a process handle nor launch error.",
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: null }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(exec.calls.filter((call) => call.includes('launchctl'))).toHaveLength(1);
   });
 
-  test('an unrelated launch error still fails when the target app is running', () => {
+  test('an unrelated launch error still fails when the target app is running', async () => {
     const exec = recordingExec({
       fail: 'simctl launch',
       outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
     });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(exec.calls).toHaveLength(4);
   });
 
-  test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', () => {
+  test('launchIosApp with metroPort null is a plain launch: no RCT_jsLocation write, no openurl', async () => {
     const exec = recordingExec({ outputs: { 'simctl launch': 'com.example.app: 4242' } });
-    const result = launchIosApp(
+    const result = await launchIosApp(
       { udid: 'U1', bundleId: 'com.example.app', metroPort: null, devClientScheme: 'myapp' },
       { exec },
     );
@@ -814,7 +817,7 @@ describe('ios', () => {
     ]);
   });
 
-  test('parseLaunchedPid reads `<bundleId>: <pid>` and nothing else', () => {
+  test('parseLaunchedPid reads `<bundleId>: <pid>` and nothing else', async () => {
     expect(parseLaunchedPid('com.example.app: 4242')).toBe(4242);
     expect(parseLaunchedPid('com.example.app: 4242\n')).toBe(4242);
     expect(parseLaunchedPid('')).toBe(null);
@@ -858,7 +861,7 @@ describe('ios', () => {
     }
   });
 
-  test('iosAppProcess finds the app pid in the simulator launchctl list', () => {
+  test('iosAppProcess finds the app pid in the simulator launchctl list', async () => {
     const exec = recordingExec({
       outputs: {
         'launchctl list': '-\t0\tcom.apple.foo\n4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
@@ -868,12 +871,12 @@ describe('ios', () => {
     expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
-  test('iosAppProcess reports stopped when the app is not running', () => {
+  test('iosAppProcess reports stopped when the app is not running', async () => {
     const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
     expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
   });
 
-  test('iosAppProcess reports unknown when the process probe fails', () => {
+  test('iosAppProcess reports unknown when the process probe fails', async () => {
     const exec = recordingExec({ fail: 'launchctl list' });
     expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
   });
@@ -921,20 +924,20 @@ describe('android: resolve-activity parsing', () => {
   const REAL =
     'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\ncom.android.settings/.Settings\n';
 
-  test('takes the component line, not the key=value header', () => {
+  test('takes the component line, not the key=value header', async () => {
     expect(parseResolvedActivity(REAL)).toBe('com.android.settings/.Settings');
   });
 
-  test('returns null for "No activity found", which resolve-activity prints with exit 0', () => {
+  test('returns null for "No activity found", which resolve-activity prints with exit 0', async () => {
     expect(parseResolvedActivity('No activity found\n')).toBe(null);
   });
 
-  test('returns null for empty or non-string output', () => {
+  test('returns null for empty or non-string output', async () => {
     expect(parseResolvedActivity('')).toBe(null);
     expect(parseResolvedActivity(null)).toBe(null);
   });
 
-  test('handles a fully qualified activity name', () => {
+  test('handles a fully qualified activity name', async () => {
     expect(parseResolvedActivity('priority=0 isDefault=true\ncom.example.app/com.example.app.MainActivity\n')).toBe(
       'com.example.app/com.example.app.MainActivity',
     );
@@ -942,14 +945,14 @@ describe('android: resolve-activity parsing', () => {
 });
 
 describe('android: install and launch', () => {
-  test('installAndroidApp uses adb install -r with the apk as one argv element', () => {
+  test('installAndroidApp uses adb install -r with the apk as one argv element', async () => {
     const exec = recordingExec();
     const apkPath = '/tmp/out puts/app-debug.apk';
     expect(installAndroidApp({ serial: 'emulator-5554', apkPath }, { exec })).toEqual({ ok: true, apkPath });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'install', '-r', apkPath]]);
   });
 
-  test('adb install is bounded by the same five minutes devicectl install gets', () => {
+  test('adb install is bounded by the same five minutes devicectl install gets', async () => {
     const options: Array<ExecOptions | undefined> = [];
     const exec = recordingExec();
     const runFile = exec.runFile.bind(exec);
@@ -963,7 +966,7 @@ describe('android: install and launch', () => {
     expect(options.at(-1)).toEqual({ timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   });
 
-  test('every adb call on the launch path runs under a hard deadline', () => {
+  test('every adb call on the launch path runs under a hard deadline', async () => {
     const exec = recordingExec({
       fail: 'android.intent.action.VIEW',
       outputs: { 'resolve-activity': ['com.example.app/.MainActivity\n', 'No activity found\n'] },
@@ -995,20 +998,20 @@ describe('android: install and launch', () => {
     }
   });
 
-  test('reverseMetroPorts maps only the reserved port to itself', () => {
+  test('reverseMetroPorts maps only the reserved port to itself', async () => {
     const exec = recordingExec();
     const result = reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8082', 'tcp:8082']]);
   });
 
-  test('hasMetroReverse matches the port mapped to itself on any transport, and nothing looser', () => {
+  test('hasMetroReverse matches the port mapped to itself on any transport, and nothing looser', async () => {
     expect(hasMetroReverse('host-19 tcp:8082 tcp:8082\n', 8082)).toBe(true);
     expect(hasMetroReverse('host-21 tcp:8081 tcp:8082\nhost-21 tcp:18082 tcp:18082\n', 8082)).toBe(false);
     expect(hasMetroReverse('', 8082)).toBe(false);
   });
 
-  test('ensureMetroReverse leaves a present reverse alone and re-applies a missing one', () => {
+  test('ensureMetroReverse leaves a present reverse alone and re-applies a missing one', async () => {
     const present = recordingExec({ outputs: { '--list': 'host-19 tcp:8082 tcp:8082\n' } });
     expect(ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: present })).toEqual({
       restored: false,
@@ -1028,19 +1031,19 @@ describe('android: install and launch', () => {
     expect(unreadable.calls).toHaveLength(1);
   });
 
-  test('reverseMetroPorts maps an explicit device port to the reserved one', () => {
+  test('reverseMetroPorts maps an explicit device port to the reserved one', async () => {
     const exec = recordingExec();
     reverseMetroPorts({ serial: 'emulator-5554', metroPort: 8082, devicePorts: [8081] }, { exec });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8082']]);
   });
 
-  test('a workspace that actually reserved 8081 gets one reverse, not a duplicate', () => {
+  test('a workspace that actually reserved 8081 gets one reverse, not a duplicate', async () => {
     const exec = recordingExec();
     reverseMetroPorts({ serial: 'emulator-5554', metroPort: DEFAULT_METRO_PORT }, { exec });
     expect(exec.calls).toEqual([['adb', '-s', 'emulator-5554', 'reverse', 'tcp:8081', 'tcp:8081']]);
   });
 
-  test('launchAndroidApp reverses, resolves the activity, and am starts it', () => {
+  test('launchAndroidApp reverses, resolves the activity, and am starts it', async () => {
     const exec = recordingExec({
       outputs: { 'resolve-activity': 'priority=0 isDefault=true\ncom.example.app/.MainActivity\n' },
     });
@@ -1076,7 +1079,7 @@ describe('android: install and launch', () => {
     expect(httpHostCall.at(-1)).toMatch(/debug_http_host.*127\.0\.0\.1:8082/);
   });
 
-  test('falls back to monkey when no launcher activity resolves', () => {
+  test('falls back to monkey when no launcher activity resolves', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
@@ -1086,7 +1089,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'monkey', '-p', 'com.example.app', '1']);
   });
 
-  test('a failed reverse stops the launch', () => {
+  test('a failed reverse stops the launch', async () => {
     const exec = recordingExec({ fail: 'reverse' });
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
@@ -1097,7 +1100,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)?.[3]).toBe('reverse');
   });
 
-  test('a running app is force-stopped before the Metro wiring and launched fresh', () => {
+  test('a running app is force-stopped before the Metro wiring and launched fresh', async () => {
     const exec = recordingExec({
       outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
@@ -1113,7 +1116,7 @@ describe('android: install and launch', () => {
     ]);
   });
 
-  test('a running release app is force-stopped before its launcher activity starts', () => {
+  test('a running release app is force-stopped before its launcher activity starts', async () => {
     const exec = recordingExec({
       outputs: { pidof: '4242\n', 'resolve-activity': 'com.example.app/.MainActivity\n' },
     });
@@ -1125,7 +1128,7 @@ describe('android: install and launch', () => {
     expect(exec.calls[1]).toEqual(['adb', '-s', 'emulator-5554', 'shell', 'am', 'force-stop', 'com.example.app']);
   });
 
-  test('a failed force-stop refuses the launch instead of foregrounding the old process', () => {
+  test('a failed force-stop refuses the launch instead of foregrounding the old process', async () => {
     const exec = recordingExec({ fail: 'force-stop', outputs: { pidof: '4242\n' } });
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
@@ -1136,7 +1139,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.some((call) => call.includes('start'))).toBe(false);
   });
 
-  test('an unreadable process list launches with am start -S instead of a separate force-stop', () => {
+  test('an unreadable process list launches with am start -S instead of a separate force-stop', async () => {
     const exec = recordingExec({
       fail: ['pidof', 'ps -A', 'force-stop'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
@@ -1161,7 +1164,7 @@ describe('android: install and launch', () => {
     ]);
   });
 
-  test('an unreadable process list opens a dev client deep link with am start -S', () => {
+  test('an unreadable process list opens a dev client deep link with am start -S', async () => {
     const exec = recordingExec({ fail: ['pidof', 'ps -A'] });
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
@@ -1171,7 +1174,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)?.slice(4, 8)).toEqual(['am', 'start', '-S', '-a']);
   });
 
-  test('an unreadable process list starts a release app with am start -S -n', () => {
+  test('an unreadable process list starts a release app with am start -S -n', async () => {
     const exec = recordingExec({
       fail: ['pidof', 'ps -A'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
@@ -1186,7 +1189,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)?.slice(4)).toEqual(['am', 'start', '-S', '-n', 'com.example.app/.MainActivity']);
   });
 
-  test('an unreadable process list falls back from a failed deep link to am start -S -n', () => {
+  test('an unreadable process list falls back from a failed deep link to am start -S -n', async () => {
     const exec = recordingExec({
       fail: ['pidof', 'ps -A', 'android.intent.action.VIEW'],
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
@@ -1201,7 +1204,7 @@ describe('android: install and launch', () => {
     expect(exec.calls.at(-1)?.slice(4)).toEqual(['am', 'start', '-S', '-n', 'com.example.app/.MainActivity']);
   });
 
-  test('an unreadable process list without a launcher activity tries a force-stop and still runs monkey', () => {
+  test('an unreadable process list without a launcher activity tries a force-stop and still runs monkey', async () => {
     const exec = recordingExec({
       fail: ['pidof', 'ps -A', 'force-stop'],
       outputs: { 'resolve-activity': 'No activity found\n' },
@@ -1217,7 +1220,7 @@ describe('android: install and launch', () => {
     ]);
   });
 
-  test('an am start failure is reported, not thrown', () => {
+  test('an am start failure is reported, not thrown', async () => {
     const exec = recordingExec({
       fail: 'am start',
       outputs: { 'resolve-activity': 'priority=0\ncom.example.app/.MainActivity\n' },
@@ -1232,7 +1235,7 @@ describe('android: install and launch', () => {
     ).toMatch(/am start/);
   });
 
-  test('an adb failure while resolving the activity falls through to monkey', () => {
+  test('an adb failure while resolving the activity falls through to monkey', async () => {
     const exec = recordingExec({ fail: 'resolve-activity' });
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
@@ -1242,7 +1245,7 @@ describe('android: install and launch', () => {
   });
 });
 
-test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
+test('writeDebugHttpHost writes host:port via run-as and reports it', async () => {
   const calls: string[][] = [];
   const exec = {
     runFile: (cmd: string, args: string[]) => {
@@ -1261,7 +1264,7 @@ test('writeDebugHttpHost writes host:port via run-as and reports it', () => {
   expect(argv[8]).toMatch(/127\.0\.0\.1:8082/);
 });
 
-test('a failed prefs write does not fail the launch', () => {
+test('a failed prefs write does not fail the launch', async () => {
   const exec = {
     runFile: (_cmd: string, args: string[]) => {
       if (args.includes('run-as')) {
@@ -1296,13 +1299,13 @@ function fakeClock(start = 1000) {
 }
 
 describe('isBundleProof', () => {
-  test('a Metro reporter bundle event after the launch is proof', () => {
+  test('a Metro reporter bundle event after the launch is proof', async () => {
     expect(isBundleProof({ ts: 100, event: 'bundle_build_started', src: 'metro' }, 100)).toBe(true);
     expect(isBundleProof({ ts: 150, event: 'bundle_build_done', src: 'metro' }, 100)).toBe(true);
     expect(isBundleProof({ ts: 150, event: 'bundling_error', src: 'metro' }, 100)).toBe(true);
   });
 
-  test('an expo-child stdout line is the same proof by another route', () => {
+  test('an expo-child stdout line is the same proof by another route', async () => {
     expect(
       isBundleProof(
         { ts: 150, src: 'metro', raw: true, event: 'expo_stdout', msg: 'iOS Bundling complete 812ms' },
@@ -1322,12 +1325,12 @@ describe('isBundleProof', () => {
     expect(isBundleProof({ ts: 150, event: 'bundle_build_done', platform: 'android' }, 100, 'ios')).toBe(false);
   });
 
-  test('a record from BEFORE the launch is not proof of this launch', () => {
+  test('a record from BEFORE the launch is not proof of this launch', async () => {
     expect(isBundleProof({ ts: 99, event: 'bundle_build_done' }, 100)).toBe(false);
     expect(isBundleProof({ event: 'bundle_build_done' }, 100)).toBe(false);
   });
 
-  test('server chatter is not proof', () => {
+  test('server chatter is not proof', async () => {
     expect(
       isBundleProof({ ts: 150, src: 'metro', event: 'supervisor_started', msg: 'supervisor pid 1 starting' }, 100),
     ).toBe(false);
@@ -1785,7 +1788,7 @@ describe('optional app readiness', () => {
 });
 
 describe('unverifiedLaunchLines', () => {
-  test('iOS names the picker and the exact command to retry without an alert step', () => {
+  test('iOS names the picker and the exact command to retry without an alert step', async () => {
     const url = devClientUrl('io.tlon.groups', 8082);
     const text = unverifiedLaunchLines({
       platform: 'ios',
@@ -1803,14 +1806,14 @@ describe('unverifiedLaunchLines', () => {
     expect(text.includes(url)).toBeTruthy();
   });
 
-  test('with no scheme it restarts the exact app without attaching a console', () => {
+  test('with no scheme it restarts the exact app without attaching a console', async () => {
     const text = unverifiedLaunchLines({ platform: 'ios', metroPort: 8082, bundleId: 'com.x', udid: 'U1' }).join('\n');
     expect(text).toContain('Re-launch: xcrun simctl launch --terminate-running-process U1 com.x');
     expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
     expect(text).not.toContain('--console');
   });
 
-  test('Android recovery restarts the reported app through its resolved launcher activity', () => {
+  test('Android recovery restarts the reported app through its resolved launcher activity', async () => {
     const text = unverifiedLaunchLines({
       platform: 'android',
       metroPort: 8082,
@@ -1826,7 +1829,7 @@ describe('unverifiedLaunchLines', () => {
     expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
   });
 
-  test('a dev-client launch without a resolved activity restarts through the deep link, not monkey', () => {
+  test('a dev-client launch without a resolved activity restarts through the deep link, not monkey', async () => {
     const base = { platform: 'android', metroPort: 8082, bundleId: 'com.x', serial: 'emulator-5584' };
     const url = devClientUrl('com.x', 8082);
     const deepLink = unverifiedLaunchLines({ ...base, devClientUrl: url, devClient: true }).join('\n');
@@ -1847,7 +1850,7 @@ describe('unverifiedLaunchLines', () => {
     );
   });
 
-  test('every printed retry command carries disableOnboarding inside the project url', () => {
+  test('every printed retry command carries disableOnboarding inside the project url', async () => {
     const simulator = unverifiedLaunchLines({
       platform: 'ios',
       metroPort: 8082,
@@ -1951,7 +1954,7 @@ describe('unverifiedLaunchLines: the action comes first', () => {
     });
   }
 
-  test('the picker is first and the retry is last', () => {
+  test('the picker is first and the retry is last', async () => {
     const lines = iosLines();
     const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
     const retry = lines.findIndex((l) => /simctl openurl/.test(l));
@@ -1960,13 +1963,13 @@ describe('unverifiedLaunchLines: the action comes first', () => {
     expect(lines.some((line) => /alert|Open in/.test(line))).toBe(false);
   });
 
-  test('the picker line still carries THIS workspace port, from the facts', () => {
+  test('the picker line still carries THIS workspace port, from the facts', async () => {
     const picker = iosLines().find((l) => /DEVELOPMENT SERVERS/.test(l));
     expect(picker).toMatch(/localhost:8082/);
     expect(picker).toMatch(/NOT another workspace/);
   });
 
-  test('a bare Android app leads with the relaunch', () => {
+  test('a bare Android app leads with the relaunch', async () => {
     const lines = unverifiedLaunchLines({
       platform: 'android',
       metroPort: 8082,
@@ -2000,7 +2003,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     });
   }
 
-  test('the evidence leads, then the commands in the order they have to run', () => {
+  test('the evidence leads, then the commands in the order they have to run', async () => {
     const lines = devClientLines();
     expect(lines[1]).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
     expect(lines[1]).toContain('unsatisfied (Local network prohibited)');
@@ -2022,7 +2025,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
   });
 
   // A Don't Allow persists across upgrade installs and logs the same reason.
-  test('the denied case has its own step, and it is the Settings switch', () => {
+  test('the denied case has its own step, and it is the Settings switch', async () => {
     const denied = devClientLines().find((line) => /If the FIRST `alert get` already finds no alert/.test(line));
     expect(denied).toMatch(/denied on an earlier run/);
     expect(denied).toMatch(/persists across upgrade installs/);
@@ -2030,7 +2033,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(denied).toMatch(/no API for that switch/);
   });
 
-  test('it replaces the network list rather than adding to it', () => {
+  test('it replaces the network list rather than adding to it', async () => {
     const text = devClientLines().join('\n');
     expect(text).not.toMatch(/socketfilterfw/);
     expect(text).not.toMatch(/same Wi-Fi SSID/);
@@ -2039,7 +2042,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).toMatch(/`agent-device metro reload` does NOT recover either screen/);
   });
 
-  test('a bare app gets the RedBox and a relaunch with no payload URL', () => {
+  test('a bare app gets the RedBox and a relaunch with no payload URL', async () => {
     const text = unverifiedLaunchLines({ ...base, devClient: false }).join('\n');
     expect(text).toMatch(/agent-device alert accept/);
     expect(text).toMatch(/Could not connect to development server/);
@@ -2053,7 +2056,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).not.toMatch(/label="Reload"/);
   });
 
-  test('without the signature the network list stays, with the pre-grant wording fixed', () => {
+  test('without the signature the network list stays, with the pre-grant wording fixed', async () => {
     const text = unverifiedLaunchLines({ ...base, localNetworkPending: false, devClient: true }).join('\n');
     expect(text).toMatch(/cannot be PRE-granted from this machine/);
     expect(text).toMatch(/agent-device alert get, then agent-device alert accept/);
@@ -2062,7 +2065,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(text).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
   });
 
-  test('the Close press is the fallback for an app this launch did not start', () => {
+  test('the Close press is the fallback for an app this launch did not start', async () => {
     const text = devClientLines().join('\n');
     expect(text).toMatch(/This launch carried -EXDevMenuShowsAtLaunch 0/);
     expect(text).toMatch(/the Expo dev menu is not over the app/);
@@ -2075,7 +2078,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     );
   });
 
-  test('a simulator never takes the routed remedy, whatever the flag says', () => {
+  test('a simulator never takes the routed remedy, whatever the flag says', async () => {
     const text = unverifiedLaunchLines({
       ...base,
       physical: false,
@@ -2149,13 +2152,13 @@ describe.skipIf(process.platform === 'win32')(
       return entries;
     };
 
-    test('case 1: no prefs file at all', () => {
+    test('case 1: no prefs file at all', async () => {
       runScript(8085);
       const entries = parsePrefs(readFileSync(prefsPath(), 'utf-8'));
       expect(entries).toEqual({ debug_http_host: '10.0.2.2:8085' });
     });
 
-    test('case 2: a prefs file that already carries the key (the value is replaced, once)', () => {
+    test('case 2: a prefs file that already carries the key (the value is replaced, once)', async () => {
       runScript(8085);
       runScript(8099);
       const text = readFileSync(prefsPath(), 'utf-8');
@@ -2165,7 +2168,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(hostMatches.length).toBe(1);
     });
 
-    test('case 3: a prefs file WITHOUT the key keeps every other entry', () => {
+    test('case 3: a prefs file WITHOUT the key keeps every other entry', async () => {
       execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
       writeFileSync(
         prefsPath(),
@@ -2186,21 +2189,21 @@ describe.skipIf(process.platform === 'win32')(
       });
     });
 
-    test("case 4: Android's empty-prefs form, `<map />`", () => {
+    test("case 4: Android's empty-prefs form, `<map />`", async () => {
       execFileSync('/bin/sh', ['-c', `mkdir -p ${join(dir, 'shared_prefs')}`]);
       writeFileSync(prefsPath(), "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map />\n");
       runScript(8085);
       expect(parsePrefs(readFileSync(prefsPath(), 'utf-8'))).toEqual({ debug_http_host: '10.0.2.2:8085' });
     });
 
-    test('a data directory that does not exist exits non-zero rather than pretending', () => {
+    test('a data directory that does not exist exits non-zero rather than pretending', async () => {
       const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085', dataDir: join(dir, 'nope') });
       expect(() => execFileSync('/bin/sh', ['-c', `sh -c ${deviceShellArg(script)}`], { stdio: 'ignore' })).toThrow(
         Error,
       );
     });
 
-    test('the script is multi-line, and every line survives the quoting', () => {
+    test('the script is multi-line, and every line survives the quoting', async () => {
       const script = debugHttpHostScript({ packageName: PKG, host: '10.0.2.2:8085' });
       expect(script.split('\n').length >= 6).toBeTruthy();
       expect(script).toMatch(/^cd \/data\/data\/com\.example\.app \|\| exit 1$/m);
@@ -2214,7 +2217,7 @@ describe.skipIf(process.platform === 'win32')(
 );
 
 describe('the Android dev-client deep link', () => {
-  test('the url is the iOS shape pointed at the emulator loopback', () => {
+  test('the url is the iOS shape pointed at the emulator loopback', async () => {
     expect(androidDevClientUrl('exp+app', 8085)).toBe(
       'exp+app://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
@@ -2223,7 +2226,7 @@ describe('the Android dev-client deep link', () => {
     );
   });
 
-  test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', () => {
+  test('launchAndroidApp sends it, quoted for the device shell, and skips resolve-activity', async () => {
     const exec = recordingExec();
     const result: LaunchResult = launchAndroidApp(
       { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'exp+app' },
@@ -2253,7 +2256,7 @@ describe('the Android dev-client deep link', () => {
     expect(result.reversed).toEqual(['tcp:8082->tcp:8082']);
   });
 
-  test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', () => {
+  test('am start exits 0 on an intent it could not resolve, so the OUTPUT is read', async () => {
     expect(
       amStartError(
         'Starting: Intent { act=android.intent.action.VIEW dat=exp+app://expo-development-client/... }\nError: Activity not started, unable to resolve Intent',
@@ -2268,7 +2271,7 @@ describe('the Android dev-client deep link', () => {
     expect(amStartError('')).toBe(null);
   });
 
-  test('a deep link nothing answers falls back to the launcher and says so', () => {
+  test('a deep link nothing answers falls back to the launcher and says so', async () => {
     const exec = recordingExec({
       outputs: {
         'android.intent.action.VIEW':
@@ -2296,14 +2299,14 @@ describe('the Android dev-client deep link', () => {
     ]);
   });
 
-  test('openAndroidDevClientUrl reports an adb failure rather than throwing', () => {
+  test('openAndroidDevClientUrl reports an adb failure rather than throwing', async () => {
     const exec = recordingExec({ fail: 'am start' });
     const r = openAndroidDevClientUrl({ serial: 'emulator-5554', url: 'exp+app://x' }, { exec });
     expect(r.failed).toBe(true);
     expect(r.reason).toMatch(/am start -d exp\+app:\/\/x failed/);
   });
 
-  test('openAndroidDevClientUrl can restrict the deep link to the recorded package', () => {
+  test('openAndroidDevClientUrl can restrict the deep link to the recorded package', async () => {
     const exec = recordingExec();
     const r = openAndroidDevClientUrl(
       { serial: 'emulator-5554', url: 'exp+app://x', packageName: 'com.example.app' },
@@ -2330,7 +2333,7 @@ describe('the Android dev-client deep link', () => {
     ]);
   });
 
-  test('deviceShellArg quotes what adb will not', () => {
+  test('deviceShellArg quotes what adb will not', async () => {
     expect(deviceShellArg('a b')).toBe(`'a b'`);
     expect(deviceShellArg("it's")).toBe(`'it'\\''s'`);
   });
@@ -2346,7 +2349,7 @@ describe('the Android dev-client deep link', () => {
 });
 
 describe('installConflictKind', () => {
-  test('the signer conflict, which a locally re-signed APK guarantees', () => {
+  test('the signer conflict, which a locally re-signed APK guarantees', async () => {
     expect(installConflictKind('adb: failed to install app.apk: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]')).toBe(
       'signature',
     );
@@ -2354,11 +2357,11 @@ describe('installConflictKind', () => {
     expect(installConflictKind('Package com.x signatures do not match previously installed version')).toBe('signature');
   });
 
-  test('the downgrade conflict, answered the same way', () => {
+  test('the downgrade conflict, answered the same way', async () => {
     expect(installConflictKind('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]')).toBe('downgrade');
   });
 
-  test('everything else is a plain install failure, and must NOT trigger an uninstall', () => {
+  test('everything else is a plain install failure, and must NOT trigger an uninstall', async () => {
     expect(installConflictKind('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]')).toBe(null);
     expect(installConflictKind('device offline')).toBe(null);
     expect(installConflictKind(null)).toBe(null);
@@ -2398,7 +2401,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
     return { exec, calls, options };
   }
 
-  test('a signer conflict uninstalls the package and installs once more, with a note saying why', () => {
+  test('a signer conflict uninstalls the package and installs once more, with a note saying why', async () => {
     const { exec, calls, options } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
     const result = installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
@@ -2417,7 +2420,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
     ]);
   });
 
-  test('a version downgrade is the same answer with its own note', () => {
+  test('a version downgrade is the same answer with its own note', async () => {
     const { exec } = conflictingExec('Failure [INSTALL_FAILED_VERSION_DOWNGRADE]');
     const result = installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
@@ -2427,7 +2430,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
     expect(result.note).toMatch(/higher versionCode/);
   });
 
-  test('ONCE: a conflict that survives the uninstall is a plain failure, not a loop', () => {
+  test('ONCE: a conflict that survives the uninstall is a plain failure, not a loop', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]', { alsoFailRetry: true });
     const result = installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
@@ -2439,14 +2442,14 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
     expect(calls.filter((c) => c.includes('install')).length).toBe(2);
   });
 
-  test('without allowUninstall nothing is ever removed -- the DEBUG flow keeps its app data', () => {
+  test('without allowUninstall nothing is ever removed -- the DEBUG flow keeps its app data', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE]');
     const result = installAndroidApp({ serial: 'emulator-5584', apkPath, packageName: 'com.example.app' }, { exec });
     expect(result.failed).toBe(true);
     expect(calls.some((c) => c.includes('uninstall'))).toBe(false);
   });
 
-  test('a non-conflict failure never uninstalls, even with allowUninstall', () => {
+  test('a non-conflict failure never uninstalls, even with allowUninstall', async () => {
     const { exec, calls } = conflictingExec('Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]');
     const result = installAndroidApp(
       { serial: 'emulator-5584', apkPath, packageName: 'com.example.app', allowUninstall: true },
@@ -2458,7 +2461,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
 });
 
 describe('launchAndroidReleaseApp', () => {
-  test('a plain am start of the launcher activity: no reverse, no prefs write, no deep link', () => {
+  test('a plain am start of the launcher activity: no reverse, no prefs write, no deep link', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' } });
     const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
     expect(result).toEqual({ ok: true, mode: 'am-start', component: 'com.example.app/.MainActivity' });
@@ -2476,14 +2479,14 @@ describe('launchAndroidReleaseApp', () => {
     ]);
   });
 
-  test('an unresolvable launcher activity falls through to monkey, as the debug launch does', () => {
+  test('an unresolvable launcher activity falls through to monkey, as the debug launch does', async () => {
     const exec = recordingExec({ outputs: { 'resolve-activity': 'No activity found\n' } });
     const result = launchAndroidReleaseApp({ serial: 'emulator-5584', packageName: 'com.example.app' }, { exec });
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('monkey');
   });
 
-  test('an am start that fails is a return value naming the component', () => {
+  test('an am start that fails is a return value naming the component', async () => {
     const exec = recordingExec({
       outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
       fail: 'am start',
@@ -2495,7 +2498,7 @@ describe('launchAndroidReleaseApp', () => {
 });
 
 describe('the android release process proof', () => {
-  test('parsePidof takes the first pid, and an empty answer is not a process', () => {
+  test('parsePidof takes the first pid, and an empty answer is not a process', async () => {
     expect(parsePidof('4242\n')).toBe(4242);
     expect(parsePidof('4242 4310\n')).toBe(4242);
     expect(parsePidof('')).toBe(null);
@@ -2503,7 +2506,7 @@ describe('the android release process proof', () => {
     expect(parsePidof('0')).toBe(null);
   });
 
-  test('parsePsPid matches the MAIN process, not a :remote one', () => {
+  test('parsePsPid matches the MAIN process, not a :remote one', async () => {
     const ps = [
       'USER           PID  PPID     VSZ    RSS WCHAN            ADDR S NAME',
       'u0_a123       4242   310 1502444 123456 0                   0 S com.example.app',
@@ -2569,7 +2572,7 @@ describe('the android release process proof', () => {
 });
 
 describe('isBundleRequestProof', () => {
-  test("a device log line naming a bundle URL on THIS workspace's port is proof of the request", () => {
+  test("a device log line naming a bundle URL on THIS workspace's port is proof of the request", async () => {
     expect(
       isBundleRequestProof(
         { ts: 150, src: 'device', msg: 'Loading app from http://10.0.2.2:8082/index.bundle?platform=android' },
@@ -2586,13 +2589,13 @@ describe('isBundleRequestProof', () => {
     ).toBe(true);
   });
 
-  test("another workspace's port is never proof -- that is the failure this check exists for", () => {
+  test("another workspace's port is never proof -- that is the failure this check exists for", async () => {
     expect(
       isBundleRequestProof({ ts: 150, src: 'device', msg: 'Loading http://10.0.2.2:8081/index.bundle' }, 100, 8082),
     ).toBe(false);
   });
 
-  test("another platform's device request is not proof", () => {
+  test("another platform's device request is not proof", async () => {
     expect(
       isBundleRequestProof(
         {
@@ -2608,7 +2611,7 @@ describe('isBundleRequestProof', () => {
     ).toBe(false);
   });
 
-  test('an error-level line naming the same URL is a request that FAILED, not one in flight', () => {
+  test('an error-level line naming the same URL is a request that FAILED, not one in flight', async () => {
     expect(
       isBundleRequestProof(
         { ts: 150, src: 'device', level: 'error', msg: 'Could not load http://10.0.2.2:8082/index.bundle' },
@@ -2618,7 +2621,7 @@ describe('isBundleRequestProof', () => {
     ).toBe(false);
   });
 
-  test('a URL with no bundle path, a record from before the launch, and a missing port are all not proof', () => {
+  test('a URL with no bundle path, a record from before the launch, and a missing port are all not proof', async () => {
     expect(
       isBundleRequestProof({ ts: 150, src: 'device', msg: 'connected to http://localhost:8082/' }, 100, 8082),
     ).toBe(false);
@@ -3060,7 +3063,7 @@ describe('verifyLaunch: still bundling', () => {
 });
 
 describe('the Metro host for a physical device', () => {
-  test('writeDebugHttpHost points a physical device at localhost, which adb reverse serves', () => {
+  test('writeDebugHttpHost points a physical device at localhost, which adb reverse serves', async () => {
     const calls: string[][] = [];
     const exec = {
       runFile: (cmd: string, args: string[]) => {
@@ -3080,7 +3083,7 @@ describe('the Metro host for a physical device', () => {
     expect(argv[8]).not.toMatch(/10\.0\.2\.2/);
   });
 
-  test('writeDebugHttpHost points an emulator at adb reverse loopback', () => {
+  test('writeDebugHttpHost points an emulator at adb reverse loopback', async () => {
     const exec = { runFile: () => '' } as unknown as Executor;
     const r = writeDebugHttpHost(
       { serial: 'emulator-5554', packageName: 'com.x', metroPort: 8082, physical: false },
@@ -3089,7 +3092,7 @@ describe('the Metro host for a physical device', () => {
     expect(r.host).toBe('127.0.0.1:8082');
   });
 
-  test('the dev-client url targets localhost on a physical device', () => {
+  test('the dev-client url targets localhost on a physical device', async () => {
     expect(androidDevClientUrl('exp+app', 8085, true)).toBe(
       'exp+app://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8085%2F%3FdisableOnboarding%3D1&disableFab=1',
     );
@@ -3098,7 +3101,7 @@ describe('the Metro host for a physical device', () => {
     );
   });
 
-  test('launchAndroidApp sends the localhost deep link when the device is physical', () => {
+  test('launchAndroidApp sends the localhost deep link when the device is physical', async () => {
     const exec = recordingExec();
     const result: LaunchResult = launchAndroidApp(
       {
@@ -3134,7 +3137,7 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
   }
   const reverses = (calls: string[][]) => calls.filter((c) => c.includes('reverse')).map((c) => c.slice(-2).join(' '));
 
-  test('a successful prefs write leaves only the same-port mapping', () => {
+  test('a successful prefs write leaves only the same-port mapping', async () => {
     const { calls, exec } = execRecording(true);
     const result: LaunchResult = launchAndroidApp(
       { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
@@ -3145,7 +3148,7 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
     expect(result.debugHttpHost).toBe('localhost:8082');
   });
 
-  test('a failed prefs write adds the 8081 fallback so the app still finds Metro', () => {
+  test('a failed prefs write adds the 8081 fallback so the app still finds Metro', async () => {
     const { calls, exec } = execRecording(false);
     const result: LaunchResult = launchAndroidApp(
       { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
@@ -3157,14 +3160,14 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
     expect(result.debugHttpHostNote).toMatch(/relying on adb reverse/);
   });
 
-  test('the same-port mapping is registered before the prefs write, so the app can never race ahead of it', () => {
+  test('the same-port mapping is registered before the prefs write, so the app can never race ahead of it', async () => {
     const { calls, exec } = execRecording(true);
     launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 }, { exec });
     const order = calls.map((c) => (c.includes('reverse') ? 'reverse' : c.includes('run-as') ? 'prefs' : 'other'));
     expect(order.indexOf('reverse')).toBeLessThan(order.indexOf('prefs'));
   });
 
-  test('a workspace on the default port still gets its one mapping', () => {
+  test('a workspace on the default port still gets its one mapping', async () => {
     const { calls, exec } = execRecording(true);
     launchAndroidApp({ serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8081 }, { exec });
     expect(reverses(calls)).toEqual(['tcp:8081 tcp:8081']);
@@ -3195,7 +3198,7 @@ describe('skipping an install the device already holds', () => {
     return path;
   }
 
-  test('an identical APK is not installed again, and says so', () => {
+  test('an identical APK is not installed again, and says so', async () => {
     const apkPath = localApk();
     const exec = recordingExec({
       outputs: {
@@ -3208,7 +3211,7 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls.some((c) => c.includes('install'))).toBe(false);
   });
 
-  test('a RELEASE run installs the swapped APK: fresh JS makes it a different artifact', () => {
+  test('a RELEASE run installs the swapped APK: fresh JS makes it a different artifact', async () => {
     const cachedApk = localApk('apk with the builders js');
     const swappedApk = join(dir, 'apk-swap', 'app-production-release.apk');
     mkdirSync(join(dir, 'apk-swap'), { recursive: true });
@@ -3227,7 +3230,7 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', swappedApk]);
   });
 
-  test('a device without sha256sum installs exactly as before', () => {
+  test('a device without sha256sum installs exactly as before', async () => {
     const apkPath = localApk();
     const exec = recordingExec({
       outputs: { 'pm path': 'package:/data/app/a/base.apk\n', sha256sum: 'sha256sum: not found' },
@@ -3237,7 +3240,7 @@ describe('skipping an install the device already holds', () => {
     expect(exec.calls).toContainEqual(['adb', '-s', 'emulator-5584', 'install', '-r', apkPath]);
   });
 
-  test('an identical .app keeps its dev-menu preferences, and recorded approvals leave nothing to prepare', () => {
+  test('an identical .app keeps its dev-menu preferences, and recorded approvals leave nothing to prepare', async () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
     for (const [schemeApprovals, writes] of [
@@ -3257,7 +3260,7 @@ describe('skipping an install the device already holds', () => {
       ],
     ] as const) {
       const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-      const result = installIosApp(
+      const result = await installIosApp(
         {
           udid: 'U1',
           appPath,
@@ -3273,11 +3276,11 @@ describe('skipping an install the device already holds', () => {
     }
   });
 
-  test('an identical .app that adoption cleared skips the dev-menu writes: the launch carries them instead', () => {
+  test('an identical .app that adoption cleared skips the dev-menu writes: the launch carries them instead', async () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('built.app', 'macho');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    const result = installIosApp(
+    const result = await installIosApp(
       {
         udid: 'U1',
         appPath,
@@ -3295,11 +3298,11 @@ describe('skipping an install the device already holds', () => {
     expect(result.devClientPreparationDurationMs).toBeUndefined();
   });
 
-  test('a .app whose JS was swapped is installed: the container holds the other one', () => {
+  test('a .app whose JS was swapped is installed: the container holds the other one', async () => {
     const installed = localApp('installed.app', 'macho');
     const appPath = localApp('js-swap.app', 'macho with this workspaces js');
     const exec = recordingExec({ outputs: { get_app_container: `${installed}\n` } });
-    const result = installIosApp({ udid: 'U1', appPath, bundleId: 'com.example.app' }, { exec });
+    const result = await installIosApp({ udid: 'U1', appPath, bundleId: 'com.example.app' }, { exec });
     expect(result).toEqual({
       ok: true,
       appPath,
@@ -3361,9 +3364,9 @@ describe('launch verification after Metro prefetch', () => {
   });
 });
 
-test('a simulator install timeout fails before dev-client preparation and gives host recovery guidance', () => {
+test('a simulator install timeout fails before dev-client preparation and gives host recovery guidance', async () => {
   const exec = recordingExec({ fail: 'simctl install', failCode: 'ETIMEDOUT' });
-  const result = installIosApp(
+  const result = await installIosApp(
     {
       udid: 'U1',
       appPath: '/private/app with spaces.app',
@@ -3451,3 +3454,25 @@ describe('verifyLaunch: bundle deliveries in a workspace with device slots', () 
     expect(result.unattributed).toBeUndefined();
   });
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a simulator install leaves the event loop free while simctl runs (POSIX executable stub; skipped on win32)',
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-install-loop-'));
+    const previousPath = process.env.PATH;
+    try {
+      writeFileSync(join(dir, 'xcrun'), '#!/bin/sh\nsleep 0.5\n', { mode: 0o755 });
+      process.env.PATH = `${dir}:${previousPath}`;
+      let ticks = 0;
+      const timer = setInterval(() => (ticks += 1), 20);
+      const installed = await installIosApp({ udid: 'U1', appPath: join(dir, 'App.app') }).finally(() =>
+        clearInterval(timer),
+      );
+      expect(installed).toEqual({ ok: true, appPath: join(dir, 'App.app') });
+      expect(ticks).toBeGreaterThan(5);
+    } finally {
+      process.env.PATH = previousPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
