@@ -865,7 +865,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('an in-process read routes hosted warnings through its caller and cancels a pending copy', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       const placement = readMacosRecord(root)!.host!;
       const output = vi.fn<(stream: 'stdout' | 'stderr', text: string) => void>();
       const abort = new AbortController();

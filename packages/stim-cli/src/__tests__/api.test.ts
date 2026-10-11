@@ -15,6 +15,7 @@ import { workspaceName } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createStim, StimError } from '../api.ts';
+import * as hostedLogs from '../device-host/hosted-logs-sync.ts';
 
 let scratch: string;
 
@@ -523,5 +524,35 @@ test('assembled agent tails filter before selection and preserve equal-timestamp
   } finally {
     clearTimeout(timeout);
     stop();
+  }
+});
+
+test('a progress failure during log backfill rejects unchanged and stops the live subscription', async () => {
+  const { root, home, directory } = fixture('follow-progress-error');
+  const path = join(directory, 'build.ndjson');
+  writeFileSync(path, JSON.stringify({ ts: 1, level: 'info', src: 'build', msg: 'backfill' }) + '\n');
+  const failure = new Error('log progress consumer failed');
+  const sync = vi.spyOn(hostedLogs, 'syncHostedLogs').mockImplementation(async (_root, context) => {
+    context?.output('stderr', 'hosted read unavailable\n');
+    return false;
+  });
+  const received: string[] = [];
+  const stim = createStim({
+    projectRoot: root,
+    home,
+    onProgress: () => {
+      throw failure;
+    },
+  });
+  try {
+    await expect(stim.logs({ sources: ['build'], tail: 1 })).rejects.toBe(failure);
+    await expect(
+      stim.followLogs({ sources: ['build'], tail: 1 }, (record) => received.push(String(record.msg))),
+    ).rejects.toBe(failure);
+    appendFileSync(path, JSON.stringify({ ts: 2, level: 'info', src: 'build', msg: 'live' }) + '\n');
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(received).toEqual(['backfill']);
+  } finally {
+    sync.mockRestore();
   }
 });
