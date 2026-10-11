@@ -92,64 +92,50 @@ function takeLockDirectory(lockPath: string, claim: ClaimHandle): string | null 
   return marker;
 }
 
-function acquireDirLock(
-  lockPath: string,
-  {
-    waitMs,
-    pollMs,
-    ensureParent,
-  }: Required<Pick<DirLockOptions, 'waitMs' | 'pollMs'>> & Pick<DirLockOptions, 'ensureParent'>,
-): { claim: ClaimHandle; marker: string } {
+interface HeldDirLock {
+  claim: ClaimHandle;
+  marker: string;
+}
+
+function prepareDirLock(lockPath: string, ensureParent: DirLockOptions['ensureParent']): void {
   ensureParent?.();
   statSync(dirname(lockPath));
-  const deadline = Date.now() + waitMs;
-  let claim: ClaimHandle | undefined;
+}
+
+function attemptDirLock(lockPath: string, pending: { claim?: ClaimHandle }): HeldDirLock | null {
+  if (!pending.claim) {
+    const attempt = tryAcquireClaim({ root: `${lockPath}.claims`, mode: 'exclusive', label: 'directory lock' });
+    pending.claim = attempt.acquired;
+    if (attempt.pending) releaseClaim(attempt.pending);
+  }
+  if (!pending.claim) return null;
+  const marker = takeLockDirectory(lockPath, pending.claim);
+  return marker ? { claim: pending.claim, marker } : null;
+}
+
+function dirLockTimeout(lockPath: string, claim: ClaimHandle | undefined): Error {
+  const error = new Error(
+    `Timed out waiting for the lock at ${lockPath}. ` +
+      (claim
+        ? 'No current Stim holds it: the directory is empty, or an older Stim version holds or left it. ' +
+          `If no older Stim is running, remove it and run the command again:\n  rm -rf ${quotedPath(lockPath)}`
+        : 'Another Stim process is holding it; wait for that command to finish and run the command again.'),
+  );
+  (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
+  (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
+  return error;
+}
+
+function nestedDirLock<T>(lockPath: string, fn: () => T): T {
+  lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 0) + 1);
   try {
-    for (;;) {
-      if (!claim) {
-        const attempt = tryAcquireClaim({ root: `${lockPath}.claims`, mode: 'exclusive', label: 'directory lock' });
-        claim = attempt.acquired;
-        if (attempt.pending) releaseClaim(attempt.pending);
-      }
-      if (claim) {
-        const marker = takeLockDirectory(lockPath, claim);
-        if (marker) return { claim, marker };
-      }
-      if (Date.now() >= deadline) {
-        const error = new Error(
-          `Timed out waiting for the lock at ${lockPath}. ` +
-            (claim
-              ? 'No current Stim holds it: the directory is empty, or an older Stim version holds or left it. ' +
-                `If no older Stim is running, remove it and run the command again:\n  rm -rf ${quotedPath(lockPath)}`
-              : 'Another Stim process is holding it; wait for that command to finish and run the command again.'),
-        );
-        (error as Error & { code?: string; lockPath?: string }).code = 'STIM_LOCK_TIMEOUT';
-        (error as Error & { code?: string; lockPath?: string }).lockPath = lockPath;
-        throw error;
-      }
-      sleepSync(pollMs);
-    }
-  } catch (error) {
-    releaseClaim(claim);
-    throw error;
+    return fn();
+  } finally {
+    lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 1) - 1);
   }
 }
 
-export function withDirLock<T>(
-  lockPath: string,
-  fn: () => T,
-  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
-): T {
-  const depth = lockDepths.get(lockPath) || 0;
-  if (depth > 0) {
-    lockDepths.set(lockPath, depth + 1);
-    try {
-      return fn();
-    } finally {
-      lockDepths.set(lockPath, (lockDepths.get(lockPath) ?? 1) - 1);
-    }
-  }
-  const { claim, marker } = acquireDirLock(lockPath, { waitMs, pollMs, ensureParent });
+function holdDirLock<T>(lockPath: string, { claim, marker }: HeldDirLock, fn: () => T): T {
   lockDepths.set(lockPath, 1);
   try {
     return fn();
@@ -160,4 +146,55 @@ export function withDirLock<T>(
     } catch {}
     releaseClaim(claim);
   }
+}
+
+export function withDirLock<T>(
+  lockPath: string,
+  fn: () => T,
+  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
+): T {
+  if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
+  prepareDirLock(lockPath, ensureParent);
+  const deadline = Date.now() + waitMs;
+  const pending: { claim?: ClaimHandle } = {};
+  let held: HeldDirLock | null;
+  try {
+    while (!(held = attemptDirLock(lockPath, pending))) {
+      if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
+      sleepSync(pollMs);
+    }
+  } catch (error) {
+    releaseClaim(pending.claim);
+    throw error;
+  }
+  return holdDirLock(lockPath, held, fn);
+}
+
+/**
+ * `withDirLock` that waits for a contended lock on a timer instead of blocking the thread. `fn` still runs
+ * synchronously: nothing awaits between taking the lock, running `fn` and releasing the lock, so the held
+ * transaction and reentrant nesting behave exactly as with `withDirLock`.
+ */
+export async function withDirLockAsync<T>(
+  lockPath: string,
+  fn: () => T,
+  { waitMs = DEFAULT_LOCK_WAIT_MS, pollMs = DEFAULT_LOCK_POLL_MS, ensureParent }: DirLockOptions = {},
+): Promise<T> {
+  if ((lockDepths.get(lockPath) || 0) > 0) return nestedDirLock(lockPath, fn);
+  prepareDirLock(lockPath, ensureParent);
+  const deadline = Date.now() + waitMs;
+  const pending: { claim?: ClaimHandle } = {};
+  let held: HeldDirLock | null;
+  try {
+    while (!(held = attemptDirLock(lockPath, pending))) {
+      if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
+      releaseClaim(pending.claim);
+      pending.claim = undefined;
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  } catch (error) {
+    releaseClaim(pending.claim);
+    throw error;
+  }
+  return holdDirLock(lockPath, held, fn);
 }

@@ -1,5 +1,12 @@
 import { realpathSync } from 'node:fs';
-import { ensureConfig, getConfigDir, getProject, loadConfig, saveConfig, withConfigLock } from './workspace/config.ts';
+import {
+  ensureConfig,
+  getConfigDir,
+  getProject,
+  loadConfig,
+  saveConfig,
+  withConfigLockAsync,
+} from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { withWorkspaceProcessLock } from './engine/workspace-process-lock.ts';
 import { parseNetstatPids, signalProcessTree } from './metro.ts';
@@ -72,7 +79,7 @@ export function reserveBrowserPort(projectPath: string, options: AllocateOptions
 
 export function releaseBrowserPort(projectPath: string, port: number): Promise<void> {
   return withPortsLock(async () =>
-    withConfigLock(() => {
+    withConfigLockAsync(() => {
       const cfg = loadConfig();
       const ports = cfg?.projects?.[projectPath]?.ports;
       if (!cfg || ports?.[BROWSER_LABEL] !== port) return;
@@ -96,7 +103,7 @@ async function allocateNamedPort(
       if (projects.some((project) => project.metroPort === port || Object.values(project.ports ?? {}).includes(port)))
         continue;
       if (!(await isFree(port))) continue;
-      const claimed = withConfigLock(() => {
+      const claimed = await withConfigLockAsync(() => {
         const cfg = ensureConfig();
         if (
           Object.values(cfg.projects).some(
@@ -198,7 +205,7 @@ export async function clearNamedPorts(
           log(`would release ${name} (${port})`);
           continue;
         }
-        withConfigLock(() => {
+        await withConfigLockAsync(() => {
           const cfg = loadConfig();
           const current = cfg?.projects?.[projectPath]?.ports;
           if (!cfg || current?.[name] !== port) return;

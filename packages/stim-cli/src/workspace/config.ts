@@ -34,6 +34,7 @@ export {
   isPathPrefix,
   loadConfig,
   withConfigLock,
+  withConfigLockAsync,
   type Config,
   type ConcurrencyLimits,
   type DeviceRecord,

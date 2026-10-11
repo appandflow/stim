@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
-import { clearDevice, loadConfig, setDevice, withConfigLock } from '../workspace/config.ts';
+import { clearDevice, loadConfig, setDevice, withConfigLockAsync } from '../workspace/config.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
   claimRemoveCommand,
@@ -81,7 +81,7 @@ export async function prepareOwnedAvd({
   configure: (avdName: string) => void;
   teardown?: typeof teardownOwnedAvd;
 }): Promise<PreparedAvd> {
-  const allocation = withConfigLock(() => {
+  const allocation = await withConfigLockAsync(() => {
     const previous = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
     if (previous?.avdName && previous.avdName !== previousAvdName) {
       throw new Error(`Another Stim run assigned AVD ${previous.avdName} to this workspace. Retry to use it.`);
@@ -175,7 +175,7 @@ export async function prepareOwnedAvd({
             error,
           );
         }
-        withConfigLock(assertReservation);
+        await withConfigLockAsync(assertReservation);
         const resolved = resolveOwnedAvdSerial(avdName);
         if (resolved.missing || resolved.notOwned) {
           throw new Error(`AVD ${avdName} could not be verified for recovery. Retry after checking its registration.`, {
@@ -193,7 +193,7 @@ export async function prepareOwnedAvd({
             : {}),
         };
       } catch (recoveryError) {
-        withConfigLock(() => {
+        await withConfigLockAsync(() => {
           if (!isDeepStrictEqual(currentRecord(), reservation)) return;
           if (previous) setDevice(projectPath, 'android', previous, slot);
           else clearDevice(projectPath, 'android', slot, avdName);
@@ -214,7 +214,7 @@ export async function prepareOwnedAvd({
       }
     }
     if (!configurationFailure) {
-      withConfigLock(() => {
+      await withConfigLockAsync(() => {
         assertReservation();
         setDevice(
           projectPath,
