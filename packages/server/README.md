@@ -1406,6 +1406,33 @@ Events are `{ "event", "subscription", ... }`.
   `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
   device from an agent driving it: an `activity.driver` of `stim device lock`
   whose `since` is in `ownLeases` is a phone.
+- `workspaces.subscribe` returns a subscription id and sends `workspaces`
+  events, each with a `seq` that starts at 0 and grows by one. The first
+  carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each
+  workspace is its environment as `status` reports it, without what only a
+  shown workspace needs: a build keeps its outcome, timing and first located
+  diagnostic, each platform's history only its newest build and the failures
+  right before it, `logs` only `errorsSinceMarker`, a pull request no
+  `reviewDecision` or `checkedAt`, and a macOS app no launch `arguments`.
+  `worktrees` are the unprovisioned worktrees' `path`, `branch`, `repository`,
+  `gitChip` and pull request `number` and `state`; `archived` is
+  `{ "count", "bytes", "newest" }` with the 10 newest archives. Later events
+  carry only what changed: `workspaces` and `worktrees` as
+  `{ "upsert", "remove" }` (whole entries by `path`, and the paths that are
+  gone), and `archived` when it changed. A client that misses a `seq`
+  subscribes again for a new snapshot.
+- `workspace.subscribe` with `{ "workspace" }` sends `workspace` events with
+  that workspace's full `environment`, on subscribing and on every change to
+  it, or `null` while no workspace has that path.
+- `machine.subscribe` sends `machine` events with `capacity`, `machine`,
+  `deviceLeases`, `simctlAvailable` and `maintenance` without `recent` and
+  `sizes`, plus `usage` and `ownLeases` as on `status` events.
+- `builds.history` with `{ "workspace" }` returns that workspace's full
+  `{ "builds" }`. `archived.list` with optional `before` and `limit` (at most 50) returns `{ "archived", "usage", "next" }`: archives newest removal first,
+  and the `before` of the next page, or null. `worktrees.list` returns the full
+  `{ "worktrees" }` and `maintenance.get` the full `{ "maintenance" }`. These
+  answer from the server's latest status, waiting up to 30 seconds for the
+  first one.
 - `logs.query` returns `{ "records" }`, and `logs.subscribe` sends `logs`
   events: first the last `tail` matching records, then new ones in batches.
   Both take the Stim Desktop log viewer's filters: exactly one of `workspace`
