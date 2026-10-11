@@ -3065,8 +3065,15 @@ test.each(['ios', 'android'] as const)(
     await state(first.id, 'ready');
     host.stop('client', { session: first.id });
     await state(first.id, 'stopped');
+    const logs = join(deviceHostArea(first.id), 'home', `${platform}-logs`);
+    mkdirSync(logs, { recursive: true });
+    writeFileSync(join(logs, 'device.ndjson'), `${JSON.stringify({ ts: 1, src: 'device', msg: 'earlier session' })}\n`);
+    writeFileSync(join(logs, 'checkpoint.json'), JSON.stringify({ until: 1000, boundary: [] }));
     const adopted = await reserve({ platform, workspace: '/client/next', attempt: 'next', slot: 'second' });
     expect(adopted.id).toBe(first.id);
+    expect(await host.logsQuery('client', { session: first.id })).toMatchObject({
+      result: { records: [], checkpoint: undefined },
+    });
     expect(adopted.parked).toBeUndefined();
     expect(adopted.appAttempt).toBeUndefined();
     await state(first.id, 'ready');

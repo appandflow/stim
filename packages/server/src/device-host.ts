@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { isIP, type AddressInfo } from 'node:net';
 import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
@@ -344,7 +344,8 @@ export class DeviceHost {
           if (adoption) {
             const owned = adoption;
             try {
-              const ledger = readHostedDeviceLedger(join(deviceHostArea(adopted.id), 'home'));
+              const home = join(deviceHostArea(adopted.id), 'home');
+              const ledger = readHostedDeviceLedger(home);
               if (
                 !ledger ||
                 !adopted.device ||
@@ -352,7 +353,11 @@ export class DeviceHost {
               ) {
                 this.release(adopted.id, owned);
                 adoption = undefined;
-              }
+              } else
+                rmSync(hostedNativeLogsDir(home, request.platform === 'android' ? 'android' : 'ios'), {
+                  recursive: true,
+                  force: true,
+                });
             } catch (error) {
               this.release(adopted.id, owned);
               throw error;
