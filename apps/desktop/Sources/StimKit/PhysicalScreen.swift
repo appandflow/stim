@@ -18,7 +18,8 @@ public enum PhysicalScreen: Equatable, Sendable {
   /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
   static func olderServer(showing what: String) -> PhysicalScreen {
     .message(
-      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Quit it so Stim Desktop starts its own.")
+      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Update or stop it so Stim Desktop starts its own."
+    )
   }
 
   /// `now` decides an expired lease before `stim status` drops the device.

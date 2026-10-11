@@ -284,6 +284,8 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
+        provisional = false
+        provisionalStart = nil
         failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
@@ -305,6 +307,8 @@ final class ServerController: ObservableObject {
       guard current == generation, process != nil, action == .fail else { return }
       generation += 1
       terminate()
+      provisional = false
+      provisionalStart = nil
       failureKind = .noAnswer
       state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
     }

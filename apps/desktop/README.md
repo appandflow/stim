@@ -994,7 +994,7 @@ Instead of a screen, the tile says:
   unreachable.
 - **The stim-server on this port is older than Stim Desktop** when the server's
   hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
-  a server it did not start. Quitting that server lets Desktop start its own.
+  a server it did not start. Updating or stopping that server lets Desktop start its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1008,8 +1008,7 @@ ended), Control turns off and the tile says why.
 
 Desktop runs a local `stim-server` while it is open; there is no switch. The app
 bundles it: `Contents/Resources/stim-server` holds a pinned official Node.js LTS
-(universal, `strip -x`, signed with the hardened runtime and only the
-`com.apple.security.cs.allow-jit` entitlement) and `@stim-cli/server` with the `stim`
+(universal, `strip -x`, signed with the hardened runtime) and `@stim-cli/server` with the `stim`
 packages it runs, so the server always matches the app and needs no global install,
 Node version manager or login shell to start. A Mac that serves without Desktop, such
 as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
@@ -1803,19 +1802,24 @@ x64 binaries with `lipo` for `--universal`. It builds `@stim-cli/server` and the
 workspace packages it imports, packs them with `pnpm pack`, and lays out their
 third-party dependencies at the versions `pnpm-lock.yaml` resolves, without
 symbolic links, keeping only the darwin `unique-pid` prebuilds. It refuses a
-staged server whose `--version` does not match `packages/server`. To move to a
+layout in which any package would load a dependency other than the one the
+lockfile names, and a staged server whose `--version` does not match
+`packages/server`. `bundle.sh --server <dir>` copies a server staged earlier
+instead; the release workflow stages it before any secret is loaded and
+`release.sh` reuses it through `DESKTOP_SERVER_RUNTIME`. To move to a
 newer Node, change `NODE_VERSION` and both hashes from that release's
 `SHASUMS256.txt`. Universal costs about 199 MB on disk (98 MB arm64 + 101 MB
 x86_64); the app and its Sparkle feed are universal, so it ships both.
 
-`release.sh` signs `bin/node` with the hardened runtime and
-`Support/Node/node.entitlements`, which grants only
-`com.apple.security.cs.allow-jit` for V8, and each `unique-pid` addon with the
-app's identity, so library validation accepts them. An ad-hoc build uses
-`Support/Node/adhoc.entitlements`, which also disables library validation, as
-the app's ad-hoc entitlements do. The Desktop workflow stages the server on
-every run, signs it the ad-hoc way and checks that it answers `/health` under an
-empty environment.
+`release.sh` signs each `unique-pid` addon and then `bin/node` with the
+hardened runtime and `Support/Node/node.entitlements`:
+`com.apple.security.cs.allow-jit`, which V8 needs, and
+`com.apple.security.cs.disable-library-validation`, because the `stim`
+commands the server runs on this Node can load a project's own native addons,
+signed by another team or not at all. Both are in the set Node.js signs its own
+macOS release with. The Desktop workflow stages the server on every run, signs
+it the same way ad hoc and checks that it answers `/health` under an empty
+environment.
 
 ## Updates
 

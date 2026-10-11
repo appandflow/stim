@@ -31,7 +31,7 @@ import Testing
 
   @Test func asksForANewerServerWithoutThePlatformsFeature() throws {
     let update = PhysicalScreen.message(
-      "The stim-server on this port is older than Stim Desktop and cannot show this device's screen. Quit it so Stim Desktop starts its own."
+      "The stim-server on this port is older than Stim Desktop and cannot show this device's screen. Update or stop it so Stim Desktop starts its own."
     )
     let older = ServerLink.open(features: nil, capabilities: ["read", "control"])
     #expect(PhysicalScreen(device: try phone("android"), link: older, now: now) == update)
@@ -65,7 +65,7 @@ import Testing
     #expect(
       PhysicalScreen(hostedMacosOn: older)
         == .message(
-          "The stim-server on this port is older than Stim Desktop and cannot show this app's window. Quit it so Stim Desktop starts its own."
+          "The stim-server on this port is older than Stim Desktop and cannot show this app's window. Update or stop it so Stim Desktop starts its own."
         ))
   }
 

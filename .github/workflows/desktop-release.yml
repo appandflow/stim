@@ -31,6 +31,7 @@ jobs:
       SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
       STIM_DESKTOP_SENTRY_DSN: ${{ vars.STIM_DESKTOP_SENTRY_DSN }}
       APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
+      DESKTOP_SERVER_RUNTIME: ${{ github.workspace }}/apps/desktop/.build/stim-server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -88,7 +89,9 @@ jobs:
 
       - name: Build before any secret is loaded
         working-directory: apps/desktop
-        run: scripts/bundle.sh --universal --release
+        run: |
+          node scripts/server-runtime.mjs "$DESKTOP_SERVER_RUNTIME" --universal
+          scripts/bundle.sh --universal --release --server "$DESKTOP_SERVER_RUNTIME"
 
       - name: Import the Developer ID certificate
         env:

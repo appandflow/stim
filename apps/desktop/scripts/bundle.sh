@@ -5,15 +5,21 @@ website=../../website
 
 universal=
 release=
-for arg in "$@"; do
-  case $arg in
+server=
+while [ $# -gt 0 ]; do
+  case $1 in
   --universal) universal=1 ;;
   --release) release=1 ;;
+  --server)
+    server=${2:?--server takes the directory scripts/server-runtime.mjs staged}
+    shift
+    ;;
   *)
-    echo "usage: scripts/bundle.sh [--universal] [--release]" >&2
+    echo "usage: scripts/bundle.sh [--universal] [--release] [--server <staged server>]" >&2
     exit 1
     ;;
   esac
+  shift
 done
 if [ -n "$release" ]; then
   app=build/Stim.app
@@ -69,7 +75,11 @@ xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simul
   -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
 codesign --force --sign - "$app/Contents/Resources/sim-fold"
-node scripts/server-runtime.mjs "$app/Contents/Resources/stim-server" ${universal:+--universal} >/dev/null
+if [ -n "$server" ]; then
+  ditto "$server" "$app/Contents/Resources/stim-server"
+else
+  node scripts/server-runtime.mjs "$app/Contents/Resources/stim-server" ${universal:+--universal} >/dev/null
+fi
 codesign --force --sign - "$app"
 if [ -z "$release" ]; then
   :

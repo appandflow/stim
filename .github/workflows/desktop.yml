@@ -98,7 +98,7 @@ jobs:
         run: |
           runtime="$RUNNER_TEMP/stim-server"
           node scripts/server-runtime.mjs "$runtime"
-          codesign --force --options runtime --sign - --entitlements Support/Node/adhoc.entitlements "$runtime/bin/node"
+          codesign --force --options runtime --sign - --entitlements Support/Node/node.entitlements "$runtime/bin/node"
           home=$(mktemp -d)
           env -i HOME="$home" "$runtime/bin/node" --input-type=module \
             -e "const { capture } = await import('$runtime/node_modules/unique-pid/index.mjs'); if (!capture(process.pid).ok) process.exit(1);"

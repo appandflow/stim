@@ -109,7 +109,9 @@ entitlements), `Autoupdate`, `Updater.app` and `Sparkle.framework`, in the
 order [Sparkle documents](https://sparkle-project.org/documentation/sandboxing/#code-signing);
 `sim-fold`; the bundled server's `unique-pid` addons and its `node`, with
 `Support/Node/node.entitlements` (`com.apple.security.cs.allow-jit`, which V8
-needs under the hardened runtime); the app; then the DMG. Notarization covers
+needs under the hardened runtime, and
+`com.apple.security.cs.disable-library-validation`, so `stim` commands can load a
+project's native addons); the app; then the DMG. Notarization covers
 `node` and the addons with the rest of the app, so a rejected nested binary
 fails `release.sh`'s `notarytool` step and the log names it.
 

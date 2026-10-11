@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const NODE_VERSION = 'v24.21.0';
@@ -144,19 +144,26 @@ function lockedTree() {
 function install(modules, contents) {
   const { server, dependencies } = lockedTree();
   const placed = new Map();
-  const place = (name, info, chain) => {
-    const source = realpathSync(info.path);
-    let target = chain.at(-1);
-    for (const dir of chain) {
-      const there = placed.get(join(dir, name));
-      if (there === source) return;
-      if (there) {
-        target = chain[0];
-        break;
-      }
+  const lookup = (dest) => {
+    const dirs = [join(dest, 'node_modules')];
+    for (let dir = dirname(dest); dir.startsWith(modules); dir = dirname(dir)) {
+      if (basename(dir) === 'node_modules') dirs.push(dir);
     }
-    const dest = join(target, name);
-    placed.set(dest, source);
+    return dirs;
+  };
+  const visible = (name, dirs) => {
+    for (const dir of dirs) {
+      const there = placed.get(join(dir, name));
+      if (there) return there.source;
+    }
+    return null;
+  };
+  const copy = (name, info, dirs) => {
+    const source = realpathSync(info.path);
+    const seen = visible(name, dirs);
+    if (seen === source) return null;
+    const dest = join(seen ? dirs[0] : modules, name);
+    placed.set(dest, { source, key: info.path });
     const from = contents.get(source);
     if (from) {
       cpSync(from, dest, { recursive: true });
@@ -167,11 +174,24 @@ function install(modules, contents) {
         filter: (path) => path !== own && !path.startsWith(`${own}/`),
       });
     }
-    for (const [child, childInfo] of Object.entries(dependencies.get(info.path) ?? {})) {
-      place(child, childInfo, [join(dest, 'node_modules'), ...chain]);
-    }
+    return { key: info.path, dest };
   };
-  place(server.name, server, [modules]);
+  const placeDependencies = (parent) => {
+    const dirs = lookup(parent.dest);
+    const children = Object.entries(dependencies.get(parent.key) ?? {})
+      .map(([name, info]) => copy(name, info, dirs))
+      .filter(Boolean);
+    for (const child of children) placeDependencies(child);
+  };
+  placeDependencies(copy(server.name, server, [modules]));
+  for (const [dest, { key }] of placed) {
+    for (const [name, info] of Object.entries(dependencies.get(key) ?? {})) {
+      const resolved = visible(name, lookup(dest));
+      if (resolved !== realpathSync(info.path)) {
+        throw new Error(`${dest} would load ${name} from ${resolved ?? 'nowhere'}, not ${info.path}`);
+      }
+    }
+  }
 }
 
 function pruneOtherPlatforms(modules) {
