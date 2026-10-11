@@ -56,7 +56,7 @@ beforeEach(() => {
     .mockImplementation((config) => devices.filter((device) => Boolean(config?.projects[device.project])));
   vi.mocked(teardownOwnedIosSim)
     .mockReset()
-    .mockImplementation((id) => {
+    .mockImplementation(async (id) => {
       devices = devices.filter((device) => device.id !== id);
       return { status: 'torn-down', label: `stim-${id}` };
     });
@@ -188,7 +188,7 @@ test('ownership refusal and teardown errors leave no shutdown record and do not 
   const refused = add('refused', 40);
   const failed = add('failed', 20);
   vi.mocked(teardownOwnedIosSim)
-    .mockReturnValueOnce({
+    .mockResolvedValueOnce({
       status: 'skipped',
       kind: 'not-owned',
       reason: 'simulator ownership changed before shutdown',
@@ -224,7 +224,7 @@ test('an older Android device in a named slot is shut down and recorded in its t
     platforms: {},
     deviceSlots: { fold: { android: { avdName: android.id, owned: true } } },
   });
-  vi.mocked(teardownOwnedAvd).mockReturnValueOnce({ status: 'torn-down', label: android.name });
+  vi.mocked(teardownOwnedAvd).mockResolvedValueOnce({ status: 'torn-down', label: android.name });
   await expect(reclaim()).resolves.toBe(1);
   expect(teardownOwnedIosSim).not.toHaveBeenCalled();
   expect(teardownOwnedAvd).toHaveBeenCalledWith(android.id, {

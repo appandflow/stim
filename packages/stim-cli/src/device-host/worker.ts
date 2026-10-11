@@ -127,7 +127,7 @@ export async function runHostedDevice(
       return { state: 'ready', device };
     }
     if (mode === 'park') {
-      const outcome = teardownOwnedIosSim(device.udid);
+      const outcome = await teardownOwnedIosSim(device.udid);
       if (outcome.status !== 'torn-down' || inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Shutdown')
         throw new Error(outcome.reason ?? 'Hosted simulator shutdown could not be verified.');
       removeHostedAppData(home, { keepBlobs: true });
@@ -144,7 +144,7 @@ export async function runHostedDevice(
       removeHostedAppData(home);
       return { state: 'stopped', device };
     }
-    const outcome = teardownOwnedIosSim(device.udid, { del: true });
+    const outcome = await teardownOwnedIosSim(device.udid, { del: true });
     if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
       throw new Error(outcome.reason ?? 'Hosted simulator teardown was not established.');
     const after = inventory().find((sim) => sim.udid === device!.udid);

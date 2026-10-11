@@ -449,8 +449,8 @@ async function stopWorkspace({
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
-  teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+  teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
   stopMacos?: boolean;
   hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
@@ -608,7 +608,7 @@ async function stopWorkspace({
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
-    outcomes.device = shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
+    outcomes.device = await shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
@@ -922,7 +922,7 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
   return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
-function shutDownDevices(
+async function shutDownDevices(
   project: ProjectRecord | null | undefined,
   workspace: string,
   {
@@ -930,11 +930,11 @@ function shutDownDevices(
     teardownAvd,
     report,
   }: {
-    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
-    teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+    teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
     report: (line: string) => void;
   },
-): DeviceOutcome {
+): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
 
   for (const { slot, platforms } of projectDeviceSlots(project)) {
@@ -954,7 +954,7 @@ function shutDownDevices(
         report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
       } else {
         debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
-        const result = teardownIos(iosUdid, { del: false, label: iosName, workspace });
+        const result = await teardownIos(iosUdid, { del: false, label: iosName, workspace });
         debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: result.status });
         device[iosKey] = reportDevice(iosUdid, result, report, 'ios');
       }
@@ -972,7 +972,7 @@ function shutDownDevices(
         report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
       } else {
         debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: android.avdName });
-        const result = teardownAvd(android.avdName, { del: false, workspace });
+        const result = await teardownAvd(android.avdName, { del: false, workspace });
         debugLog.log('stop.device.end', {
           platform: 'android',
           slot,

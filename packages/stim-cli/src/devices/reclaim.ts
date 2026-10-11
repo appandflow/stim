@@ -227,18 +227,18 @@ function parkRequest(
   };
 }
 
-function reclaimOwnedDevices(
+async function reclaimOwnedDevices(
   project: ProjectRecord | null,
   projectPath: string,
   { park = false }: { park?: boolean } = {},
-): {
+): Promise<{
   deletedDevices: string[];
   parkedDevices: ParkedDevice[];
   evictedDevices: ParkedDevice[];
   poolNotes: string[];
   skippedDevices: SkippedDevice[];
   failedDevices: SkippedDevice[];
-} {
+}> {
   const deletedDevices: string[] = [];
   const parkedDevices: ParkedDevice[] = [];
   const evictedDevices: ParkedDevice[] = [];
@@ -251,7 +251,7 @@ function reclaimOwnedDevices(
     if (ios?.owned && ios.deviceUdid) {
       const udid = ios.deviceUdid as string;
       const label = (ios.deviceName as string | undefined) || udid;
-      const r = teardownOwnedIosSim(udid, {
+      const r = await teardownOwnedIosSim(udid, {
         del: true,
         label,
         ...(park ? { park: parkRequest(project, projectPath, slot, Boolean(ios.simslimManaged)) } : {}),
@@ -277,7 +277,7 @@ function reclaimOwnedDevices(
     const android = platforms.android;
     if (android?.owned && android.avdName) {
       const bound = parkedMaxSetting('android');
-      const r = teardownOwnedAvd(android.avdName, {
+      const r = await teardownOwnedAvd(android.avdName, {
         del: true,
         owner: { projectPath, slot },
         ...(park && !bound.error && bound.max > 0
@@ -498,7 +498,7 @@ async function reclaimIdleProject(
 
   const { deletedDevices, parkedDevices, evictedDevices, poolNotes, skippedDevices, failedDevices } =
     deleteOwnedDevices && !supervisorHeld && failedCollectors.length === 0
-      ? reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
+      ? await reclaimOwnedDevices(project, path, { park: parkOwnedDevices })
       : {
           deletedDevices: [] as string[],
           parkedDevices: [] as ParkedDevice[],

@@ -270,7 +270,13 @@ test('a concurrent adoption cannot be overwritten by a new AVD creation using an
     }),
   ).not.toBeNull();
   await expect(
-    ensureOwnedDevice({ platform: 'android', projectPath: '/adopter', project: previous, label: 'new', settings: {} }),
+    ensureOwnedDevice({
+      platform: 'android',
+      projectPath: '/adopter',
+      project: previous,
+      label: 'new',
+      settings: {},
+    }),
   ).rejects.toThrow('Another Stim run assigned AVD');
   expect(getProject('/adopter')?.platforms?.android?.avdName).toBe('stim-source');
   expect(calls.some((call) => call.includes('create avd'))).toBe(false);
@@ -305,13 +311,13 @@ test('an AVD parked between failed creation and recovery cannot bypass adoption'
   expect(running).toBeNull();
 });
 
-test('parking shuts down an owned AVD and overflow deletion failures keep both ownership records', () => {
+test('parking shuts down an owned AVD and overflow deletion failures keep both ownership records', async () => {
   park('stim-old');
   makeAvd('stim-new');
   setDevice('/source', 'android', { avdName: 'stim-new', owned: true });
   running = 'stim-new';
   failDelete = true;
-  const result = teardownOwnedAvd('stim-new', {
+  const result = await teardownOwnedAvd('stim-new', {
     del: true,
     owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration },
@@ -323,7 +329,7 @@ test('parking shuts down an owned AVD and overflow deletion failures keep both o
   expect(readParked('android')).toHaveLength(2);
   expect(running).toBeNull();
   failDelete = false;
-  expect(teardownParkedAvd('stim-old').status).toBe('torn-down');
+  expect((await teardownParkedAvd('stim-old')).status).toBe('torn-down');
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
 });
 
@@ -341,13 +347,13 @@ function fillUserData(directory: string): void {
   mkdirSync(join(directory, 'snapshots', 'default_boot'), { recursive: true });
 }
 
-test('parking keeps the AVD user data and records the installed app', () => {
+test('parking keeps the AVD user data and records the installed app', async () => {
   makeAvd('stim-new');
   const directory = join(home, 'avd', 'stim-new.avd');
   fillUserData(directory);
   upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
 
-  const result = teardownOwnedAvd('stim-new', {
+  const result = await teardownOwnedAvd('stim-new', {
     del: true,
     owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration, appId: 'com.example.app', cacheKey: 'abc-debug' },
@@ -360,12 +366,12 @@ test('parking keeps the AVD user data and records the installed app', () => {
   ]);
 });
 
-test('erasing a parked AVD wipes its user data and snapshots and keeps it parked without its app', () => {
+test('erasing a parked AVD wipes its user data and snapshots and keeps it parked without its app', async () => {
   park('stim-old', { packageName: 'com.example.app', cacheKey: 'abc-debug' });
   const directory = join(home, 'avd', 'stim-old.avd');
   fillUserData(directory);
 
-  expect(eraseParkedAvd('stim-old').status).toBe('torn-down');
+  expect((await eraseParkedAvd('stim-old')).status).toBe('torn-down');
 
   expect(readdirSync(directory).toSorted()).toEqual(['config.ini', 'userdata.img']);
   const [record] = readParked('android');
@@ -375,13 +381,13 @@ test('erasing a parked AVD wipes its user data and snapshots and keeps it parked
   expect(avds).toEqual(new Set(['stim-old']));
 });
 
-test('erasing refuses a parked AVD a workspace references and keeps its data and record', () => {
+test('erasing refuses a parked AVD a workspace references and keeps its data and record', async () => {
   park('stim-old', { packageName: 'com.example.app' });
   const directory = join(home, 'avd', 'stim-old.avd');
   fillUserData(directory);
   upsertProject('/other', { platforms: { android: { avdName: 'stim-old', owned: true } } });
 
-  const result = eraseParkedAvd('stim-old');
+  const result = await eraseParkedAvd('stim-old');
 
   expect(result.status).toBe('failed');
   expect(readdirSync(directory)).toContain('userdata-qemu.img.qcow2');
@@ -390,14 +396,14 @@ test('erasing refuses a parked AVD a workspace references and keeps its data and
 
 test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   'a failed wipe keeps the parked AVD without its app or cache key (POSIX directory permissions; skipped on win32 and as root)',
-  () => {
+  async () => {
     park('stim-old', { packageName: 'com.example.app', cacheKey: 'abc-debug' });
     const directory = join(home, 'avd', 'stim-old.avd');
     fillUserData(directory);
     const snapshots = join(directory, 'snapshots');
     chmodSync(snapshots, 0o500);
     try {
-      expect(eraseParkedAvd('stim-old').status).toBe('failed');
+      expect((await eraseParkedAvd('stim-old')).status).toBe('failed');
     } finally {
       chmodSync(snapshots, 0o700);
     }
@@ -410,13 +416,13 @@ test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   },
 );
 
-test('a workspace wipe of its own stopped AVD removes user data and keeps the assignment', () => {
+test('a workspace wipe of its own stopped AVD removes user data and keeps the assignment', async () => {
   makeAvd('stim-new');
   const directory = join(home, 'avd', 'stim-new.avd');
   fillUserData(directory);
   upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
 
-  const result = teardownOwnedAvd('stim-new', { wipe: true, owner: { projectPath: '/source' } });
+  const result = await teardownOwnedAvd('stim-new', { wipe: true, owner: { projectPath: '/source' } });
 
   expect(result.status).toBe('torn-down');
   expect(readdirSync(directory).toSorted()).toEqual(['config.ini', 'userdata.img']);
@@ -424,14 +430,14 @@ test('a workspace wipe of its own stopped AVD removes user data and keeps the as
   expect(avds).toEqual(new Set(['stim-new']));
 });
 
-test('an AVD that cannot be parked keeps its user data until it is deleted', () => {
+test('an AVD that cannot be parked keeps its user data until it is deleted', async () => {
   makeAvd('stim-new');
   const directory = join(home, 'avd', 'stim-new.avd');
   writeFileSync(join(directory, 'userdata-qemu.img.qcow2'), 'data');
   upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
   failDelete = true;
 
-  const result = teardownOwnedAvd('stim-new', {
+  const result = await teardownOwnedAvd('stim-new', {
     del: true,
     owner: { projectPath: '/source' },
     park: { projectPath: '/source', max: 1, configuration: avdPoolConfiguration(16, {}) },
@@ -442,13 +448,13 @@ test('an AVD that cannot be parked keeps its user data until it is deleted', () 
   expect(readParked('android')).toEqual([]);
 });
 
-test('parking retains a busy eviction for later GC without deleting or losing either device', () => {
+test('parking retains a busy eviction for later GC without deleting or losing either device', async () => {
   park('stim-old');
   makeAvd('stim-new');
   setDevice('/source', 'android', { avdName: 'stim-new', owned: true });
-  expect(() =>
-    removeParkedAfter('android', 'stim-old', () => {
-      const result = teardownOwnedAvd('stim-new', {
+  await expect(
+    removeParkedAfter('android', 'stim-old', async () => {
+      const result = await teardownOwnedAvd('stim-new', {
         del: true,
         owner: { projectPath: '/source' },
         park: { projectPath: '/source', max: 1, configuration },
@@ -463,14 +469,14 @@ test('parking retains a busy eviction for later GC without deleting or losing ei
       ).toEqual(['stim-new', 'stim-old']);
       throw new Error('retain the busy eviction');
     }),
-  ).toThrow('retain the busy eviction');
+  ).rejects.toThrow('retain the busy eviction');
   expect(getProject('/source')?.platforms?.android).toBeUndefined();
   expect(avds).toEqual(new Set(['stim-new', 'stim-old']));
-  expect(teardownParkedAvd('stim-old').status).toBe('torn-down');
+  expect((await teardownParkedAvd('stim-old')).status).toBe('torn-down');
   expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
 });
 
-test('pool deletion excludes adoption and an adopted emulator cannot be deleted by a stale GC report', () => {
+test('pool deletion excludes adoption and an adopted emulator cannot be deleted by a stale GC report', async () => {
   park();
   upsertProject('/adopter', {});
   const request = {
@@ -479,19 +485,19 @@ test('pool deletion excludes adoption and an adopted emulator cannot be deleted 
     udid: 'stim-source',
     device: { avdName: 'stim-source', owned: true },
   };
-  expect(() =>
+  await expect(
     removeParkedAfter('android', 'stim-source', () => {
       expect(adoptParked(request)).toBeNull();
       throw new Error('retain for retry');
     }),
-  ).toThrow('retain for retry');
+  ).rejects.toThrow('retain for retry');
   const report = collectParkedAvds({ directorySize: () => 1024 });
   expect(adoptParked(request)?.name).toBe('stim-source');
-  expect(deleteParkedAvds(report)).toBe(0);
+  expect(await deleteParkedAvds(report)).toBe(0);
   expect(avds.has('stim-source')).toBe(true);
 });
 
-test('GC protects parked emulators from the orphan sweep and keeps an unverifiable listing', () => {
+test('GC protects parked emulators from the orphan sweep and keeps an unverifiable listing', async () => {
   park();
   expect(findOrphanedDevices({ config: loadConfig(), avds: ['stim-source'] })).toMatchObject({
     orphaned: [],
@@ -504,7 +510,7 @@ test('GC protects parked emulators from the orphan sweep and keeps an unverifiab
     directorySize: () => 1024,
   });
   expect(report[0]).toMatchObject({ listed: null, deviceProfile: 'pixel_6' });
-  expect(deleteParkedAvds(report)).toBe(1);
+  expect(await deleteParkedAvds(report)).toBe(1);
   expect(readParked('android')).toHaveLength(1);
 });
 

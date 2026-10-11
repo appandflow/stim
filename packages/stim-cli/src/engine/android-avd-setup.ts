@@ -240,7 +240,7 @@ export async function prepareOwnedAvd({
   }
   if (configurationFailure) {
     const { error } = configurationFailure;
-    const cleanup = teardown(avdName, {
+    const cleanup = await teardown(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: reservation },
       onRemoved: () => {

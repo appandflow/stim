@@ -342,8 +342,8 @@ export async function bootIosSim(
   if (openViewer) viewer.open(udid);
 }
 
-export function shutdownIosSim(udid: string): void {
-  getExecutor().runFileQuiet('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
+export async function shutdownIosSim(udid: string): Promise<void> {
+  await getExecutor().runFileQuietAsync('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
 }
 
 export function listIosDeviceTypes(): IosDeviceType[] {

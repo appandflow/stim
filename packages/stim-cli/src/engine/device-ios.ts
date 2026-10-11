@@ -322,7 +322,7 @@ function resetAdoptedSim(udid: string, out: Notify): void {
 
 type AdoptedRecord = OwnedDeviceRecord & { deviceUdid: string; deviceName: string };
 
-function takeParkedIosSim({
+async function takeParkedIosSim({
   projectPath,
   slot,
   label,
@@ -334,7 +334,7 @@ function takeParkedIosSim({
   label: string;
   choice: IosCreationChoice;
   out: Notify;
-}): AdoptedRecord | null {
+}): Promise<AdoptedRecord | null> {
   const candidates = selectParked(readParked('ios'), {
     deviceTypeIdentifier: choice.deviceTypeId,
     runtimeIdentifier: choice.runtimeId,
@@ -344,8 +344,8 @@ function takeParkedIosSim({
   for (const parked of candidates) {
     const sim = listed.get(parked.udid);
     if (!sim || !sim.available) {
-      const result = sim ? teardownParkedIosSim(parked.udid, { label: parked.name }) : null;
-      const removed = sim ? result?.status === 'torn-down' : dropParked('ios', parked.udid);
+      const result = sim ? await teardownParkedIosSim(parked.udid, { label: parked.name }) : null;
+      const removed = sim ? result?.status === 'torn-down' : await dropParked('ios', parked.udid);
       if (removed) {
         out(
           chalk.dim(

@@ -168,11 +168,11 @@ export function idleDeviceLines(devices: readonly IdleDevice[]): string[] {
   ];
 }
 
-export function shutDownIdleDevices(
+export async function shutDownIdleDevices(
   devices: readonly IdleDevice[],
   idleMs: number,
   recollect: () => IdleDevice[],
-): { failures: number; shutDown: IdleDevice[] } {
+): Promise<{ failures: number; shutDown: IdleDevice[] }> {
   const candidates = idleShutdownCandidates(devices, idleMs);
   const shutDown: IdleDevice[] = [];
   if (candidates.length === 0) {
@@ -196,8 +196,8 @@ export function shutDownIdleDevices(
     }
     const outcome =
       device.kind === 'ios'
-        ? teardownOwnedIosSim(device.id, { label: device.name })
-        : teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
+        ? await teardownOwnedIosSim(device.id, { label: device.name })
+        : await teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
     if (outcome.status === 'torn-down') {
       shutDown.push(device);
       console.log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));

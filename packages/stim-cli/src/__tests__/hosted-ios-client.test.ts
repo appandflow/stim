@@ -768,7 +768,7 @@ test('hosted stop failures cannot overwrite the local default-slot outcome', asy
   errorMethod = 'device-host.stop';
   errorCode = 'closed';
   errorSession = sessionId;
-  const teardown = vi.fn<NonNullable<Parameters<typeof runStop>[0]['teardownIos']>>(() => ({
+  const teardown = vi.fn<NonNullable<Parameters<typeof runStop>[0]['teardownIos']>>(async () => ({
     status: 'torn-down' as const,
     label: 'local simulator',
     id: 'LOCAL',

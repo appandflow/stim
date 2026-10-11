@@ -513,7 +513,7 @@ async function wipeAdoptedAvd(room: AdoptedRoom, free: number | null): Promise<s
   if (!expectedRecord?.adoptionPending || expectedRecord.avdName !== room.avdName) {
     throw new Error('the emulator assignment changed before the wipe; its data was kept');
   }
-  const wiped = room.wipeDevice(room.avdName, {
+  const wiped = await room.wipeDevice(room.avdName, {
     wipe: true,
     owner: { projectPath: room.root, slot: room.slot, expectedRecord },
     workspace: room.root,

@@ -119,6 +119,9 @@ function recordingExec({
     async runFileAsync(file: string, args: string[] = [], opts) {
       return this.runFile(file, args, opts);
     },
+    runFileQuietAsync() {
+      throw new Error('app-install must use runFile, not runFileQuietAsync');
+    },
     spawn() {
       throw new Error('app-install does not spawn');
     },
@@ -2393,6 +2396,7 @@ describe('installAndroidApp: the uninstall-and-retry, exactly once', () => {
       runQuiet: () => null,
       runFileQuiet: () => null,
       runFileAsync: async () => '',
+      runFileQuietAsync: async () => null,
       spawn: () => {
         throw new Error('not used');
       },

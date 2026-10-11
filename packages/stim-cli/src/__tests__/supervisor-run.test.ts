@@ -1003,7 +1003,7 @@ describe('idle stop', () => {
     expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
   });
 
-  test('a physical device this workspace locks blocks the stop until the lease expires', () => {
+  test('a physical device this workspace locks blocks the stop until the lease expires', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
     takeLease({ root, platform: 'android', id: 'PHYSICAL-SERIAL', kind: 'declared', durationMs: 30 * MINUTE });
@@ -1126,7 +1126,7 @@ describe('device idle shutdown', () => {
         seen.checks++;
         return due() ? [{ device: {} as never, idleForMs: deviceMinutes * MINUTE }] : [];
       },
-      shutDown: (_root, idleMs, log) => {
+      shutDown: async (_root, idleMs, log) => {
         seen.shutDowns.push(idleMs);
         log({ level: 'info', event: 'device_idle_shutdown', msg: 'shut down simulator stim-test, idle 2m' });
         return 1;

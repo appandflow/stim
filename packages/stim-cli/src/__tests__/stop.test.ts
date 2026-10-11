@@ -210,11 +210,11 @@ function seams(over = {}) {
       return true;
     },
     inspectIdentity: () => 'same' as const,
-    teardownIos: (udid: string, opts: { del?: boolean; label?: string }) => {
+    teardownIos: async (udid: string, opts: { del?: boolean; label?: string }) => {
       calls.teardowns.push({ udid, opts });
       return { status: 'torn-down', label: 'stim-a' };
     },
-    teardownAvd: (name: string, opts: { del?: boolean }) => {
+    teardownAvd: async (name: string, opts: { del?: boolean }) => {
       calls.teardowns.push({ avd: name, opts });
       return { status: 'torn-down', label: name };
     },
@@ -501,7 +501,7 @@ test('a device Stim does not own is left alone', async () => {
 test('an occupied sim is reported as skipped and does not fail the run', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
+    teardownIos: async () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
   });
   const r = await runStop(opts);
   expect(r.ok).toBe(true);
@@ -514,7 +514,7 @@ test('an occupied sim is reported as skipped and does not fail the run', async (
 test('a failed device teardown fails the run and says why, with a remedy', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({
+    teardownIos: async () => ({
       status: 'failed',
       label: 'U1',
       reason: 'simulator U1 is still Booted after 2 shutdown attempts and 30s of waiting',
@@ -533,7 +533,7 @@ test('a failed device teardown fails the run and says why, with a remedy', async
 test('a failed Android device teardown reports an adb-flavored remedy', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { android: { avdName: 'stim-app', owned: true } } },
-    teardownAvd: () => ({
+    teardownAvd: async () => ({
       status: 'failed',
       label: 'stim-app',
       reason: 'Owned AVD stim-app did not finish shutting down within 60s.',
@@ -574,7 +574,7 @@ afterEach(() => {
   resetExecutor();
 });
 
-test('readSupervisorState reads the supervisor block, and tolerates corruption', () => {
+test('readSupervisorState reads the supervisor block, and tolerates corruption', async () => {
   expect(readSupervisorState(tmpRoot)).toBe(null);
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readSupervisorState(tmpRoot)).toBe(null);
@@ -659,7 +659,7 @@ test('stopping frees the reserved port in the registry and keeps the device reco
     root: tmpRoot,
     isAlive: () => false,
     resolveMetro: async () => ({ missing: true }),
-    teardownIos: () => ({ status: 'torn-down', label: 'stim-a' }),
+    teardownIos: async () => ({ status: 'torn-down', label: 'stim-a' }),
     clearRegistration: async () => {},
     report: () => {},
   });
@@ -853,7 +853,7 @@ test('nothing recorded means no clear and no signal', async () => {
   expect(calls.collectorsCleared).toBe(0);
 });
 
-test('readCollectorState reads the collectors block and tolerates corruption', () => {
+test('readCollectorState reads the collectors block and tolerates corruption', async () => {
   expect(readCollectorState(tmpRoot)).toEqual({});
   writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
   expect(readCollectorState(tmpRoot)).toEqual({});
@@ -879,7 +879,7 @@ test('an occupied sim names the UI-test runner that decided the skip', async () 
   const reports: string[] = [];
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({
+    teardownIos: async () => ({
       status: 'skipped',
       kind: 'occupied',
       reason: 'in use by another process (occupied)',
@@ -898,7 +898,7 @@ test('an occupied sim names the UI-test runner that decided the skip', async () 
 test('an occupied skip with no holder list (fail-closed probe) still gets the generic hint', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
+    teardownIos: async () => ({ status: 'skipped', kind: 'occupied', reason: 'in use by another process (occupied)' }),
   });
   const r = await runStop(opts);
   const ios = r.outcomes.device.ios;
@@ -909,7 +909,7 @@ test('an occupied skip with no holder list (fail-closed probe) still gets the ge
 test('a not-owned skip is not given an occupancy hint', async () => {
   const { opts } = seams({
     project: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } },
-    teardownIos: () => ({ status: 'skipped', kind: 'not-owned', reason: 'sim is now named "other"' }),
+    teardownIos: async () => ({ status: 'skipped', kind: 'not-owned', reason: 'sim is now named "other"' }),
   });
   const r = await runStop(opts);
   const ios = r.outcomes.device.ios;
@@ -1411,7 +1411,7 @@ test('stop visits all device slots and reports a named-slot failure without skip
         external: { ios: { deviceUdid: 'USER', owned: false } },
       },
     },
-    teardownIos: (udid: string) => {
+    teardownIos: async (udid: string) => {
       visited.push(udid);
       return udid === 'PHONE' ? { status: 'failed', reason: 'busy' } : { status: 'torn-down', label: udid };
     },
@@ -1607,8 +1607,8 @@ test('stop --slot closes only the slot emulator sessions claimed in this workspa
         deviceSlots: { fold: { android: { avdName: 'stim-app-fold', owned: true } } },
       },
       collectors: {},
-      teardownAvd: (name: string, options: { del?: boolean; workspace?: string }) =>
-        teardownOwnedAvd(name, {
+      teardownAvd: async (name: string, options: { del?: boolean; workspace?: string }) =>
+        await teardownOwnedAvd(name, {
           ...options,
           resolveAvd: () => (running ? { serial: 'emulator-5554' } : { notRunning: true }),
           waitForShutdown: () => {

@@ -709,10 +709,10 @@ function pruneStatusCaches(report: GcReport): number {
   return deleteStaleStatusCaches(collectStaleStatusCaches(listMountedVolumes()).stale);
 }
 
-function reclaimParkedDevices(report: GcReport, deps: GcDependencies): number {
+async function reclaimParkedDevices(report: GcReport, deps: GcDependencies): Promise<number> {
   return report.cacheScope
-    ? eraseParkedDevices(report.parkedSims, report.parkedAvds)
-    : deleteParkedSims(report.parkedSims, deps) + deleteParkedAvds(report.parkedAvds);
+    ? await eraseParkedDevices(report.parkedSims, report.parkedAvds)
+    : (await deleteParkedSims(report.parkedSims, deps)) + (await deleteParkedAvds(report.parkedAvds));
 }
 
 async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPayload> {
@@ -787,8 +787,14 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   const idleFailures =
     idle === null
       ? 0
-      : shutDownIdleDevices(report.idleDevices, idle, () =>
-          collectIdleDevices(loadConfig(), listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }), report.deadProjects),
+      : (
+          await shutDownIdleDevices(report.idleDevices, idle, () =>
+            collectIdleDevices(
+              loadConfig(),
+              listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }),
+              report.deadProjects,
+            ),
+          )
         ).failures;
   if (idleFailures) process.exitCode = 1;
   const inventory =
@@ -822,7 +828,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
     : 0;
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs);
   deleteFailures += deleteRecordings(report.recordings, { whole: all, olderThan, now: Date.now() });
-  deleteFailures += reclaimParkedDevices(report, deps);
+  deleteFailures += await reclaimParkedDevices(report, deps);
   deleteFailures += await deleteParkedHostedDevices(report.parkedHostedDevices);
   deleteFailures += await reclaimMemory(cache, report.memory);
 
@@ -832,7 +838,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
 
   deleteFailures += await deleteOrphanedWorkspaces(report.orphanedWorkspaces);
 
-  deleteFailures += deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
+  deleteFailures += await deleteProjectDevices(orphanedDevices, staleDevices, staleDeviceRecords);
   deleteFailures += forgetStaleLedgerEntries(report.staleLedgerEntries);
   deleteFailures += forgetStaleEasLedgerEntries(report.staleEasLedgerEntries, listMountedVolumes(), deps);
   deleteFailures += pruneStatusCaches(report);
