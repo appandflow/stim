@@ -126,6 +126,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   delete env.CODEX_THREAD_ID;
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
+  Object.assign(process.env, env);
 
   const launchdLabel = process.env.XPC_SERVICE_NAME;
   const tailscaleBinary = findTailscale(env);

@@ -330,7 +330,7 @@ final class ServerController: ObservableObject {
       let bundled = BundledServer.inApp()
     else { return nil }
     var environment = ProcessInfo.processInfo.environment
-    environment["STIM_HOME"] = provisionalHome
+    if !StimHome.isDefault(provisionalHome) { environment["STIM_HOME"] = provisionalHome }
     if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
     return StimServerCLI(environment: environment, bundled: bundled)
   }

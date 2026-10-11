@@ -1037,7 +1037,8 @@ they are served again. The bundled server runs unless you choose another `stim-s
 launch where no server answers, Desktop starts the bundled server at once, before the
 login shell returns, with the launch environment and the Stim home it expects: the
 launch's `STIM_HOME`, else the one the login shell reported on the last launch, else
-`~/.stim`. The server reads the login shell's environment itself for the commands it
+`~/.stim`. It passes `STIM_HOME` only for a home other than `~/.stim`, since an explicit
+`STIM_HOME` turns on the scoped-home defaults. The server reads the login shell's environment itself for the commands it
 runs, and answers once it has. Until Desktop's own login shell confirms that home, Desktop
 treats the server like a provisionally adopted one: it reads status but holds pairing,
 device and control writes. When the login shell names another home, Desktop stops that

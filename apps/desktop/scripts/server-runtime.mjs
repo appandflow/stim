@@ -52,7 +52,6 @@ async function download(url, path) {
 async function nodeBinary(arch) {
   const name = `node-${NODE_VERSION}-darwin-${arch}`;
   const binary = join(cache, arch, 'node');
-  if (existsSync(binary)) return binary;
   mkdirSync(join(cache, arch), { recursive: true });
   const sums = join(cache, 'SHASUMS256.txt');
   if (!existsSync(sums)) await download(`https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt`, sums);
