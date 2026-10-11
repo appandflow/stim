@@ -102,6 +102,17 @@ export interface StimDiagnostics {
   records: NdjsonRecord[];
 }
 
+export interface StimLogsOptions {
+  slot?: string;
+  sources?: string[];
+  minLevel?: string;
+  since?: string;
+  grep?: string;
+  tail?: number;
+  errorsOnly?: boolean;
+  signal?: AbortSignal;
+}
+
 export interface StimReadOptions {
   signal?: AbortSignal;
 }
@@ -136,6 +147,10 @@ export interface StimClient {
    * Runs in the calling process without blocking its event loop on child processes.
    */
   stats(options?: StimReadOptions): Promise<StimStats>;
+  /** Reads the merged raw log timeline, including native crashes and agent actions, as `stim logs --json`. */
+  logs(options?: StimLogsOptions): Promise<NdjsonRecord[]>;
+  /** Emits matching backfill (bounded when `tail` is supplied), then appended records until stopped or aborted. */
+  followLogs(options: StimLogsOptions, onRecord: (record: NdjsonRecord) => void): Promise<() => void>;
 }
 
 export interface StimFailure {

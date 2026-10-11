@@ -6,6 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
+import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
@@ -16,6 +17,7 @@ import type {
   StimBuildOptions,
   StimClient,
   StimFailure,
+  StimLogsOptions,
   StimOptions,
   StimReadOptions,
   StimRunOptions,
@@ -31,6 +33,7 @@ export type {
   StimDiagnosticsOptions,
   StimOptions,
   StimPlatform,
+  StimLogsOptions,
   StimProgress,
   StimReadOptions,
   StimRunOptions,
@@ -120,6 +123,16 @@ export function createStim(options: StimOptions): StimClient {
         async (operation) =>
           (await readProjectStats(findProjectRoot(operation.projectRoot), operation.env, operation.signal)).report,
       ),
+    logs: ({ signal, ...request }: StimLogsOptions = {}) =>
+      read(begin(signal), (operation) => readWorkspaceLogs(operation, request)),
+    followLogs: ({ signal, ...request }, onRecord) => {
+      const operation = begin(signal);
+      return read(operation, async (readContext) => {
+        const stop = await followWorkspaceLogs(readContext, request, onRecord);
+        if ('error' in operation.callback) stop();
+        return stop;
+      });
+    },
     build: (({ signal, ...request }: StimBuildOptions) =>
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>

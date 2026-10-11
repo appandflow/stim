@@ -1,4 +1,13 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -6,6 +15,7 @@ import { workspaceName } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createStim, StimError } from '../api.ts';
+import * as hostedLogs from '../device-host/hosted-logs-sync.ts';
 
 let scratch: string;
 
@@ -389,4 +399,160 @@ test('settings reads sharing one signal leave no abort listeners behind, even wh
   }
   expect(added.mock.calls.length).toBeGreaterThan(0);
   await vi.waitFor(() => expect(removed.mock.calls.length).toBe(added.mock.calls.length));
+});
+
+test('logs clients read independent homes with bounded tails and reject invalid filters', async () => {
+  const first = fixture('logs-first');
+  const second = fixture('logs-second');
+  for (const item of [first, second])
+    writeFileSync(
+      join(item.directory, 'client.ndjson'),
+      [1, 2, 3].map((ts) => JSON.stringify({ ts, src: 'client', level: 'info', msg: item.root })).join('\n') + '\n',
+    );
+  const environment = { ...process.env };
+  const spawn = vi.spyOn(getExecutor(), 'spawn');
+  try {
+    const results = await Promise.all(
+      [first, second].map((item) => createStim({ projectRoot: item.root, home: item.home }).logs({ tail: 1 })),
+    );
+    expect(results).toEqual([first, second].map((item) => [{ ts: 3, src: 'client', level: 'info', msg: item.root }]));
+    expect(spawn).not.toHaveBeenCalled();
+    expect(process.env).toEqual(environment);
+    const stim = createStim({ projectRoot: first.root, home: first.home });
+    for (const options of [
+      { tail: -1 },
+      { tail: 0.5 },
+      { sources: ['missing'] },
+      { minLevel: 'loud' },
+      { since: '5m', grep: '(' },
+    ])
+      await expect(stim.logs(options)).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(await stim.logs({ tail: 0 })).toEqual([]);
+    const abort = new AbortController();
+    abort.abort();
+    await expect(stim.logs({ signal: abort.signal })).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  } finally {
+    spawn.mockRestore();
+  }
+});
+
+test('assembled agent tails filter before selection and preserve equal-timestamp ordering across sessions', async () => {
+  const { root, home, directory } = fixture('agent-tail');
+  const state = join(scratch, 'agent-state');
+  const deviceUdid = '1F11A62B-F7CF-435D-BD1B-0FA926895E93';
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ projects: { [root]: { platforms: { ios: { owned: true, deviceUdid } } } } }),
+  );
+  writeFileSync(
+    join(directory, 'device.ndjson'),
+    JSON.stringify({ ts: 1, src: 'device', level: 'info', msg: 'start' }) + '\n',
+  );
+  for (const session of ['first', 'second']) {
+    const dir = join(state, 'sessions', session);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, 'runner.log'),
+      `-destination "platform=iOS Simulator,id=${deviceUdid}"\n2026-09-25 12:00:00.000+0000 Runner started\n`,
+    );
+    const lines = Array.from({ length: 12000 }, (_, index) =>
+      JSON.stringify({
+        version: 1,
+        ts: new Date(Date.parse('2026-10-09T12:00:00Z') + Math.floor(index / 4)).toISOString(),
+        session,
+        kind: 'action.recorded',
+        command: 'press',
+        summary: `${session}:${index}${index < 100 ? ':wanted' : ''}`,
+        details: { platform: 'ios' },
+      }),
+    );
+    writeFileSync(join(dir, 'events.ndjson'), lines.join('\n') + '\n');
+  }
+  const stim = createStim({
+    projectRoot: root,
+    home,
+    env: {
+      ...process.env,
+      HOME: scratch,
+      AGENT_DEVICE_STATE_DIR: state,
+      AGENT_DEVICE_CLAIMS_DIR: join(scratch, 'claims'),
+    },
+  });
+  const selected = await stim.logs({ sources: ['agent'], grep: ':wanted$', tail: 6 });
+  expect(selected.map((record) => record.msg)).toEqual([
+    'first:98:wanted',
+    'first:99:wanted',
+    'second:96:wanted',
+    'second:97:wanted',
+    'second:98:wanted',
+    'second:99:wanted',
+  ]);
+  const all = await stim.logs({ sources: ['agent'] });
+  expect(all).toHaveLength(24000);
+  expect(await stim.logs({ sources: ['agent'], tail: 20 })).toEqual(all.slice(-20));
+  expect(await stim.logs({ sources: ['agent'], tail: 0 })).toEqual([]);
+  const messages: string[] = [];
+  let complete!: () => void;
+  const appended = new Promise<void>((resolve) => {
+    complete = resolve;
+  });
+  const stop = await stim.followLogs({ sources: ['agent'], tail: 2 }, (record) => {
+    messages.push(String(record.msg));
+    if (messages.length === 82) complete();
+  });
+  const lines = Array.from({ length: 80 }, (_, index) =>
+    JSON.stringify({
+      version: 1,
+      ts: new Date(Date.parse('2026-10-09T13:00:00Z') + index).toISOString(),
+      session: 'first',
+      kind: 'action.recorded',
+      command: 'press',
+      summary: `appended:${index}`,
+      details: { platform: 'ios' },
+    }),
+  );
+  appendFileSync(join(state, 'sessions', 'first', 'events.ndjson'), lines.join('\n') + '\n');
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      appended,
+      new Promise<void>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Missing appended agent actions')), 3500);
+      }),
+    ]);
+    expect(messages.slice(2)).toEqual(Array.from({ length: 80 }, (_, index) => `appended:${index}`));
+  } finally {
+    clearTimeout(timeout);
+    stop();
+  }
+});
+
+test('a progress failure during log backfill rejects unchanged and stops the live subscription', async () => {
+  const { root, home, directory } = fixture('follow-progress-error');
+  const path = join(directory, 'build.ndjson');
+  writeFileSync(path, JSON.stringify({ ts: 1, level: 'info', src: 'build', msg: 'backfill' }) + '\n');
+  const failure = new Error('log progress consumer failed');
+  const sync = vi.spyOn(hostedLogs, 'syncHostedLogs').mockImplementation(async (_root, context) => {
+    context?.output('stderr', 'hosted read unavailable\n');
+    return false;
+  });
+  const received: string[] = [];
+  const stim = createStim({
+    projectRoot: root,
+    home,
+    onProgress: () => {
+      throw failure;
+    },
+  });
+  try {
+    await expect(stim.logs({ sources: ['build'], tail: 1 })).rejects.toBe(failure);
+    await expect(
+      stim.followLogs({ sources: ['build'], tail: 1 }, (record) => received.push(String(record.msg))),
+    ).rejects.toBe(failure);
+    appendFileSync(path, JSON.stringify({ ts: 2, level: 'info', src: 'build', msg: 'live' }) + '\n');
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    expect(received).toEqual(['backfill']);
+  } finally {
+    sync.mockRestore();
+  }
 });

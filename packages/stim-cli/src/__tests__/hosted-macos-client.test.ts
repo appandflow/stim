@@ -864,6 +864,32 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       expect(result.err).toContain('needs read access');
     });
 
+    test('an in-process read routes hosted warnings through its caller and cancels a pending copy', async () => {
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const placement = readMacosRecord(root)!.host!;
+      const output = vi.fn<(stream: 'stdout' | 'stderr', text: string) => void>();
+      const abort = new AbortController();
+      const context = { signal: abort.signal, output };
+      host.logsRefused = true;
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        expect(await syncHostedMacosLogs(root, placement, undefined, undefined, 'ios', context)).toBe(false);
+        expect(output).toHaveBeenCalledWith('stderr', expect.stringContaining('needs read access'));
+        expect(stderr).not.toHaveBeenCalled();
+        host.logsRefused = false;
+        host.silentMethods.add('device-host.logs.query');
+        const pending = syncHostedMacosLogs(root, placement, undefined, undefined, 'ios', context);
+        await vi.waitFor(() =>
+          expect(host.methods.filter((method) => method === 'device-host.logs.query')).toHaveLength(2),
+        );
+        abort.abort();
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        expect(output).toHaveBeenCalledTimes(1);
+      } finally {
+        stderr.mockRestore();
+      }
+    });
+
     test('follow keeps copying, warns once per outage and recovers', async () => {
       await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1));

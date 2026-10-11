@@ -1,5 +1,5 @@
 export default {
-  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, stats, and cancellation',
+  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, stats, logs, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -24,7 +24,7 @@ output chunk. Without onProgress, operations write nothing to the caller's
 stdout or stderr. The home is fixed when the client is created: home, else
 STIM_HOME from env, else the default home. build, run and diagnostics each use
 a bundled worker that calls the same lifecycle operations as the CLI. stop and
-reads such as settings and stats run in the calling process against the client's
+reads such as settings, stats and logs run in the calling process against the client's
 home and project. None parses CLI arguments or changes the caller's
 cwd/environment.
 
@@ -33,6 +33,16 @@ effective value, origin and per-layer values. An invalid environment override
 rejects with StimError STIM_BAD_ARG and its remedy. stats() returns the
 stim stats --json payload with the last recorded agent-device and SwiftPM cache
 usage instead of measuring them again.
+
+logs({ tail, sources, minLevel, slot, since, grep, errorsOnly }) returns the raw
+stim logs --json records, including native crash capture, agent actions and Expo
+error context. It runs in process, with asynchronous chunked reads and bounded
+record selection when tail is supplied. A new file generation gets a compact
+metadata index; later queries reuse it and index only appended bytes.
+Matching agent actions are also selected within tail; attribution still scans
+each retained session generation to establish device ownership.
+followLogs(options, onRecord) emits the requested backfill followed by new records
+and returns a stop function. AbortSignal also stops the subscription.
 
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime

@@ -13,7 +13,12 @@ import { basename, join } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
 import type { ProjectRecord } from '@stim-cli/core/state';
 import type { ProcessStart } from '../process-identity.ts';
-import { createAgentActionReader, workspaceAgentTargets, type AgentTarget } from '../devices/agent-actions.ts';
+import {
+  createAsyncAgentActionReader as createAgentActionReader,
+  createAsyncAgentActionReader,
+  workspaceAgentTargets,
+  type AgentTarget,
+} from '../devices/agent-actions.ts';
 
 const FIXTURE = join(import.meta.dirname, 'fixtures', 'agent-device');
 const IOS_SESSION = join('sessions', 'cwd_b764dacffe51e890_default');
@@ -55,8 +60,8 @@ function read(targets: AgentTarget[], options: { sinceTs?: number; startOf?: typ
   return createAgentActionReader({ targets, home, startOf: options.startOf ?? live, ...options })();
 }
 
-test('an iOS session is split between simulators at the close before the runner moved', () => {
-  const second = read([{ platform: 'ios', id: SECOND_SIM, slot: 'phone' }]);
+test('an iOS session is split between simulators at the close before the runner moved', async () => {
+  const second = await read([{ platform: 'ios', id: SECOND_SIM, slot: 'phone' }]);
   expect(second.map((record) => [record.level, record.msg])).toEqual([
     ['info', 'Opened com.appandflow.stim'],
     ['info', 'Tapped (201, 542)'],
@@ -75,7 +80,7 @@ test('an iOS session is split between simulators at the close before the runner 
   });
   expect(second[2]).toMatchObject({ event: 'agent_failed', command: 'press' });
 
-  const first = read([{ platform: 'ios', id: FIRST_SIM, slot: 'default' }]);
+  const first = await read([{ platform: 'ios', id: FIRST_SIM, slot: 'default' }]);
   expect(first.map((record) => record.msg)).toEqual([
     'Opened com.appandflow.stim',
     'Ran snapshot',
@@ -85,8 +90,8 @@ test('an iOS session is split between simulators at the close before the runner 
   expect(first[0]).not.toHaveProperty('slot');
 });
 
-test('actions older than the workspace timeline are not merged', () => {
-  const records = read([{ platform: 'ios', id: FIRST_SIM, slot: 'default' }], {
+test('actions older than the workspace timeline are not merged', async () => {
+  const records = await read([{ platform: 'ios', id: FIRST_SIM, slot: 'default' }], {
     sinceTs: Date.parse('2026-09-25T12:13:00Z'),
   });
   expect(records.map((record) => record.msg)).toEqual(['Closed default']);
@@ -118,7 +123,7 @@ describe('native macOS actions', () => {
     appendFileSync(join(dir, 'events.ndjson'), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
   };
 
-  test('matches the isolated app identifier, excludes previous launches, and preserves failures and duration', () => {
+  test('matches the isolated app identifier, excludes previous launches, and preserves failures and duration', async () => {
     append(
       open(-5),
       event(-1, 'press'),
@@ -128,7 +133,7 @@ describe('native macOS actions', () => {
       event(4, 'press', { x: 20, y: 30 }, { requestId: 'press' }),
       event(5, 'scroll', {}, { kind: 'request.finished', status: 'error' }),
     );
-    expect(read([target])).toEqual([
+    expect(await read([target])).toEqual([
       expect.objectContaining({
         deviceId: 'owned-launch',
         platform: 'macos',
@@ -139,125 +144,125 @@ describe('native macOS actions', () => {
       }),
       expect.objectContaining({ event: 'agent_failed', level: 'error', command: 'scroll' }),
     ]);
-    expect(read([{ ...target, bundleId: 'dev.sample.stim.other-workspace' }])).toEqual([]);
+    expect(await read([{ ...target, bundleId: 'dev.sample.stim.other-workspace' }])).toEqual([]);
   });
 
-  test('follows app switches across incremental reads and clears a closed or failed open', () => {
+  test('follows app switches across incremental reads and clears a closed or failed open', async () => {
     append(open(0), event(1, 'press'));
     const reader = createAgentActionReader({ targets: [target], home });
-    expect(reader().map((r) => r.command)).toEqual(['open', 'press']);
+    expect((await reader()).map((r) => r.command)).toEqual(['open', 'press']);
     append(open(2, 'dev.other'), event(3, 'type'));
-    expect(reader()).toEqual([]);
+    expect(await reader()).toEqual([]);
     append(open(4), event(5, 'close', {}, { kind: 'request.started' }), event(5, 'close'), event(6, 'press'));
-    expect(reader().map((r) => r.command)).toEqual(['open', 'close']);
+    expect((await reader()).map((r) => r.command)).toEqual(['open', 'close']);
     append(
       open(7),
       event(8, 'close', {}, { kind: 'request.started' }),
       event(8, 'close', {}, { kind: 'request.finished', status: 'error' }),
       event(9, 'press'),
     );
-    expect(reader().map((r) => [r.command, r.level])).toEqual([
+    expect((await reader()).map((r) => [r.command, r.level])).toEqual([
       ['open', 'info'],
       ['close', 'error'],
     ]);
   });
 
-  test('a follower started before the launch acquires the target, and a relaunch changes the launch ID', () => {
+  test('a follower started before the launch acquires the target, and a relaunch changes the launch ID', async () => {
     let current: AgentTarget[] = [];
     const reader = createAgentActionReader({ targets: () => current, home });
     append(open(0), event(1, 'press'));
-    expect(reader()).toEqual([]);
+    expect(await reader()).toEqual([]);
     current = [target];
-    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+    expect((await reader()).map((r) => [r.command, r.deviceId])).toEqual([
       ['open', 'owned-launch'],
       ['press', 'owned-launch'],
     ]);
     const relaunch = { ...target, id: 'second-launch', launchedAt: target.launchedAt + 10_000 };
     current = [relaunch];
     append(event(9, 'press'), event(11, 'press'), open(12), event(13, 'type'));
-    expect(reader().map((r) => [r.command, r.deviceId])).toEqual([
+    expect((await reader()).map((r) => [r.command, r.deviceId])).toEqual([
       ['press', 'second-launch'],
       ['open', 'second-launch'],
       ['type', 'second-launch'],
     ]);
   });
 
-  test('an unrecorded open or close clears attribution before later actions', () => {
+  test('an unrecorded open or close clears attribution before later actions', async () => {
     append(open(0), event(1, 'press'));
     const reader = createAgentActionReader({ targets: [target], home });
-    expect(reader()).toHaveLength(2);
+    expect(await reader()).toHaveLength(2);
     append(event(2, 'open', {}, { kind: 'request.started' }), event(3, 'press'));
-    expect(reader()).toEqual([]);
+    expect(await reader()).toEqual([]);
     append(open(4), event(5, 'close', {}, { kind: 'request.started' }), event(6, 'type'));
-    expect(reader().map((r) => r.command)).toEqual(['open']);
+    expect((await reader()).map((r) => r.command)).toEqual(['open']);
   });
 
-  test('rotation cannot attribute actions after a missed app switch, even when the replacement is larger', () => {
+  test('rotation cannot attribute actions after a missed app switch, even when the replacement is larger', async () => {
     append(open(0), event(1, 'press'));
     const reader = createAgentActionReader({ targets: [target], home });
-    expect(reader()).toHaveLength(2);
+    expect(await reader()).toHaveLength(2);
     append(open(2, 'dev.other'));
     const events = join(root, 'sessions', 'native-proof', 'events.ndjson');
     renameSync(events, `${events}.1`);
     append(...Array.from({ length: 20 }, (_, i) => event(i + 3, 'press')));
-    expect(reader()).toEqual([]);
+    expect(await reader()).toEqual([]);
     append(open(25), event(26, 'type'));
-    expect(reader().map((r) => r.command)).toEqual(['open', 'type']);
+    expect((await reader()).map((r) => r.command)).toEqual(['open', 'type']);
   });
 
-  test('an unknown event version invalidates attribution until a fresh explicit app open', () => {
+  test('an unknown event version invalidates attribution until a fresh explicit app open', async () => {
     append(open(0));
     const reader = createAgentActionReader({ targets: [target], home });
-    expect(reader()).toHaveLength(1);
+    expect(await reader()).toHaveLength(1);
     append({ ...open(1, 'dev.other'), version: 2 }, event(2, 'press'));
-    expect(reader()).toEqual([expect.objectContaining({ event: 'agent_format_unknown', platform: 'macos' })]);
+    expect(await reader()).toEqual([expect.objectContaining({ event: 'agent_format_unknown', platform: 'macos' })]);
     append(event(3, 'press'));
-    expect(reader()).toEqual([]);
+    expect(await reader()).toEqual([]);
     append(open(4), event(5, 'press'));
-    expect(reader().map((r) => r.command)).toEqual(['open', 'press']);
+    expect((await reader()).map((r) => r.command)).toEqual(['open', 'press']);
   });
 
-  test('screenshots cannot inherit app attribution because their surface override is not recorded', () => {
+  test('screenshots cannot inherit app attribution because their surface override is not recorded', async () => {
     append(open(0), event(1, 'screenshot'), event(2, 'press'));
-    expect(read([target]).map((r) => r.command)).toEqual(['open', 'press']);
+    expect((await read([target])).map((r) => r.command)).toEqual(['open', 'press']);
   });
 
   test.each(['desktop', 'frontmost-app', 'menubar'])(
     'excludes the %s surface even with a matching app identifier',
-    (surface) => {
+    async (surface) => {
       append(open(0, target.bundleId, surface), event(1, 'press'));
-      expect(read([target])).toEqual([]);
+      expect(await read([target])).toEqual([]);
     },
   );
 
-  test('an open with an inherited surface cannot restore app attribution', () => {
+  test('an open with an inherited surface cannot restore app attribution', async () => {
     append(
       open(0, target.bundleId, 'menubar'),
       event(1, 'open', { platform: 'macos', appBundleId: target.bundleId }),
       event(2, 'press'),
     );
-    expect(read([target])).toEqual([]);
+    expect(await read([target])).toEqual([]);
   });
 });
 
-test('an Android session is attributed only while agent-device holds a live claim on the emulator', () => {
+test('an Android session is attributed only while agent-device holds a live claim on the emulator', async () => {
   const emulator: AgentTarget = { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' };
-  expect(read([emulator]).map((record) => [record.level, record.msg])).toEqual([
+  expect((await read([emulator])).map((record) => [record.level, record.msg])).toEqual([
     ['error', 'Failed open: DEVICE_NOT_FOUND'],
     ['info', 'Opened io.tlon.groups'],
     ['info', 'Tapped (541, 2265)'],
   ]);
-  expect(read([emulator], { startOf: gone })).toEqual([]);
-  expect(read([{ ...emulator, name: 'stim-other' }])).toEqual([]);
+  expect(await read([emulator], { startOf: gone })).toEqual([]);
+  expect(await read([{ ...emulator, name: 'stim-other' }])).toEqual([]);
 });
 
-test('later calls return only complete lines appended since the previous call, and a request keeps its start until it finishes', () => {
+test('later calls return only complete lines appended since the previous call, and a request keeps its start until it finishes', async () => {
   const reader = createAgentActionReader({
     targets: [{ platform: 'ios', id: SECOND_SIM, slot: 'default' }],
     home,
     startOf: live,
   });
-  expect(reader()).toHaveLength(4);
+  expect(await reader()).toHaveLength(4);
   const events = join(root, IOS_SESSION, 'events.ndjson');
   const line = JSON.stringify({
     version: 1,
@@ -269,26 +274,26 @@ test('later calls return only complete lines appended since the previous call, a
     summary: 'Filled @e3',
   });
   appendFileSync(events, line.slice(0, 40));
-  expect(reader()).toEqual([]);
+  expect(await reader()).toEqual([]);
   appendFileSync(events, `${line.slice(40)}\n`);
-  expect(reader().map((record) => record.msg)).toEqual(['Filled @e3']);
+  expect((await reader()).map((record) => record.msg)).toEqual(['Filled @e3']);
   const started = { ...JSON.parse(line), ts: '2026-09-25T12:17:01.000Z', kind: 'request.started', requestId: 'def' };
   appendFileSync(events, `${JSON.stringify(started)}\n`);
-  expect(reader()).toEqual([]);
+  expect(await reader()).toEqual([]);
   appendFileSync(
     events,
     `${JSON.stringify({ ...JSON.parse(line), ts: '2026-09-25T12:17:04.000Z', requestId: 'def' })}\n`,
   );
-  expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
-  expect(reader()).toEqual([]);
+  expect(await reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
+  expect(await reader()).toEqual([]);
   appendFileSync(
     events,
     `${JSON.stringify({ ...JSON.parse(line), ts: '2026-09-25T12:17:05.000Z', requestId: 'def' })}\n`,
   );
-  expect(reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
+  expect(await reader()).toEqual([expect.objectContaining({ startedAt: Date.parse('2026-09-25T12:17:01.000Z') })]);
 });
 
-test('an action keeps its start time however many requests the session made before it', () => {
+test('an action keeps its start time however many requests the session made before it', async () => {
   const events = join(root, IOS_SESSION, 'events.ndjson');
   const entry = (at: number, kind: string, requestId: string, extra: object = {}) =>
     JSON.stringify({
@@ -307,20 +312,20 @@ test('an action keeps its start time however many requests the session made befo
     entry(i * 1000 + 800, 'request.finished', `r${i}`, { status: 'ok' }),
   ]).flat();
   appendFileSync(events, `${lines.join('\n')}\n`);
-  const tapped = read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }]).filter((r) => r.msg === 'Tapped');
+  const tapped = (await read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }])).filter((r) => r.msg === 'Tapped');
   expect(tapped).toHaveLength(100);
   expect(tapped.every((record) => (record.ts as number) - (record.startedAt as number) === 800)).toBe(true);
 });
 
-test('an unrecognized event format yields one warning instead of misread actions', () => {
+test('an unrecognized event format yields one warning instead of misread actions', async () => {
   const events = join(root, IOS_SESSION, 'events.ndjson');
   writeFileSync(events, `${JSON.stringify({ version: 2, ts: '2026-09-25T12:17:00.000Z', type: 'tap', at: [1, 2] })}\n`);
-  const records = read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }]);
+  const records = await read([{ platform: 'ios', id: SECOND_SIM, slot: 'default' }]);
   expect(records).toHaveLength(1);
   expect(records[0]).toMatchObject({ src: 'agent', level: 'warn', event: 'agent_format_unknown' });
 });
 
-test('targets are the workspace-owned simulators and emulators of every slot', () => {
+test('targets are the workspace-owned simulators and emulators of every slot', async () => {
   expect(
     workspaceAgentTargets({
       platforms: {
@@ -335,7 +340,7 @@ test('targets are the workspace-owned simulators and emulators of every slot', (
   ]);
 });
 
-test('workspace-only sessions are read through iOS runner logs and shared Android claims', () => {
+test('workspace-only sessions are read through iOS runner logs and shared Android claims', async () => {
   const stateDir = workspaceAgentDeviceDir('/projects/app');
   mkdirSync(stateDir, { recursive: true });
   renameSync(join(root, 'sessions'), join(stateDir, 'sessions'));
@@ -348,7 +353,7 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
     home,
     startOf: live,
   });
-  const records = reader();
+  const records = await reader();
   expect(records.filter((record) => record.platform === 'ios').map((record) => record.msg)).toEqual([
     'Opened com.appandflow.stim',
     'Ran snapshot',
@@ -360,9 +365,9 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
     'Opened io.tlon.groups',
     'Tapped (541, 2265)',
   ]);
-  expect(reader()).toEqual([]);
+  expect(await reader()).toEqual([]);
   cpSync(join(stateDir, 'sessions', basename(IOS_SESSION)), join(root, IOS_SESSION), { recursive: true });
-  expect(reader().map((record) => record.msg)).toEqual([
+  expect((await reader()).map((record) => record.msg)).toEqual([
     'Opened com.appandflow.stim',
     'Ran snapshot',
     'Tapped @e7',
@@ -370,14 +375,32 @@ test('workspace-only sessions are read through iOS runner logs and shared Androi
   ]);
 });
 
-test('a session name shared by two workspaces is attributed through the claim that names its state directory', () => {
+test('a session name shared by two workspaces is attributed through the claim that names its state directory', async () => {
   const other = workspaceAgentDeviceDir('/projects/other');
   mkdirSync(other, { recursive: true });
   cpSync(join(root, 'sessions'), join(other, 'sessions'), { recursive: true });
-  const records = read([{ platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' }]);
+  const records = await read([{ platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' }]);
   expect(records.map((record) => record.msg)).toEqual([
     'Failed open: DEVICE_NOT_FOUND',
     'Opened io.tlon.groups',
     'Tapped (541, 2265)',
   ]);
+});
+
+test('async live-claim attribution preserves identity checks and yields across retained claims', async () => {
+  const emulator: AgentTarget = { platform: 'android', id: 'emulator-5560', slot: 'default', name: 'stim-app' };
+  const claim = readFileSync(join(root, 'device-claims', 'android.json'), 'utf8');
+  for (let i = 0; i < 100; i++) writeFileSync(join(root, 'device-claims', `retained-${i}.json`), claim);
+  let yielded = false;
+  setImmediate(() => {
+    yielded = true;
+  });
+  const records = await createAsyncAgentActionReader({ targets: [emulator], home, startOf: live })();
+  expect(yielded).toBe(true);
+  expect(records).toEqual(await read([emulator]));
+  expect(await createAsyncAgentActionReader({ targets: [emulator], home, startOf: gone })()).toEqual([]);
+  const abort = new AbortController();
+  const pending = createAsyncAgentActionReader({ targets: [emulator], home, startOf: live }, abort.signal)();
+  setImmediate(() => abort.abort());
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
 });

@@ -1,5 +1,8 @@
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { open, readdir, readFile, stat as asyncStat } from 'node:fs/promises';
+import { setImmediate as nextTurn } from 'node:timers/promises';
+import { BoundedSelection } from './log-selection.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 interface DeviceTarget {
@@ -240,43 +243,72 @@ export interface AgentActionReaderOptions {
   claimedDevice?: (session: string, sessionsDir: string) => string | null;
 }
 
+export interface AgentRecordSelection {
+  tail?: number;
+  matches: (record: NdjsonRecord) => boolean;
+}
+
+function agentRecordCollector(selection?: AgentRecordSelection) {
+  const out: NdjsonRecord[] = [];
+  const bounded =
+    selection?.tail === undefined
+      ? null
+      : new BoundedSelection<{ record: NdjsonRecord; position: number }>(
+          (a, b) => Number(a.record.ts) - Number(b.record.ts) || a.position - b.position,
+          selection.tail,
+        );
+  let position = 0;
+  const keep = (record: NdjsonRecord) => {
+    if (selection && !selection.matches(record)) return;
+    if (bounded) bounded.keep({ record, position: position++ });
+    else out.push(record);
+  };
+  return {
+    keep,
+    records: () =>
+      bounded
+        ? bounded.sorted().map(({ record }) => record)
+        : out.toSorted((a, b) => (a.ts as number) - (b.ts as number)),
+  };
+}
+
 /**
  * Reads agent-device session actions incrementally from the supplied sessions directories. With targets,
  * records are restricted to those devices; without targets, retained session metadata supplies attribution.
  * Missing directories and unreadable files yield no records.
  */
-export function createAgentActionReader({
+function agentActionReads({
   sessionsDirs,
   targets: resolveTargets,
   sinceTs = -Infinity,
   now = Date.now,
   claimedDevice = () => null,
-}: AgentActionReaderOptions): () => NdjsonRecord[] {
+}: AgentActionReaderOptions): (selection?: AgentRecordSelection) => Generator<AgentRead, NdjsonRecord[], unknown> {
   const cursors = new Map<string, SessionCursor>();
 
-  return () => {
+  return function* (selection) {
     const targets = typeof resolveTargets === 'function' ? resolveTargets() : resolveTargets;
     if (targets && !targets.length) return [];
     const byId = new Map(targets?.map((target) => [target.id, target]));
     const macosByBundle = new Map(
       targets?.flatMap((target) => (target.platform === 'macos' ? [[target.bundleId, target] as const] : [])),
     );
-    const sessionDirs = (typeof sessionsDirs === 'function' ? sessionsDirs() : sessionsDirs).flatMap((sessionsDir) => {
+    const sessionDirs: { name: string; sessionsDir: string; dir: string }[] = [];
+    for (const sessionsDir of typeof sessionsDirs === 'function' ? sessionsDirs() : sessionsDirs) {
       try {
-        return readdirSync(sessionsDir).map((name) => ({ name, sessionsDir, dir: join(sessionsDir, name) }));
-      } catch {
-        return [];
-      }
-    });
+        const names = (yield { kind: 'names', path: sessionsDir }) as string[];
+        sessionDirs.push(...names.map((name) => ({ name, sessionsDir, dir: join(sessionsDir, name) })));
+      } catch {}
+    }
 
-    const out: NdjsonRecord[] = [];
+    const { keep, records } = agentRecordCollector(selection);
     for (const { name, sessionsDir, dir } of sessionDirs) {
       const eventsPath = join(dir, 'events.ndjson');
       const lines: string[] = [];
       let cursor = cursors.get(dir);
       if (!cursor) {
         try {
-          if (statSync(eventsPath).mtimeMs < sinceTs) continue;
+          if (((yield { kind: 'stat', path: eventsPath }) as { mtimeMs: number }).mtimeMs < sinceTs) continue;
         } catch {
           continue;
         }
@@ -293,21 +325,32 @@ export function createAgentActionReader({
         };
         cursors.set(dir, cursor);
         try {
-          lines.push(...readFileSync(`${eventsPath}.1`, 'utf8').split('\n'));
+          lines.push(...((yield { kind: 'text', path: `${eventsPath}.1` }) as string).split('\n'));
         } catch {}
       }
       // agent-device rotates events.ndjson to events.ndjson.1 at AGENT_DEVICE_EVENT_LOG_MAX_BYTES (5 MiB by
       // default). A rotation between two reads restarts at the new file; the unread tail of .1 is skipped.
-      let chunk = readCompleteLines(eventsPath, cursor.offset);
+      let chunk = (yield { kind: 'lines', path: eventsPath, start: cursor.offset }) as ReturnType<
+        typeof readCompleteLines
+      >;
       if (chunk && (chunk.size < cursor.offset || (cursor.identity && chunk.identity !== cursor.identity))) {
         cursor.bundleId = null;
-        chunk = readCompleteLines(eventsPath, 0);
+        chunk = (yield { kind: 'lines', path: eventsPath, start: 0 }) as ReturnType<typeof readCompleteLines>;
       }
       if (!chunk) continue;
       cursor.identity = chunk.identity;
       cursor.offset = chunk.next;
       lines.push(...chunk.text.split('\n'));
-      const parsed = parseAgentEvents(lines);
+      const parsed: ParsedAgentEvents = { events: [], started: [], finished: [], session: null, unknownVersion: null };
+      for (let offset = 0; offset < lines.length; offset += 500) {
+        const batch = parseAgentEvents(lines.slice(offset, offset + 500));
+        parsed.events.push(...batch.events);
+        parsed.started.push(...batch.started);
+        parsed.finished.push(...batch.finished);
+        parsed.session ??= batch.session;
+        parsed.unknownVersion ??= batch.unknownVersion;
+        yield { kind: 'turn' };
+      }
       for (const [requestId, at] of parsed.started) cursor.started.set(requestId, at);
       cursor.session ??= parsed.session;
       const session = cursor.session;
@@ -326,12 +369,12 @@ export function createAgentActionReader({
       const runnerPath = join(dir, 'runner.log');
       let runnerSize = -1;
       try {
-        runnerSize = statSync(runnerPath).size;
+        runnerSize = ((yield { kind: 'stat', path: runnerPath }) as { size: number }).size;
       } catch {}
       if (cursor.runner?.size !== runnerSize) {
         let text = '';
         try {
-          text = readFileSync(runnerPath, 'utf8');
+          text = (yield { kind: 'text', path: runnerPath }) as string;
         } catch {}
         cursor.runner = { size: runnerSize, spans: parseRunnerSpans(text) };
       }
@@ -363,11 +406,12 @@ export function createAgentActionReader({
               : undefined;
         if (target) {
           cursor.unknownReported = true;
-          out.push(formatUnknownRecord(session ?? name, parsed.unknownVersion, target, now()));
+          keep(formatUnknownRecord(session ?? name, parsed.unknownVersion, target, now()));
         }
       }
       if (parsed.unknownVersion) cursor.bundleId = null;
-      for (const event of parsed.events) {
+      for (const [index, event] of parsed.events.entries()) {
+        if (index % 500 === 0) yield { kind: 'turn' };
         if (event.kind === 'request.started') {
           cursor.closing = event.command === 'close' ? cursor.bundleId : null;
           cursor.bundleId = null;
@@ -386,7 +430,7 @@ export function createAgentActionReader({
             event.ts >= Math.max(sinceTs, target.launchedAt) &&
             (startedAt ?? event.ts) >= target.launchedAt
           )
-            out.push(agentRecord(event, target.id, target, startedAt));
+            keep(agentRecord(event, target.id, target, startedAt));
           if (event.command === 'close') cursor.bundleId = null;
           continue;
         }
@@ -395,9 +439,114 @@ export function createAgentActionReader({
         const deviceId = !targets && cursor.platform === 'android' ? null : deviceAt(event.ts);
         const target = targets ? (deviceId ? byId.get(deviceId) : undefined) : retainedTarget();
         const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
-        if (target) out.push(agentRecord(event, deviceId || null, target, startedAt));
+        if (target) keep(agentRecord(event, deviceId || null, target, startedAt));
       }
     }
-    return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));
+    return records();
+  };
+}
+
+type AgentRead =
+  | { kind: 'names' | 'stat' | 'text'; path: string }
+  | { kind: 'lines'; path: string; start: number }
+  | { kind: 'turn' };
+
+function syncRead(request: AgentRead): unknown {
+  switch (request.kind) {
+    case 'names':
+      return readdirSync(request.path);
+    case 'stat':
+      return statSync(request.path);
+    case 'text':
+      return readFileSync(request.path, 'utf8');
+    case 'lines':
+      return readCompleteLines(request.path, request.start);
+    case 'turn':
+      return undefined;
+  }
+}
+
+/** Reads new agent-device actions synchronously, retaining attribution cursors between reads. */
+export function createAgentActionReader(options: AgentActionReaderOptions): () => NdjsonRecord[] {
+  const reads = agentActionReads(options);
+  return () => {
+    const iterator = reads();
+    let step = iterator.next();
+    while (!step.done) {
+      let value: unknown;
+      try {
+        value = syncRead(step.value);
+      } catch (error) {
+        step = iterator.throw(error);
+        continue;
+      }
+      step = iterator.next(value);
+    }
+    return step.value;
+  };
+}
+
+async function asyncRead(request: AgentRead): Promise<unknown> {
+  switch (request.kind) {
+    case 'names':
+      return readdir(request.path);
+    case 'stat':
+      return asyncStat(request.path);
+    case 'text':
+      return readFile(request.path, 'utf8');
+    case 'turn':
+      return nextTurn();
+    case 'lines': {
+      let handle;
+      try {
+        handle = await open(request.path, 'r');
+      } catch {
+        return null;
+      }
+      try {
+        const stats = await handle.stat({ bigint: true });
+        const size = Number(stats.size);
+        const identity = `${stats.dev}:${stats.ino}`;
+        if (size <= request.start) return { text: '', next: request.start, size, identity };
+        const buffer = Buffer.alloc(size - request.start);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, request.start);
+        const end = buffer.subarray(0, bytesRead).lastIndexOf(0x0a);
+        return {
+          text: end < 0 ? '' : buffer.toString('utf8', 0, end + 1),
+          next: request.start + end + 1,
+          size,
+          identity,
+        };
+      } catch {
+        return null;
+      } finally {
+        await handle.close();
+      }
+    }
+  }
+}
+
+/** Reads new agent-device actions asynchronously; selection applies only to matching output from this call. */
+export function createAsyncAgentActionReader(
+  options: AgentActionReaderOptions,
+  signal?: AbortSignal,
+): (selection?: AgentRecordSelection) => Promise<NdjsonRecord[]> {
+  const reads = agentActionReads(options);
+  return async (selection) => {
+    signal?.throwIfAborted();
+    const iterator = reads(selection);
+    let step = iterator.next();
+    while (!step.done) {
+      let value: unknown;
+      try {
+        value = await asyncRead(step.value);
+      } catch (error) {
+        step = iterator.throw(error);
+        continue;
+      }
+      signal?.throwIfAborted();
+      step = iterator.next(value);
+    }
+    return step.value;
   };
 }

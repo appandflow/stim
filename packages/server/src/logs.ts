@@ -82,16 +82,6 @@ export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
   });
 }
 
-export function logArgs(filter: LogFilter, follow: boolean): string[] {
-  const args = ['logs', '--json', ...(follow ? ['--follow'] : []), `--tail=${filter.tail ?? MAX_LOG_TAIL}`];
-  if (filter.sources) args.push('--source', ...LOG_SOURCES.filter((source) => filter.sources!.includes(source)));
-  if (filter.slot) args.push(`--slot=${filter.slot}`);
-  if (filter.level) args.push(`--level=${filter.level}`);
-  if (filter.grep) args.push(`--grep=${filter.grep}`);
-  if (filter.errors) args.push('--errors');
-  return args;
-}
-
 export interface LogSink {
   send: (records: JsonObject[]) => void;
   bufferedBytes: () => number;
