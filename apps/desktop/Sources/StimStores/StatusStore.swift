@@ -221,8 +221,9 @@ public final class StatusStore: ObservableObject {
           .cli,
           "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
         )
-        self.projects.merge(reported) { old, _ in old }
-        self.projects.merge(resolved) { old, _ in old }
+        var additions = reported.filter { self.projects[$0.key] == nil }
+        additions.merge(resolved.filter { self.projects[$0.key] == nil }) { first, _ in first }
+        if !additions.isEmpty { self.projects.merge(additions) { old, _ in old } }
         guard sequence > self.shown else { return }
         self.shown = sequence
         var payload = payload

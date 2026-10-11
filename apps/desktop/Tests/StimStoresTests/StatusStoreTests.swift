@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import StimKit
 import Testing
@@ -17,6 +18,76 @@ private func makeStore(_ fetches: Scripted<StatusPayload>) -> StatusStore {
 
 @MainActor
 struct StatusStoreTests {
+  private func projectsPayload(_ rows: [[String: String]], live: Int = 0) throws -> StatusPayload {
+    let data = try JSONSerialization.data(withJSONObject: [
+      "environments": [], "unprovisionedWorktrees": rows,
+      "capacity": ["liveCount": live, "committedMb": 0, "totalMemoryMb": 0, "overCapacity": false],
+    ])
+    return try JSONDecoder().decode(StatusPayload.self, from: data)
+  }
+
+  @Test func unchangedProjectsDoNotPublishAndNewReportedAndResolvedProjectsPublishTogether() async throws {
+    let store = makeStore(Scripted<StatusPayload>())
+    var publications: [[String: Project]] = []
+    let subscription = store.$projects.sink { publications.append($0) }
+    defer { subscription.cancel() }
+
+    store.accept(.success(payload(live: 1)))
+    #expect(await until { store.payload?.capacity?.liveCount == 1 })
+    #expect(publications.count == 1)
+
+    let known = ["path": "/known", "repository": "/one/app"]
+    store.accept(.success(try projectsPayload([known, ["path": "/known", "repository": "/discarded"]], live: 2)))
+    #expect(await until { store.payload?.capacity?.liveCount == 2 })
+    #expect(publications.count == 2)
+    #expect(store.projects["/known"]?.root == "/one/app")
+
+    store.accept(.success(try projectsPayload([["path": "/known", "repository": "/changed"]], live: 3)))
+    #expect(await until { store.payload?.capacity?.liveCount == 3 })
+    #expect(publications.count == 2)
+    #expect(store.projects["/known"]?.root == "/one/app")
+
+    let unresolvedRoot = "/nonexistent-\(UUID().uuidString)"
+    let unresolved = "\(unresolvedRoot)/.worktrees/new"
+    store.accept(
+      .success(
+        try projectsPayload(
+          [
+            known, ["path": "/new", "repository": "/two/app"], ["path": unresolved],
+          ], live: 4)))
+    #expect(await until { store.payload?.capacity?.liveCount == 4 })
+    #expect(publications.count == 3)
+    #expect(publications.last?["/new"]?.root == "/two/app")
+    #expect(publications.last?[unresolved] == Project(root: unresolvedRoot))
+    #expect(store.title(of: Project(root: "/one/app")) == "app (one)")
+    #expect(store.title(of: Project(root: "/two/app")) == "app (two)")
+  }
+
+  @Test func aStaleRefreshAddsNewProjectsWhileKeepingTheNewerPayloadAndProjectIdentity() async throws {
+    let fetches = Scripted<StatusPayload>()
+    let store = makeStore(fetches)
+    store.refresh()
+    #expect(await until { fetches.calls == 1 })
+    store.accept(.success(try projectsPayload([["path": "/known", "repository": "/newer"]], live: 2)))
+    #expect(await until { store.payload?.capacity?.liveCount == 2 })
+
+    var publications: [[String: Project]] = []
+    let subscription = store.$projects.sink { publications.append($0) }
+    defer { subscription.cancel() }
+    fetches.finish(
+      0,
+      .success(
+        try projectsPayload(
+          [
+            ["path": "/known", "repository": "/older"], ["path": "/late", "repository": "/late-root"],
+          ], live: 1)))
+    #expect(await until { store.projects["/late"] != nil })
+    #expect(publications.count == 2)
+    #expect(store.projects["/known"]?.root == "/newer")
+    #expect(store.projects["/late"]?.root == "/late-root")
+    #expect(store.payload?.capacity?.liveCount == 2)
+  }
+
   @Test func aRefreshThatFinishesAfterANewerWatchPayloadDoesNotReplaceIt() async {
     let fetches = Scripted<StatusPayload>()
     let store = makeStore(fetches)
