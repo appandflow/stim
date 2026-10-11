@@ -19,6 +19,7 @@ import {
 import { canonicalPath } from './commands/gc/paths.ts';
 import type { Finding } from './diagnostics/doctor.ts';
 import { clearWorkspaceOutputs, collectWorkspaceOutputs } from './commands/gc/workspaces.ts';
+import type { GcOutput } from './commands/gc/results.ts';
 import { workspaceActivity } from './devices/activity.ts';
 import { ownedAvdSerialResolver } from './devices/android.ts';
 import { projectDeviceSlots } from './devices/device-slots.ts';
@@ -300,7 +301,7 @@ async function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): Pro
     );
   const idle = collect(now);
   if (dryRun || idle.length === 0) return { targets: idle.map(deviceLabel), failures: 0 };
-  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()));
+  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()), stepOutput(note));
   return { targets: shutDown.map(deviceLabel), failures };
 }
 
@@ -386,7 +387,7 @@ async function reclaimIdleDevServers({ root, dryRun, note, now }: StepContext): 
   return { targets, failures };
 }
 
-async function reclaimWorkspaceOutputs({ root, dryRun, now, diskRecovered }: StepContext): Promise<StepResult> {
+async function reclaimWorkspaceOutputs({ root, dryRun, now, note, diskRecovered }: StepContext): Promise<StepResult> {
   const other = isOtherWorkspace(root);
   const report = collectWorkspaceOutputs({ olderThan: null, now, measure: false });
   const clearable = report.workspaces
@@ -401,7 +402,11 @@ async function reclaimWorkspaceOutputs({ root, dryRun, now, diskRecovered }: Ste
   const targets: string[] = [];
   let failures = 0;
   for (const entry of clearable) {
-    const result = await clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan: null, now });
+    const result = await clearWorkspaceOutputs(
+      { ...report, workspaces: [entry] },
+      { olderThan: null, now },
+      stepOutput(note),
+    );
     failures += result.failures;
     targets.push(...result.cleared);
     if (diskRecovered()) break;
@@ -419,10 +424,15 @@ export function trimmableCaches(): GcCache[] {
   );
 }
 
-function reclaimStaleCacheEntries({ dryRun }: StepContext): StepResult {
+function reclaimStaleCacheEntries({ dryRun, note }: StepContext): StepResult {
   const caches = trimmableCaches();
   if (dryRun) return { targets: caches.map(cacheLabel), failures: 0 };
-  return { targets: trimCaches(caches, STALE_CACHE_DAYS).map(cacheLabel), failures: 0 };
+  const { trimmed, failures } = trimCaches(caches, STALE_CACHE_DAYS, stepOutput(note));
+  return { targets: trimmed.map(cacheLabel), failures };
+}
+
+function stepOutput(note: (line: string) => void): GcOutput {
+  return { log: note, record: () => {}, fail: () => {} };
 }
 
 const STEPS: Record<ReclaimStepName, (context: StepContext) => StepResult | Promise<StepResult>> = {
@@ -440,18 +450,11 @@ const STEP_ACTIONS: Record<ReclaimStepName, string> = {
 };
 
 async function runStep(step: ReclaimStepName, context: StepContext): Promise<StepResult> {
-  const log = console.log;
-  const exitCode = process.exitCode;
-  console.log = console.error;
   try {
-    const result = await STEPS[step](context);
-    return process.exitCode === exitCode ? result : { ...result, failures: result.failures + 1 };
+    return await STEPS[step](context);
   } catch (error) {
     context.note(chalk.red(phaseLine('budget', `${STEP_ACTIONS[step]} failed: ${(error as Error)?.message || error}`)));
     return { targets: [], failures: 1 };
-  } finally {
-    console.log = log;
-    process.exitCode = exitCode;
   }
 }
 

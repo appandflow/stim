@@ -10,7 +10,7 @@ import { workspaceName } from '../../workspace/paths.ts';
 import { workspaceLastUsed } from '../../workspace/workspace-state.ts';
 import { canonicalPath } from './paths.ts';
 import type { GcSkip } from './types.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, recordGcResult, type GcOutput } from './results.ts';
 
 export interface WorkspaceDirEntry {
   dir: string;
@@ -270,6 +270,7 @@ export function collectWorkspaceOutputs({
 export async function clearWorkspaceOutputs(
   report: WorkspaceOutputsReport,
   { olderThan, now = Date.now() }: { olderThan: number | null; now?: number },
+  { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; cleared: string[] }> {
   let failures = 0;
   let cleared = 0;
@@ -278,8 +279,8 @@ export async function clearWorkspaceOutputs(
     const root = entry.projectRoot;
     if (!entry.willClear || root === null) {
       if (entry.keptReason) {
-        console.log(chalk.dim(`Kept the build outputs of ${root ?? entry.dir}: ${entry.keptReason}`));
-        recordGcResult('workspaceOutputs', 'kept', root ?? entry.dir, { bytes: entry.bytes, detail: entry.keptReason });
+        log(chalk.dim(`Kept the build outputs of ${root ?? entry.dir}: ${entry.keptReason}`));
+        record('workspaceOutputs', 'kept', root ?? entry.dir, { bytes: entry.bytes, detail: entry.keptReason });
       }
       continue;
     }
@@ -300,10 +301,8 @@ export async function clearWorkspaceOutputs(
       );
     } catch (error) {
       failures++;
-      console.log(
-        chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`),
-      );
-      recordGcResult('workspaceOutputs', 'failed', root, {
+      log(chalk.red(`Could not clear the build outputs of ${root}: ${(error as Error)?.message || String(error)}`));
+      record('workspaceOutputs', 'failed', root, {
         bytes: entry.bytes,
         detail: (error as Error)?.message || String(error),
       });
@@ -311,17 +310,17 @@ export async function clearWorkspaceOutputs(
     }
     const kept = run.ran ? run.value : `in use: ${run.reasons.join('; ')}`;
     if (kept) {
-      console.log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
-      recordGcResult('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
+      log(chalk.yellow(`Kept the build outputs of ${root}: ${kept}`));
+      record('workspaceOutputs', 'kept', root, { bytes: entry.bytes, detail: kept });
       continue;
     }
     cleared += entry.bytes ?? 0;
     clearedRoots.push(root);
-    console.log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
-    recordGcResult('workspaceOutputs', 'done', root, { bytes: entry.bytes });
+    log(chalk.green(`Cleared the build outputs of ${root} (${sizeText(entry.bytes)})`));
+    record('workspaceOutputs', 'done', root, { bytes: entry.bytes });
   }
   if (cleared) {
-    console.log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
+    log(chalk.dim(`Cleared ${formatBytes(cleared)} of workspace build outputs. ${REBUILD_COST}`));
   }
   return { failures, cleared: clearedRoots };
 }
