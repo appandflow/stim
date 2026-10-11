@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: { index: 'index.ts' },
+  entry: { index: 'index.ts', s3: 's3.ts' },
   format: 'esm',
   dts: true,
   outDir: 'dist',

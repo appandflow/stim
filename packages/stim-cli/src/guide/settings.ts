@@ -1098,8 +1098,9 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.remoteBuildCache
     false skips both optional remote artifact providers, including loading
     their modules and authentication. Local artifact caching stays enabled.
-    Stim ships no network provider or hosted cache. Remote artifact reuse
-    requires a provider configured through cache.provider or Expo.
+    Select @stim-cli/cache/s3 through cache.provider for S3-compatible storage,
+    including Cloudflare R2, or configure another provider through Expo.
+    Stim does not run a hosted cache service; credentials use the AWS SDK chain.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.

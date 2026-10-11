@@ -160,9 +160,9 @@ for profile selection, device support, and cache behavior.
 
 ### Optional artifact providers
 
-The provider integration is implemented, but Stim ships no network provider
-or hosted cache service. Without a configured provider, artifacts stay on the
-local machine.
+Stim ships an optional S3-compatible provider through `@stim-cli/cache/s3`,
+including Cloudflare R2. Without a configured provider, artifacts stay on the
+local machine. Stim does not run a hosted cache service.
 
 Projects can supply a module through `cache.provider` using the
 [`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
@@ -171,6 +171,37 @@ or use a configured Expo `buildCacheProvider`, such as `eas`.
 Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
 This caches app artifacts; ccache and Clang CAS use separate compiler caches.
+
+Install `@stim-cli/cache` in the app and select the S3 provider in `.stim.json`:
+
+```json
+{
+  "cache": {
+    "provider": "@stim-cli/cache/s3",
+    "options": {
+      "bucket": "stim-cache",
+      "endpoint": "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com",
+      "region": "auto",
+      "prefix": "team/cache-v1"
+    }
+  }
+}
+```
+
+Use a private R2 bucket and an R2 token scoped to Object Read & Write on that
+bucket. Save the credentials through the AWS SDK's standard credential chain;
+for a named profile, run `AWS_PROFILE=stim-r2 stim ios`. Keep secrets out of
+committed settings. See [Cloudflare's setup guide](https://developers.cloudflare.com/r2/get-started/s3/).
+For AWS S3, omit `endpoint` and use the bucket's region. Other compatible
+services may require `forcePathStyle: true`.
+
+The same transport shares Metro values and complete native artifacts, with
+local caches checked first, digest verification and cancellable transfers.
+Use matching native toolchains for the initial test: the provider uses Stim's
+existing keys and does not add a toolchain partition. It does not synchronize
+dependency directories or compiler caches. Bucket lifecycle rules own remote
+retention; local GC never deletes shared objects. Single PUT uploads are
+limited to 5 GiB per entry.
 
 ## Keep the source checkout warm
 

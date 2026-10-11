@@ -100,7 +100,27 @@ export interface BuildCacheCapability {
   store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
 }
 
+export interface FileCacheResolveInput {
+  key: string;
+  destinationDir: string;
+  signal: AbortSignal;
+}
+
+export interface FileCacheStoreInput {
+  key: string;
+  sourcePath: string;
+  overwrite: boolean;
+  signal: AbortSignal;
+}
+
+/** Opaque, complete files. Downloads are materialized inside destinationDir; a miss leaves it empty. */
+export interface FileCacheCapability {
+  resolve(input: FileCacheResolveInput): Promise<string | null>;
+  store(input: FileCacheStoreInput): Promise<void>;
+}
+
 export interface CacheProvider {
+  files?: FileCacheCapability;
   metro?: MetroCacheCapability;
   builds?: BuildCacheCapability;
 }
@@ -148,6 +168,10 @@ function moduleCandidate(namespace: unknown): unknown {
 }
 
 function capabilityError(provider: CacheProvider): string | null {
+  const files = provider.files;
+  if (files !== undefined && (typeof files?.resolve !== 'function' || typeof files?.store !== 'function')) {
+    return 'the files capability must implement resolve() and store()';
+  }
   const metro = provider.metro;
   if (metro !== undefined && (typeof metro?.get !== 'function' || typeof metro?.set !== 'function')) {
     return 'the metro capability must implement get() and set()';
@@ -156,8 +180,8 @@ function capabilityError(provider: CacheProvider): string | null {
   if (builds !== undefined && (typeof builds?.resolve !== 'function' || typeof builds?.store !== 'function')) {
     return 'the builds capability must implement resolve() and store()';
   }
-  if (metro === undefined && builds === undefined) {
-    return 'the provider advertises neither a metro nor a builds capability';
+  if (metro === undefined && builds === undefined && files === undefined) {
+    return 'the provider advertises no files, metro or builds capability';
   }
   return null;
 }

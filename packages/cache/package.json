@@ -21,10 +21,19 @@
       "types": "./dist/index.d.mts",
       "module-sync": "./dist/index.mjs",
       "default": "./dist/index.mjs"
+    },
+    "./s3": {
+      "types": "./dist/s3.d.mts",
+      "module-sync": "./dist/s3.mjs",
+      "default": "./dist/s3.mjs"
     }
   },
   "scripts": {
     "build": "tsdown"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1149.0",
+    "tar": "^7.5.22"
   },
   "engines": {
     "node": ">=22.12.0"
