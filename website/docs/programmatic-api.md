@@ -47,7 +47,7 @@ chunk which can contain partial lines. Without a callback the API stays silent.
 
 `build`, `run`, `stop` and `diagnostics` each run in a separate bundled worker
 and invoke the same lifecycle operations as the CLI. Reads such as `settings`
-run in the importing process against the client's home and project, so clients
+and `stats` run in the importing process against the client's home and project, so clients
 for different homes can share a process. Neither parses Commander arguments. The
 importing process keeps its working directory, environment, output and signal
 handlers.
@@ -55,7 +55,7 @@ handlers.
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
 `StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
-`StimDiagnostics`, `StimReadOptions`, `StimSettings`, `StimProgress`, and
+`StimDiagnostics`, `StimReadOptions`, `StimSettings`, `StimStats`, `StimProgress`, and
 `StimPlatform`.
 
 ## Build only
@@ -140,6 +140,13 @@ per-layer values for the client's project, the same payload as
 `stim settings --json`. It reads in the importing process and starts no Stim
 worker. An invalid environment override rejects with a `StimError` carrying
 `STIM_BAD_ARG` and its remedy.
+
+## Stats
+
+`stats()` returns run and build-cache counts for the client's project and the
+machine, build placement, and the agent-device and SwiftPM cache usage Stim
+last recorded, the same payload as `stim stats --json` except that it does not
+measure those usage figures again. It reads in the importing process.
 
 ## Diagnostics and CI state
 

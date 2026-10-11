@@ -1,5 +1,4 @@
-import type { ChildProcess } from 'node:child_process';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import {
   coerceSettingText,
   isJsonObject,
@@ -12,7 +11,7 @@ import {
   type SettingsPayload,
 } from '@stim-cli/core/state';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
-import { gitAsync } from './git.ts';
+import { gitPath, killOnAbort } from './git-read.ts';
 import { findCommandWorkspaceAsync } from './project.ts';
 import { readCommittedSettings, unknownSettingKeys } from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
@@ -42,36 +41,6 @@ export interface SettingsContext {
   committed: { app: unknown; repository: unknown };
   env: NodeJS.ProcessEnv;
   desktopInstalled: () => boolean;
-}
-
-function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, string>; omitEnv: string[] } {
-  return {
-    env: Object.fromEntries(
-      Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])),
-    ),
-    omitEnv: Object.keys(process.env).filter((name) => env[name] === undefined),
-  };
-}
-
-function killOnAbort(signal: AbortSignal | undefined): (child: ChildProcess) => void {
-  return (child) => {
-    if (!signal) return;
-    if (signal.aborted) return void child.kill('SIGKILL');
-    const kill = () => child.kill('SIGKILL');
-    signal.addEventListener('abort', kill, { once: true });
-    child.once('close', () => signal.removeEventListener('abort', kill));
-  };
-}
-
-function gitPath(cwd: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string | null> {
-  return gitAsync(cwd, ['rev-parse', ...args], { ...childEnvironment(env), onSpawn: killOnAbort(signal) }).then(
-    (out) => {
-      const path = out.trim();
-      if (!path) return null;
-      return sep === '/' ? path : path.replaceAll('/', sep);
-    },
-    () => null,
-  );
 }
 
 /** Reads the layers a settings lookup in `cwd` sees, running Git with exactly `env`; `signal` kills its Git children. */

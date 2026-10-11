@@ -11,7 +11,7 @@ import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
 import assert from 'node:assert';
 import { execFileSync, execSync } from 'node:child_process';
-import { runStats as runServerStats } from '../../../server/src/stats.ts';
+import { createStim } from '../api.ts';
 import {
   existsSync,
   mkdirSync,
@@ -850,7 +850,7 @@ describe('stim stats', async () => {
   });
 });
 
-test('CLI and the server read child agree for a real monorepo worktree and its symlink', async () => {
+test('CLI and createStim().stats() agree for a real monorepo worktree and its symlink', async () => {
   resetExecutor();
   root = realpathSync.native(root);
   tmpHome = realpathSync.native(tmpHome);
@@ -914,19 +914,13 @@ test('CLI and the server read child agree for a real monorepo worktree and its s
     assert.strictEqual(realpathSync.native(repoRoot), repository, operands);
     assert.strictEqual(statsProjectKey({ root: cwd, commonDir, repoRoot }), app, operands);
     const cli = await inDir(cwd, () => runStats(['--json']));
-    const child = runServerStats({ ...process.env }, cwd, { timeoutMs: 10_000, maxOutputBytes: 1024 * 1024 });
-    try {
-      const outcome = await child.outcome;
-      assert(outcome.ok);
-      expect(JSON.parse(outcome.stdout)).toEqual(JSON.parse(cli.out[0]!));
-      expect(JSON.parse(outcome.stdout).project).toMatchObject({
-        key: app,
-        ios: { lastColdBuildMs: 1200 },
-        android: null,
-      });
-    } finally {
-      await child.cancel();
-    }
+    const report = await createStim({ projectRoot: cwd }).stats();
+    expect(report).toEqual(JSON.parse(cli.out[0]!));
+    expect(report.project).toMatchObject({
+      key: app,
+      ios: { lastColdBuildMs: 1200 },
+      android: null,
+    });
   }
 });
 

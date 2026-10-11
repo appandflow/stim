@@ -79,6 +79,7 @@ import {
   doctorWorkspace,
   loadMachineDetails,
   MachineDetailsCache,
+  type DetailsStats,
   type DoctorTarget,
 } from './machine-details.ts';
 import { UsageRecorder } from './usage-history.ts';
@@ -138,7 +139,6 @@ import {
   type PeerIdentity,
   validStuckMinutes,
 } from './registry.ts';
-import { runStats } from './stats.ts';
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
@@ -659,13 +659,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     running.add(run.cancel);
     return run.outcome.finally(() => running.delete(run.cancel));
   };
-  const readDetailsStats = () => {
-    const run = runStats(options.env, homedir(), {
-      ...commandLimits,
-      timeoutMs: options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS,
-    });
-    running.add(run.cancel);
-    return run.outcome.finally(() => running.delete(run.cancel));
+  const readDetailsStats = (): Promise<DetailsStats> => {
+    const abort = new AbortController();
+    const timeoutMs = options.commandLimits?.timeoutMs ?? DETAILS_TIMEOUT_MS;
+    let task: Promise<DetailsStats>;
+    const cancel = async () => {
+      abort.abort();
+      await task;
+    };
+    const deadline = setTimeout(() => abort.abort(), timeoutMs);
+    task = Promise.resolve()
+      .then(() => createStim({ projectRoot: homedir(), env: options.env }).stats({ signal: abort.signal }))
+      .then(
+        (report): DetailsStats => ({ ok: true, report }),
+        (cause: unknown): DetailsStats => ({
+          ok: false,
+          message: abort.signal.aborted
+            ? `stim stats did not finish within ${timeoutMs / 1000} s.`
+            : readFailure(cause),
+        }),
+      )
+      .finally(() => {
+        clearTimeout(deadline);
+        running.delete(cancel);
+      });
+    running.add(cancel);
+    return task;
   };
   const machineDetails = new MachineDetailsCache(() =>
     loadMachineDetails(runDetailsCommand, loadAudit, readDetailsStats),
@@ -1620,14 +1639,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'logs.query' | 'stats.get' | 'build.plan'>(
+    function command<M extends 'logs.query' | 'build.plan'>(
       id: RequestId,
       args: string[],
       cwd: string,
       result: (stdout: string) => Methods[M]['result'],
       limits: CommandLimits = commandLimits,
       turn: Promise<void> | null = null,
-      stats = false,
     ): Promise<void> | null {
       if (commands.size >= MAX_COMMANDS) {
         error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
@@ -1647,7 +1665,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       const start = async () => {
         if (dropped) return;
-        run = stats ? runStats(options.env, cwd, limits) : runStim(options.stimCli, options.env, args, cwd, limits);
+        run = runStim(options.stimCli, options.env, args, cwd, limits);
         const outcome = await run.outcome;
         commands.delete(cancel);
         running.delete(cancel);
@@ -1770,7 +1788,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
-    function inProcessRead<M extends 'settings.get'>(
+    function inProcessRead<M extends 'settings.get' | 'stats.get'>(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
@@ -1788,7 +1806,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         .then(read)
         .then(
           (result) => {
-            if (!abort.signal.aborted) send(socket, { id, result });
+            if (abort.signal.aborted) return undefined;
+            if (Buffer.byteLength(JSON.stringify(result)) > commandLimits.maxOutputBytes) {
+              error(id, 'stim-failed', `${label} printed more than ${commandLimits.maxOutputBytes} bytes.`);
+            } else send(socket, { id, result });
             return undefined;
           },
           (cause: unknown) => {
@@ -1818,18 +1839,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
         );
       }
-      command<typeof method>(
-        id,
-        ['stats', '--json'],
-        cwd,
-        (stdout) => {
-          const value: unknown = JSON.parse(stdout);
-          if (!isJsonObject(value)) throw new Error('not an object');
-          return value;
-        },
-        commandLimits,
-        null,
-        true,
+      return inProcessRead<'stats.get'>(id, 'stim stats', (signal) =>
+        createStim({ projectRoot: cwd, env: options.env }).stats({ signal }),
       );
     }
 

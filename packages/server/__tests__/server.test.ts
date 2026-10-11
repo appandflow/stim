@@ -3941,14 +3941,14 @@ while (true) {}
     writeFileSync(join(workspace, 'package.json'), '{}');
     const script = `#!${process.execPath}
 const fs = require('node:fs');
-fs.writeFileSync(require('node:path').join(process.env.STATS_GIT_JOBS, String(process.pid)), String(process.ppid));
+fs.writeFileSync(require('node:path').join(process.env.STATS_GIT_JOBS, String(process.pid)), '');
 require('node:net').createServer().listen(0, '127.0.0.1');
 `;
     writeFileSync(join(bin, 'git'), script);
     chmodSync(join(bin, 'git'), 0o755);
     return {
       env: { PATH: bin + ':' + process.env.PATH, STATS_GIT_JOBS: jobs },
-      processes: () => readdirSync(jobs).flatMap((pid) => [Number(pid), Number(readFileSync(join(jobs, pid), 'utf8'))]),
+      processes: () => readdirSync(jobs).map(Number),
     };
   }
 
@@ -3961,7 +3961,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       const second = await authed(port);
       for (let id = 10; id < 14; id++)
         first.socket.send(JSON.stringify({ id, method: 'stats.get', params: { workspace } }));
-      await until(() => slow.processes().length === 8);
+      await until(() => slow.processes().length >= 4);
       expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
       expect(await first.request('settings.get')).toMatchObject({ error: { code: 'limit-exceeded' } });
       const owned = slow.processes();
@@ -3982,7 +3982,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       expect(await reply).toMatchObject({
         error: { code: 'stim-failed', message: 'stim stats did not finish within 1 s.' },
       });
-      expect(slow.processes().every((pid) => !alive(pid))).toBe(true);
+      await until(() => slow.processes().every((pid) => !alive(pid)));
       client.socket.send(JSON.stringify({ id: 10, method: 'stats.get', params: { workspace } }));
       await until(() => slow.processes().length === 4);
       await server!.close();
@@ -3995,7 +3995,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     'reads settings in-process, keeping another socket responsive and killing its Git children at timeout and on disconnect',
     async () => {
       const slow = slowGit();
-      const gits = () => readdirSync(join(root, 'git-jobs')).map(Number);
+      const gits = slow.processes;
       const port = await start({ env: slow.env, commandLimits: { timeoutMs: 1000 } });
       const first = await authed(port);
       const second = await authed(port);

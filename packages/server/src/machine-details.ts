@@ -146,20 +146,21 @@ export function buildClients(records: AuditRecord[], now: number): BuildClientSu
   return [...clients.values()].toSorted((a, b) => Date.parse(b.lastAt) - Date.parse(a.lastAt));
 }
 
+export type DetailsStats = { ok: true; report: Record<string, unknown> } | { ok: false; message: string };
+
 export async function loadMachineDetails(
   run: (args: string[], cwd?: string) => Promise<CommandOutcome>,
   audit: () => Promise<AuditRecord[]>,
-  readStats: () => Promise<CommandOutcome>,
+  readStats: () => Promise<DetailsStats>,
 ): Promise<Omit<MachineDetails, 'buildMachines'>> {
   const measuredAt = new Date().toISOString();
   const [gc, stats, records] = await Promise.all([run(GC_DRY_RUN), readStats(), audit()]);
   const gcPart = part(gc, 'stim gc');
-  const statsPart = part(stats, 'stim stats');
   return {
     gc: gcPart.payload,
     ...(gcPart.error ? { gcError: gcPart.error } : {}),
-    stats: statsPart.payload,
-    ...(statsPart.error ? { statsError: statsPart.error } : {}),
+    stats: stats.ok ? stats.report : null,
+    ...(stats.ok ? {} : { statsError: stats.message }),
     buildClients: buildClients(records, Date.parse(measuredAt)),
     measuredAt,
   };

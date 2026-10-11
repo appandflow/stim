@@ -58,7 +58,7 @@ describe('loadMachineDetails', () => {
       await loadMachineDetails(
         run,
         async () => [],
-        async () => ({ ok: true, stdout: '{"version":1}' }),
+        async () => ({ ok: true, report: { version: 1 } }),
       ),
     ).toMatchObject({
       gc: { args: ['gc', '--json'] },
