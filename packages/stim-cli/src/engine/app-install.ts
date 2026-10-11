@@ -456,7 +456,7 @@ const ADB_UNINSTALL_TIMEOUT_MS = 120_000;
 const ADB_SHELL_TIMEOUT_MS = 30_000;
 const ADB_SHELL_OPTIONS = { timeoutMs: ADB_SHELL_TIMEOUT_MS, killSignal: 'SIGKILL' } as const;
 
-export function installAndroidApp(
+export async function installAndroidApp(
   {
     serial,
     apkPath,
@@ -464,16 +464,16 @@ export function installAndroidApp(
     allowUninstall = false,
   }: { serial: string; apkPath: string; packageName?: string | null; allowUninstall?: boolean },
   { exec = null }: ExecOpt = {},
-): AndroidInstallResult {
+): Promise<AndroidInstallResult> {
   const e = exec || getExecutor();
   if (packageName && deviceHoldsApk({ serial, packageName, apkPath }, { exec: e })) {
     return { ok: true, apkPath, skipped: true };
   }
-  const install = () => {
-    e.runFile('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
+  const install = async () => {
+    await e.runFileAsync('adb', ['-s', serial, 'install', '-r', apkPath], { timeoutMs: ADB_INSTALL_TIMEOUT_MS });
   };
   try {
-    install();
+    await install();
     return { ok: true, apkPath };
   } catch (err) {
     const conflict = installConflictKind(describe(err));
@@ -481,7 +481,7 @@ export function installAndroidApp(
       return { failed: true, code: INSTALL_ERROR, reason: `adb install failed for ${apkPath}: ${describe(err)}` };
     }
     try {
-      e.runFile('adb', ['-s', serial, 'uninstall', packageName], {
+      await e.runFileAsync('adb', ['-s', serial, 'uninstall', packageName], {
         timeoutMs: ADB_UNINSTALL_TIMEOUT_MS,
         killSignal: 'SIGKILL',
       });
@@ -495,7 +495,7 @@ export function installAndroidApp(
       };
     }
     try {
-      install();
+      await install();
     } catch (retryErr) {
       return {
         failed: true,
@@ -528,10 +528,10 @@ export function parseResolvedActivity(text: unknown): string | null {
   return null;
 }
 
-function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
+async function resolveLaunchActivity(serial: string, packageName: string, { exec = null }: ExecOpt = {}) {
   const e = exec || getExecutor();
   try {
-    const out = e.runFile(
+    const out = await e.runFileAsync(
       'adb',
       [
         '-s',
@@ -553,19 +553,19 @@ function resolveLaunchActivity(serial: string, packageName: string, { exec = nul
   }
 }
 
-export function reverseMetroPorts(
+export async function reverseMetroPorts(
   {
     serial,
     metroPort,
     devicePorts = null,
   }: { serial: string; metroPort: number | string; devicePorts?: (number | string)[] | null },
   { exec = null }: ExecOpt = {},
-): { ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string } {
+): Promise<{ ok?: boolean; reversed?: string[]; failed?: boolean; code?: string; reason?: string }> {
   const e = exec || getExecutor();
   const pairs = (devicePorts ?? [metroPort]).map((device) => [device, metroPort]);
   for (const [device, host] of pairs) {
     try {
-      e.runFile('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
+      await e.runFileAsync('adb', ['-s', serial, 'reverse', `tcp:${device}`, `tcp:${host}`], ADB_SHELL_OPTIONS);
     } catch (err) {
       return {
         failed: true,
@@ -587,19 +587,19 @@ export function hasMetroReverse(listing: unknown, metroPort: number): boolean {
 }
 
 /** Re-applies the launch's `metroPort` reverse when the device no longer has it. */
-export function ensureMetroReverse(
+export async function ensureMetroReverse(
   { serial, metroPort }: { serial: string; metroPort: number },
   { exec = null }: ExecOpt = {},
-): { restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string } {
+): Promise<{ restored: boolean; failed?: undefined; reason?: undefined } | { failed: true; reason: string }> {
   const e = exec || getExecutor();
   let listing: string;
   try {
-    listing = e.runFile('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
+    listing = await e.runFileAsync('adb', ['-s', serial, 'reverse', '--list'], ADB_SHELL_OPTIONS);
   } catch {
     return { failed: true, reason: `adb reverse --list failed on ${serial}` };
   }
   if (hasMetroReverse(listing, metroPort)) return { restored: false };
-  const reversed = reverseMetroPorts({ serial, metroPort }, { exec: e });
+  const reversed = await reverseMetroPorts({ serial, metroPort }, { exec: e });
   return reversed.failed ? { failed: true, reason: reversed.reason ?? 'adb reverse failed' } : { restored: true };
 }
 
@@ -637,7 +637,7 @@ export function debugHttpHostScript({
   ].join('\n');
 }
 
-export function writeDebugHttpHost(
+export async function writeDebugHttpHost(
   {
     serial,
     packageName,
@@ -645,12 +645,12 @@ export function writeDebugHttpHost(
     physical = false,
   }: { serial: string; packageName: string; metroPort: number | string; physical?: boolean },
   { exec = null }: ExecOpt = {},
-): { ok: boolean; host?: string; reason?: string } {
+): Promise<{ ok: boolean; host?: string; reason?: string }> {
   const e = exec || getExecutor();
   const host = `${androidMetroHost(physical)}:${metroPort}`;
   const script = debugHttpHostScript({ packageName, host });
   try {
-    e.runFile(
+    await e.runFileAsync(
       'adb',
       ['-s', serial, 'shell', 'run-as', packageName, 'sh', '-c', deviceShellArg(script)],
       ADB_SHELL_OPTIONS,
@@ -674,7 +674,7 @@ export function amStartError(text: unknown): string | null {
   return null;
 }
 
-export function openAndroidDevClientUrl(
+export async function openAndroidDevClientUrl(
   {
     serial,
     url,
@@ -682,7 +682,7 @@ export function openAndroidDevClientUrl(
     stopOnStart = false,
   }: { serial: string; url: string; packageName?: string; stopOnStart?: boolean },
   { exec = null }: ExecOpt = {},
-): { ok?: boolean; url?: string; failed?: boolean; reason?: string } {
+): Promise<{ ok?: boolean; url?: string; failed?: boolean; reason?: string }> {
   const e = exec || getExecutor();
   let out;
   try {
@@ -702,7 +702,7 @@ export function openAndroidDevClientUrl(
       ANDROID_DISABLE_AUTO_LAUNCH_EXTRA,
       'true',
     ];
-    out = e.runFile('adb', args, ADB_SHELL_OPTIONS);
+    out = await e.runFileAsync('adb', args, ADB_SHELL_OPTIONS);
   } catch (err) {
     return { failed: true, reason: `am start -d ${url} failed on ${serial}: ${describe(err)}` };
   }
@@ -711,16 +711,16 @@ export function openAndroidDevClientUrl(
   return { ok: true, url };
 }
 
-function stopRunningAndroidApp(
+async function stopRunningAndroidApp(
   serial: string,
   packageName: string,
   exec: Executor,
-): { restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string } {
+): Promise<{ restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string }> {
   const running = androidAppProcess(serial, packageName, { exec });
   if (running.state === 'stopped') return {};
   if (running.state !== 'running') return { stopOnStart: true };
   try {
-    exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+    await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
   } catch (err) {
     return {
       failed: true,
@@ -731,16 +731,21 @@ function stopRunningAndroidApp(
   return { restartedPid: running.pid };
 }
 
-function launchAndroidWithMonkey(serial: string, packageName: string, stopOnStart: boolean, exec: Executor): void {
+async function launchAndroidWithMonkey(
+  serial: string,
+  packageName: string,
+  stopOnStart: boolean,
+  exec: Executor,
+): Promise<void> {
   if (stopOnStart) {
     try {
-      exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+      await exec.runFileAsync('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
     } catch {}
   }
-  exec.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+  await exec.runFileAsync('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
 }
 
-export function launchAndroidApp(
+export async function launchAndroidApp(
   {
     serial,
     packageName,
@@ -757,19 +762,19 @@ export function launchAndroidApp(
     bridgePort?: number;
   },
   { exec = null }: ExecOpt = {},
-): AndroidLaunchResult {
+): Promise<AndroidLaunchResult> {
   const e = exec || getExecutor();
-  const { stopOnStart = false, ...restart } = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
-  const reversed = reverseMetroPorts(
+  const reversed = await reverseMetroPorts(
     { serial, metroPort: bridgePort ?? metroPort, devicePorts: [metroPort] },
     { exec: e },
   );
   if (reversed.failed) return reversed;
-  const prefs = writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
+  const prefs = await writeDebugHttpHost({ serial, packageName, metroPort, physical }, { exec: e });
   let reversedPairs = reversed.reversed ?? [];
   if (!prefs.ok && Number(metroPort) !== DEFAULT_METRO_PORT) {
-    const fallback = reverseMetroPorts(
+    const fallback = await reverseMetroPorts(
       { serial, metroPort: bridgePort ?? metroPort, devicePorts: [DEFAULT_METRO_PORT] },
       { exec: e },
     );
@@ -786,15 +791,15 @@ export function launchAndroidApp(
   let devClientNote = null;
   if (devClientScheme) {
     const url = androidDevClientUrl(devClientScheme, metroPort, physical);
-    const opened = openAndroidDevClientUrl({ serial, url, stopOnStart }, { exec: e });
+    const opened = await openAndroidDevClientUrl({ serial, url, stopOnStart }, { exec: e });
     if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
     devClientNote = `${opened.reason}; fell back to the launcher activity`;
   }
 
-  const component = resolveLaunchActivity(serial, packageName, { exec: e });
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile(
+      await e.runFileAsync(
         'adb',
         ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
         ADB_SHELL_OPTIONS,
@@ -810,7 +815,7 @@ export function launchAndroidApp(
   }
 
   try {
-    launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
     return {
@@ -821,17 +826,17 @@ export function launchAndroidApp(
   }
 }
 
-export function launchAndroidReleaseApp(
+export async function launchAndroidReleaseApp(
   { serial, packageName }: { serial: string; packageName: string },
   { exec = null }: ExecOpt = {},
-): AndroidLaunchResult {
+): Promise<AndroidLaunchResult> {
   const e = exec || getExecutor();
-  const { stopOnStart = false, ...restart } = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = await stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
-  const component = resolveLaunchActivity(serial, packageName, { exec: e });
+  const component = await resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile(
+      await e.runFileAsync(
         'adb',
         ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
         ADB_SHELL_OPTIONS,
@@ -846,7 +851,7 @@ export function launchAndroidReleaseApp(
     }
   }
   try {
-    launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
+    await launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', ...restart };
   } catch (err) {
     return {

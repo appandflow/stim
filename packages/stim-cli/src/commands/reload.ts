@@ -493,7 +493,7 @@ export async function runReload({
       continue;
     }
     const serial = candidate.record.deviceId;
-    const ensured = d.ensureReverse(serial, port);
+    const ensured = await d.ensureReverse(serial, port);
     if (ensured.failed) {
       return {
         ok: false,

@@ -1036,8 +1036,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     checkCapacity = remoteDevice.checkCapacity;
     ensureDevice = remoteDevice.ensureDevice;
     ensureDeviceBooted = remoteDevice.ensureDeviceBooted;
-    install = remoteDevice.install;
-    launch = remoteDevice.launch;
+    const remote = remoteDevice;
+    install = async (args) => remote.install(args);
+    launch = async (args) => remote.launch(args);
   }
 
   const emuLog = emulatorLogFile(root);
