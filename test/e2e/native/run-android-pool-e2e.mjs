@@ -133,7 +133,7 @@ try {
   const report = collectParkedAvds({});
   assert.equal(report.length, 1);
   assert.equal(report[0].listed, true);
-  assert.equal(deleteParkedAvds(report), 0);
+  assert.equal(await deleteParkedAvds(report), 0);
   assert.equal(readParked('android').length, 0);
   assert(!listAvds().includes(first.device.avdName));
   writeFileSync(
@@ -151,7 +151,7 @@ try {
     if (result.failedDevices.length) out(JSON.stringify(result.failedDevices));
   }
   for (const parked of readParked('android')) {
-    const result = teardownParkedAvd(parked.name);
+    const result = await teardownParkedAvd(parked.name);
     assert.equal(result.status, 'torn-down', JSON.stringify(result));
   }
   const remaining = listAvds().filter((name) => owned.has(name));
