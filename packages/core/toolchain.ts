@@ -13,8 +13,9 @@ export interface ToolchainProbe {
   list(path: string): string[];
 }
 
+const stat = (path: string) => statSync(path, { throwIfNoEntry: false });
+
 export function defaultToolchainProbe(): ToolchainProbe {
-  const stat = (path: string) => statSync(path, { throwIfNoEntry: false });
   return {
     home: homedir(),
     execPath: process.execPath,
