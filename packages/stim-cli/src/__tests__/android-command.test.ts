@@ -2744,26 +2744,28 @@ describe('the remote cache', () => {
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/EAS session expired.*building instead/);
   });
 
-  test('a provider that TIMES OUT does not stall the loop, and the command stops holding the process open', async () => {
+  test('a provider that TIMES OUT does not stall the loop, and the run reports the abandoned work instead of exiting', async () => {
     const exits: Array<string | number | null | undefined> = [];
     const originalExit = process.exit;
     process.exit = asProcessExit((code) => {
       exits.push(code);
     });
     let h;
+    let result;
     try {
       h = harness({
         loadProvider: async () => provider(),
         resolveRemoteBuild: async () => ({ timedOut: true }),
       });
-      await h.run();
+      result = await h.run();
       await new Promise((r) => setTimeout(r, 20));
     } finally {
       process.exit = originalExit;
     }
     expect(h.calls.build.length).toBe(1);
     expect(labelled(h.stderr, 'cache')[0]).toMatch(/did not answer within 30s; building instead/);
-    expect(exits).toEqual([0]);
+    expect(result.uploadsAbandoned).toBe(true);
+    expect(exits).toEqual([]);
   });
 
   test('a provider that cannot be loaded says so ONCE and builds', async () => {
