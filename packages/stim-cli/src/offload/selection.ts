@@ -1,4 +1,4 @@
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, ambientEnv } from '@stim-cli/core';
 import { operationState } from '../engine/operation-state.ts';
 import { InvalidArgumentError } from 'commander';
 import { OFFLOAD_MODES, parseMachine, automaticMachineEnabled } from '@stim-cli/core/state';
@@ -68,17 +68,17 @@ const settingSource = (flag: string | undefined, env: string | undefined, settin
 export function buildPlacementSettings(selected: string): PlacementSetting[] {
   const flag = operationState(ambientContext()).buildMachineFlag;
   const remote = loadConfig()?.remote;
-  const rawMode = process.env.STIM_REMOTE_BUILD_MODE || remote?.buildMode;
+  const rawMode = ambientEnv().STIM_REMOTE_BUILD_MODE || remote?.buildMode;
   return [
     {
       key: 'remote.build',
       value: selected,
-      from: settingSource(flag, process.env.STIM_REMOTE_BUILD, remote?.build),
+      from: settingSource(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build),
     },
     {
       key: 'remote.buildMode',
       value: selected === 'local' ? 'off' : OFFLOAD_MODES.includes(rawMode as never) ? (rawMode as string) : 'auto',
-      from: settingSource(undefined, process.env.STIM_REMOTE_BUILD_MODE, remote?.buildMode),
+      from: settingSource(undefined, ambientEnv().STIM_REMOTE_BUILD_MODE, remote?.buildMode),
     },
   ];
 }
@@ -91,7 +91,7 @@ export function resolveBuildPlacement(flag?: string): {
   operationState(ambientContext()).buildMachineFlag = flag;
   let selected = 'auto';
   try {
-    selected = resolveBuildMachine(flag, process.env.STIM_REMOTE_BUILD, remote?.build);
+    selected = resolveBuildMachine(flag, ambientEnv().STIM_REMOTE_BUILD, remote?.build);
     selected = requireConfiguredMachine(selected, remote?.machines);
     if (namedBuildMachine(selected) && pairedMachines([selected]).length === 0)
       throw new OffloadRefusal(selected, 'no remote Mac is paired');

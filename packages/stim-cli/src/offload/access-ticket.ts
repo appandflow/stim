@@ -1,7 +1,8 @@
+import { ambientEnv } from '@stim-cli/core';
 import { createHash } from 'node:crypto';
 
 export function readAccessTicket(): { ticket: string; ticketHash: string } | undefined {
-  const ticket = process.env.STIM_ACCESS_TICKET?.trim();
+  const ticket = ambientEnv().STIM_ACCESS_TICKET?.trim();
   return ticket && /^[A-Za-z0-9_-]{43}$/.test(ticket)
     ? { ticket, ticketHash: createHash('sha256').update(ticket).digest('hex') }
     : undefined;
