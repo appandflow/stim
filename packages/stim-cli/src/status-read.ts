@@ -267,19 +267,32 @@ async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): 
   processes.catch(() => {});
   const gitRead = gitScope === 'all' ? readGitInto(probes, worktrees, orphanWorktrees) : null;
 
-  const androidRuntimeOf = (avdName: string) => probes.androidRuntime(avdName);
+  const logs = projects.map(([path]) => logFacts(path));
+
+  const simsByUdid: Record<string, IosSimRecord> = {};
+  let simsAvailable = true;
+  let simctlError: string | null = null;
+  try {
+    for (const sim of await simsRead) simsByUdid[sim.udid] = sim;
+  } catch (e) {
+    simsAvailable = false;
+    simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
+  }
+  const running = await processes;
   const devices = projects.map(([, proj]) => ({
     androidRuntimes: Object.fromEntries(
       projectDeviceSlots(proj)
         .slice(1)
         .map(({ slot, platforms }) => [
           slot,
-          platforms.android?.owned && platforms.android.avdName ? androidRuntimeOf(platforms.android.avdName) : null,
+          platforms.android?.owned && platforms.android.avdName
+            ? probes.androidRuntime(platforms.android.avdName)
+            : null,
         ]),
     ),
     androidRuntime:
       proj.platforms?.android?.owned && proj.platforms.android.avdName
-        ? androidRuntimeOf(proj.platforms.android.avdName)
+        ? probes.androidRuntime(proj.platforms.android.avdName)
         : null,
     androidDeviceProfiles: Object.fromEntries(
       projectDeviceSlots(proj)
@@ -296,18 +309,6 @@ async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): 
         ? ownedAvdDeviceProfile(proj.platforms.android.avdName)
         : null,
   }));
-  const logs = projects.map(([path]) => logFacts(path));
-
-  const simsByUdid: Record<string, IosSimRecord> = {};
-  let simsAvailable = true;
-  let simctlError: string | null = null;
-  try {
-    for (const sim of await simsRead) simsByUdid[sim.udid] = sim;
-  } catch (e) {
-    simsAvailable = false;
-    simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
-  }
-  const running = await processes;
   await gitRead;
 
   const history = readStats().record?.history;
