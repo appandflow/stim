@@ -160,9 +160,10 @@ for profile selection, device support, and cache behavior.
 
 ### Optional artifact providers
 
-Stim ships an optional S3-compatible provider through `@stim-cli/cache/s3`,
+`@stim-cli/cache-s3` is a separate provider for S3-compatible storage,
 including Cloudflare R2. Without a configured provider, artifacts stay on the
-local machine. Stim does not run a hosted cache service.
+local machine. Its AWS SDK and archive dependencies are installed only when
+you install that provider. Stim does not run a hosted cache service.
 
 Projects can supply a module through `cache.provider` using the
 [`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
@@ -172,12 +173,12 @@ Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
 This caches app artifacts; ccache and Clang CAS use separate compiler caches.
 
-Install `@stim-cli/cache` in the app and select the S3 provider in `.stim.json`:
+Install `@stim-cli/cache-s3` in the app and select the S3 provider in `.stim.json`:
 
 ```json
 {
   "cache": {
-    "provider": "@stim-cli/cache/s3",
+    "provider": "@stim-cli/cache-s3",
     "options": {
       "bucket": "stim-cache",
       "endpoint": "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com",

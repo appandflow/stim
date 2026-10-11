@@ -4,8 +4,8 @@ import { createServer, type Server } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../s3.ts';
-import { runCacheProviderContract } from '../contract.ts';
+import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
+import { runCacheProviderContract } from '@stim-cli/cache';
 
 interface ObjectEntry {
   body: Buffer;

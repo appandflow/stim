@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const repositoryRoot = process.env.RELEASE_PREP_ROOT ?? join(import.meta.dirname, '..');
-const packageDirs = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
+const packageDirs = ['core', 'cache', 'cache-s3', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
 const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
 const acceptedRanges = new Set(['workspace:^', 'workspace:~', 'workspace:*']);

@@ -17,6 +17,7 @@ packages/core                @stim-cli/core                shared primitives (ca
 packages/stim-cli            stim                          the CLI
 packages/ci                  @stim-cli/ci                  CI lifecycle and stim-ci executable
 packages/cache               @stim-cli/cache               cache provider contract and tier coordination
+packages/cache-s3            @stim-cli/cache-s3            optional S3-compatible cache provider
 packages/expo-build-cache    @stim-cli/expo-build-cache    Expo build cache provider
 packages/metro               @stim-cli/metro               shared Metro transform cache + log reporter
 packages/server              @stim-cli/server              stim-server, read-only status for paired clients
@@ -81,7 +82,7 @@ Every package name must already exist on npm, because trusted publishing can
 only be configured for an existing package:
 
 ```bash
-for p in @stim-cli/core @stim-cli/cache @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/server; do
+for p in @stim-cli/core @stim-cli/cache @stim-cli/cache-s3 @stim-cli/metro @stim-cli/expo-build-cache stim @stim-cli/ci @stim-cli/server; do
   npm view "$p" name >/dev/null || echo "$p: first publication required"
 done
 ```
@@ -189,7 +190,7 @@ preparation, `git status --short` may show only the draft
 
    ```bash
    out=$(mktemp -d)
-   for p in core cache metro expo-build-cache stim-cli ci server; do
+   for p in core cache cache-s3 metro expo-build-cache stim-cli ci server; do
      tgz=$(cd "packages/$p" && pnpm pack --pack-destination "$out" | tail -1)
      echo "== $p ($(tar -tzf "$tgz" | wc -l | tr -d ' ') files)"
      tar -tzf "$tgz" | grep -E 'README|LICENSE'
@@ -387,7 +388,7 @@ repeat the affected gate rather than waiving it.
    Do not add claims here. Once the tag is remote, a correction requires a new
    version; never move or force-push the published tag.
 7. **Publish to npm.** Pushing the tag in step 5 triggers the
-   `Release` workflow, which publishes all seven packages via OIDC trusted
+   `Release` workflow, which publishes all eight packages via OIDC trusted
    publishing (no token, `--provenance`) once the run is approved in the
    `release` environment. If the current GitHub identity is an allowed
    reviewer, approve the deployment directly with `gh` instead of waiting for

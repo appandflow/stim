@@ -8,7 +8,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { deserialize, serialize } from 'node:v8';
 import { create, extract } from 'tar';
-import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from './provider.ts';
+import { CACHE_PROVIDER_API_VERSION, type CacheProvider, type FileCacheCapability } from '@stim-cli/cache';
 
 export const apiVersion: typeof CACHE_PROVIDER_API_VERSION = CACHE_PROVIDER_API_VERSION;
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
-const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
+const PACKAGE_DIRS = ['core', 'cache', 'cache-s3', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
 const ACCEPTED_RANGES = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
