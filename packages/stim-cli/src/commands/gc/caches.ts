@@ -6,7 +6,7 @@ import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCache, type CacheDescriptor } from '../../cache/caches.ts';
 import { canonicalPath } from './paths.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { memoryCacheKind } from './memory.ts';
 import { parseArchiveSelector } from './archive-selector.ts';
 
@@ -145,75 +145,84 @@ function emptyCache(cache: CacheDescriptor): {
   return { removed, bytes: failed ? 0 : (cache.bytes ?? 0), failed, skipped: null };
 }
 
-function reportFailures(cache: CacheDescriptor, failed: number | undefined): void {
-  if (!failed) return;
+function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {
+  if (!failed) return false;
   const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`;
-  console.log(chalk.red(`${cache.name}: ${message}`));
-  recordGcResult('cache', 'failed', cache.name, { id: cache.dir, detail: message });
-  process.exitCode = 1;
+  log(chalk.red(`${cache.name}: ${message}`));
+  record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
+  fail();
+  return true;
 }
 
-export function trimCaches(caches: GcCache[], olderThan: number): GcCache[] {
+export function trimCaches(
+  caches: GcCache[],
+  olderThan: number,
+  output: GcOutput = GC_OUTPUT,
+): { trimmed: GcCache[]; failures: number } {
+  const { log, record } = output;
   let cacheBytes = 0;
+  let failures = 0;
   const trimmed: GcCache[] = [];
   for (const c of caches) {
     if (c.machineGlobal) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
+      log(chalk.yellow(`Left ${c.name} alone: ${c.machineGlobal}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: c.machineGlobal });
       continue;
     }
     const r = pruneCache(c, { olderThanDays: olderThan });
     if (r.skipped) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
+      log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
     } else if (r.removed) {
       cacheBytes += r.bytes;
       trimmed.push(c);
-      recordGcResult('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
-      console.log(
+      record('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
+      log(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      console.log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
+      log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
     }
-    reportFailures(c, r.failed);
+    if (reportFailures(c, r.failed, output)) failures++;
   }
 
   if (cacheBytes) {
-    console.log(
+    log(
       chalk.dim(
         `Trimmed ${formatBytes(cacheBytes)} of shared cache. The next build that wanted those entries pays to rebuild them.`,
       ),
     );
   }
-  return trimmed;
+  return { trimmed, failures };
 }
 
 export function emptyCaches(caches: GcCache[]): void {
+  const output = GC_OUTPUT;
+  const { log, record } = output;
   let cacheBytes = 0;
   for (const c of caches) {
     if (!c.willEmpty) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
+      log(chalk.yellow(`Left ${c.name} alone: ${c.emptySkipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: c.emptySkipped ?? null });
       continue;
     }
     const r = emptyCache(c);
     if (r.skipped) {
-      console.log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
-      recordGcResult('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
+      log(chalk.yellow(`Left ${c.name} alone: ${r.skipped}`));
+      record('cache', 'kept', c.name, { id: c.dir, detail: r.skipped });
     } else if (r.removed) {
       cacheBytes += r.bytes;
-      recordGcResult('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
-      console.log(
+      record('cache', 'done', c.name, { id: c.dir, bytes: r.bytes });
+      log(
         chalk.green(`Emptied ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      console.log(chalk.dim(`${c.name}: already empty`));
+      log(chalk.dim(`${c.name}: already empty`));
     }
-    reportFailures(c, r.failed);
+    reportFailures(c, r.failed, output);
   }
   if (cacheBytes) {
-    console.log(
+    log(
       chalk.dim(
         `Emptied ${formatBytes(cacheBytes)} of shared cache. Every build that wanted any of it now pays to rebuild it.`,
       ),

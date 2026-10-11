@@ -50,3 +50,18 @@ export function recordGcResult(
 export function takeGcResults(): GcResult[] {
   return results.splice(0);
 }
+
+/** Where `stim gc`'s helpers print each line, record each result and report a failure; the budget passes its own. */
+export interface GcOutput {
+  log: (line: string) => void;
+  record: typeof recordGcResult;
+  fail: () => void;
+}
+
+export const GC_OUTPUT: GcOutput = {
+  log: (line) => console.log(line),
+  record: recordGcResult,
+  fail: () => {
+    process.exitCode = 1;
+  },
+};

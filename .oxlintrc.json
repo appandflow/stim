@@ -243,7 +243,6 @@
     {
       "files": [
         "packages/stim-cli/src/archive.ts",
-        "packages/stim-cli/src/budget.ts",
         "packages/stim-cli/src/command-output.ts",
         "packages/stim-cli/src/commands/android.ts",
         "packages/stim-cli/src/commands/android/build.ts",

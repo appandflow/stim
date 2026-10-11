@@ -442,5 +442,29 @@ describe.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
         process.exitCode = undefined;
       }
     });
+
+    test('trimming through a caller output counts the failure without printing or touching the exit code', () => {
+      const dir = join(tmpHome, 'locked-cache');
+      mkdirSync(join(dir, 'entry'), { recursive: true });
+      age(join(dir, 'entry'));
+      chmodSync(dir, 0o500);
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const lines: string[] = [];
+      try {
+        const result = trimCaches([makeCacheDescriptor({ dir, prune: 'entries' })], 30, {
+          log: (line) => lines.push(line),
+          record: () => {},
+          fail: () => {},
+        });
+        expect(result.failures).toBe(1);
+        expect(lines.join('\n')).toContain(`1 entry in ${dir} could not be removed`);
+        expect(log).not.toHaveBeenCalled();
+        expect(process.exitCode).toBeUndefined();
+      } finally {
+        log.mockRestore();
+        chmodSync(dir, 0o700);
+        process.exitCode = undefined;
+      }
+    });
   },
 );
