@@ -352,7 +352,10 @@ export async function placeHostedNative(
             } catch (offerError) {
               if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
                 throw offerError;
-              await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())));
+              await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())), {
+                signal: runCancellationSignal(),
+                what: 'hosted app offer',
+              });
             }
           }
         }
@@ -369,7 +372,7 @@ export async function placeHostedNative(
           typeof delivery.notice === 'string' ? delivery.notice : 'App installation or launch is unknown.',
         );
       if (Date.now() > deadline) throw new Error('App installation did not finish.');
-      await cancellableSleep(POLL_MS);
+      await cancellableSleep(POLL_MS, { signal: runCancellationSignal(), what: 'hosted app installation' });
       delivery = await call(host, 'device-host.app.attach', ids);
     }
     if (typeof delivery.notice === 'string') note(delivery.notice);
