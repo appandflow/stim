@@ -150,9 +150,8 @@ type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 export type WorkerRequest =
   | { operation: 'run'; options: WithoutSignal<StimRunOptions> }
   | { operation: 'build'; options: WithoutSignal<StimBuildOptions> }
-  | { operation: 'stop'; options: Omit<StimStopOptions, 'signal'> }
   | { operation: 'diagnostics'; options: Omit<StimDiagnosticsOptions, 'signal'> };
 
 export type WorkerResponse =
-  | { ok: true; result: StimRunResult | StimBuildResult | StimStopResult | StimDiagnostics }
+  | { ok: true; result: StimRunResult | StimBuildResult | StimDiagnostics }
   | { ok: false; error: StimFailure };

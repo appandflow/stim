@@ -261,6 +261,57 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test('stop runs in the calling process and reports through onProgress without touching the caller context', async () => {
+  const { root, home } = fixture('stop-in-process');
+  const output: string[] = [];
+  const cwd = process.cwd();
+  const environment = { ...process.env };
+  const interrupts = process.listeners('SIGINT');
+  const spawn = vi.spyOn(getExecutor(), 'spawn');
+  const log = vi.spyOn(console, 'log');
+  const error = vi.spyOn(console, 'error');
+  try {
+    const result = await createStim({
+      projectRoot: root,
+      home,
+      onProgress: ({ message }) => output.push(message),
+    }).stop();
+    expect(result).toMatchObject({ ok: true });
+    expect(spawn).not.toHaveBeenCalledWith(process.execPath, expect.anything(), expect.anything());
+    expect(log).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(output.join('')).not.toBe('');
+    expect(process.cwd()).toBe(cwd);
+    expect(process.env).toEqual(environment);
+    expect(process.listeners('SIGINT')).toEqual(interrupts);
+  } finally {
+    spawn.mockRestore();
+    log.mockRestore();
+    error.mockRestore();
+  }
+});
+
+test('an in-process stop refusal keeps the log path, and a throwing onProgress rejects with its own error', async () => {
+  const { root, home, directory } = fixture('stop-refusal');
+  await expect(createStim({ projectRoot: root, home }).stop({ slot: 'missing' })).rejects.toMatchObject({
+    name: 'StimError',
+    code: 'STIM_BAD_ARG',
+    details: { logs: directory },
+  });
+  const thrown = new Error('progress consumer failed');
+  const calls: string[] = [];
+  const stim = createStim({
+    projectRoot: root,
+    home,
+    onProgress: ({ message }) => {
+      calls.push(message);
+      throw thrown;
+    },
+  });
+  await expect(stim.stop()).rejects.toBe(thrown);
+  expect(calls).toHaveLength(1);
+});
+
 test('a settings refusal rejects with its code and remedy, and an aborted read does not start', async () => {
   const { root, home } = fixture('settings-refusal');
   vi.stubEnv('STIM_BUDGET_MIN_FREE_DISK_GB', 'lots');

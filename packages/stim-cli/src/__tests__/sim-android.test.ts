@@ -1,3 +1,5 @@
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import assert from 'node:assert';
 import {
   existsSync,
@@ -1155,8 +1157,6 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
 test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', async () => {
   const calls: string[] = [];
   const errors: string[] = [];
-  const originalError = console.error;
-  console.error = (message) => errors.push(String(message));
   setExecutor({
     runFileQuiet: (file: string, args: string[] = []) => {
       const cmd = [file, ...args].join(' ');
@@ -1165,14 +1165,12 @@ test('shutdownAndroidEmulator warns and still kills the emulator when sync fails
     },
   });
 
-  try {
-    await shutdownAndroidEmulator('emulator-5554');
-  } finally {
-    console.error = originalError;
-  }
+  await withAmbientContext(testContext({ output: (_stream, text) => errors.push(text) }), () =>
+    shutdownAndroidEmulator('emulator-5554'),
+  );
 
   expect(calls).toEqual(['adb -s emulator-5554 shell sync', 'adb -s emulator-5554 emu kill']);
-  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway']);
+  expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway\n']);
 });
 
 test('waitForBoot keeps polling while adb still fails', async () => {

@@ -51,7 +51,7 @@ import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, ambientWrite } from '@stim-cli/core';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
   return Object.assign(new Error(`${machine}: ${error instanceof Error ? error.message : String(error)}`), {
@@ -434,7 +434,8 @@ export async function stopHostedNative(
       try {
         await pullHostedNativeLogs(root, name, placement, host, true, platform);
       } catch (error) {
-        process.stderr.write(
+        ambientWrite(
+          'stderr',
           `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }
@@ -449,7 +450,8 @@ export async function stopHostedNative(
       try {
         await pullHostedNativeLogs(root, name, placement, host, true, platform);
       } catch (error) {
-        process.stderr.write(
+        ambientWrite(
+          'stderr',
           `Could not copy the host's final native logs from ${placement.machine}: ${(error as Error).message}\n`,
         );
       }

@@ -45,10 +45,10 @@ configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
 chunk which can contain partial lines. Without a callback the API stays silent.
 
-`build`, `run`, `stop` and `diagnostics` each run in a separate bundled worker
-and invoke the same lifecycle operations as the CLI. Reads such as `settings`
-and `stats` run in the importing process against the client's home and project, so clients
-for different homes can share a process. Neither parses Commander arguments. The
+`build`, `run` and `diagnostics` each run in a separate bundled worker and
+invoke the same lifecycle operations as the CLI. `stop` and reads such as
+`settings` and `stats` run in the importing process against the client's home
+and project, so clients for different homes can share a process. Neither parses Commander arguments. The
 importing process keeps its working directory, environment, output and signal
 handlers.
 
@@ -116,7 +116,8 @@ Test runners should wait for their own application-specific ready state.
 
 Every method accepts an `AbortSignal`. Cancellation interrupts a worker and
 waits for it to exit; a read stops its child processes and rejects with
-`STIM_CANCELLED`. Native tools retain their existing cooperative cancellation
+`STIM_CANCELLED`; an aborted `stop()` finishes its teardown and then rejects
+with `STIM_CANCELLED`. Native tools retain their existing cooperative cancellation
 and ownership claims; this is not a forced-kill deadline.
 
 Call `stop()` in cleanup even when `run()` failed partway through. Use a fresh
@@ -129,9 +130,10 @@ Resources belong to the workspace, not to an individual JavaScript client.
 Use a dedicated checkout/workspace for a CI job.
 
 Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `details`
-preserve failure information. Operation errors returned by workers include the workspace log path
-in `details.logs`. An exception thrown by `onProgress` cancels the worker and
-is propagated unchanged.
+preserve failure information. Operation errors include the workspace log path
+in `details.logs`. An exception thrown by `onProgress` stops further progress
+and is propagated unchanged: a worker operation is cancelled, and an in-process
+`stop()` or read finishes its work first.
 
 ## Settings
 

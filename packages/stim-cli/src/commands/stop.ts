@@ -1174,7 +1174,7 @@ export async function stopWorkspaceNow({
   endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report),
   deviceSlots = workspaceDeviceSlots,
   recordedSlots = recordedDeviceSlots,
-  stop = (options: { root: string; slot?: string }) => runStop(options),
+  stop = (options: { root: string; slot?: string }) => runStop({ ...options, report }),
 }: {
   root: string;
   slot?: string;

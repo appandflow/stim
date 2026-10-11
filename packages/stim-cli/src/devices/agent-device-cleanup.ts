@@ -1,3 +1,4 @@
+import { ambientWrite } from '@stim-cli/core';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
@@ -113,7 +114,7 @@ function explainFailure(error: unknown): Error {
 }
 
 function report(message: string): void {
-  process.stderr.write(`${phaseLine('device', message)}\n`);
+  ambientWrite('stderr', `${phaseLine('device', message)}\n`);
 }
 
 export async function closeOwnedDeviceSessions(

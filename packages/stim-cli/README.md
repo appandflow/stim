@@ -84,10 +84,12 @@ Each result is a separate copy kept in the workspace until `stim worktree remove
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
-`build`, `run`, `stop` and `diagnostics` each use a separate bundled worker so
-their home, cancellation and process state cannot change the importing process.
-`settings()` and `stats()` read the `stim settings --json` and `stim stats --json`
-payloads in the importing process, against the client's own home. The CLI and workers call
+`build`, `run` and `diagnostics` each use a separate bundled worker so their
+home, cancellation and process state cannot change the importing process.
+`stop()` runs in the importing process, and so do `settings()` and `stats()`,
+which read the `stim settings --json` and `stim stats --json` payloads. All
+three use the client's own home and leave the caller's cwd, environment,
+output and signal handlers as they were. The CLI and workers call
 the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.
 Cancellation waits for the worker to exit, and does not replace `stop()`.
@@ -100,8 +102,9 @@ Ownership checks and cache locks remain active. `stop()` acts on this workspace,
 including resources from earlier runs, so use a dedicated workspace in CI.
 
 Stim failures are `StimError` instances with `code`, `message`, `remedy`, and
-`details`. An exception thrown by `onProgress` cancels the worker and is
-propagated unchanged.
+`details`. An exception thrown by `onProgress` stops further progress and is
+propagated unchanged: a worker operation is cancelled, and an in-process
+`stop()` or read finishes its work first.
 `diagnostics()` returns the workspace log directory and up to 200 local records,
 even if no run has succeeded. It does not fetch remote logs or capture new crashes.
 See [the API reference](https://stim.appandflow.com/docs/programmatic-api) or
