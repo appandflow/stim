@@ -392,7 +392,7 @@ export default function doctorCommand(
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
-      const toolchain = toolchainReport(root);
+      const toolchain = host === 'darwin' ? toolchainReport(root) : null;
       const maintenance = maintenanceStatus();
       const maintenanceLines = [
         phaseLine('maintenance.mode', maintenance.mode),
@@ -424,7 +424,7 @@ export default function doctorCommand(
             stim,
             budget.report,
             doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
-            toolchainLines(toolchain),
+            toolchain ? toolchainLines(toolchain) : [],
           ),
           ...maintenanceLines,
         ];
@@ -441,8 +441,10 @@ export default function doctorCommand(
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
       for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
         console.log(chalk.dim(line));
-      console.log(chalk.bold('\nToolchain'));
-      for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
+      if (toolchain) {
+        console.log(chalk.bold('\nToolchain'));
+        for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
+      }
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

@@ -147,10 +147,15 @@ function pathEntries(path: string | undefined): string[] {
  * The toolchain environment a process started outside a login shell, such as stim-server under Stim Desktop or
  * launchd, needs: `base` with Homebrew, `~/.local/bin`, the default Node's directory and the Android SDK tools
  * appended to `PATH`, and `ANDROID_HOME` and `JAVA_HOME` set when `base` lacks them and they can be found. It only
- * fills gaps: nothing `base` sets is replaced, and every added `PATH` entry goes after the existing ones. The
- * running Node's directory is always the last entry, so `node` resolves.
+ * fills gaps: nothing `base` sets is replaced, and every added `PATH` entry goes after the existing ones. Unless
+ * `runningNode` is false, the running Node's directory is always the last entry, so `node` resolves. `PNPM_HOME` is
+ * set to pnpm's global directory when that is added, since pnpm's global commands need it.
  */
-export function discoverToolchain(base: NodeJS.ProcessEnv, probe: ToolchainProbe = defaultToolchainProbe()): Toolchain {
+export function discoverToolchain(
+  base: NodeJS.ProcessEnv,
+  probe: ToolchainProbe = defaultToolchainProbe(),
+  { runningNode = true }: { runningNode?: boolean } = {},
+): Toolchain {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(base)) if (value !== undefined) env[key] = value;
   const entries: ToolchainEntry[] = [];
@@ -165,6 +170,8 @@ export function discoverToolchain(base: NodeJS.ProcessEnv, probe: ToolchainProbe
   if (defaultNode) append(defaultNode.bin);
   for (const dir of HOMEBREW_BINS) append(dir);
   for (const dir of ['.local/bin', 'Library/pnpm', '.bun/bin']) append(join(probe.home, dir));
+  const pnpmHome = join(probe.home, 'Library', 'pnpm');
+  if (!env.PNPM_HOME && path.includes(pnpmHome)) env.PNPM_HOME = pnpmHome;
 
   const sdkSet = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
   const standardSdk = join(probe.home, 'Library', 'Android', 'sdk');
@@ -180,7 +187,8 @@ export function discoverToolchain(base: NodeJS.ProcessEnv, probe: ToolchainProbe
   );
 
   entries.push(javaEntry(env, probe));
-  append(dirname(probe.execPath));
+  const running = dirname(probe.execPath);
+  if (runningNode) append(running);
   env.PATH = path.join(delimiter);
 
   const node = onPath('node');
@@ -188,7 +196,9 @@ export function discoverToolchain(base: NodeJS.ProcessEnv, probe: ToolchainProbe
     ? null
     : defaultNode && node === defaultNode.bin
       ? defaultNode.from
-      : 'the Node running Stim';
+      : node === running
+        ? 'the Node running Stim'
+        : node && `${node} on the discovered PATH`;
   entries.unshift({
     name: 'node',
     value: node && join(node, 'node'),
@@ -261,14 +271,8 @@ export function projectNodePin(
   const tools = probe.read(join(root, '.tool-versions'));
   const asdf = tools && /^nodejs\s+(\S+)/m.exec(tools)?.[1];
   if (asdf) return { spec: asdf, file: '.tool-versions' };
-  try {
-    const volta = (JSON.parse(probe.read(join(root, 'package.json')) ?? '{}') as { volta?: { node?: unknown } }).volta
-      ?.node;
-    if (typeof volta === 'string' && volta) return { spec: volta, file: 'package.json' };
-  } catch {
-    return null;
-  }
-  return null;
+  const volta = /"volta"\s*:\s*\{[^}]*"node"\s*:\s*"([^"]+)"/.exec(probe.read(join(root, 'package.json')) ?? '')?.[1];
+  return volta ? { spec: volta, file: 'package.json' } : null;
 }
 
 /**

@@ -33,11 +33,12 @@ public enum Toolchain {
     return environment
   }
 
-  /// `base` with the toolchain the bundled Node's `discoverToolchain` finds, or nil when it fails.
+  /// `base` with the toolchain the bundled Node's `discoverToolchain` finds, or nil when it fails. The bundled Node's
+  /// own directory is left off `PATH`, so Desktop's Node checks see only the user's Node.
   public static func discover(base: [String: String], bundled: BundledServer) async -> [String: String]? {
     let script =
       "import { discoverToolchain } from '@stim-cli/core/toolchain';"
-      + "process.stdout.write(JSON.stringify(discoverToolchain(process.env).env));"
+      + "process.stdout.write(JSON.stringify(discoverToolchain(process.env, undefined, { runningNode: false }).env));"
     var request = ProcessRequest(
       bundled.node, ["--input-type=module", "-e", script], cwd: bundled.root, environment: base, timeout: 5)
     request.captureStderr = true
@@ -66,7 +67,7 @@ public enum Toolchain {
     await LaunchMilestones.reach("login-environment")
     var environment = shell
     for (name, value) in parseOverrides(overrides ?? "") { environment[name] = value }
-    if let path = base["STIM_HOME"] { environment["STIM_HOME"] = path }
+    if launch["STIM_HOME"] != nil || !(stimHome ?? "").isEmpty { environment["STIM_HOME"] = base["STIM_HOME"] }
     return environment
   }
 }

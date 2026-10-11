@@ -18,7 +18,7 @@ public struct StimCLI: Sendable {
       case .notFound:
         return "Could not find the stim executable. Install it globally, set STIM_BIN, or choose it in Settings."
       case .toolNotFound(let name):
-        return "Could not find \(name) on the login shell's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
+        return "Could not find \(name) on Stim Desktop's PATH. Install Node.js 22.12 or later from nodejs.org, then try again."
       case .exited(let code, let stderr):
         return stderr.isEmpty ? "stim exited with status \(code)." : "stim exited with status \(code): \(stderr)"
       case .timedOut(let seconds):

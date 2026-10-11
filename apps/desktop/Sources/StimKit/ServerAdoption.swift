@@ -1,8 +1,7 @@
 import Foundation
 
-/// How far Desktop trusts the stim-server it found running on its port. Before the login shell's environment
-/// arrives, Desktop adopts a server provisionally with the Stim home that environment reported on the last launch,
-/// so the sidebar can show the server's status feed. A provisional adoption allows reads only: no pairing, no saved
+/// How far Desktop trusts the stim-server it found running on its port. Before its environment is ready, Desktop
+/// adopts a server provisionally for the Stim home it runs with, so the sidebar can show the server's status feed. A provisional adoption allows reads only: no pairing, no saved
 /// or deleted token, no `stim-server` command and no control request until the login environment confirms it.
 public enum ServerAdoption: Equatable, Sendable {
   case none

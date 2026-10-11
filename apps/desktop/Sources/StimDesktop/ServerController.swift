@@ -112,8 +112,10 @@ final class ServerController: ObservableObject {
   @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
-  private var loginEnvironment: [String: String]?
+  private var resolvedEnvironment: [String: String]?
   private var provisionalHome = StimHome.path(environment: [:])
+  /// The launch environment with the Settings Stim home and overrides, read once at launch like the CLI's.
+  private var settingsEnvironment = ProcessInfo.processInfo.environment
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -188,12 +190,12 @@ final class ServerController: ObservableObject {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
   }
 
-  func configure(environment: Task<[String: String], Never>, provisionalHome: String) {
+  func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
-    self.provisionalHome = provisionalHome
+    self.settingsEnvironment = settingsEnvironment
+    provisionalHome = StimHome.path(environment: settingsEnvironment)
     Task {
-      let login = await environment.value
-      loginEnvironment = login
+      resolvedEnvironment = await environment.value
       await verifyAdoption()
     }
     start()
@@ -245,7 +247,7 @@ final class ServerController: ObservableObject {
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
         guard current == generation else { return }
-        if loginEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
+        if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
           provisional = true
           state = .running(health, owned: false)
           return
@@ -312,13 +314,10 @@ final class ServerController: ObservableObject {
   /// The bundled server, started with the launch environment and the Stim home and overrides from Settings, so it
   /// waits for nothing. It discovers the toolchain for the commands it runs itself. Nil with an override.
   private func bundledCLI() -> StimServerCLI? {
-    let defaults = UserDefaults.standard
-    guard defaults.string(forKey: AppPreferences.Key.stimServerExecutable)?.isEmpty ?? true,
+    guard UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)?.isEmpty ?? true,
       let bundled = BundledServer.inApp()
     else { return nil }
-    var environment = Toolchain.settingsEnvironment(
-      launch: ProcessInfo.processInfo.environment, stimHome: defaults.string(forKey: AppPreferences.Key.stimHome),
-      overrides: defaults.string(forKey: AppPreferences.Key.environmentOverrides))
+    var environment = settingsEnvironment
     if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
     return StimServerCLI(environment: environment, bundled: bundled)
   }
@@ -326,12 +325,12 @@ final class ServerController: ObservableObject {
   /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
   /// for again from the start, now with the login environment's Stim home.
   private func verifyAdoption() async {
-    guard provisional, case .running(let adopted, owned: false) = state, let login = loginEnvironment else { return }
+    guard provisional, case .running(let adopted, owned: false) = state, let resolved = resolvedEnvironment else { return }
     let current = generation
     let probe = await StimServerCLI.health(port: port)
     guard current == generation, provisional else { return }
     if let health = ServerAdoption.confirmed(
-      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: login))
+      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: resolved))
     {
       state = .running(health, owned: false)
       provisional = false

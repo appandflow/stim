@@ -211,7 +211,7 @@ struct SetupGuideView: View {
       statusLine("Node.js \(version)", tone: .success, icon: "checkmark.circle.fill")
     case .missing?:
       statusLine(
-        "Node.js is not on your login shell's PATH." + (setup.brewPath == nil ? " Install it, then check again." : ""),
+        "Stim Desktop found no Node.js." + (setup.brewPath == nil ? " Install it, then check again." : ""),
         tone: .warning, icon: "exclamationmark.triangle.fill")
     case .outdated(let found)?:
       statusLine(

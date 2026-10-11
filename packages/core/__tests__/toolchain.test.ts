@@ -18,7 +18,7 @@ function probe(files: Record<string, string>, execPath = '/Applications/Stim.app
             ...new Set(
               paths
                 .filter((file) => file.startsWith(`${path}/`))
-                .map((file) => file.slice(path.length + 1).split('/')[0]!),
+                .map((file) => file.slice(path.length + 1).split('/')[0] ?? ''),
             ),
           ]
         : [],
@@ -43,7 +43,7 @@ describe('discoverToolchain', () => {
         '/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java': '',
       }),
     );
-    expect(env.PATH!.split(':')).toEqual([
+    expect(env.PATH?.split(':')).toEqual([
       '/usr/bin',
       '/bin',
       `${HOME}/.nvm/versions/node/v20.18.3/bin`,

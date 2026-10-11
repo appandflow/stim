@@ -51,7 +51,7 @@ struct AdvancedSettingsView: View {
         Text("Environment")
       } footer: {
         Text(
-          "Stim Desktop runs no login shell: Stim finds Node, Homebrew, the Android SDK and Java itself. Set the Stim home here instead of STIM_HOME, and add other variables, such as STIM_* settings, as KEY=VALUE lines. Changes apply when Stim Desktop restarts."
+          "Stim Desktop runs no login shell: Stim finds Node, Homebrew, the Android SDK and Java itself. Set the Stim home here instead of STIM_HOME, and add other variables, such as STIM_* settings, as KEY=VALUE lines. They are stored in plain text, so keep secrets out. Changes apply when Stim Desktop restarts."
         )
         .foregroundStyle(Palette.tertiary)
       }

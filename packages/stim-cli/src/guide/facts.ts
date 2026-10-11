@@ -535,7 +535,7 @@ leased until <time>" for each one.`,
                   only for approved machines whose worker reports it.
                   expiresAt is when a pending request lapses; "lapsed" is
                   a pending request whose expiry passed. --fix asks again.
-  toolchain       { entries, projectNode }. entries is one { name, value,
+  toolchain       { entries, projectNode } on macOS, else null. entries is one { name, value,
                   source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
                   brew and adb: source "environment" when this process's
                   environment provides it, "discovered" when stim-server's

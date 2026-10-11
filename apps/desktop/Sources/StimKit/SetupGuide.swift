@@ -82,7 +82,7 @@ public struct SetupChecks: Equatable, Sendable {
 
   public var stim: CLICompatibility?
   public var node: CLICompatibility?
-  /// Homebrew's `brew`, which can install Node.js, when it is on the login shell's PATH.
+  /// Homebrew's `brew`, which can install Node.js, when it is on Stim Desktop's PATH.
   public var brewPath: String?
   /// The installed skill's `SKILL.md`, or nil when none was found.
   public var skillPath: String?

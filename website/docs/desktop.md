@@ -61,11 +61,11 @@ Desktop runs no login shell. It finds Node, the `stim` CLI, Homebrew, the
 Android SDK and Java the way `stim doctor`'s **Toolchain** section reports them,
 so a variable set only in a shell profile does not reach it. Set the Stim home,
 and variables such as `STIM_*` settings as `KEY=VALUE` lines, in **Settings >
-Advanced > Environment**; they apply when Desktop restarts. Desktop uses a
-non-empty launch `STIM_HOME`, then that setting, then `~/.stim`; **Settings > App
-
-> Stim CLI** shows the home, and private-home copies refuse servers for another
-> home.
+Advanced > Environment**; they apply when Desktop restarts and are stored in
+plain text in Desktop's preferences, so keep secrets out of them. Desktop uses a
+non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
+section of **Settings > App** shows the home, and private-home copies refuse
+servers for another home.
 
 The app updates itself. Release builds report crashes, app hangs of 2 seconds or
 more and a few handled failures to Sentry, with file paths, host names,
