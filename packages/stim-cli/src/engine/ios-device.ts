@@ -64,8 +64,20 @@ export function parseDevicectlDevices(payload: unknown): IosDeviceEntry[] {
   return out;
 }
 
-export function listIosDevices({ exec = null }: { exec?: Executor | null } = {}): IosDeviceEntry[] {
-  return readIosDevices({ exec }) ?? [];
+export async function listIosDevices({ exec = null }: { exec?: Executor | null } = {}): Promise<IosDeviceEntry[]> {
+  const executor = exec || getExecutor();
+  const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
+  const out = join(dir, 'devices.json');
+  try {
+    await executor.runFileAsync('xcrun', ['devicectl', 'list', 'devices', '-j', out], {
+      timeoutMs: DEVICECTL_TIMEOUT_MS,
+    });
+    return parseDevicectlDevices(readFileSync(out, 'utf-8'));
+  } catch {
+    return [];
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /** devicectl's device list, or null when devicectl failed or did not answer within `timeoutMs`. */
@@ -328,7 +340,7 @@ function wirelessInstallFailure(
  * second install, each with the same bound; `beforeStep` runs before each of those two
  * so the caller can extend its device lease.
  */
-export function installIosDeviceApp(
+export async function installIosDeviceApp(
   {
     udid,
     appPath,
@@ -336,15 +348,15 @@ export function installIosDeviceApp(
     wireless = false,
   }: { udid: string; appPath: string; bundleId?: string | null; wireless?: boolean },
   { exec = null, beforeStep = () => {} }: { exec?: Executor | null; beforeStep?: () => void } = {},
-): IosDeviceInstallResult {
+): Promise<IosDeviceInstallResult> {
   const e = exec || getExecutor();
   const timeoutMs = iosDeviceBounds(wireless).installMs;
   const target = { udid, appPath, wireless };
-  const install = () => {
-    e.runFile('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], { timeoutMs });
+  const install = async () => {
+    await e.runFileAsync('xcrun', ['devicectl', 'device', 'install', 'app', '--device', udid, appPath], { timeoutMs });
   };
   try {
-    install();
+    await install();
     return { ok: true, appPath };
   } catch (err) {
     const dropped = wirelessInstallFailure(err, target);
@@ -361,7 +373,9 @@ export function installIosDeviceApp(
     }
     try {
       beforeStep();
-      e.runFile('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], { timeoutMs });
+      await e.runFileAsync('xcrun', ['devicectl', 'device', 'uninstall', 'app', '--device', udid, bundleId], {
+        timeoutMs,
+      });
     } catch (uninstallErr) {
       const uninstallKind = iosInstallFailureKind(errorText(uninstallErr));
       return (
@@ -377,7 +391,7 @@ export function installIosDeviceApp(
     }
     try {
       beforeStep();
-      install();
+      await install();
     } catch (retryErr) {
       return (
         wirelessInstallFailure(retryErr, target) ?? {
@@ -435,15 +449,15 @@ export function deviceProcessPid(processes: readonly IosDeviceProcess[], appName
   return null;
 }
 
-export function iosDeviceProcess(
+export async function iosDeviceProcess(
   { udid, appName }: { udid: string; appName: string },
   { exec = null }: { exec?: Executor | null } = {},
-): AppProcessProbe {
+): Promise<AppProcessProbe> {
   const executor = exec || getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   const out = join(dir, 'processes.json');
   try {
-    executor.runFile(
+    await executor.runFileAsync(
       'xcrun',
       ['devicectl', 'device', 'info', 'processes', '--device', udid, '--quiet', '--json-output', out],
       {
@@ -567,7 +581,7 @@ export async function awaitIosDeviceLaunch({
   appName: string;
   collectorPid?: number | null;
   readRecords: () => NdjsonRecord[];
-  probe?: () => AppProcessProbe;
+  probe?: () => AppProcessProbe | Promise<AppProcessProbe>;
   wireless?: boolean;
   timeoutMs?: number;
   pollMs?: number;
@@ -579,7 +593,7 @@ export async function awaitIosDeviceLaunch({
   for (;;) {
     const records = collectorRecordsFor(readRecords(), collectorPid);
     const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
-    const running = probeProcess();
+    const running = await probeProcess();
     if (running.state === 'running') return { pid: running.pid };
     if (ended) {
       const evidence = launchEvidence(records);
@@ -641,14 +655,14 @@ export async function verifyIosDeviceReleaseLaunch({
   udid: string;
   appName: string;
   waitMs?: number;
-  probe?: () => AppProcessProbe;
+  probe?: () => AppProcessProbe | Promise<AppProcessProbe>;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 }): Promise<IosDeviceReleaseVerification> {
   const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const running = probeProcess();
+  const running = await probeProcess();
   const waitedMs = now() - startedAt;
   if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
   return running.state === 'running'

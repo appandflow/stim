@@ -310,7 +310,9 @@ test('an absent transportType is not treated as wireless', () => {
   });
 });
 
-test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', ({ onTestFinished }) => {
+test('listIosDevices runs devicectl into a temp file, parses it, and removes the directory', async ({
+  onTestFinished,
+}) => {
   const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
   const calls: Array<{ file: string; args: string[] }> = [];
@@ -324,7 +326,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
     },
   });
   try {
-    expect(listIosDevices()).toEqual([
+    expect(await listIosDevices()).toEqual([
       {
         udid: PHONE,
         name: 'Phone 802E',
@@ -350,7 +352,7 @@ test('listIosDevices runs devicectl into a temp file, parses it, and removes the
   expect(existsSync(unrelated)).toBe(true);
 });
 
-test('listIosDevices reports no devices when devicectl fails, readIosDevices reports null, and both clean up', () => {
+test('listIosDevices reports no devices when devicectl fails, readIosDevices reports null, and both clean up', async () => {
   let outPath = '';
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -359,7 +361,7 @@ test('listIosDevices reports no devices when devicectl fails, readIosDevices rep
     },
   });
   try {
-    expect(listIosDevices()).toEqual([]);
+    expect(await listIosDevices()).toEqual([]);
     expect(readIosDevices()).toBeNull();
   } finally {
     resetExecutor();
@@ -409,7 +411,7 @@ test('deviceProcessPid matches the app bundle, not a process that merely mention
   expect(deviceProcessPid([], 'Fixture')).toBe(null);
 });
 
-test('iosDeviceProcess passes the udid and cleans its temp directory up', () => {
+test('iosDeviceProcess passes the udid and cleans its temp directory up', async () => {
   const calls: string[][] = [];
   let outPath = '';
   setExecutor({
@@ -421,7 +423,7 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'running', pid: 767 });
+    expect(await iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'running', pid: 767 });
   } finally {
     resetExecutor();
   }
@@ -429,14 +431,14 @@ test('iosDeviceProcess passes the udid and cleans its temp directory up', () => 
   expect(existsSync(outPath)).toBe(false);
 });
 
-test('iosDeviceProcess reports unknown -- not "gone" -- when the probe itself fails', () => {
+test('iosDeviceProcess reports unknown -- not "gone" -- when the probe itself fails', async () => {
   setExecutor({
     runFile() {
       throw new Error('devicectl: device not found');
     },
   });
   try {
-    expect(iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'unknown' });
+    expect(await iosDeviceProcess({ udid: PHONE, appName: 'Fixture' })).toEqual({ state: 'unknown' });
   } finally {
     resetExecutor();
   }
@@ -457,7 +459,7 @@ test('iosInstallFailureKind names the causes devicectl reports, and nothing it d
   expect(iosInstallFailureKind(undefined)).toBe(null);
 });
 
-test('installIosDeviceApp installs once and reports the path it installed', () => {
+test('installIosDeviceApp installs once and reports the path it installed', async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -466,7 +468,9 @@ test('installIosDeviceApp installs once and reports the path it installed', () =
     },
   });
   try {
-    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' })).toEqual({
+    expect(
+      await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' }),
+    ).toEqual({
       ok: true,
       appPath: '/tmp/Fixture.app',
     });
@@ -476,7 +480,7 @@ test('installIosDeviceApp installs once and reports the path it installed', () =
   expect(calls).toEqual([['devicectl', 'device', 'install', 'app', '--device', PHONE, '/tmp/Fixture.app']]);
 });
 
-test('a signer conflict uninstalls once, retries once, and says the data went with it', () => {
+test('a signer conflict uninstalls once, retries once, and says the data went with it', async () => {
   const calls: string[][] = [];
   const order: string[] = [];
   setExecutor({
@@ -491,7 +495,7 @@ test('a signer conflict uninstalls once, retries once, and says the data went wi
   });
   let result;
   try {
-    result = installIosDeviceApp(
+    result = await installIosDeviceApp(
       { udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' },
       { beforeStep: () => order.push('lease') },
     );
@@ -506,8 +510,8 @@ test('a signer conflict uninstalls once, retries once, and says the data went wi
   expect(calls[1]).toEqual(['devicectl', 'device', 'uninstall', 'app', '--device', PHONE, 'com.example.app']);
 });
 
-test('a failed uninstall or retry keeps the cause devicectl names instead of the signer or generic remedy', () => {
-  const run = (failStep: string, failure: string) => {
+test('a failed uninstall or retry keeps the cause devicectl names instead of the signer or generic remedy', async () => {
+  const run = async (failStep: string, failure: string) => {
     let installs = 0;
     setExecutor({
       runFile(_file: string, args: string[]) {
@@ -517,7 +521,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
       },
     });
     try {
-      return installIosDeviceApp({
+      return await installIosDeviceApp({
         udid: PHONE,
         appPath: '/tmp/Fixture.app',
         bundleId: 'com.example.app',
@@ -528,7 +532,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
     }
   };
   const ids = { udid: PHONE, bundleId: 'com.example.app' };
-  const uninstall = run('uninstall', 'The device is locked.');
+  const uninstall = await run('uninstall', 'The device is locked.');
   expect(uninstall.code).toBe('STIM_INSTALL_FAILED');
   expect(uninstall.remedy).toBe(iosInstallRemedy('locked', ids));
   let installs = 0;
@@ -542,7 +546,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
     },
   });
   try {
-    const retry = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    const retry = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
     expect(retry.code).toBe('STIM_INSTALL_FAILED');
     expect(retry.remedy).toBe(iosInstallRemedy('storage', ids));
   } finally {
@@ -550,7 +554,7 @@ test('a failed uninstall or retry keeps the cause devicectl names instead of the
   }
 });
 
-test("a failure that is not a signer conflict never uninstalls the user's app", () => {
+test("a failure that is not a signer conflict never uninstalls the user's app", async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile(_file: string, args: string[]) {
@@ -560,7 +564,7 @@ test("a failure that is not a signer conflict never uninstalls the user's app", 
   });
   let result;
   try {
-    result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
+    result = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: 'com.example.app' });
   } finally {
     resetExecutor();
   }
@@ -617,7 +621,7 @@ function timedOut(): Error {
   return Object.assign(new Error('Command timed out'), { code: 'ETIMEDOUT' });
 }
 
-test('a Wi-Fi install that times out or loses the phone maps to the wireless code, with the cable as the remedy', () => {
+test('a Wi-Fi install that times out or loses the phone maps to the wireless code, with the cable as the remedy', async () => {
   const timeouts: Array<number | undefined> = [];
   const failures = [timedOut(), new Error('Command failed: xcrun devicectl\nThe device was disconnected.')];
   for (const failure of failures) {
@@ -628,7 +632,12 @@ test('a Wi-Fi install that times out or loses the phone maps to the wireless cod
       },
     });
     try {
-      const result = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', bundleId: null, wireless: true });
+      const result = await installIosDeviceApp({
+        udid: PHONE,
+        appPath: '/tmp/Fixture.app',
+        bundleId: null,
+        wireless: true,
+      });
       expect(result.code).toBe('STIM_DEVICE_WIRELESS_FAILED');
       expect(result.reason).toContain('Wi-Fi');
       expect(result.remedy).toMatch(/cable/);
@@ -639,7 +648,7 @@ test('a Wi-Fi install that times out or loses the phone maps to the wireless cod
   expect(timeouts).toEqual([900_000, 900_000]);
 });
 
-test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', () => {
+test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled timeout stays an install failure', async () => {
   for (const failure of [
     new Error('The device is locked.'),
     Object.assign(new Error('Command timed out\nThe device is locked.'), { code: 'ETIMEDOUT' }),
@@ -650,7 +659,7 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
       },
     });
     try {
-      const locked = installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
+      const locked = await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app', wireless: true });
       expect(locked.code).toBe('STIM_INSTALL_FAILED');
       expect(locked.remedy).toBe(iosInstallRemedy('locked', { udid: PHONE, bundleId: null }));
     } finally {
@@ -665,7 +674,7 @@ test('a Wi-Fi install refused for a known cause keeps that cause, and a cabled t
     },
   });
   try {
-    expect(installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app' }).code).toBe('STIM_INSTALL_FAILED');
+    expect((await installIosDeviceApp({ udid: PHONE, appPath: '/tmp/Fixture.app' })).code).toBe('STIM_INSTALL_FAILED');
   } finally {
     resetExecutor();
   }

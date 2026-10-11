@@ -257,8 +257,8 @@ async function verifyIosMetroRun({
           { root, slot, platform: 'ios', deviceId: udid, appId: bundleId, since: launchedAt, appPath, physical },
           logsDir,
         );
-  const deviceProcess = (): boolean | null => {
-    const running = d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
+  const deviceProcess = async (): Promise<boolean | null> => {
+    const running = await d.iosDeviceProcess({ udid, appName: appName ?? bundleId });
     return running.state === 'unknown' ? null : running.state === 'running';
   };
 
@@ -503,8 +503,13 @@ export interface IosRunCompletion {
   uploadsAbandoned: boolean;
 }
 
-function installsOverWifi(d: IosDeps, udid: string, selectedWireless: boolean, note: (line: string) => void): boolean {
-  const current = d.listIosDevices().find((entry) => entry.udid === udid);
+async function installsOverWifi(
+  d: IosDeps,
+  udid: string,
+  selectedWireless: boolean,
+  note: (line: string) => void,
+): Promise<boolean> {
+  const current = (await d.listIosDevices()).find((entry) => entry.udid === udid);
   const wireless = current ? isWirelessIosDevice(current) : selectedWireless;
   if (wireless) {
     note(
@@ -796,14 +801,14 @@ export async function finishIosRun({
   let launchedAt = d.now();
 
   if (physical) {
-    const overWifi = installsOverWifi(d, udid, wireless, note);
+    const overWifi = await installsOverWifi(d, udid, wireless, note);
     const bounds = iosDeviceBounds(overWifi);
     const lostBeforeInstall = raiseLeaseFor(bounds.installMs, true);
     if (lostBeforeInstall) return fail(lostBeforeInstall);
     await d.stopPreviousCollector({ root, note });
     enterPhase('install');
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosDeviceApp(
+    const installed = await d.installIosDeviceApp(
       { udid, appPath: appPath!, bundleId, wireless: overWifi },
       { beforeStep: () => raiseLeaseFor(bounds.installMs, false) },
     );

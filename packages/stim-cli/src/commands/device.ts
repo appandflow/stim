@@ -126,13 +126,13 @@ interface ResolvedDevice {
   deviceName: string | null;
 }
 
-function resolveDevice(
+async function resolveDevice(
   platform: LeasePlatform,
   requested: string | null,
   d: DeviceDeps,
-): ResolvedDevice | DeviceFailure {
+): Promise<ResolvedDevice | DeviceFailure> {
   if (platform === 'ios') {
-    const resolved = resolveIosPhysicalDevice(requested, d.listIosDevices());
+    const resolved = resolveIosPhysicalDevice(requested, await d.listIosDevices());
     if (!resolved.udid) {
       return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
     }
@@ -191,18 +191,18 @@ async function poolDevice(
     root,
     platform,
     idLabel,
-    list: () =>
+    list: async () =>
       platform === 'ios'
-        ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+        ? iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
             id: entry.udid,
             name: entry.name,
             fallback: isWirelessIosDevice(entry),
           }))
         : androidPoolCandidates(d.listAdbDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
-    noCandidates: () => {
+    noCandidates: async () => {
       const resolved =
         platform === 'ios'
-          ? iosPoolNoCandidatesRefusal(d.listIosDevices())
+          ? iosPoolNoCandidatesRefusal(await d.listIosDevices())
           : androidPoolNoCandidatesRefusal(d.listAdbDevices(), isEmulator);
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
@@ -307,7 +307,7 @@ export async function runLock(
   const device = owned
     ? owned
     : idArg
-      ? resolveDevice(platform, idArg, d)
+      ? await resolveDevice(platform, idArg, d)
       : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
   if (isFailure(device)) return report(device);
 

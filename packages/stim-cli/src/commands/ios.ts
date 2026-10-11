@@ -710,14 +710,14 @@ async function runIos(
         root,
         platform: PLATFORM,
         idLabel: 'udid',
-        list: () =>
-          iosPoolCandidates(d.listIosDevices()).map((entry) => ({
+        list: async () =>
+          iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
             id: entry.udid,
             name: entry.name,
             fallback: isWirelessIosDevice(entry),
           })),
-        noCandidates: () => {
-          const resolved = iosPoolNoCandidatesRefusal(d.listIosDevices());
+        noCandidates: async () => {
+          const resolved = iosPoolNoCandidatesRefusal(await d.listIosDevices());
           return { message: resolved.error as string, remedy: resolved.remedy as string };
         },
         waitSeconds,
@@ -736,7 +736,10 @@ async function runIos(
       physicalDevice = { udid: pooled.candidate.id, name: pooled.candidate.name ?? pooled.candidate.id };
       wireless = pooled.candidate.fallback === true;
     } else if (physical) {
-      const resolved = resolveIosPhysicalDevice(typeof deviceFlag === 'string' ? deviceFlag : null, d.listIosDevices());
+      const resolved = resolveIosPhysicalDevice(
+        typeof deviceFlag === 'string' ? deviceFlag : null,
+        await d.listIosDevices(),
+      );
       if (!resolved.udid) {
         return fail({ code: 'STIM_NO_DEVICE', message: resolved.error!, remedy: resolved.remedy! });
       }

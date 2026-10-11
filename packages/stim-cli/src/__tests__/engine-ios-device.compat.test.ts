@@ -10,14 +10,14 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
     getExecutor().runFile('xcrun', ['devicectl', '--version'], { timeoutMs: 15_000 });
   });
 
-  test('the argv is accepted and every entry it returns is well formed', ({ onTestFinished }) => {
+  test('the argv is accepted and every entry it returns is well formed', async ({ onTestFinished }) => {
     resetExecutor();
     const unrelated = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
     onTestFinished(() => rmSync(unrelated, { recursive: true, force: true }));
     const executor = getExecutor();
     let outPath = '';
     let discoveryError: unknown;
-    const devices = listIosDevices({
+    const devices = await listIosDevices({
       exec: {
         ...executor,
         runFile(file, args, options) {
@@ -42,9 +42,9 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
     expect(existsSync(unrelated)).toBe(true);
   }, 60_000);
 
-  test('the process-probe argv is accepted by the real devicectl when a phone is connected', () => {
+  test('the process-probe argv is accepted by the real devicectl when a phone is connected', async () => {
     resetExecutor();
-    const [connected] = listIosDevices();
+    const [connected] = await listIosDevices();
     if (!connected)
       throw new Error(
         'Compatibility requires a connected, paired, unlocked iPhone with Developer Mode enabled; process argv was not verified.',
@@ -53,7 +53,7 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
     let failure = '';
     let timedOut = false;
     let probedUdid: string | undefined;
-    const probe = iosDeviceProcess(
+    const probe = await iosDeviceProcess(
       { udid: connected.udid, appName: 'NoSuchAppStimWouldEverBuild' },
       {
         exec: {
