@@ -86,7 +86,7 @@ import {
   listAvdDeviceProfiles,
   physicalDeviceModel,
   probeEmulatorSerial,
-  resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
   resolvePhysicalDevice,
   waitForBoot,
   type trimAndroidCaches,
@@ -349,7 +349,7 @@ interface RunAndroidOptions {
   releaseSlot?: typeof releaseBuildSlot;
   ensureDevice?: typeof ensureOwnedDevice;
   ensureDeviceBooted?: typeof ensureBooted;
-  resolveAvdSerial?: typeof resolveOwnedAvdSerial;
+  resolveAvdSerial?: typeof resolveOwnedAvdSerialAsync;
   waitForDeviceBoot?: typeof waitForBoot;
   dataFreeBytes?: typeof androidDataFreeBytes;
   trimCaches?: typeof trimAndroidCaches;
@@ -428,7 +428,7 @@ function resolveRunAndroidOptions(
     listSystemImages = listInstalledSystemImages,
     listDeviceProfiles,
     ensureDeviceBooted = ensureBooted,
-    resolveAvdSerial = resolveOwnedAvdSerial,
+    resolveAvdSerial = resolveOwnedAvdSerialAsync,
     waitForDeviceBoot = waitForBoot,
     dataFreeBytes,
     trimCaches,

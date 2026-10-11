@@ -24,7 +24,7 @@ import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
-  getAvdNameForSerial,
+  getAvdNameForSerialAsync,
   androidPoolNoCandidatesRefusal,
   listAdbDevices,
   memoizeEmulatorProbe,
@@ -38,7 +38,7 @@ const DEFAULT_FOR = '5m';
 export interface DeviceDeps {
   findProjectRoot: typeof findProjectRoot;
   getProject: (root: string) => ProjectRecord | null;
-  avdNameOf: (serial: string) => string | null;
+  avdNameOf: (serial: string) => Promise<string | null>;
   listIosDevices: typeof listIosDevices;
   listAdbDevices: typeof listAdbDevices;
   physicalDeviceModel: typeof physicalDeviceModel;
@@ -57,7 +57,7 @@ export interface DeviceDeps {
 const DEFAULT_DEPS: DeviceDeps = {
   findProjectRoot,
   getProject,
-  avdNameOf: getAvdNameForSerial,
+  avdNameOf: getAvdNameForSerialAsync,
   listIosDevices,
   listAdbDevices,
   physicalDeviceModel,
@@ -149,12 +149,12 @@ interface OwnedVirtualDevice extends ResolvedDevice {
   slot: string;
 }
 
-function findOwnedVirtualDevice(
+async function findOwnedVirtualDevice(
   project: ProjectRecord | null,
   platform: LeasePlatform,
   id: string,
-  avdNameOf: (serial: string) => string | null,
-): OwnedVirtualDevice | null {
+  avdNameOf: (serial: string) => Promise<string | null>,
+): Promise<OwnedVirtualDevice | null> {
   let running: { name: string | null } | undefined;
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     if (platform === 'ios') {
@@ -166,7 +166,7 @@ function findOwnedVirtualDevice(
     }
     const emulator = platforms.android;
     if (!emulator?.owned || !emulator.avdName || !/^emulator-\d+$/.test(id)) continue;
-    running ??= { name: avdNameOf(id) };
+    running ??= { name: await avdNameOf(id) };
     if (running.name === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
   }
   return null;
@@ -287,7 +287,7 @@ export async function runLock(
   const deadline = d.now() + wait.seconds * 1000;
   const lastLine: { at: number | null } = { at: null };
 
-  const owned = idArg ? findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
+  const owned = idArg ? await findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
   if (owned && opts.slot && opts.slot !== owned.slot) {
     return report({
       code: 'STIM_BAD_ARG',

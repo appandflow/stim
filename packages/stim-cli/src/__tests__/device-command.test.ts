@@ -42,7 +42,7 @@ function harness(over: Partial<DeviceDeps> = {}) {
     io,
     findProjectRoot: () => root,
     getProject: () => null,
-    avdNameOf: () => null,
+    avdNameOf: async () => null,
     listIosDevices: async () => [
       {
         udid: PHONE,
@@ -121,7 +121,7 @@ describe('stim device lock', () => {
   test('refuses ids the workspace does not own as simulators or emulators', async () => {
     const h = harness({
       getProject: () => OWNED_PROJECT,
-      avdNameOf: () => 'Pixel_9_user',
+      avdNameOf: async () => 'Pixel_9_user',
       listIosDevices: async () => [],
     });
     expect(await runLock('ios', 'USER-UDID', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
@@ -138,7 +138,7 @@ describe('stim device lock', () => {
   });
 
   test("leases the workspace's own emulator by serial, and refuses a --slot it is not in", async () => {
-    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'stim-app' });
+    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: async () => 'stim-app' });
     const facts = await runLock('android', 'emulator-5728', {}, h.deps);
     assert(!('code' in facts));
     expect(facts).toMatchObject({ id: 'emulator-5728', deviceName: 'stim-app' });
