@@ -39,3 +39,5 @@ export * from './maintenance.ts';
 export * from './agent-device.ts';
 export * from './archive.ts';
 export * from './setup-journal.ts';
+export * from './status-views.ts';
+export * from './keyed-delta.ts';
