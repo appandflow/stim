@@ -10,6 +10,7 @@ export default defineConfig({
     'phone-protocol': 'phone-protocol.ts',
     'receive-protocol': 'receive-protocol.ts',
     oversight: 'oversight.ts',
+    toolchain: 'toolchain.ts',
   },
   format: 'esm',
   dts: true,

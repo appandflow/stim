@@ -89,9 +89,17 @@ a build grant. The server prunes journals more than one hour past expiry at
 startup and hourly.
 
 `stim-server` runs the `stim` version this package was released with, not the
-one on your PATH. It reads the login shell's environment once at start, so
-`PATH`, `ANDROID_HOME`, and `STIM_*` variables match your terminal even when
-another app starts it.
+one on your PATH. It never runs a login shell. At start it fills the gaps in
+the environment it was given, the way `stim doctor` reports under **Toolchain**:
+it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
+`~/.local/bin`, pnpm's and bun's global directories and the Android SDK tools to
+`PATH`, sets `ANDROID_HOME` to `~/Library/Android/sdk` when that exists, and sets
+`JAVA_HOME` to Android Studio's bundled runtime when no JDK is installed under
+`/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
+and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
+project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the
+login shell only when neither exists. Anything else a shell profile sets, such as
+`STIM_*` variables, reaches the server only through its environment or `--env`.
 
 ## Set up a worker Mac
 
@@ -1066,10 +1074,9 @@ foreground `tailscale serve` session counts as present. To move a service that
 created a route to another `--port`, run `uninstall` first.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` pin variables and PATH entries for
-the server. stim-server replaces its environment with the login shell's at
-start, so a `PATH` or `GEM_HOME` in the plist alone is lost and an entry in
-`~/.zshrc` changes the terminal too. These flags apply after that capture, to
-the server and to the builds it starts. The plist stores each `--env` value in
+the server. A LaunchAgent gets no shell profile, so these are how a service sees
+a variable or tool that toolchain discovery does not find. They apply after
+discovery, to the server and to the builds it starts. The plist stores each `--env` value in
 `EnvironmentVariables`, so it stays out of the server's process arguments, and
 passes only the name as `--env KEY`; the server reads that variable from the
 environment launchd gives it. The values sit in plain text in the plist. A

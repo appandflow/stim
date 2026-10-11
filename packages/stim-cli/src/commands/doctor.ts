@@ -1,4 +1,5 @@
 import { maintenanceNdjsonFile } from '@stim-cli/core/state';
+import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
@@ -94,6 +95,61 @@ function stimVersionLines(report: StimVersionReport): string[] {
   ];
 }
 
+const OVERRIDES: Record<string, string> = {
+  node: 'put another node first on PATH',
+  JAVA_HOME: 'set JAVA_HOME',
+  ANDROID_HOME: 'set ANDROID_HOME',
+};
+
+/**
+ * Where the toolchain a process without a login shell, such as stim-server under Stim Desktop, finds each tool,
+ * and the Node the project's dev server runs on.
+ */
+export interface ToolchainReport {
+  entries: ToolchainEntry[];
+  projectNode: { pin: string; spec: string; bin: string | null; version: string | null } | null;
+}
+
+export function toolchainReport(root: string, env: NodeJS.ProcessEnv = process.env): ToolchainReport {
+  const { entries } = discoverToolchain(env);
+  const pin = projectNodePin(root);
+  const pinned = pin ? projectNodeBin(root, env) : null;
+  return {
+    entries,
+    projectNode: pin
+      ? { pin: pin.file, spec: pin.spec, bin: pinned?.bin ?? null, version: pinned?.version ?? null }
+      : null,
+  };
+}
+
+function toolchainLine(entry: ToolchainEntry): string {
+  const where =
+    entry.source === 'environment'
+      ? 'from the environment'
+      : entry.source === 'discovered'
+        ? `found from ${entry.from ?? 'a standard location'}`
+        : 'not found';
+  const override = OVERRIDES[entry.name] ? `; ${OVERRIDES[entry.name]} to override` : '';
+  return phaseLine(entry.name, `${entry.value ?? 'unset'} (${where}${override})`);
+}
+
+function toolchainLines(report: ToolchainReport): string[] {
+  const project = report.projectNode;
+  return [
+    ...report.entries.map(toolchainLine),
+    ...(project
+      ? [
+          phaseLine(
+            'project node',
+            project.bin
+              ? `${project.version} at ${project.bin}, which ${project.pin} pins (${project.spec}); Metro runs on it when the node on PATH does not satisfy the pin`
+              : `${project.pin} pins ${project.spec}, which no nvm, fnm, Volta, asdf or mise install provides; Metro runs on the node on PATH`,
+          ),
+        ]
+      : []),
+  ];
+}
+
 function budgetLines(budget: BudgetReport | null): string[] {
   return budget ? [phaseLine('budget', budgetLine(budget))] : [];
 }
@@ -103,6 +159,7 @@ export function doctorSuccessLines(
   stim: StimVersionReport,
   budget: BudgetReport | null = null,
   projectLines: string[] = [],
+  toolchain: string[] = [],
 ): string[] {
   return [
     `Doctor (${doctorTarget(platform)})`,
@@ -110,6 +167,7 @@ export function doctorSuccessLines(
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
     ...budgetLines(budget),
+    ...(toolchain.length ? ['', 'Toolchain', ...toolchain] : []),
     '',
     'Shared',
     phaseLine('settings', 'every Stim setting type, machine config paths, companions and inert keys'),
@@ -334,6 +392,7 @@ export default function doctorCommand(
       const agentDriver = inspectHostedAgentDriver();
       if (agentDriver) findings.push(agentDriver);
 
+      const toolchain = toolchainReport(root);
       const maintenance = maintenanceStatus();
       const maintenanceLines = [
         phaseLine('maintenance.mode', maintenance.mode),
@@ -350,6 +409,7 @@ export default function doctorCommand(
             maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
             remoteMachines: remoteMachines.machines,
             deviceHosts: deviceHostMachines.machines,
+            toolchain,
             findings,
           }),
         );
@@ -364,6 +424,7 @@ export default function doctorCommand(
             stim,
             budget.report,
             doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
+            toolchainLines(toolchain),
           ),
           ...maintenanceLines,
         ];
@@ -380,6 +441,8 @@ export default function doctorCommand(
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
       for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
         console.log(chalk.dim(line));
+      console.log(chalk.bold('\nToolchain'));
+      for (const line of toolchainLines(toolchain)) console.log(chalk.dim(line));
       for (const f of ordered) {
         const tag = f.level === 'cost' ? chalk.yellow('costs time') : chalk.dim('note');
         console.log(`\n${tag}  ${chalk.bold(f.title)}`);

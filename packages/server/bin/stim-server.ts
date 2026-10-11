@@ -4,7 +4,8 @@ import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readHostedSessions } from '@stim-cli/core/state';
-import { bundledStim, loginShellEnvironment } from '../src/environment.ts';
+import { discoverToolchain } from '@stim-cli/core/toolchain';
+import { bundledStim } from '../src/environment.ts';
 import { formatHostedSessions, readHostedSessionRows } from '../src/hosted-sessions.ts';
 import { readAudit } from '../src/actions.ts';
 import {
@@ -119,9 +120,7 @@ function macName(tailscale: TailscaleState): string {
 async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
-  const login = loginShellEnvironment();
-  if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
-  const env = applyServeEnvironment(login ?? process.env, extraEnv, pathPrepend);
+  const env = applyServeEnvironment(discoverToolchain(process.env).env, extraEnv, pathPrepend);
   delete env.CLAUDE_CODE_SESSION_ID;
   delete env.CODEX_THREAD_ID;
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;

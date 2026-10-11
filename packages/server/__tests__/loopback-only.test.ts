@@ -14,7 +14,9 @@ vi.mock('../src/server.ts', () => ({
 }));
 vi.mock('../src/environment.ts', () => ({
   bundledStim: () => ({ cli: 'unused', version: '1.0.0' }),
-  loginShellEnvironment: () => process.env,
+}));
+vi.mock('@stim-cli/core/toolchain', () => ({
+  discoverToolchain: (env: NodeJS.ProcessEnv) => ({ env: { ...env }, entries: [] }),
 }));
 vi.mock('../src/tailscale.ts', () => ({
   findTailscale: () => null,

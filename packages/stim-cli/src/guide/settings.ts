@@ -901,7 +901,7 @@ iPhone simulator on the target runtime. Its project-selected CocoaPods must matc
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
-the app's .ruby-version when installed, and otherwise the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the Mac's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
+the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the Mac's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
@@ -956,8 +956,8 @@ than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
 \`stim-server service install [--serve]\` on the remote Mac keeps stim-server
 running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
-pin a PATH entry or variable such as a private CocoaPods that stim-server's
-login-shell environment would otherwise replace.
+pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
+toolchain discovery does not find.
 \`stim-server service update --release <version>\` there moves the service to
 that exact stim-server release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed

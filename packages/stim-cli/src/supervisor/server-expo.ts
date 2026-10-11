@@ -17,6 +17,7 @@ import {
   registerMetroStore,
 } from './metro-store.ts';
 import { supervisorError } from './errors.ts';
+import { withProjectNode } from './project-node.ts';
 
 function resolveExpoBin(root: string): { path: string; source: 'package' | 'shim' } | null {
   const fromPackage = expoBinFromPackage(resolvePackageJson(root, 'expo'));
@@ -310,12 +311,21 @@ export async function startExpoServer({
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
   const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
+  const node = withProjectNode(root, process.env);
+  if (node.pinned) {
+    log.write({
+      src: 'metro',
+      level: 'info',
+      event: 'project_node',
+      msg: `Metro runs on Node ${node.pinned.version} from ${node.pinned.bin}, which ${node.pinned.pin} pins`,
+    });
+  }
   const child = spawn(command, commandArgs, {
     cwd: root,
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
     env: {
-      ...process.env,
+      ...node.env,
       FORCE_COLOR: '0',
       ...expoProxyEnv(process.env),
       ...storeEnv,

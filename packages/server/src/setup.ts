@@ -7,7 +7,8 @@ import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/cor
 import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
 import type { BuildToolchain } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
-import { bundledStim, loginShellEnvironment } from './environment.ts';
+import { discoverToolchain } from '@stim-cli/core/toolchain';
+import { bundledStim } from './environment.ts';
 import { grantDevice, readBuildClients, readDeviceHostClients, serverDir, type PairedDevice } from './registry.ts';
 import {
   fetchHealth,
@@ -395,7 +396,7 @@ export function defaultSetupDeps(): SetupDeps {
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     async toolchain(options) {
-      const env = applyServeEnvironment(loginShellEnvironment() ?? process.env, options.env, options.pathPrepend);
+      const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
       const host = new BuildHost({
         worker: join(dirname(bundledStim().cli), 'offload-worker.mjs'),
         env,

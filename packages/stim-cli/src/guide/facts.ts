@@ -535,6 +535,15 @@ leased until <time>" for each one.`,
                   only for approved machines whose worker reports it.
                   expiresAt is when a pending request lapses; "lapsed" is
                   a pending request whose expiry passed. --fix asks again.
+  toolchain       { entries, projectNode }. entries is one { name, value,
+                  source, from? } for node, ANDROID_HOME, JAVA_HOME, stim,
+                  brew and adb: source "environment" when this process's
+                  environment provides it, "discovered" when stim-server's
+                  toolchain discovery would find it (from says where), or
+                  "missing". projectNode is { pin, spec, bin, version } when
+                  .nvmrc, .node-version, .tool-versions or package.json volta
+                  pins Node (bin and version are null when no install
+                  satisfies the pin), else null
   remoteMachines  one { machine, state, dnsName?, deviceId?, requestedAt?,
                   expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",

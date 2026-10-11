@@ -109,6 +109,15 @@ Doctor also prints the running CLI version and the `stim` installation resolved
 from `PATH`, and flags a resolved installation that is older than another
 available one.
 
+A **Toolchain** section reports where `node`, `ANDROID_HOME`, `JAVA_HOME`,
+`stim`, `brew` and `adb` come from: this shell's environment, or the location
+stim-server would discover them at without a login shell (a version manager's
+default Node, Homebrew, `~/.local/bin`, the standard Android SDK, a system JDK
+or Android Studio's bundled runtime), with how to override each. When the app
+pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or `package.json`'s
+`volta.node`, it also names the installed Node Metro runs on when the `node` on
+`PATH` does not satisfy the pin. `--json` adds this as `toolchain`.
+
 A `budget` line reports the free disk on the volumes that hold the app and
 `$STIM_HOME`, and the estimated committed memory, against the
 [machine budget](./settings.md#machine-settings). When the machine is over

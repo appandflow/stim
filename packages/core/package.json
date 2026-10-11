@@ -56,6 +56,11 @@
       "types": "./dist/receive-protocol.d.mts",
       "module-sync": "./dist/receive-protocol.mjs",
       "default": "./dist/receive-protocol.mjs"
+    },
+    "./toolchain": {
+      "types": "./dist/toolchain.d.mts",
+      "module-sync": "./dist/toolchain.mjs",
+      "default": "./dist/toolchain.mjs"
     }
   },
   "scripts": {
