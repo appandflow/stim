@@ -699,16 +699,16 @@ test('cloneIgnoredEntries against a real git repo drops a nested .DerivedData bu
   }
 });
 
-test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and parses the paths', () => {
+test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and parses the paths', async () => {
   const calls: string[][] = [];
   setExecutor({
-    runFileQuiet: (_file: string, args: string[]) => {
+    runFileAsync: async (_file: string, args: string[]) => {
       calls.push(args);
       return 'M app.json\nM  package.json';
     },
     spawn: () => {},
   });
-  expect(dirtyFingerprintFiles('/p')).toEqual(['app.json', 'package.json']);
+  expect(await dirtyFingerprintFiles('/p')).toEqual(['app.json', 'package.json']);
   expect(calls[0]).toEqual([
     '--no-optional-locks',
     '-C',
@@ -724,11 +724,16 @@ test('dirtyFingerprintFiles asks git about exactly the fingerprint inputs and pa
   ]);
 });
 
-test('dirtyFingerprintFiles is empty on a clean tree and when git cannot answer', () => {
-  setExecutor({ runFileQuiet: () => '', spawn: () => {} });
-  expect(dirtyFingerprintFiles('/p')).toEqual([]);
-  setExecutor({ runFileQuiet: () => null, spawn: () => {} });
-  expect(dirtyFingerprintFiles('/p')).toEqual([]);
+test('dirtyFingerprintFiles is empty on a clean tree and when git cannot answer', async () => {
+  setExecutor({ runFileAsync: async () => '', spawn: () => {} });
+  expect(await dirtyFingerprintFiles('/p')).toEqual([]);
+  setExecutor({
+    runFileAsync: async () => {
+      throw new Error('Git unavailable');
+    },
+    spawn: () => {},
+  });
+  expect(await dirtyFingerprintFiles('/p')).toEqual([]);
 });
 
 test('git runs against a real repo whose path holds a space, a dollar sign, and shell metacharacters (NTFS-legal set on win32)', () => {

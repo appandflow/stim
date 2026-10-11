@@ -476,8 +476,8 @@ export function depsOutOfSync(
 
 const FINGERPRINT_INPUT_FILES = ['app.json', 'app.config.ts', 'app.config.js', 'app.config.mjs', 'package.json'];
 
-export function dirtyFingerprintFiles(root: string): string[] {
-  const out = gitQuiet(root, ['status', '--porcelain', '--', ...FINGERPRINT_INPUT_FILES]);
+export async function dirtyFingerprintFiles(root: string): Promise<string[]> {
+  const out = await gitQuietAsync(root, ['status', '--porcelain', '--', ...FINGERPRINT_INPUT_FILES]);
   if (out === null || out.trim() === '') return [];
   return out
     .split('\n')

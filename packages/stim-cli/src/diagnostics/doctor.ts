@@ -1,10 +1,11 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { rm } from 'fs/promises';
 import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
+import { gitQuietAsync } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
@@ -1410,8 +1411,8 @@ function listDirectory(dir: string): string[] {
   }
 }
 
-function hasLinkedPackageWithGit(projectRoot: string): boolean {
-  const root = repoRoot(projectRoot) ?? projectRoot;
+async function hasLinkedPackageWithGit(projectRoot: string): Promise<boolean> {
+  const root = (await repoRootAsync(projectRoot)) ?? projectRoot;
   for (let dir = projectRoot; ; dir = dirname(dir)) {
     if (linkedPackageWithGitIn(join(dir, 'node_modules'))) return true;
     if (dir === root || dirname(dir) === dir || relative(root, dirname(dir)).startsWith('..')) return false;
@@ -1452,7 +1453,7 @@ export async function detectLinkedLibraryGitMetadata(
   }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
 ): Promise<Finding | null> {
   const mainRoot = await mainCheckoutProjectRoot(projectRoot);
-  if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  if (!(await hasLinkedPackageWithGit(mainRoot))) return null;
   const skipped = fingerprintConfigSkipped(mainRoot);
   if (skipped) return skipped;
   let sources: FingerprintSource[];
@@ -1480,8 +1481,8 @@ export async function detectLinkedLibraryGitMetadata(
   };
 }
 
-function appPathInRepository(projectRoot: string): string {
-  const top = repoRoot(projectRoot);
+async function appPathInRepository(projectRoot: string): Promise<string> {
+  const top = await repoRootAsync(projectRoot);
   if (!top) return '';
   const path = relative(realpathSync(top), realpathSync(projectRoot));
   return path.startsWith('..') ? '' : path;
@@ -1498,12 +1499,12 @@ export async function detectFingerprintParity(
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
-    dirtyFiles?: (root: string) => string[];
+    dirtyFiles?: (root: string) => string[] | Promise<string[]>;
     platform?: DoctorPlatform;
     iosProjectPath?: string;
   } = {},
 ): Promise<Finding | null> {
-  if (gitQuiet(projectRoot, ['rev-parse', '--git-dir']) == null) {
+  if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) {
     return null;
   }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
@@ -1533,18 +1534,18 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = gitQuiet(
+  const added = await gitQuietAsync(
     projectRoot,
     ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
     { write: true, timeoutMs: 60000 },
   );
   if (added == null) {
-    rmSync(base, { recursive: true, force: true });
+    await rm(base, { recursive: true, force: true });
     return null;
   }
 
   try {
-    const headApp = join(worktree, appPathInRepository(projectRoot));
+    const headApp = join(worktree, await appPathInRepository(projectRoot));
     const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
     const project = await fingerprintProject(projectRoot, {
@@ -1565,13 +1566,13 @@ export async function detectFingerprintParity(
       projectHash: project.hash,
       worktreeHash: clean.hash,
       changed,
-      dirtyFiles: dirtyFiles(projectRoot),
+      dirtyFiles: await dirtyFiles(projectRoot),
     });
   } catch {
     return null;
   } finally {
-    gitQuiet(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
-    rmSync(base, { recursive: true, force: true });
-    gitQuiet(projectRoot, ['worktree', 'prune'], { write: true });
+    await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
+    await rm(base, { recursive: true, force: true });
+    await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
   }
 }
