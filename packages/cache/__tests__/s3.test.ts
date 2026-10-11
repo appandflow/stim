@@ -23,11 +23,16 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'stim-s3-test-'));
   objects = new Map();
   slowStarted = undefined;
+  vi.stubEnv('AWS_PROFILE', '');
   vi.stubEnv('AWS_ACCESS_KEY_ID', 'test-key');
   vi.stubEnv('AWS_SECRET_ACCESS_KEY', 'test-secret');
   vi.stubEnv('AWS_SESSION_TOKEN', '');
   server = createServer(async (request, response) => {
     try {
+      if (!request.headers.authorization?.startsWith('AWS4-HMAC-SHA256 Credential=test-key/')) {
+        response.writeHead(403).end('<Error><Code>FixtureCredentialsRequired</Code></Error>');
+        return;
+      }
       assert(request.url);
       const key = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
       if (request.method === 'PUT') {
@@ -84,6 +89,31 @@ afterEach(async () => {
 function signal(): AbortSignal {
   return new AbortController().signal;
 }
+
+test('an explicit cache profile overrides the ambient AWS profile', async () => {
+  const credentials = join(directory, 'credentials');
+  const configuration = join(directory, 'config');
+  await writeFile(credentials, '[cache-test]\naws_access_key_id=test-key\naws_secret_access_key=test-secret\n');
+  await writeFile(configuration, '');
+  vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', credentials);
+  vi.stubEnv('AWS_CONFIG_FILE', configuration);
+  vi.stubEnv('AWS_PROFILE', 'not-configured');
+  const provider = createCacheProvider({ projectRoot: directory, options: { ...options, profile: 'cache-test' } });
+  assert(provider.files);
+  await provider.files.store({
+    key: 'explicit-profile',
+    sourcePath: await source('owned'),
+    overwrite: false,
+    signal: signal(),
+  });
+  const found = await provider.files.resolve({
+    key: 'explicit-profile',
+    destinationDir: await destination(),
+    signal: signal(),
+  });
+  assert(found);
+  expect(await readFile(found, 'utf8')).toBe('owned');
+});
 
 async function source(contents: string, name = 'source'): Promise<string> {
   const path = join(directory, name);

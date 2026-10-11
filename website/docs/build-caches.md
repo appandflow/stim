@@ -190,7 +190,9 @@ Install `@stim-cli/cache` in the app and select the S3 provider in `.stim.json`:
 
 Use a private R2 bucket and an R2 token scoped to Object Read & Write on that
 bucket. Save the credentials through the AWS SDK's standard credential chain;
-for a named profile, run `AWS_PROFILE=stim-r2 stim ios`. Keep secrets out of
+for a named profile, set `cache.options.profile` to `stim-r2` or run
+`AWS_PROFILE=stim-r2 stim ios`. An explicit cache profile overrides the ambient
+AWS profile. Keep secrets out of
 committed settings. See [Cloudflare's setup guide](https://developers.cloudflare.com/r2/get-started/s3/).
 For AWS S3, omit `endpoint` and use the bucket's region. Other compatible
 services may require `forcePathStyle: true`.

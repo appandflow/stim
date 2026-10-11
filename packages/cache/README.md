@@ -52,8 +52,9 @@ Install `@stim-cli/cache` in the project, then select its S3 provider in
 For AWS S3, omit `endpoint` and use the bucket's region. Other S3-compatible
 services can set `forcePathStyle: true` when required. Credentials use the AWS
 SDK's standard credential chain. For a named profile in `~/.aws/credentials`,
-run commands with `AWS_PROFILE=stim-r2`, for example
-`AWS_PROFILE=stim-r2 stim ios`. Credentials never belong in `.stim.json`.
+set `cache.options.profile` to `stim-r2`, or run commands with
+`AWS_PROFILE=stim-r2`, for example `AWS_PROFILE=stim-r2 stim ios`. An explicit
+cache profile overrides the ambient AWS profile. Credentials never belong in `.stim.json`.
 
 Create a private R2 bucket and an R2 API token with Object Read & Write access
 scoped to that bucket. Copy the S3 endpoint shown by Cloudflare; jurisdiction

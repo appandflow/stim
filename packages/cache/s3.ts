@@ -17,6 +17,7 @@ export interface S3FileCacheOptions {
   prefix?: string | undefined;
   endpoint?: string | undefined;
   region?: string | undefined;
+  profile?: string | undefined;
   forcePathStyle?: boolean | undefined;
 }
 
@@ -43,6 +44,7 @@ export function createS3FileCache(options: S3FileCacheOptions): FileCacheCapabil
   const config: S3ClientConfig = {
     ...(options.endpoint !== undefined ? { endpoint: options.endpoint } : {}),
     region: options.region ?? 'us-east-1',
+    ...(options.profile !== undefined ? { profile: options.profile } : {}),
     ...(options.forcePathStyle !== undefined ? { forcePathStyle: options.forcePathStyle } : {}),
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
@@ -139,6 +141,7 @@ export function createCacheProvider({
     prefix: typeof options.prefix === 'string' ? options.prefix : undefined,
     endpoint: typeof options.endpoint === 'string' ? options.endpoint : undefined,
     region: typeof options.region === 'string' ? options.region : undefined,
+    profile: typeof options.profile === 'string' ? options.profile : undefined,
     forcePathStyle: typeof options.forcePathStyle === 'boolean' ? options.forcePathStyle : undefined,
   });
   return {
