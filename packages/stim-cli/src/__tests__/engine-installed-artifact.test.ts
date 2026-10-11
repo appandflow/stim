@@ -55,6 +55,9 @@ function recordingExec({
     runFileAsync: () => {
       throw new Error('the identity check must use runFile, not runFileAsync');
     },
+    runFileQuietAsync: () => {
+      throw new Error('the identity check must use runFile, not runFileQuietAsync');
+    },
     spawn: () => {
       throw new Error('the identity check does not spawn');
     },

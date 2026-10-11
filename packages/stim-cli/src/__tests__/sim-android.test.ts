@@ -675,7 +675,7 @@ test.each([
   { timeoutMs: 250, flushMs: 250, killTimeoutMs: 1 },
 ])(
   'shutdownAndroidEmulator shares a $timeoutMs ms deadline across sync and kill',
-  ({ timeoutMs, flushMs, killTimeoutMs }) => {
+  async ({ timeoutMs, flushMs, killTimeoutMs }) => {
     const calls: Array<{ argv: string[]; timeoutMs: number | undefined }> = [];
     const now = vi.spyOn(Date, 'now').mockReturnValueOnce(0).mockReturnValue(flushMs);
     setExecutor({
@@ -688,7 +688,7 @@ test.each([
     });
 
     try {
-      shutdownAndroidEmulator('emulator-5554', timeoutMs);
+      await shutdownAndroidEmulator('emulator-5554', timeoutMs);
     } finally {
       now.mockRestore();
     }
@@ -700,29 +700,35 @@ test.each([
   },
 );
 
-test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', () => {
+test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to disappear', async () => {
   let locked = true;
   const sleeps: number[] = [];
   const calls: string[] = [];
 
-  waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => calls.push(`shutdown:${timeoutMs}`), {
-    listProcesses: () => [],
-    resolveDirectory: () => '/avds/stim-app.avd',
-    readProcessId: () => 123,
-    processAlive: () => locked,
-    directoryExists: () => true,
-    sleep: (ms) => {
-      calls.push('wait');
-      sleeps.push(ms);
-      locked = false;
+  await waitForAndroidEmulatorShutdown(
+    'stim-app',
+    async (timeoutMs) => {
+      calls.push(`shutdown:${timeoutMs}`);
     },
-  });
+    {
+      listProcesses: () => [],
+      resolveDirectory: () => '/avds/stim-app.avd',
+      readProcessId: () => 123,
+      processAlive: () => locked,
+      directoryExists: () => true,
+      sleep: (ms) => {
+        calls.push('wait');
+        sleeps.push(ms);
+        locked = false;
+      },
+    },
+  );
 
   expect(sleeps).toEqual([100]);
   expect(calls).toEqual(['shutdown:60000', 'wait']);
 });
 
-test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', () => {
+test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qemu left behind, then kills a stuck one', async () => {
   const alive = new Map<number, number>([
     [123, 1],
     [456, 3],
@@ -732,7 +738,7 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   const killed: number[] = [];
   const queried: number[] = [];
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'win32',
     pollMs: 1000,
@@ -759,9 +765,9 @@ test('waitForAndroidEmulatorShutdown on win32 waits for the crashpad handler qem
   expect(clock).toBe(1 + 15);
 });
 
-test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains alive after termination', () => {
+test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains alive after termination', async () => {
   let clock = 0;
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       platform: 'win32',
@@ -777,12 +783,12 @@ test('waitForAndroidEmulatorShutdown refuses when a crashpad handler remains ali
         clock += ms / 1000;
       },
     }),
-  ).toThrow('Crashpad handler 456 for owned AVD stim-app stayed alive.');
+  ).rejects.toThrow('Crashpad handler 456 for owned AVD stim-app stayed alive.');
 });
 
-test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', () => {
+test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handler', async () => {
   let queried = false;
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -797,11 +803,11 @@ test('waitForAndroidEmulatorShutdown outside win32 never looks for a crash handl
   expect(queried).toBe(false);
 });
 
-test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', () => {
+test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadline', async () => {
   let elapsed = 0;
   let commandTimeout = 0;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown(
       'stim-app',
       (timeoutMs) => {
@@ -821,11 +827,11 @@ test('waitForAndroidEmulatorShutdown includes the shutdown command in its deadli
         },
       },
     ),
-  ).toThrow(/did not finish shutting down after 1s/);
+  ).rejects.toThrow(/did not finish shutting down after 1s/);
   expect(commandTimeout).toBe(250);
 });
 
-test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', () => {
+test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix and Windows', async () => {
   const avdDirectory = join(tmpHome, 'stim-app.avd');
   for (const [platform, lockPath] of [
     ['darwin', join(avdDirectory, 'hardware-qemu.ini.lock')],
@@ -836,7 +842,7 @@ test('waitForAndroidEmulatorShutdown reads Android emulator lock PIDs on Unix an
     writeFileSync(lockPath, '412503\0');
     let observedPid: number | null = null;
 
-    waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+    await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       platform,
       resolveDirectory: () => avdDirectory,
@@ -868,11 +874,11 @@ test.each(['darwin', 'win32'] as const)(
   },
 );
 
-test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', () => {
+test('waitForAndroidEmulatorShutdown prefers the active process lock over the legacy fallback', async () => {
   const paths: string[] = [];
   let observedPid: number | null = null;
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -891,11 +897,11 @@ test('waitForAndroidEmulatorShutdown prefers the active process lock over the le
   expect(observedPid).toBe(123);
 });
 
-test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () => {
+test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', async () => {
   const paths: string[] = [];
   let observedPid: number | null = null;
 
-  waitForAndroidEmulatorShutdown('stim-app', () => {}, {
+  await waitForAndroidEmulatorShutdown('stim-app', () => {}, {
     listProcesses: () => [],
     platform: 'darwin',
     resolveDirectory: () => '/avds/stim-app.avd',
@@ -917,10 +923,10 @@ test('waitForAndroidEmulatorShutdown falls back to the legacy process lock', () 
   expect(observedPid).toBe(456);
 });
 
-test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', () => {
+test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock remains', async () => {
   let elapsed = 0;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       timeoutMs: 250,
@@ -934,13 +940,13 @@ test('waitForAndroidEmulatorShutdown times out while the owned AVD process lock 
         elapsed += ms;
       },
     }),
-  ).toThrow(/did not finish shutting down after 1s/);
+  ).rejects.toThrow(/did not finish shutting down after 1s/);
 });
 
-test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', () => {
+test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD lock', async () => {
   const shutdown = vi.fn<() => void>();
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', shutdown, {
       listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
@@ -948,7 +954,7 @@ test('waitForAndroidEmulatorShutdown refuses to signal a process without an AVD 
       processAlive: () => false,
       directoryExists: () => true,
     }),
-  ).toThrow(/Could not find the emulator process lock/);
+  ).rejects.toThrow(/Could not find the emulator process lock/);
   expect(shutdown).not.toHaveBeenCalled();
 });
 
@@ -1022,60 +1028,66 @@ describe('waitForAndroidEmulatorShutdown when the console kill has no effect', (
     return { options, signals, alive };
   }
 
-  test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', () => {
+  test('signals the verified emulator once the console shutdown times out, SIGTERM before SIGKILL', async () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
     const consoleKills: number[] = [];
 
-    waitForAndroidEmulatorShutdown('stim-app', (timeoutMs) => consoleKills.push(timeoutMs), options);
+    await waitForAndroidEmulatorShutdown(
+      'stim-app',
+      async (timeoutMs) => {
+        consoleKills.push(timeoutMs);
+      },
+      options,
+    );
 
     expect(consoleKills).toEqual([60_000]);
     expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
     expect(alive.size).toBe(0);
   });
 
-  test('stops an orphaned emulator that holds no process lock and is not reachable over adb', () => {
+  test('stops an orphaned emulator that holds no process lock and is not reachable over adb', async () => {
     const { options, signals } = hungEmulator({ pids: [4242], dies: ['SIGTERM'] });
 
-    waitForAndroidEmulatorShutdown('stim-app', null, { ...options, readProcessId: () => null });
+    await waitForAndroidEmulatorShutdown('stim-app', null, { ...options, readProcessId: () => null });
 
     expect(signals).toEqual(['SIGTERM:4242@0']);
   });
 
-  test('gives an emulator adb cannot reach the whole timeout to exit on SIGTERM before SIGKILL', () => {
+  test('gives an emulator adb cannot reach the whole timeout to exit on SIGTERM before SIGKILL', async () => {
     const { options, signals, alive } = hungEmulator({ pids: [4242] });
 
-    waitForAndroidEmulatorShutdown('stim-app', null, options);
+    await waitForAndroidEmulatorShutdown('stim-app', null, options);
 
     expect(signals).toEqual(['SIGTERM:4242@0', 'SIGKILL:4242@60000']);
     expect(alive.size).toBe(0);
   });
 
-  test('never signals a pid whose identity changed or could not be captured, and refuses instead', () => {
+  test('never signals a pid whose identity changed or could not be captured, and refuses instead', async () => {
     const different = hungEmulator({ pids: [4242], identity: () => 'different' });
     const unverified = hungEmulator({ pids: [4242], captured: () => false });
 
     for (const { options, signals } of [different, unverified]) {
-      expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+      await expect(waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).rejects.toThrow(
         /emulator process 4242 is still running \(Stim could not verify the identity of 4242, so it sent no signal\)\.$/,
       );
       expect(signals).toEqual([]);
     }
   });
 
-  test('refuses when the emulator survives SIGKILL', () => {
+  test('refuses when the emulator survives SIGKILL', async () => {
     const { options, signals } = hungEmulator({ pids: [4242], dies: [] });
 
-    expect(() => waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).toThrow(
+    await expect(waitForAndroidEmulatorShutdown('stim-app', () => {}, options)).rejects.toThrow(
       'Owned AVD stim-app did not finish shutting down after 70s: emulator process 4242 is still running.',
     );
     expect(signals).toEqual(['SIGTERM:4242@60000', 'SIGKILL:4242@65000']);
   });
 });
 
-test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', () => {
+test('waitForAndroidEmulatorShutdown verifies the AVD directory remains available', async () => {
   let locked = true;
 
-  expect(() =>
+  await expect(
     waitForAndroidEmulatorShutdown('stim-app', () => {}, {
       listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
@@ -1088,10 +1100,10 @@ test('waitForAndroidEmulatorShutdown verifies the AVD directory remains availabl
       directoryExists: () => false,
       sleep: () => {},
     }),
-  ).toThrow(/Could not verify the content directory/);
+  ).rejects.toThrow(/Could not verify the content directory/);
 });
 
-test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', () => {
+test('shutdownAndroidEmulator bounds the guest write flush before killing the emulator', async () => {
   const calls: Array<{ command: string; timeoutMs: number | undefined }> = [];
   const now = vi.spyOn(Date, 'now').mockReturnValue(0);
   setExecutor({
@@ -1102,7 +1114,7 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
   });
 
   try {
-    shutdownAndroidEmulator('emulator-5554');
+    await shutdownAndroidEmulator('emulator-5554');
   } finally {
     now.mockRestore();
   }
@@ -1113,7 +1125,7 @@ test('shutdownAndroidEmulator bounds the guest write flush before killing the em
   ]);
 });
 
-test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', () => {
+test('shutdownAndroidEmulator warns and still kills the emulator when sync fails', async () => {
   const calls: string[] = [];
   const errors: string[] = [];
   const originalError = console.error;
@@ -1127,7 +1139,7 @@ test('shutdownAndroidEmulator warns and still kills the emulator when sync fails
   });
 
   try {
-    shutdownAndroidEmulator('emulator-5554');
+    await shutdownAndroidEmulator('emulator-5554');
   } finally {
     console.error = originalError;
   }

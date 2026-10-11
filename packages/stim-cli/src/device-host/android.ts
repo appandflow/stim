@@ -193,7 +193,7 @@ export async function runHostedAndroidDevice(
       return { state: 'ready', device };
     }
     if (mode === 'park') {
-      const outcome = teardownOwnedAvd(device.avdName, {});
+      const outcome = await teardownOwnedAvd(device.avdName, {});
       if (outcome.status !== 'torn-down')
         throw new Error(outcome.reason ?? 'Hosted Android shutdown was not established.');
       assertOwnedAvdStopped(device.avdName);
@@ -206,7 +206,7 @@ export async function runHostedAndroidDevice(
       withConfigLock(() => {
         if (!loadConfig()) ensureConfig();
       });
-      const outcome = teardownOwnedAvd(device.avdName, { del: true });
+      const outcome = await teardownOwnedAvd(device.avdName, { del: true });
       if (outcome.status !== 'torn-down' && outcome.status !== 'missing')
         throw new Error(outcome.reason ?? 'Hosted Android deletion was not established.');
     }

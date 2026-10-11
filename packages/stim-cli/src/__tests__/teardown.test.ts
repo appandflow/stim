@@ -108,29 +108,29 @@ function fakeClock() {
 
 const OWNED = { udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true };
 
-test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', () => {
+test('teardownOwnedIosSim shuts down and deletes an owned, unoccupied sim', async () => {
   const exec = iosExecutor({ sims: [OWNED] });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true });
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('torn-down');
   expect(r.label).toBe('stim-app');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', () => {
+test('teardownOwnedIosSim shuts down WITHOUT deleting when del is false', async () => {
   const exec = iosExecutor({ sims: [OWNED] });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(!exec.calls.some((c) => /simctl delete/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim reports failed, not torn-down, when the simulator never reaches Shutdown', () => {
+test('teardownOwnedIosSim reports failed, not torn-down, when the simulator never reaches Shutdown', async () => {
   const exec = iosExecutor({ sims: [OWNED], shutdownSettles: false });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
   expect(r.status).toBe('failed');
   expect(r.label).toBe('stim-app');
   expect(r.reason).toMatch(/still Booted after 2 shutdown attempts/);
@@ -138,82 +138,103 @@ test('teardownOwnedIosSim reports failed, not torn-down, when the simulator neve
   expect(exec.calls.some((c) => /simctl delete/.test(c))).toBe(false);
 });
 
-test('teardownOwnedIosSim refuses a sim renamed away from Stim ownership', () => {
+test('waiting for a simulator to shut down leaves the event loop free', async () => {
+  setExecutor(iosExecutor({ sims: [OWNED], shutdownSettles: false }));
+  let now = 0;
+  let ticks = 0;
+  const timer = setInterval(() => (ticks += 1), 0);
+  const r = await teardownOwnedIosSim('U1', {
+    del: false,
+    shutdownClock: {
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      },
+    },
+  }).finally(() => clearInterval(timer));
+  expect(r.status).toBe('failed');
+  expect(ticks).toBeGreaterThan(10);
+});
+
+test('teardownOwnedIosSim refuses a sim renamed away from Stim ownership', async () => {
   const exec = iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true });
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('skipped');
   expect(r.reason).toMatch(/not Stim-owned/);
   expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim reports missing without erroring', () => {
+test('teardownOwnedIosSim reports missing without erroring', async () => {
   setExecutor(iosExecutor({ sims: [] }));
-  expect(teardownOwnedIosSim('U1', { del: true })).toEqual({ status: 'missing' });
+  expect(await teardownOwnedIosSim('U1', { del: true })).toEqual({ status: 'missing' });
 });
 
-test('teardownOwnedIosSim shuts down an owned sim without checking occupancy', () => {
+test('teardownOwnedIosSim shuts down an owned sim without checking occupancy', async () => {
   const exec = iosExecutor({
     sims: [OWNED],
     occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
   });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
+  const r = await teardownOwnedIosSim('U1', { del: false, shutdownClock: fakeClock() });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /simctl shutdown U1/.test(c))).toBeTruthy();
   expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
 });
 
-test('teardownOwnedIosSim does not check occupancy or shut down a sim that is not owned', () => {
+test('teardownOwnedIosSim does not check occupancy or shut down a sim that is not owned', async () => {
   const exec = iosExecutor({
     sims: [{ ...OWNED, name: 'My Real Sim' }],
     occupied: '\t123\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[0x1][rb-legacy]\n',
   });
   setExecutor(exec);
 
-  const r = teardownOwnedIosSim('U1', { del: false });
+  const r = await teardownOwnedIosSim('U1', { del: false });
 
   expect(r.kind).toBe('not-owned');
   expect(exec.calls.some((c) => /launchctl list/.test(c))).toBe(false);
   expect(exec.calls.some((c) => /simctl shutdown/.test(c))).toBe(false);
 });
 
-test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', () => {
+test('teardownOwnedIosSim deletes an occupied sim anyway, without needing force', async () => {
   const exec = iosExecutor({
     sims: [OWNED],
     occupied: '\t123\t0\tUIKitApplication:com.example.thing.xctrunner[0x1][rb-legacy]\n',
   });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true });
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('torn-down');
   expect(exec.calls.some((c) => /simctl delete U1/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim still refuses a sim that is not Stim-owned, even when deleting', () => {
+test('teardownOwnedIosSim still refuses a sim that is not Stim-owned, even when deleting', async () => {
   const exec = iosExecutor({ sims: [{ udid: 'U1', name: 'My iPhone', state: 'Booted', isAvailable: true }] });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true });
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('skipped');
   expect(r.kind).toBe('not-owned');
   expect(!exec.calls.some((c) => /simctl shutdown|simctl delete/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedIosSim reports a failed delete rather than torn-down', () => {
+test('teardownOwnedIosSim reports a failed delete rather than torn-down', async () => {
   const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl delete' });
   setExecutor(exec);
-  const r = teardownOwnedIosSim('U1', { del: true });
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/boom/);
 });
 
-test('teardownOwnedIosSim contains a throw instead of propagating it', () => {
-  setExecutor(iosExecutor({ sims: [OWNED], throwOn: 'simctl shutdown' }));
-  const r = teardownOwnedIosSim('U1', { del: true });
+test('teardownOwnedIosSim contains a failed simulator listing and touches nothing', async () => {
+  const exec = iosExecutor({ sims: [OWNED], throwOn: 'simctl list devices' });
+  setExecutor(exec);
+  const r = await teardownOwnedIosSim('U1', { del: true });
   expect(r.status).toBe('failed');
   expect(r.reason).toMatch(/boom/);
+  expect(exec.calls.some((c) => /simctl (shutdown|delete)/.test(c))).toBe(false);
 });
 
-test('teardownOwnedIosSim parks an owned simulator and clears its project claim', () => {
+test('teardownOwnedIosSim parks an owned simulator and clears its project claim', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -255,7 +276,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
       runFileQuiet: () => '',
       spawn: () => null,
     });
-    const result = teardownOwnedIosSim('U1', {
+    const result = await teardownOwnedIosSim('U1', {
       del: true,
       park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
     });
@@ -281,7 +302,7 @@ test('teardownOwnedIosSim parks an owned simulator and clears its project claim'
   }
 });
 
-test("teardownOwnedIosSim carries the workspace record's scheme approvals into the parked record", () => {
+test("teardownOwnedIosSim carries the workspace record's scheme approvals into the parked record", async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -322,7 +343,7 @@ test("teardownOwnedIosSim carries the workspace record's scheme approvals into t
       runFileQuiet: () => '',
       spawn: () => null,
     });
-    const result = teardownOwnedIosSim('U1', {
+    const result = await teardownOwnedIosSim('U1', {
       del: true,
       park: { projectPath, max: 1, simslimManaged: true, appId: 'com.example.app', cacheKey: 'abc-debug-sim' },
     });
@@ -334,7 +355,7 @@ test("teardownOwnedIosSim carries the workspace record's scheme approvals into t
   }
 });
 
-test('a failed overflow eviction retains its parked ownership record', () => {
+test('a failed overflow eviction retains its parked ownership record', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -401,7 +422,7 @@ test('a failed overflow eviction retains its parked ownership record', () => {
       spawn: () => null,
     });
 
-    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
 
     expect(result.status).toBe('torn-down');
     expect(result.evictionFailures?.join('\n')).toMatch(/simctl busy/);
@@ -416,7 +437,7 @@ test('a failed overflow eviction retains its parked ownership record', () => {
   }
 });
 
-test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
+test('teardownOwnedIosSim falls back to deletion when parking fails', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -454,7 +475,7 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
       runFileQuiet: () => '',
       spawn: () => null,
     });
-    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
     expect(result.status).toBe('torn-down');
     expect(result.parkFallback).toMatch(/device types unavailable/);
     expect(calls).toContain('xcrun simctl delete U1');
@@ -465,7 +486,7 @@ test('teardownOwnedIosSim falls back to deletion when parking fails', () => {
   }
 });
 
-test('teardownOwnedIosSim deletes instead of parking when the rename fails', () => {
+test('teardownOwnedIosSim deletes instead of parking when the rename fails', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -477,7 +498,7 @@ test('teardownOwnedIosSim deletes instead of parking when the rename fails', () 
     const exec = iosExecutor({ sims: [{ ...OWNED, state: 'Shutdown' }], throwOn: 'simctl rename' });
     setExecutor(exec);
 
-    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
 
     expect(result.status).toBe('torn-down');
     expect(result.parkFallback).toMatch(/boom/);
@@ -489,7 +510,7 @@ test('teardownOwnedIosSim deletes instead of parking when the rename fails', () 
   }
 });
 
-test('parking fallback re-resolves ownership immediately before deletion', () => {
+test('parking fallback re-resolves ownership immediately before deletion', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -531,7 +552,7 @@ test('parking fallback re-resolves ownership immediately before deletion', () =>
       spawn: () => null,
     });
 
-    const result = teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
+    const result = await teardownOwnedIosSim('U1', { del: true, park: { projectPath, max: 1 } });
 
     expect(result.status).toBe('failed');
     expect(result.reason).toMatch(/not a Stim-owned sim/);
@@ -544,7 +565,7 @@ test('parking fallback re-resolves ownership immediately before deletion', () =>
   }
 });
 
-test('teardownOwnedIosSim does not park a simulator that remains booted', () => {
+test('teardownOwnedIosSim does not park a simulator that remains booted', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -586,7 +607,7 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
       spawn: () => null,
     });
 
-    const result = teardownOwnedIosSim('U1', {
+    const result = await teardownOwnedIosSim('U1', {
       del: true,
       park: { projectPath, max: 1 },
       shutdownClock: fakeClock(),
@@ -605,7 +626,7 @@ test('teardownOwnedIosSim does not park a simulator that remains booted', () => 
   }
 });
 
-test('teardownOwnedIosSim waits for a lagging shutdown before parking the simulator', () => {
+test('teardownOwnedIosSim waits for a lagging shutdown before parking the simulator', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pool-teardown-'));
   process.env.STIM_HOME = home;
   seedCreatedDevices();
@@ -651,7 +672,7 @@ test('teardownOwnedIosSim waits for a lagging shutdown before parking the simula
       spawn: () => null,
     });
 
-    const result = teardownOwnedIosSim('U1', {
+    const result = await teardownOwnedIosSim('U1', {
       del: true,
       park: { projectPath, max: 1 },
       shutdownClock: fakeClock(),
@@ -688,14 +709,14 @@ function seedParkedSim(): void {
   saveConfig(config);
 }
 
-test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked without its app', () => {
+test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked without its app', async () => {
   seedParkedSim();
   const exec = iosExecutor({
     sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
   });
   setExecutor(exec);
 
-  expect(eraseParkedIosSim('U1').status).toBe('torn-down');
+  expect((await eraseParkedIosSim('U1')).status).toBe('torn-down');
 
   expect(exec.calls).toContain('xcrun simctl erase U1');
   const [record] = readParked('ios');
@@ -705,14 +726,14 @@ test('eraseParkedIosSim erases a shut-down parked simulator and keeps it parked 
   expect(record).not.toHaveProperty('schemeApprovals');
 });
 
-test('eraseParkedIosSim leaves a booted parked simulator and its record alone', () => {
+test('eraseParkedIosSim leaves a booted parked simulator and its record alone', async () => {
   seedParkedSim();
   const exec = iosExecutor({
     sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Booted', isAvailable: true }],
   });
   setExecutor(exec);
 
-  const result = eraseParkedIosSim('U1');
+  const result = await eraseParkedIosSim('U1');
 
   expect(result).toMatchObject({ status: 'failed', reason: expect.stringMatching(/Booted, not Shutdown/) });
   expect(exec.calls).not.toContain('xcrun simctl erase U1');
@@ -724,7 +745,7 @@ test('eraseParkedIosSim leaves a booted parked simulator and its record alone', 
   ]);
 });
 
-test('a failed simctl erase keeps the parked simulator without its app, cache key, or scheme approvals', () => {
+test('a failed simctl erase keeps the parked simulator without its app, cache key, or scheme approvals', async () => {
   seedParkedSim();
   const exec = iosExecutor({
     sims: [{ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1', state: 'Shutdown', isAvailable: true }],
@@ -732,7 +753,7 @@ test('a failed simctl erase keeps the parked simulator without its app, cache ke
   });
   setExecutor(exec);
 
-  expect(eraseParkedIosSim('U1').status).toBe('failed');
+  expect((await eraseParkedIosSim('U1')).status).toBe('failed');
 
   const [record] = readParked('ios');
   expect(record).toMatchObject({ udid: 'U1', name: 'stim-parked (iPhone 17 26.5) u1' });
@@ -769,7 +790,7 @@ function androidExecutor({ avds = [], adb = '', avdName = null, throwOn = null }
   };
 }
 
-test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () => {
+test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', async () => {
   const exec = androidExecutor({
     avds: ['stim-app'],
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
@@ -777,7 +798,7 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
   });
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   setExecutor(exec);
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
     assertStopped: () => {},
@@ -793,7 +814,7 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', () 
 
 test.each(['emulator -list-avds', 'adb devices'])(
   'teardown bounds a blocked %s child and keeps ownership for recovery',
-  (blocked) => {
+  async (blocked) => {
     const real = getExecutor();
     const fake = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
     const before = readCreatedDevices();
@@ -824,7 +845,7 @@ test.each(['emulator -list-avds', 'adb devices'])(
       runFile: inventory,
     });
     const started = Date.now();
-    const result = teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
+    const result = await teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
     expect(Date.now() - started).toBeLessThan(25_000);
     expect(result.status).toBe('failed');
     expect(result.reason).toMatch(/Command timed out/);
@@ -835,13 +856,13 @@ test.each(['emulator -list-avds', 'adb devices'])(
     expect(fake.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
     expect(readCreatedDevices()).toEqual(before);
     setExecutor(fake);
-    expect(teardownOwnedAvd('stim-app', { waitForShutdown: shutdown }).status).toBe('torn-down');
+    expect((await teardownOwnedAvd('stim-app', { waitForShutdown: shutdown })).status).toBe('torn-down');
     expect(shutdown).toHaveBeenCalledOnce();
   },
   30000,
 );
 
-test('teardown waits out an adb devices inventory that answers after 8 s', () => {
+test('teardown waits out an adb devices inventory that answers after 8 s', async () => {
   const real = getExecutor();
   const listing = 'List of devices attached\nemulator-5554\tdevice\n';
   const fake = androidExecutor({ avds: ['stim-app'], adb: listing, avdName: 'stim-app' });
@@ -869,7 +890,7 @@ test('teardown waits out an adb devices inventory that answers after 8 s', () =>
     },
     runFile: inventory,
   });
-  const result = teardownOwnedAvd('stim-app', {
+  const result = await teardownOwnedAvd('stim-app', {
     onRemoved,
     waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
   });
@@ -879,7 +900,7 @@ test('teardown waits out an adb devices inventory that answers after 8 s', () =>
   expect(fake.calls).toContain('adb -s emulator-5554 emu kill');
 }, 30000);
 
-test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', () => {
+test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', async () => {
   const real = getExecutor();
   const exec = androidExecutor({
     avds: ['stim-app'],
@@ -926,7 +947,7 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   const shutdown = vi.fn<() => void>(() => {
     stopped = true;
   });
-  const result = teardownOwnedAvd('stim-app', { del: true, workspace, onRemoved, waitForShutdown: shutdown });
+  const result = await teardownOwnedAvd('stim-app', { del: true, workspace, onRemoved, waitForShutdown: shutdown });
   expect(result.status).toBe('failed');
   expect(result.reason).toMatch(/Command timed out/);
   expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
@@ -937,20 +958,20 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   expect(readCreatedDevices()).toEqual(before);
 }, 20000);
 
-test('teardownOwnedAvd refuses an AVD that this Stim home did not record', () => {
+test('teardownOwnedAvd refuses an AVD that this Stim home did not record', async () => {
   const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
   setExecutor(exec);
-  const r = teardownOwnedAvd('Pixel_6_API_34', { del: true });
+  const r = await teardownOwnedAvd('Pixel_6_API_34', { del: true });
   expect(r.status).toBe('skipped');
   expect(!exec.calls.some((c) => /emu kill|avdmanager delete/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedAvd reports missing for an AVD that no longer exists', () => {
+test('teardownOwnedAvd reports missing for an AVD that no longer exists', async () => {
   setExecutor(androidExecutor({ avds: [], adb: 'List of devices attached\n' }));
-  expect(teardownOwnedAvd('stim-gone', { del: true }).status).toEqual('missing');
+  expect((await teardownOwnedAvd('stim-gone', { del: true })).status).toEqual('missing');
 });
 
-test('teardownOwnedAvd contains a throw instead of propagating it', () => {
+test('teardownOwnedAvd contains a throw instead of propagating it', async () => {
   setExecutor(
     androidExecutor({
       avds: ['stim-app'],
@@ -960,7 +981,7 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
     }),
   );
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
     assertStopped: () => {},
@@ -970,7 +991,7 @@ test('teardownOwnedAvd contains a throw instead of propagating it', () => {
   expect(r.reason).toMatch(/boom/);
 });
 
-test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out', () => {
+test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out', async () => {
   const exec = androidExecutor({
     avds: ['stim-app'],
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
@@ -978,7 +999,7 @@ test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out',
   });
   setExecutor(exec);
 
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => {
       shutdown!(60_000);
@@ -992,7 +1013,7 @@ test('teardownOwnedAvd does not delete an AVD when emulator shutdown times out',
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
 });
 
-test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down when adb cannot shut the emulator down', () => {
+test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down when adb cannot shut the emulator down', async () => {
   const exec = androidExecutor({
     avds: ['stim-app'],
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
@@ -1000,7 +1021,7 @@ test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down whe
   });
   setExecutor(exec);
 
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: false,
     waitForShutdown: (_avdName, shutdown) => {
       shutdown!(60_000);
@@ -1013,12 +1034,12 @@ test('teardownOwnedAvd (stop, del false) reports failed instead of torn-down whe
   expect(exec.calls.some((c) => /emu kill/.test(c))).toBeTruthy();
 });
 
-test('teardownOwnedAvd stops an AVD that adb cannot resolve without a console command, and refuses when it stays', () => {
+test('teardownOwnedAvd stops an AVD that adb cannot resolve without a console command, and refuses when it stays', async () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
   setExecutor(exec);
   const consoleShutdowns: unknown[] = [];
 
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: (_avdName, shutdown) => {
       consoleShutdowns.push(shutdown);
@@ -1033,12 +1054,12 @@ test('teardownOwnedAvd stops an AVD that adb cannot resolve without a console co
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
 });
 
-test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', () => {
+test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', async () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
   setExecutor(exec);
 
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: () => {},
     resolveAvd: () => resolutions.shift()!,
@@ -1049,12 +1070,12 @@ test('teardownOwnedAvd refuses deletion when the AVD restarts after shutdown', (
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
 });
 
-test('teardownOwnedAvd rechecks the process lock immediately before deletion', () => {
+test('teardownOwnedAvd rechecks the process lock immediately before deletion', async () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5554' }, { notRunning: true as const }];
   setExecutor(exec);
 
-  const r = teardownOwnedAvd('stim-app', {
+  const r = await teardownOwnedAvd('stim-app', {
     del: true,
     waitForShutdown: () => {},
     resolveAvd: () => resolutions.shift()!,
@@ -1068,16 +1089,16 @@ test('teardownOwnedAvd rechecks the process lock immediately before deletion', (
   expect(exec.calls.some((c) => /delete avd -n/.test(c))).toBeFalsy();
 });
 
-test('ownership skip outcomes carry a machine-readable kind', () => {
+test('ownership skip outcomes carry a machine-readable kind', async () => {
   setExecutor(iosExecutor({ sims: [{ ...OWNED, name: 'My Real Sim' }] }));
-  expect(teardownOwnedIosSim('U1', { del: true }).kind).toBe('not-owned');
+  expect((await teardownOwnedIosSim('U1', { del: true })).kind).toBe('not-owned');
   resetExecutor();
 
   setExecutor(androidExecutor({ avds: ['Pixel_6'], adb: 'List of devices attached\n' }));
-  expect(teardownOwnedAvd('Pixel_6', { del: true }).kind).toBe('not-owned');
+  expect((await teardownOwnedAvd('Pixel_6', { del: true })).kind).toBe('not-owned');
 });
 
-test('iOS session close failure warns but shutdown still follows', () => {
+test('iOS session close failure warns but shutdown still follows', async () => {
   const exec = iosExecutor({ sims: [OWNED] });
   const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
   setExecutor({
@@ -1095,7 +1116,7 @@ test('iOS session close failure warns but shutdown still follows', () => {
     },
   });
   try {
-    expect(teardownOwnedIosSim('U1').status).toBe('torn-down');
+    expect((await teardownOwnedIosSim('U1')).status).toBe('torn-down');
     const close = exec.calls.findIndex((command) => command.startsWith('agent-device close'));
     expect(close).toBeGreaterThan(-1);
     expect(close).toBeLessThan(exec.calls.findIndex((command) => command.includes('simctl shutdown')));
@@ -1105,7 +1126,7 @@ test('iOS session close failure warns but shutdown still follows', () => {
   }
 });
 
-test('iOS ownership loss during session inventory prevents close and shutdown', () => {
+test('iOS ownership loss during session inventory prevents close and shutdown', async () => {
   const exec = iosExecutor({ sims: [OWNED] });
   const renamed = iosExecutor({ sims: [{ ...OWNED, name: 'User simulator' }] });
   let listed = false;
@@ -1123,21 +1144,21 @@ test('iOS ownership loss during session inventory prevents close and shutdown', 
       });
     },
   });
-  expect(teardownOwnedIosSim('U1').kind).toBe('not-owned');
+  expect((await teardownOwnedIosSim('U1')).kind).toBe('not-owned');
   expect(exec.calls.some((command) => /agent-device close|simctl shutdown/.test(command))).toBe(false);
 });
 
-test('Android serial reuse before shutdown keeps the device', () => {
+test('Android serial reuse before shutdown keeps the device', async () => {
   const exec = androidExecutor({ avds: ['stim-app'] });
   const resolutions = [{ serial: 'emulator-5554' }, { serial: 'emulator-5556' }];
   setExecutor(exec);
-  const result = teardownOwnedAvd('stim-app', { resolveAvd: () => resolutions.shift()! });
+  const result = await teardownOwnedAvd('stim-app', { resolveAvd: () => resolutions.shift()! });
   expect(result.status).toBe('failed');
   expect(result.reason).toMatch(/changed before shutdown/);
   expect(exec.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
 });
 
-test('a stopped AVD closes its stale sessions unless another device now holds their serial', () => {
+test('a stopped AVD closes its stale sessions unless another device now holds their serial', async () => {
   const exec = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\nemulator-5556\tdevice\n' });
   const session = { name: 'stale', platform: 'android', device: 'stim-app', id: 'emulator-5554', createdAt: 1 };
   const sessions = [
@@ -1157,7 +1178,7 @@ test('a stopped AVD closes its stale sessions unless another device now holds th
     },
   });
   try {
-    const result = teardownOwnedAvd('stim-app', {
+    const result = await teardownOwnedAvd('stim-app', {
       resolveAvd: () => ({ notRunning: true }),
       waitForShutdown: () => {},
     });
@@ -1176,7 +1197,7 @@ test.each([
   ['Shutdown', true, []],
 ])(
   'stop closes a session claimed from the repository root only once it shuts the simulator down (%s, settles: %s)',
-  (state, shutdownSettles, expected) => {
+  async (state, shutdownSettles, expected) => {
     const repo = join(avdHome, 'repo');
     mkdirSync(join(repo, 'app'), { recursive: true });
     const claims = join(avdHome, 'claims');
@@ -1212,7 +1233,7 @@ test.each([
     process.env.AGENT_DEVICE_CLAIMS_DIR = claims;
     const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
     try {
-      teardownOwnedIosSim('U1', { del: false, workspace: join(repo, 'app'), shutdownClock: fakeClock() });
+      await teardownOwnedIosSim('U1', { del: false, workspace: join(repo, 'app'), shutdownClock: fakeClock() });
       expect(events.filter((event) => event !== 'shutdown')).toEqual(expected);
       expect(events[0]).toBe('shutdown');
     } finally {

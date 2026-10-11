@@ -23,7 +23,6 @@ import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
-import { sleepSync } from '../ownership-claim.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
 
@@ -453,6 +452,19 @@ export function listAdbDevices({
 }: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
   return parseAdbDevices(
     getExecutor().runFile(androidToolPath('adb'), ['devices'], {
+      timeoutMs,
+      killSignal: 'SIGKILL',
+      cwd: androidToolCwd(platform),
+    }),
+  );
+}
+
+export async function listAdbDevicesAsync({
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
+  platform = process.platform,
+}: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): Promise<AdbDevices> {
+  return parseAdbDevices(
+    await getExecutor().runFileAsync(androidToolPath('adb'), ['devices'], {
       timeoutMs,
       killSignal: 'SIGKILL',
       cwd: androidToolCwd(platform),
@@ -1238,20 +1250,20 @@ export async function waitForBoot(
 const ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS = 60_000;
 const ANDROID_EMULATOR_SHUTDOWN_POLL_MS = 100;
 
-export function shutdownAndroidEmulator(
+export async function shutdownAndroidEmulator(
   serial: string,
   timeoutMs: number = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
-): void {
+): Promise<void> {
   const exec = getExecutor();
   const started = Date.now();
   if (
-    exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'shell', 'sync'], {
+    (await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'shell', 'sync'], {
       timeoutMs: Math.min(5000, timeoutMs),
-    }) === null
+    })) === null
   ) {
     console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
   }
-  exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
+  await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
     timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
   });
 }
@@ -1394,9 +1406,9 @@ const EMULATOR_SIGNAL_GRACE_MS = 5000;
  * grace, but only a process whose command line names this AVD and whose identity, captured before
  * shutdown, still matches. Windows has no process-table scan, so there nothing is signalled.
  */
-export function waitForAndroidEmulatorShutdown(
+export async function waitForAndroidEmulatorShutdown(
   avdName: string,
-  shutdown: ((timeoutMs: number) => void) | null,
+  shutdown: ((timeoutMs: number) => void | Promise<void>) | null,
   {
     timeoutMs = ANDROID_EMULATOR_SHUTDOWN_TIMEOUT_MS,
     pollMs = ANDROID_EMULATOR_SHUTDOWN_POLL_MS,
@@ -1413,7 +1425,7 @@ export function waitForAndroidEmulatorShutdown(
     crashHandlerPids = emulatorCrashHandlerPids,
     killCrashHandler = (pid: number) => signalProcessTree(pid, 'SIGKILL', { platform }),
     now = Date.now,
-    sleep = sleepSync,
+    sleep = (ms: number) => new Promise<void>((done) => setTimeout(done, ms)),
   }: {
     timeoutMs?: number;
     pollMs?: number;
@@ -1430,9 +1442,9 @@ export function waitForAndroidEmulatorShutdown(
     crashHandlerPids?: (qemuPid: number) => number[];
     killCrashHandler?: (pid: number) => void;
     now?: () => number;
-    sleep?: (ms: number) => void;
+    sleep?: (ms: number) => void | Promise<void>;
   } = {},
-): void {
+): Promise<void> {
   const { directory, processId } = resolveAvdProcess(avdName, { platform, resolveDirectory, readProcessId });
   const identities = new Map<number, ProcessRecord | null>();
   for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
@@ -1454,20 +1466,20 @@ export function waitForAndroidEmulatorShutdown(
     if (processId !== null && !identities.has(processId) && processAlive(processId)) pids.push(processId);
     return pids;
   };
-  const waitUntil = (until: number) => {
+  const waitUntil = async (until: number) => {
     for (;;) {
       if (running().length === 0) return true;
       const remaining = until - now();
       if (remaining <= 0) return false;
-      sleep(Math.min(pollMs, remaining));
+      await sleep(Math.min(pollMs, remaining));
     }
   };
   const started = now();
   if (shutdown) {
     const deadline = started + timeoutMs;
     const shutdownTimeoutMs = deadline - now();
-    if (shutdownTimeoutMs > 0) shutdown(shutdownTimeoutMs);
-    waitUntil(deadline);
+    if (shutdownTimeoutMs > 0) await shutdown(shutdownTimeoutMs);
+    await waitUntil(deadline);
   }
   for (const name of ['SIGTERM', 'SIGKILL'] as const) {
     const verified = running().filter((pid) => {
@@ -1481,7 +1493,7 @@ export function waitForAndroidEmulatorShutdown(
       } catch {}
     }
     const graceMs = name === 'SIGTERM' && !shutdown ? timeoutMs : signalGraceMs;
-    if (waitUntil(now() + graceMs)) break;
+    if (await waitUntil(now() + graceMs)) break;
   }
   const left = new Set(running());
   for (const pid of scanAvdEmulatorProcesses(avdName, platform, listProcesses)) {
@@ -1512,7 +1524,7 @@ export function waitForAndroidEmulatorShutdown(
   if (platform === 'win32' && processId !== null) {
     const handlerDeadline = now() + CRASH_HANDLER_EXIT_TIMEOUT_MS;
     for (const handler of crashHandlerPids(processId)) {
-      while (processAlive(handler) && now() < handlerDeadline) sleep(pollMs);
+      while (processAlive(handler) && now() < handlerDeadline) await sleep(pollMs);
       if (processAlive(handler)) {
         killCrashHandler(handler);
         if (processAlive(handler))

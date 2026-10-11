@@ -287,7 +287,7 @@ function deviceLabel(device: IdleDevice): string {
   return `${device.kind} ${device.name} in ${device.project}`;
 }
 
-function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): StepResult {
+async function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): Promise<StepResult> {
   if (deviceSweepIsScoped()) {
     note(chalk.dim(phaseLine('budget', 'idle devices left alone: STIM_HOME scopes this config, devices are global')));
     return { targets: [], failures: 0 };
@@ -300,7 +300,7 @@ function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): StepResul
     );
   const idle = collect(now);
   if (dryRun || idle.length === 0) return { targets: idle.map(deviceLabel), failures: 0 };
-  const { failures, shutDown } = shutDownIdleDevices(idle, 0, () => collect(Date.now()));
+  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()));
   return { targets: shutDown.map(deviceLabel), failures };
 }
 

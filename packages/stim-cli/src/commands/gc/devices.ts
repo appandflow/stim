@@ -426,7 +426,10 @@ export function collectParkedAvds(deps: GcDeviceDependencies, age: ParkedAge = {
   });
 }
 
-export function eraseParkedDevices(sims: readonly ParkedSimReport[], avds: readonly ParkedAvdReport[]): number {
+export async function eraseParkedDevices(
+  sims: readonly ParkedSimReport[],
+  avds: readonly ParkedAvdReport[],
+): Promise<number> {
   let failures = 0;
   const devices = [
     ...sims.map((sim) => ({ platform: 'ios', id: sim.udid, name: sim.name, listed: sim.listed, bytes: sim.bytes })),
@@ -445,7 +448,9 @@ export function eraseParkedDevices(sims: readonly ParkedSimReport[], avds: reado
       continue;
     }
     const result =
-      device.platform === 'ios' ? eraseParkedIosSim(device.id, { label: device.name }) : eraseParkedAvd(device.id);
+      device.platform === 'ios'
+        ? await eraseParkedIosSim(device.id, { label: device.name })
+        : await eraseParkedAvd(device.id);
     if (result.status === 'torn-down') {
       console.log(chalk.green(`Erased ${what}; it stays parked`));
       recordGcResult('parkedDevice', 'done', device.name, { id: device.id, bytes: device.bytes });
@@ -460,7 +465,7 @@ export function eraseParkedDevices(sims: readonly ParkedSimReport[], avds: reado
   return failures;
 }
 
-export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {
+export async function deleteParkedAvds(avds: readonly ParkedAvdReport[]): Promise<number> {
   let failures = 0;
   for (const avd of avds) {
     if (avd.listed === null) {
@@ -472,7 +477,7 @@ export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {
       });
       continue;
     }
-    const result = teardownParkedAvd(avd.name);
+    const result = await teardownParkedAvd(avd.name);
     if (result.status === 'failed') {
       failures++;
       console.log(chalk.red(`Failed to delete parked android emulator ${avd.name}: ${result.reason}`));
@@ -487,7 +492,10 @@ export function deleteParkedAvds(avds: readonly ParkedAvdReport[]): number {
   return failures;
 }
 
-export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: GcDeviceDependencies = {}): number {
+export async function deleteParkedSims(
+  parkedSims: readonly ParkedSimReport[],
+  deps: GcDeviceDependencies = {},
+): Promise<number> {
   let failures = 0;
   let emptied = 0;
   for (const sim of parkedSims) {
@@ -502,9 +510,9 @@ export function deleteParkedSims(parkedSims: readonly ParkedSimReport[], deps: G
     }
     try {
       const teardown = sim.listed
-        ? teardownParkedIosSim(sim.udid, { label: sim.name, deleteSim: deps.deleteParkedIosSim })
+        ? await teardownParkedIosSim(sim.udid, { label: sim.name, deleteSim: deps.deleteParkedIosSim })
         : null;
-      const removed = sim.listed ? teardown?.status === 'torn-down' : dropParked('ios', sim.udid);
+      const removed = sim.listed ? teardown?.status === 'torn-down' : await dropParked('ios', sim.udid);
       if (!removed) {
         if (teardown?.status === 'failed') {
           failures++;
@@ -569,17 +577,17 @@ export function collectDeviceLeases(now: number): DeviceLeaseGarbage {
   return { expired, kept };
 }
 
-export function deleteProjectDevices(
+export async function deleteProjectDevices(
   orphanedDevices: OrphanedDevice[],
   staleDevices: StaleProjectDevice[],
   staleDeviceRecords: StaleDeviceRecord[],
-): number {
+): Promise<number> {
   let deleteFailures = 0;
-  function reap(d: OrphanedDevice | StaleProjectDevice, onlyIfMissing = false) {
+  async function reap(d: OrphanedDevice | StaleProjectDevice, onlyIfMissing = false) {
     const r =
       d.kind === 'ios'
-        ? teardownOwnedIosSim(d.id, { del: true, label: d.name })
-        : teardownOwnedAvd(d.name, {
+        ? await teardownOwnedIosSim(d.id, { del: true, label: d.name })
+        : await teardownOwnedAvd(d.name, {
             del: true,
             onlyIfMissing,
             ...('project' in d ? { owner: { projectPath: d.project, slot: d.slot } } : {}),
@@ -611,10 +619,10 @@ export function deleteProjectDevices(
     return r.status;
   }
 
-  for (const d of orphanedDevices) reap(d);
+  for (const d of orphanedDevices) await reap(d);
 
   for (const d of staleDevices) {
-    const status = reap(d);
+    const status = await reap(d);
     if (d.kind === 'ios' && (status === 'torn-down' || status === 'missing')) {
       clearDevice(d.project, d.kind, d.slot, d.id);
       console.log(chalk.dim(`  cleared the ${d.kind} record for ${d.project}`));
@@ -623,7 +631,7 @@ export function deleteProjectDevices(
 
   for (const r of staleDeviceRecords) {
     if (r.kind === 'android' && r.owned) {
-      reap({ ...r, name: r.id, idleDays: 0 }, true);
+      await reap({ ...r, name: r.id, idleDays: 0 }, true);
     } else {
       const removed = withConfigLock(() => {
         if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;

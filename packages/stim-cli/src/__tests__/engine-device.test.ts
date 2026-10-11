@@ -2247,7 +2247,7 @@ describe('ensureOwnedDevice: android', () => {
       const configureAvd = () => {
         throw new Error('EEXIST: file already exists');
       };
-      const teardownAvd = () => ({ status: 'failed' as const, reason: 'delete failed' });
+      const teardownAvd = async () => ({ status: 'failed' as const, reason: 'delete failed' });
       await expect(
         ensureOwnedDevice({
           platform: 'android',

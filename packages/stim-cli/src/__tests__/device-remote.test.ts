@@ -87,6 +87,9 @@ function mockExec({
     runFileAsync() {
       throw new Error('device-remote must use runFile, not runFileAsync');
     },
+    runFileQuietAsync() {
+      throw new Error('device-remote must use runFile, not runFileQuietAsync');
+    },
     spawn() {
       throw new Error('device-remote does not spawn');
     },

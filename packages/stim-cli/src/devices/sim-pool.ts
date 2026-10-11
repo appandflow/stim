@@ -226,16 +226,16 @@ function claimParkedOperation(platform: PoolPlatform, udid: string) {
 export function removeParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  beforeRemove: (record: PoolRecords[P]) => void,
-): PoolRecords[P] | null {
+  beforeRemove: (record: PoolRecords[P]) => void | Promise<void>,
+): Promise<PoolRecords[P] | null> {
   return settleParkedAfter(platform, udid, beforeRemove, null);
 }
 
 export function eraseParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  erase: (record: PoolRecords[P], eraseStarted: () => void) => void,
-): PoolRecords[P] | null {
+  erase: (record: PoolRecords[P], eraseStarted: () => void) => void | Promise<void>,
+): Promise<PoolRecords[P] | null> {
   return settleParkedAfter(platform, udid, erase, erasedRecord);
 }
 
@@ -248,12 +248,12 @@ function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
   return erased;
 }
 
-function settleParkedAfter<P extends PoolPlatform>(
+async function settleParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  action: (record: PoolRecords[P], destructiveStarted: () => void) => void,
+  action: (record: PoolRecords[P], destructiveStarted: () => void) => void | Promise<void>,
   keep: ((record: PoolRecords[P]) => PoolRecords[P]) | null,
-): PoolRecords[P] | null {
+): Promise<PoolRecords[P] | null> {
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
@@ -289,7 +289,7 @@ function settleParkedAfter<P extends PoolPlatform>(
     try {
       markClaimChildPending(claim);
       try {
-        action(claimed.record, () => {
+        await action(claimed.record, () => {
           started = true;
         });
       } finally {
@@ -321,6 +321,6 @@ function settleParkedAfter<P extends PoolPlatform>(
   }
 }
 
-export function dropParked(platform: PoolPlatform, udid: string): boolean {
-  return removeParkedAfter(platform, udid, () => {}) !== null;
+export async function dropParked(platform: PoolPlatform, udid: string): Promise<boolean> {
+  return (await removeParkedAfter(platform, udid, () => {})) !== null;
 }

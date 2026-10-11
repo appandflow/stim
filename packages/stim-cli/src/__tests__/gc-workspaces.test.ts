@@ -1696,6 +1696,10 @@ test('gc --delete keeps a just-merged worktree for the grace period, then remove
       file === 'git' ? real.runFile(file, args, opts) : fake([file, ...args].join(' ')),
     runFileQuiet: (file, args = [], opts) =>
       file === 'git' ? real.runFileQuiet(file, args, opts) : fake([file, ...args].join(' ')),
+    runFileAsync: async (file, args = [], opts) =>
+      file === 'git' ? real.runFileAsync(file, args, opts) : fake([file, ...args].join(' ')),
+    runFileQuietAsync: async (file, args = [], opts) =>
+      file === 'git' ? real.runFileQuietAsync(file, args, opts) : fake([file, ...args].join(' ')),
     spawn: () => {
       throw new Error('unexpected spawn');
     },

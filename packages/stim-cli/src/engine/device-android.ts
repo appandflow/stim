@@ -93,7 +93,7 @@ export async function ensureOwnedAndroidDevice({
   let replacedProfile: string | null = null;
   if (record?.setupIncomplete && record.avdName) {
     const avdName = record.avdName;
-    const cleanup = teardownAvd(avdName, {
+    const cleanup = await teardownAvd(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: record },
       onRemoved: () => {
@@ -119,7 +119,7 @@ export async function ensureOwnedAndroidDevice({
       );
     }
     replacedProfile = ownedAvdDeviceProfile(avdName);
-    const cleanup = teardownAvd(avdName, {
+    const cleanup = await teardownAvd(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: record },
       onRemoved: () => {
@@ -247,7 +247,7 @@ export async function ensureOwnedAndroidDevice({
       if (isLegacyDeletionClaim(parked.deletionClaim)) continue;
       const resolved = resolveOwnedAvdSerial(parked.name);
       if (resolved.missing) {
-        const result = teardownParkedAvd(parked.name);
+        const result = await teardownParkedAvd(parked.name);
         if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
         continue;
       }
@@ -262,7 +262,7 @@ export async function ensureOwnedAndroidDevice({
         ownedAvdSystemImage(parked.name) !== systemImage ||
         !ownedAvdMatchesConfiguration(parked.name, parked.configuration)
       ) {
-        const result = teardownParkedAvd(parked.name);
+        const result = await teardownParkedAvd(parked.name);
         if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
         continue;
       }

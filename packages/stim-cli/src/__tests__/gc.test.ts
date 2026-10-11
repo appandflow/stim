@@ -379,8 +379,8 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   );
 
   let failures = 0;
-  const output = await captureLog(() => {
-    failures = deleteParkedSims(report.parkedSims);
+  const output = await captureLog(async () => {
+    failures = await deleteParkedSims(report.parkedSims);
   });
 
   expect(failures).toBe(1);

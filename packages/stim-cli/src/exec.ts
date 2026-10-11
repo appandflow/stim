@@ -35,6 +35,8 @@ export interface Executor {
   runFileAsync(file: string, args: string[], opts: ExecOptions): Promise<string>;
   runQuiet(cmd: string, opts: ExecOptions): string | null;
   runFileQuiet(file: string, args: string[], opts: ExecOptions): string | null;
+  /** `runFileQuiet` without blocking the event loop. */
+  runFileQuietAsync(file: string, args: string[], opts: ExecOptions): Promise<string | null>;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
   /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
   findExecutable(name: string): string | null;
@@ -235,6 +237,10 @@ const defaultExecutor: Executor = {
       return null;
     }
   },
+  runFileQuietAsync(file, args, opts) {
+    budgetMs(opts.timeoutMs);
+    return this.runFileAsync(file, args, opts).catch(() => null);
+  },
   spawn(cmd, args = [], opts = {}) {
     refuseUnsafeBatchArguments(cmd, args);
     return spawn(cmd, args, opts.env || !ambientContext() ? opts : { ...opts, env: ambientEnv() });
@@ -319,8 +325,21 @@ export type MockExecutor = { [K in keyof Executor]?: (...args: any[]) => any };
 
 let active: Executor = debugExecutor;
 
-/** @internal Test seam that swaps the process executor. */
+/**
+ * @internal Test seam that swaps the process executor. A mock without the async methods answers `runFileAsync` from
+ * its `runFile` and `runFileQuietAsync` from its `runFileQuiet`.
+ */
 export function setExecutor(e: MockExecutor): void {
+  if (e.runFile)
+    e.runFileAsync ??= async (...args: Parameters<Executor['runFile']>) => {
+      if (!e.runFile) throw new Error('the mock executor has no runFile');
+      return e.runFile(...args);
+    };
+  if (e.runFileQuiet)
+    e.runFileQuietAsync ??= async (...args: Parameters<Executor['runFileQuiet']>) => {
+      if (!e.runFileQuiet) throw new Error('the mock executor has no runFileQuiet');
+      return e.runFileQuiet(...args);
+    };
   active = e as Executor;
 }
 
