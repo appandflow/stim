@@ -558,7 +558,7 @@ public struct Supervisor: Decodable, Hashable, Sendable {
 }
 
 public struct Logs: Decodable, Hashable, Sendable {
-  public var dir: String
+  public var dir: String?
   public var errorsSinceMarker: Int?
 }
 
