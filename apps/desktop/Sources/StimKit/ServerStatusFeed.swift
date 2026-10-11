@@ -98,10 +98,13 @@ import Foundation
     if !keepDelivering { delivering = false }
   }
 
+  /// An `error` event ends a view until the client subscribes it again, which it does on its own; the caller runs its
+  /// own watcher until the next payload.
   private func ended(_ event: ServerEvent) -> Bool {
     guard event.name == "error" else { return false }
-    DebugLog.warning(.server, "status views ended with an error: \(event.error?.code ?? "unknown")")
-    stop()
+    DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
+    generation += 1
+    delivering = false
     return true
   }
 

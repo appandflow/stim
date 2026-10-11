@@ -1,0 +1,281 @@
+{
+  "workspaces": {
+    "event": "workspaces",
+    "subscription": "s1",
+    "seq": 0,
+    "snapshot": {
+      "workspaces": [
+        {
+          "path": "/Users/dev/app/.worktrees/wide-insets/apps/mobile",
+          "slots": [
+            {
+              "slot": "ipad",
+              "ios": {
+                "name": "stim-wide-insets-mobile-ipad (iPad Pro 11-inch (M5) 27.0)",
+                "udid": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
+                "owned": true,
+                "state": "Booted",
+                "activity": {
+                  "state": "driven",
+                  "driver": {
+                    "tool": "agent-device",
+                    "pid": 4163,
+                    "since": "2026-09-25T02:06:08.796Z"
+                  },
+                  "lastActivityAt": "2026-09-25T02:09:01.052Z",
+                  "basis": [
+                    "agent-device-claim"
+                  ],
+                  "futureField": true
+                }
+              },
+              "android": null
+            }
+          ],
+          "live": true,
+          "memoryMb": 3700,
+          "warnings": [],
+          "ios": {
+            "name": "stim-wide-insets-mobile (iPhone 18 Pro 27.0)",
+            "udid": "A370BA4E-3511-4A47-97C9-B916F6190C90",
+            "owned": true,
+            "state": "Shutdown"
+          },
+          "android": {
+            "name": "stim-wide-insets-mobile",
+            "owned": true,
+            "physical": false,
+            "serial": "emulator-5554",
+            "state": "detected",
+            "deviceProfile": "pixel_fold",
+            "activity": {
+              "state": "idle",
+              "lastActivityAt": "2026-09-24T23:00:00.000Z",
+              "basis": [
+                "device-log"
+              ]
+            }
+          },
+          "metro": {
+            "port": 8091,
+            "running": true,
+            "pid": 33394
+          },
+          "supervisor": {
+            "pid": 33383,
+            "mode": "expo-child",
+            "startedAt": "2026-09-24T19:45:30.078Z",
+            "healthy": true
+          },
+          "remoteDevices": [
+            {
+              "platform": "ios",
+              "backend": "eas",
+              "sessionId": "drs_9",
+              "state": "claimed",
+              "startedAt": "2026-09-24T19:50:00.000Z",
+              "webPreviewUrl": "https://preview.example/9"
+            }
+          ],
+          "build": {
+            "platform": "ios",
+            "slot": "default",
+            "state": "running",
+            "phase": "compile",
+            "startedAt": "2026-09-24T19:50:00.000Z",
+            "phaseStartedAt": "2026-09-24T19:50:20.000Z",
+            "outcome": "cold",
+            "expectedMs": 240000,
+            "expectedPhaseMs": 200000,
+            "basis": 4,
+            "placement": {
+              "host": "janics-mac-mini:7869",
+              "phase": "build",
+              "startedAt": "2026-09-24T19:50:04.000Z",
+              "phaseStartedAt": "2026-09-24T19:50:20.000Z"
+            }
+          },
+          "worktree": null,
+          "logs": {
+            "errorsSinceMarker": 0
+          },
+          "lastBuilds": {
+            "ios": {
+              "platform": "ios",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 71000,
+              "startedAt": "2026-09-24T19:05:11.000Z",
+              "finishedAt": "2026-09-24T19:06:22.000Z",
+              "offloadedTo": "janics-mac-mini:7869"
+            },
+            "android": {
+              "platform": "android",
+              "status": "ok",
+              "cacheHit": false,
+              "cacheSkipped": false,
+              "durationMs": 158000,
+              "startedAt": "2026-09-24T19:12:40.000Z",
+              "finishedAt": "2026-09-24T19:15:18.000Z",
+              "offloadFallback": "janics-mac-mini:7869: busy (load at or above 2/core; load 8.2/core, 2 builds)"
+            }
+          }
+        }
+      ],
+      "worktrees": [
+        {
+          "path": "/Users/dev/app-wt",
+          "branch": "feat/x"
+        }
+      ],
+      "archived": {
+        "count": 0,
+        "bytes": 0,
+        "newest": []
+      }
+    }
+  },
+  "workspace": {
+    "event": "workspace",
+    "subscription": "s2",
+    "seq": 0,
+    "environment": {
+      "path": "/Users/dev/app/.worktrees/wide-insets/apps/mobile",
+      "slots": [
+        {
+          "slot": "ipad",
+          "ios": {
+            "name": "stim-wide-insets-mobile-ipad (iPad Pro 11-inch (M5) 27.0)",
+            "udid": "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0",
+            "owned": true,
+            "state": "Booted",
+            "activity": {
+              "state": "driven",
+              "driver": {
+                "tool": "agent-device",
+                "pid": 4163,
+                "since": "2026-09-25T02:06:08.796Z"
+              },
+              "lastActivityAt": "2026-09-25T02:09:01.052Z",
+              "basis": [
+                "agent-device-claim"
+              ],
+              "futureField": true
+            }
+          },
+          "android": null
+        }
+      ],
+      "live": true,
+      "memoryMb": 3700,
+      "warnings": [],
+      "ios": {
+        "name": "stim-wide-insets-mobile (iPhone 18 Pro 27.0)",
+        "udid": "A370BA4E-3511-4A47-97C9-B916F6190C90",
+        "owned": true,
+        "state": "Shutdown"
+      },
+      "android": {
+        "name": "stim-wide-insets-mobile",
+        "owned": true,
+        "physical": false,
+        "serial": "emulator-5554",
+        "state": "detected",
+        "deviceProfile": "pixel_fold",
+        "activity": {
+          "state": "idle",
+          "lastActivityAt": "2026-09-24T23:00:00.000Z",
+          "basis": [
+            "device-log"
+          ]
+        }
+      },
+      "metro": {
+        "port": 8091,
+        "running": true,
+        "pid": 33394
+      },
+      "supervisor": {
+        "pid": 33383,
+        "mode": "expo-child",
+        "startedAt": "2026-09-24T19:45:30.078Z",
+        "healthy": true
+      },
+      "logs": {
+        "dir": "/Users/dev/.stim/workspaces/mobile/logs",
+        "errorsSinceMarker": 0
+      },
+      "worktree": null,
+      "remoteDevices": [
+        {
+          "platform": "ios",
+          "backend": "eas",
+          "sessionId": "drs_9",
+          "state": "claimed",
+          "startedAt": "2026-09-24T19:50:00.000Z",
+          "webPreviewUrl": "https://preview.example/9"
+        }
+      ],
+      "build": {
+        "platform": "ios",
+        "slot": "default",
+        "state": "running",
+        "phase": "compile",
+        "startedAt": "2026-09-24T19:50:00.000Z",
+        "phaseStartedAt": "2026-09-24T19:50:20.000Z",
+        "outcome": "cold",
+        "expectedMs": 240000,
+        "expectedPhaseMs": 200000,
+        "basis": 4,
+        "placement": {
+          "host": "janics-mac-mini:7869",
+          "phase": "build",
+          "startedAt": "2026-09-24T19:50:04.000Z",
+          "phaseStartedAt": "2026-09-24T19:50:20.000Z"
+        }
+      },
+      "lastBuilds": {
+        "ios": {
+          "platform": "ios",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 71000,
+          "fingerprint": "a4f00d1111111111111111111111111111111111",
+          "startedAt": "2026-09-24T19:05:11.000Z",
+          "finishedAt": "2026-09-24T19:06:22.000Z",
+          "offloadedTo": "janics-mac-mini:7869"
+        },
+        "android": {
+          "platform": "android",
+          "status": "ok",
+          "cacheHit": false,
+          "cacheSkipped": false,
+          "durationMs": 158000,
+          "fingerprint": "a4f00d2222222222222222222222222222222222",
+          "startedAt": "2026-09-24T19:12:40.000Z",
+          "finishedAt": "2026-09-24T19:15:18.000Z",
+          "offloadFallback": "janics-mac-mini:7869: busy (load at or above 2/core; load 8.2/core, 2 builds)"
+        }
+      }
+    }
+  },
+  "machine": {
+    "event": "machine",
+    "subscription": "s3",
+    "seq": 0,
+    "machine": {
+      "capacity": {
+        "liveCount": 1,
+        "committedMb": 3700,
+        "totalMemoryMb": 49152,
+        "overCapacity": false
+      },
+      "machine": null,
+      "deviceLeases": [],
+      "simctlAvailable": true,
+      "maintenance": null
+    }
+  }
+}

@@ -31,8 +31,9 @@ private func decoded(_ views: StatusViews) throws -> StatusPayload {
   #expect(views.applyWorkspaces(fields(snapshot)) == .changed)
   #expect(
     views.applyWorkspaces(
-      fields(#"{"seq":1,"workspaces":{"upsert":["# + workspace("/w/a", errors: 2) + "," + workspace("/w/c")
-        + #"],"remove":["/w/b"]}}"#)) == .changed)
+      fields(
+        #"{"seq":1,"workspaces":{"upsert":["# + workspace("/w/a", errors: 2) + "," + workspace("/w/c")
+          + #"],"remove":["/w/b"]}}"#)) == .changed)
   #expect(views.applyWorkspaces(fields(#"{"seq":2,"worktrees":{"upsert":[],"remove":["/w/loose"]}}"#)) == .changed)
 
   let payload = try decoded(views)
@@ -87,4 +88,22 @@ private func decoded(_ views: StatusViews) throws -> StatusPayload {
   #expect(payload.capacity?.liveCount == 1)
   #expect(payload.archived?.map(\.id) == ["a"])
   #expect(payload.archivedUsage?.count == 1)
+}
+
+@Test func `the live views the server derives from a captured status decode as a status payload`() throws {
+  let url = try #require(Bundle.module.url(forResource: "live-views", withExtension: "json", subdirectory: "Fixtures"))
+  guard case .object(let events) = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: url)),
+    case .object(let list)? = events["workspaces"], case .object(let machine)? = events["machine"],
+    case .object(let detail)? = events["workspace"], case .object(let environment)? = detail["environment"],
+    let path = environment["path"]?.string
+  else { throw CocoaError(.coderReadCorrupt) }
+  var views = StatusViews()
+  #expect(views.applyWorkspaces(list) == .changed)
+  #expect(views.applyMachine(machine) == .changed)
+  let summaries = try decoded(views)
+  #expect(!summaries.environments.isEmpty)
+  #expect(summaries.capacity != nil)
+  #expect(summaries.oversight?.environments.count == summaries.environments.count)
+  _ = views.setDetail(.object(environment), for: path)
+  #expect(try decoded(views).environments.contains { $0.path == path && $0.logs?.dir != nil })
 }
