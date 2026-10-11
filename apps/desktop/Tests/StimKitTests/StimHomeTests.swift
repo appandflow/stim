@@ -4,26 +4,32 @@ import Testing
 @testable import StimKit
 
 @Suite struct StimHomeTests {
-  @Test func launchHomeOverridesShellHome() {
-    let environment = StimHome.environment(
-      ["STIM_HOME": "/tmp/shell", "PATH": "/bin"], launch: ["STIM_HOME": "/tmp/launch"])
-    #expect(environment["STIM_HOME"] == "/tmp/launch")
-    #expect(environment["PATH"] == "/bin")
-    #expect(StimHome.path(environment: environment) == "/tmp/launch")
+  @Test func launchHomeOverridesTheSettingAndTheDefaultHomeIsNeverExported() {
+    let launch = Toolchain.settingsEnvironment(
+      launch: ["STIM_HOME": "/tmp/launch", "PATH": "/bin"], stimHome: "/tmp/setting", overrides: nil, home: "/Users/me")
+    #expect(launch["STIM_HOME"] == "/tmp/launch")
+    #expect(launch["PATH"] == "/bin")
+    let setting = Toolchain.settingsEnvironment(
+      launch: ["STIM_HOME": "relative"], stimHome: "/tmp/setting", overrides: nil, home: "/Users/me")
+    #expect(setting["STIM_HOME"] == "/tmp/setting")
+    let tilde = Toolchain.settingsEnvironment(launch: [:], stimHome: "~/scratch", overrides: nil, home: "/Users/me")
+    #expect(tilde["STIM_HOME"] == "/Users/me/scratch")
+    let defaultHome = Toolchain.settingsEnvironment(
+      launch: [:], stimHome: "/Users/me/.stim", overrides: "STIM_HOME=/Users/me/.stim", home: "/Users/me")
+    #expect(defaultHome["STIM_HOME"] == nil)
+    #expect(StimHome.path(environment: defaultHome, home: "/Users/me") == "/Users/me/.stim")
   }
 
-  @Test(arguments: [[:], ["STIM_HOME": ""], ["STIM_HOME": "relative/x"], ["STIM_HOME": "~/x"]])
-  func absentOrEmptyLaunchHomeKeepsShellHome(launch: [String: String]) {
-    let environment = StimHome.environment(["STIM_HOME": "/tmp/shell"], launch: launch)
-    #expect(StimHome.path(environment: environment) == "/tmp/shell")
-  }
-
-  @Test func defaultHomeDoesNotSetEnvironmentVariable() {
-    let environment = StimHome.environment(["PATH": "/bin"], launch: [:])
-    #expect(environment["STIM_HOME"] == nil)
-    #expect(StimHome.path(environment: environment, home: "/Users/me") == "/Users/me/.stim")
-    #expect(StimHome.path(environment: ["STIM_HOME": ""], home: "/Users/me") == "/Users/me/.stim")
-    #expect(StimHome.path(environment: ["STIM_HOME": "relative"], home: "/Users/me") == "/Users/me/.stim")
+  @Test func overridesSetVariablesAndSkipCommentsAndInvalidNames() {
+    let environment = Toolchain.settingsEnvironment(
+      launch: ["NODE_USE_SYSTEM_CA": "1"],
+      stimHome: nil,
+      overrides: "# trustd stall\nNODE_USE_SYSTEM_CA=0\n  STIM_MAX_BUILDS = 2\nnot a line\n1BAD=x\nURL=a=b\n",
+      home: "/Users/me")
+    #expect(environment["NODE_USE_SYSTEM_CA"] == "0")
+    #expect(environment["STIM_MAX_BUILDS"] == " 2")
+    #expect(environment["URL"] == "a=b")
+    #expect(environment["1BAD"] == nil)
   }
 
   @Test func defaultDesktopStillAdoptsForeignServer() {

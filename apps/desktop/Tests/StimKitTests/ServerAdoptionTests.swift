@@ -12,16 +12,6 @@ import Testing
           .utf8))
   }
 
-  @Test func provisionalHomePrefersLaunchHomeThenLastLoginHome() {
-    #expect(
-      ServerAdoption.provisionalHome(
-        launch: ["STIM_HOME": "/launch"], lastLoginHome: "/login", home: "/Users/me") == "/launch")
-    #expect(ServerAdoption.provisionalHome(launch: [:], lastLoginHome: "/login", home: "/Users/me") == "/login")
-    #expect(
-      ServerAdoption.provisionalHome(
-        launch: ["STIM_HOME": "relative"], lastLoginHome: nil, home: "/Users/me") == "/Users/me/.stim")
-  }
-
   @Test func provisionalAdoptionTakesOnlyAReadyServerForTheExpectedHome() throws {
     let custom = try health(home: "/tmp/custom")
     #expect(

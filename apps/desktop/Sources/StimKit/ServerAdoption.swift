@@ -9,16 +9,6 @@ public enum ServerAdoption: Equatable, Sendable {
   case provisional(home: String)
   case verified(home: String)
 
-  /// The Stim home to decide a provisional adoption with: the launch environment's `STIM_HOME`, which overrides the
-  /// login shell's, then the home the login shell reported on the last launch, then `~/.stim`.
-  public static func provisionalHome(
-    launch: [String: String], lastLoginHome: String?, home: String = NSHomeDirectory()
-  ) -> String {
-    if let path = launch["STIM_HOME"], path.hasPrefix("/") { return path }
-    if let lastLoginHome, lastLoginHome.hasPrefix("/") { return lastLoginHome }
-    return "\(home)/.stim"
-  }
-
   /// The ready server `probe` reports, when Desktop may adopt it provisionally for `provisionalHome`. A server that is
   /// not ready or serves another home waits for the login environment instead of failing on a possibly stale home.
   public static func provisional(
