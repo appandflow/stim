@@ -1,6 +1,6 @@
 import { lstatSync, mkdirSync, readdirSync, rmSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { ClaimRefusedError, releaseClaim, tryAcquireClaim, type ClaimHandle } from './ownership-claim.ts';
+import { ClaimRefusedError, releaseClaim, sleepSync, tryAcquireClaim, type ClaimHandle } from './ownership-claim.ts';
 import { quotedPath } from './quoted-path.ts';
 
 const DEFAULT_LOCK_WAIT_MS = 12000;
@@ -9,15 +9,9 @@ const lockDepths = new Map<string, number>();
 const OWNER_MARKER = /^\.stim-claim-[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/;
 
 export interface DirLockOptions {
-  /** @deprecated Occupied locks are never expired. */
-  staleMs?: number;
   waitMs?: number;
   pollMs?: number;
   ensureParent?: () => void;
-}
-
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**

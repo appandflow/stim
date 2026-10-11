@@ -1,6 +1,5 @@
 import type { HostedIosChoice, HostedIosPlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
-export { iosAgentRemoteConfig } from './hosted-native.ts';
 export interface HostedIosTarget extends HostedNativeTarget {
   choice: HostedIosChoice;
 }
