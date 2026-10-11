@@ -187,16 +187,19 @@ struct StimDesktopApp: App {
     }
     let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
-    ServerController.shared.configure(environment: environment)
+    let provisionalHome = ServerAdoption.provisionalHome(
+      launch: ProcessInfo.processInfo.environment,
+      lastLoginHome: UserDefaults.standard.string(forKey: AppPreferences.Key.lastLoginStimHome))
+    ServerController.shared.configure(environment: environment, provisionalHome: provisionalHome)
     BuildRequestNotifier.shared.start()
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared
-    let store = StatusStore(cli: cli)
+    let store = StatusStore(cli: cli, stimHome: provisionalHome)
     self.store = store
     serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
       DispatchQueue.main.async {
-        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.statsConnection) }
+        MainActor.assumeIsolated { store?.useServer(ServerSession.shared.feedConnection) }
       }
     }
     notifier = Notifier(store: store)
