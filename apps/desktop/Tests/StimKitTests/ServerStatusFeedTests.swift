@@ -250,6 +250,33 @@ import Testing
     #expect(await until { recorder.payloads.last?.archived?.map(\.id) == ["b", "a"] })
   }
 
+  @Test func aFailedArchivesReadIsRetriedWhenTheViewsComeBack() async throws {
+    let retries = Box<[@MainActor () -> Void]>([])
+    let (client, socket) = try await openClient(retries: retries)
+    defer { client.stop() }
+    let feed = feed(Recorder())
+    feed.use(client)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces(["/w/a"]))
+    let reads = { socket.sent.filter { $0["method"] == .string("archived.list") }.count }
+    #expect(await until { reads() == 1 })
+    socket.refuse("archived.list", code: "status-failed")
+    socket.reply([
+      "event": .string("error"), "subscription": .string("s1"),
+      "error": .object(["code": .string("status-failed"), "message": .string("the status worker exited")]),
+    ])
+    await settle()
+
+    let retry = try #require(retries.value.first)
+    retry()
+    await settle()
+    socket.answer("workspaces.subscribe", .object(["subscription": .string("s3")]))
+    await settle()
+    socket.reply(workspaces(["/w/a"], subscription: "s3"))
+    #expect(await until { reads() == 2 })
+  }
+
   @Test func losingTheServerStopsTheFeedSoTheStoreFallsBackAndNoLatePayloadIsShown() async throws {
     let (client, socket) = try await openClient()
     defer { client.stop() }

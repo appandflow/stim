@@ -59,7 +59,7 @@ import Foundation
     for (path, unsubscribe) in details where !paths.contains(path) {
       unsubscribe()
       details[path] = nil
-      if views.setDetail(nil, for: path) == .changed { decode() }
+      if views.setDetail(nil, for: path) == .changed, views.hasWorkspaces { decode() }
     }
     guard let client else { return }
     for path in paths where details[path] == nil {
@@ -104,6 +104,7 @@ import Foundation
     guard event.name == "error" else { return false }
     DebugLog.warning(.server, "a status view ended with an error: \(event.error?.code ?? "unknown")")
     generation += 1
+    archivedSeen = nil
     delivering = false
     return true
   }
@@ -147,19 +148,28 @@ import Foundation
       do {
         repeat {
           let page = try await client.request("archived.list", before.map { ["before": .string($0)] } ?? [:])
-          guard case .object(let fields) = page, case .array(let entries)? = fields["archived"] else { return }
+          guard case .object(let fields) = page, case .array(let entries)? = fields["archived"] else {
+            self?.forgetArchives(generation: generation)
+            return
+          }
           archived += entries
           usage = fields["usage"]
           before = fields["next"]?.string
         } while before != nil && !Task.isCancelled
       } catch {
         DebugLog.warning(.server, "archived.list failed: \(error.localizedDescription)")
+        self?.forgetArchives(generation: generation)
         return
       }
       guard let self, !Task.isCancelled, generation == self.generation else { return }
       self.views.setArchives(archived, usage: usage)
       self.decode()
     }
+  }
+
+  /// Lets the next archives summary read the archives again, after a read that did not finish.
+  private func forgetArchives(generation: Int) {
+    if generation == self.generation { archivedSeen = nil }
   }
 
   private func decode() {
