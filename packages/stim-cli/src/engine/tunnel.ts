@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
-import { basename, join, resolve as resolvePath, sep } from 'node:path';
+import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
@@ -234,9 +234,11 @@ function waitForFileUrl(
 ): Promise<{ url: string | null; exited: boolean; lastLine?: string | null }> {
   return new Promise((resolve) => {
     let settled = false;
+    let watcher: FSWatcher | null = null;
     const finish = (url: string | null, exited = false) => {
       if (settled) return;
       settled = true;
+      watcher?.close();
       clearInterval(interval);
       clearTimeout(timer);
       child.removeListener('error', onError);
@@ -255,7 +257,17 @@ function waitForFileUrl(
     const onExit = () => finish(null, true);
     child.on('error', onError);
     child.on('exit', onExit);
-    const interval = setInterval(probe, 25);
+    try {
+      watcher = watch(dirname(logFile), (_event, name) => {
+        if (name === null || name.toString() === basename(logFile)) probe();
+      });
+      watcher.on('error', () => {
+        watcher?.close();
+        watcher = null;
+      });
+      watcher.unref();
+    } catch {}
+    const interval = setInterval(probe, Math.min(1000, timeoutMs));
     const timer = setTimeout(() => finish(null), timeoutMs);
     probe();
   });
