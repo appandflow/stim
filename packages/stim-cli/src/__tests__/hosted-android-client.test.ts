@@ -28,12 +28,8 @@ import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import {
-  androidAgentRemoteConfig,
-  prepareHostedAndroid,
-  placeHostedAndroid,
-  stopHostedAndroid,
-} from '../device-host/hosted-android.ts';
+import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
+import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedAndroid, writeHostedAndroid } from '../device-host/ios-state.ts';
 import { applyHostedAndroidProbe } from '../device-host/hosted-android-status.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';

@@ -2,7 +2,7 @@ import { readSwiftpmCacheUsage, type SwiftpmCacheUsage } from './swiftpm-cache-u
 import { readAgentDeviceUsage, type AgentDeviceUsage } from './agent-device-usage.ts';
 import { existsSync, realpathSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve } from 'node:path';
-import { readStateFile } from './json-file.ts';
+import { isJsonObject, readStateFile } from './json-file.ts';
 import { statsFile } from './paths.ts';
 import type { RunOutcomeKind, StatsPlatform } from './status.ts';
 
@@ -280,7 +280,7 @@ function normalize(record: StatsRecord): StatsRecord {
     for (const [key, scope] of Object.entries(source)) projects[key] = normalizeScope(scope);
   }
   const history: Record<string, RunHistory> = {};
-  if (isObject(record.history)) {
+  if (isJsonObject(record.history)) {
     for (const [key, scope] of Object.entries(record.history)) {
       const normalized = normalizeHistory(scope);
       if (Object.keys(normalized).length) history[key] = normalized;
@@ -292,9 +292,9 @@ function normalize(record: StatsRecord): StatsRecord {
     : [];
   const capacityWaits = Array.isArray(record.capacityWaits) ? record.capacityWaits.flatMap(normalizeCapacityWait) : [];
   const buildMachines: Record<string, BuildMachineTotals> = {};
-  if (isObject(record.buildMachines)) {
+  if (isJsonObject(record.buildMachines)) {
     for (const [name, totals] of Object.entries(record.buildMachines)) {
-      if (isObject(totals)) buildMachines[name] = normalizeMachineTotals(totals);
+      if (isJsonObject(totals)) buildMachines[name] = normalizeMachineTotals(totals);
     }
   }
   return {
@@ -310,7 +310,7 @@ function normalize(record: StatsRecord): StatsRecord {
 }
 
 function normalizePlacement(value: unknown): StatsPlacement[] {
-  if (!isObject(value)) return [];
+  if (!isJsonObject(value)) return [];
   const { decision, platform, reason, project, machine } = value;
   if (!PLACEMENT_DECISIONS.includes(decision as PlacementDecision) || !PLATFORMS.includes(platform as StatsPlatform))
     return [];
@@ -337,7 +337,7 @@ function normalizePlacement(value: unknown): StatsPlacement[] {
 }
 
 function normalizeCapacityRefusal(value: unknown): StatsCapacityRefusal[] {
-  if (!isObject(value)) return [];
+  if (!isJsonObject(value)) return [];
   const { at, kind, platform, max, workspace } = value;
   if (kind !== 'device' || !PLATFORMS.includes(platform as StatsPlatform)) return [];
   if (typeof at !== 'string' || !Number.isFinite(Date.parse(at))) return [];
@@ -347,7 +347,7 @@ function normalizeCapacityRefusal(value: unknown): StatsCapacityRefusal[] {
 }
 
 function normalizeCapacityWait(value: unknown): StatsCapacityWait[] {
-  if (!isObject(value) || value.kind !== 'device-wait') return [];
+  if (!isJsonObject(value) || value.kind !== 'device-wait') return [];
   const refusal = normalizeCapacityRefusal({ ...value, kind: 'device' })[0];
   if (!refusal || typeof value.ms !== 'number' || !Number.isFinite(value.ms) || value.ms < 0) return [];
   return [
@@ -374,21 +374,17 @@ function normalizeMachineTotals(totals: Record<string, unknown>): BuildMachineTo
   };
 }
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function normalizeHistory(scope: unknown): RunHistory {
   const history: RunHistory = {};
-  if (!isObject(scope)) return history;
+  if (!isJsonObject(scope)) return history;
   for (const platform of PLATFORMS) {
     const lists = scope[platform];
-    if (!isObject(lists)) continue;
+    if (!isJsonObject(lists)) continue;
     const normalized: Partial<Record<RunOutcomeKind, RunSample[]>> = {};
     for (const outcome of OUTCOMES) {
       const samples = lists[outcome];
       if (!Array.isArray(samples)) continue;
-      const kept = samples.filter(isObject).flatMap((sample): RunSample[] => {
+      const kept = samples.filter(isJsonObject).flatMap((sample): RunSample[] => {
         const durationMs = wholeMs(sample.durationMs);
         if (durationMs <= 0) return [];
         return [
@@ -409,7 +405,7 @@ function normalizeHistory(scope: unknown): RunHistory {
 
 export function wholePhases(phases: unknown): Record<string, number> {
   const out: Record<string, number> = {};
-  if (!isObject(phases)) return out;
+  if (!isJsonObject(phases)) return out;
   for (const [name, ms] of Object.entries(phases)) {
     const value = Number(ms);
     if (Number.isFinite(value) && value >= 0) out[name] = Math.round(value);

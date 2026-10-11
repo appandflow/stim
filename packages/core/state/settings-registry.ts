@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path';
+import { isJsonObject } from './json-file.ts';
 import { TAILNET_MACHINE_PATTERN } from './tailnet.ts';
 import { HOSTED_AGENT_DRIVERS } from './hosted-macos.ts';
 
@@ -908,10 +909,6 @@ export const SETTING_GROUPS: readonly string[] = [
   ),
 ];
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function bundleUrlAccepts(value: unknown, key: string): boolean {
   if (typeof value !== 'string' || !/^(https?:\/\/|\/(?!\/))/.test(value) || /[\s\\#]/.test(value)) return false;
   try {
@@ -958,7 +955,7 @@ export function acceptsShape(setting: SettingDefinition, value: unknown): boolea
     case 'choice':
       return typeof value === 'string' && type.choices.includes(value);
     case 'object':
-      return isPlainObject(value);
+      return isJsonObject(value);
     case 'bundle-url':
       return bundleUrlAccepts(value, setting.key);
   }

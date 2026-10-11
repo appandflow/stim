@@ -212,7 +212,7 @@ function asOwner(record: unknown): ClaimOwner | null {
   return { pid: candidate.pid, processToken: candidate.processToken };
 }
 
-function sleepSync(ms: number): void {
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
