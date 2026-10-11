@@ -79,6 +79,8 @@ import {
   readArchives,
   type ArchivedWorkspace,
   type ArchivedUsage,
+  type HostedAndroidPlacement,
+  type HostedIosPlacement,
 } from '@stim-cli/core/state';
 import {
   createActivityReader,
@@ -115,8 +117,6 @@ import {
 } from './physical-devices.ts';
 
 type SupervisorRecordExt = SupervisorRecord & { mode?: string | null };
-
-export const WATCH_GIT_MAX_AGE_MS = 60_000;
 
 export function iosStatusName(ios: NonNullable<EnvironmentState['ios']>): string {
   const host = ios.host;
@@ -179,28 +179,81 @@ export interface StatusSnapshot {
   machine: MachineUsageState | null;
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
+  probes: StatusProbes;
 }
 
-export function readStatus(
-  gitMaxAgeMs: number,
-  simctlListing: string | null = null,
-  archives?: ArchivedWorkspace[],
-): Promise<StatusSnapshot> {
-  return withStateReadCache(() => readStatusFacts(gitMaxAgeMs, simctlListing, archives));
+/**
+ * The facts a status read gets from subprocesses, devices and the network. Everything else it reads from files. A
+ * watcher passes probes that answer from caches it refreshes on change signals.
+ */
+export interface StatusProbes {
+  /** Rejects when simctl cannot be read. */
+  simulators(): Promise<IosSimRecord[]>;
+  metro(
+    projects: [string, ProjectRecord][],
+  ): Promise<{ metro: MetroResolution | null; supervisor: SupervisorFacts | null }[]>;
+  hostedIos(placements: Record<string, HostedIosPlacement>): ReturnType<typeof readHostedIosStatus>;
+  hostedAndroid(placements: Record<string, HostedAndroidPlacement>): ReturnType<typeof readHostedAndroidStatus>;
+  hostedMacos(record: ReturnType<typeof readMacosRecord>): ReturnType<typeof readHostedMacosStatus>;
+  git(
+    worktrees: WorktreeFacts[],
+    skip: (worktree: WorktreeFacts) => boolean,
+  ): Promise<Map<string, WorktreeFacts['git']>>;
+  androidRuntime(avdName: string): AndroidRuntimeFacts;
+  physicalDevice(platform: 'ios' | 'android', id: string): PhysicalDeviceReading;
+  deviceTables(): DeviceProcessTables;
+  metroReverses(serial: string): string | null;
+  footprints(): ReturnType<typeof readFootprints>;
+  archives(): ArchivedWorkspace[];
 }
 
-async function readStatusFacts(
-  gitMaxAgeMs: number,
-  simctlListing: string | null,
-  cachedArchives?: ArchivedWorkspace[],
-): Promise<StatusSnapshot> {
+/**
+ * Probes that read everything when asked. `simctlListing`, when given, answers `simulators` without running simctl,
+ * `gitMaxAgeMs` reuses git summaries read that recently, and `archives` answers `archives` without reading them.
+ */
+export function liveProbes({
+  simctlListing = null,
+  gitMaxAgeMs = 0,
+  archives,
+}: { simctlListing?: string | null; gitMaxAgeMs?: number; archives?: ArchivedWorkspace[] } = {}): StatusProbes {
+  const androidRuntimeOf = androidRuntimeReader();
+  return {
+    simulators: () =>
+      simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+    metro: readMetroFacts,
+    hostedIos: readHostedIosStatus,
+    hostedAndroid: readHostedAndroidStatus,
+    hostedMacos: readHostedMacosStatus,
+    git: (worktrees, skip) => readWorktreeGit(worktrees, { maxAgeMs: gitMaxAgeMs, skip }),
+    androidRuntime: androidRuntimeOf,
+    physicalDevice: physicalDeviceReader(),
+    deviceTables: createDeviceProcessTables,
+    metroReverses: (serial) =>
+      getExecutor().runFileQuiet('adb', ['-s', serial, 'reverse', '--list'], { timeoutMs: 5000 }),
+    footprints: readFootprints,
+    archives: () => archives ?? readArchives(),
+  };
+}
+
+/**
+ * Reads the status of every environment. With `git: 'all'` it reads the git summary of every worktree before
+ * composing; with `'live'` only those of live environments, after composing.
+ */
+export function readStatus({
+  probes = liveProbes(),
+  git = 'live',
+}: { probes?: StatusProbes; git?: 'all' | 'live' } = {}): Promise<StatusSnapshot> {
+  return withStateReadCache(() => readStatusFacts(probes, git));
+}
+
+async function readStatusFacts(probes: StatusProbes, gitScope: 'all' | 'live'): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
-  const iosReads = projects.map(([path]) => readHostedIosStatus(hostedIosPlacements(readWorkspaceState(path))));
+  const iosReads = projects.map(([path]) => probes.hostedIos(hostedIosPlacements(readWorkspaceState(path))));
   const androidReads = projects.map(([path]) =>
-    readHostedAndroidStatus(hostedAndroidPlacements(readWorkspaceState(path))),
+    probes.hostedAndroid(hostedAndroidPlacements(readWorkspaceState(path))),
   );
-  const macosReads = projects.map(([path]) => readHostedMacosStatus(readMacosRecord(path)));
+  const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
   const worktrees = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
   const orphanWorktrees = unprovisionedWorktrees(
@@ -208,21 +261,13 @@ async function readStatusFacts(
     projects.map(([p]) => p),
   );
 
-  const simsRead =
-    simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing));
+  const simsRead = probes.simulators();
   simsRead.catch(() => {});
-  const ports = await portLookup(projects.flatMap(([, proj]) => (proj.metroPort ? [proj.metroPort] : [])));
-  const processes = Promise.all(
-    projects.map(async ([path, proj]) => {
-      const metro = proj.metroPort ? await resolveOnPort(proj.metroPort, path, ports) : null;
-      return { metro, supervisor: await supervisorFacts(path, proj, metro, ports) };
-    }),
-  );
+  const processes = probes.metro(projects);
   processes.catch(() => {});
-  const watching = gitMaxAgeMs > 0;
-  const gitRead = watching ? readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs) : null;
+  const gitRead = gitScope === 'all' ? readGitInto(probes, worktrees, orphanWorktrees) : null;
 
-  const androidRuntimeOf = androidRuntimeReader();
+  const androidRuntimeOf = (avdName: string) => probes.androidRuntime(avdName);
   const devices = projects.map(([, proj]) => ({
     androidRuntimes: Object.fromEntries(
       projectDeviceSlots(proj)
@@ -274,7 +319,6 @@ async function readStatusFacts(
   const leaseFiles = listLeaseFiles();
   const leases = deviceLeaseStates(leaseFiles, { root: cwdRoot, now: leaseNow });
   const roots: WorkspaceProcessRoots[] = [];
-  const readPhysicalDevice = physicalDeviceReader();
   const simulatorUdids = new Set(
     [
       ...Object.keys(simsByUdid),
@@ -388,7 +432,7 @@ async function readStatusFacts(
       root: path,
       now: leaseNow,
       simulatorUdids,
-      read: readPhysicalDevice,
+      read: (platform, id) => probes.physicalDevice(platform, id),
     });
     if (state && physicalDevices.length) state.physicalDevices = physicalDevices;
     labelOnlyRoots.push(
@@ -404,21 +448,21 @@ async function readStatusFacts(
     );
   }
 
-  if (!watching) {
+  if (gitScope === 'live') {
     const live = new Set(states.flatMap((state) => (state.live && state.worktree ? [state.worktree.path] : [])));
-    await readGitInto(worktrees, orphanWorktrees, gitMaxAgeMs, live);
+    await readGitInto(probes, worktrees, orphanWorktrees, live);
   }
 
   applyStatusMeasures(states, worktrees);
   readLogDerivedFacts(states);
-  const tables = createDeviceProcessTables();
+  const tables = probes.deviceTables();
   readDeviceProcesses(states, tables, { projects, launchesByState });
-  readMetroReverses(states, launchesByState);
+  readMetroReverses(states, launchesByState, probes);
   const sims = Object.values(simsByUdid);
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
-  const machine = await readMachineUsage({ states, roots, simNames, tables, busy });
-  const archives = cachedArchives ?? readArchives();
+  const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
+  const archives = probes.archives();
   const maxCount = machineNumber('archive.maxCount', cfg, process.env);
   return {
     archived: linkReplacedArchives(
@@ -440,6 +484,7 @@ async function readStatusFacts(
     machine,
     roots,
     simNames,
+    probes,
   };
 }
 
@@ -512,17 +557,19 @@ async function readMachineUsage({
   simNames,
   tables,
   busy,
+  probes,
 }: {
   states: EnvironmentState[];
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
   tables: DeviceProcessTables;
   busy: boolean;
+  probes: StatusProbes;
 }): Promise<MachineUsageState | null> {
   const needed = busy || states.some((state) => state.live || state.build?.state === 'running');
   const processes = needed ? tables.host() : null;
   if (!processes) return null;
-  const footprints = await readFootprints();
+  const footprints = await probes.footprints();
   const machine = attributeMachineUsage({ processes, footprints, environments: states, roots, simNames });
   applyMachineMemory(states, machine);
   return machine;
@@ -533,7 +580,7 @@ async function readMachineUsage({
  * machine usage, it reads the host process table again; it reuses every other subprocess fact of the full read.
  */
 export async function refreshLightFacts(snapshot: StatusSnapshot, machine: boolean): Promise<void> {
-  const fresh = createDeviceProcessTables();
+  const fresh = snapshot.probes.deviceTables();
   snapshot.tables = {
     host: machine && snapshot.machine ? fresh.host : snapshot.tables.host,
     android: snapshot.tables.android,
@@ -552,18 +599,18 @@ export async function refreshLightFacts(snapshot: StatusSnapshot, machine: boole
 }
 
 async function readGitInto(
+  probes: StatusProbes,
   worktrees: WorktreeFacts[],
   orphans: WorktreeFacts[],
-  maxAgeMs: number,
   only?: ReadonlySet<string>,
 ): Promise<void> {
   const home = homedir();
-  const byPath = await readWorktreeGit(worktrees, {
-    maxAgeMs,
-    skip: (w) =>
+  const byPath = await probes.git(
+    worktrees,
+    (w) =>
       (only !== undefined && !only.has(w.path)) ||
       (process.platform === 'darwin' && orphans.includes(w) && inPrivacyProtectedFolder(w.path, home)),
-  });
+  );
   for (const worktree of worktrees) worktree.git = byPath.get(worktree.path) ?? null;
 }
 
@@ -613,12 +660,11 @@ function readDeviceProcesses(
 function readMetroReverses(
   states: EnvironmentState[],
   launchesByState: ReturnType<typeof readWorkspaceLaunches>[],
+  probes: StatusProbes,
 ): void {
   for (const [i, state] of states.entries()) {
     for (const target of metroReverseTargets(state, launchesByState[i]!)) {
-      const listing = getExecutor().runFileQuiet('adb', ['-s', target.serial, 'reverse', '--list'], {
-        timeoutMs: 5000,
-      });
+      const listing = probes.metroReverses(target.serial);
       if (listing !== null && !hasMetroReverse(listing, target.metroPort)) addReverseMissingIssue(state, target);
     }
   }
@@ -710,6 +756,18 @@ function readAndroidRuntime(resolveSerial: () => ResolvedAvdSerial): AndroidRunt
   } catch (error) {
     return { serial: null, state: 'unknown', error: String((error as Error)?.message || error).split('\n')[0] };
   }
+}
+
+async function readMetroFacts(
+  projects: [string, ProjectRecord][],
+): Promise<{ metro: MetroResolution | null; supervisor: SupervisorFacts | null }[]> {
+  const ports = await portLookup(projects.flatMap(([, proj]) => (proj.metroPort ? [proj.metroPort] : [])));
+  return Promise.all(
+    projects.map(async ([path, proj]) => {
+      const metro = proj.metroPort ? await resolveOnPort(proj.metroPort, path, ports) : null;
+      return { metro, supervisor: await supervisorFacts(path, proj, metro, ports) };
+    }),
+  );
 }
 
 interface PortLookup {

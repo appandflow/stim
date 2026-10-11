@@ -11,13 +11,7 @@ import {
 } from '../status-watch.ts';
 import type { StatusSources } from '../status-watch.ts';
 import { watchStdoutReader } from '../stdout-reader.ts';
-import {
-  iosStatusName,
-  readStatus,
-  refreshLightFacts,
-  WATCH_GIT_MAX_AGE_MS,
-  type StatusSnapshot,
-} from '../status-read.ts';
+import { iosStatusName, liveProbes, readStatus, refreshLightFacts, type StatusSnapshot } from '../status-read.ts';
 import chalk from 'chalk';
 import { statSync } from 'fs';
 import { totalmem } from 'os';
@@ -128,6 +122,8 @@ function phaseMarker({ phase, live, warmStep }: EnvironmentState): string {
   return live ? '' : chalk.dim(' [idle]');
 }
 
+const WATCH_GIT_MAX_AGE_MS = 60_000;
+
 export default function statusCommand(program: Command): void {
   program
     .command('status')
@@ -139,7 +135,7 @@ export default function statusCommand(program: Command): void {
     .action(async (opts: StatusOptions) => {
       if (opts.watch) return watchStatus(Boolean(opts.json));
       const json = Boolean(opts.json);
-      for (const line of renderStatus(await readStatus(0), json)) console.log(line);
+      for (const line of renderStatus(await readStatus(), json)) console.log(line);
     });
 }
 
@@ -361,7 +357,14 @@ async function watchStatus(json: boolean): Promise<void> {
             archives = readArchives();
             archiveStamp = stamp;
           }
-          snapshot = await readStatus(WATCH_GIT_MAX_AGE_MS, sources?.simulatorListing(), archives);
+          snapshot = await readStatus({
+            git: 'all',
+            probes: liveProbes({
+              simctlListing: sources?.simulatorListing(),
+              gitMaxAgeMs: WATCH_GIT_MAX_AGE_MS,
+              archives,
+            }),
+          });
         }
         measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full))).join('\n');
