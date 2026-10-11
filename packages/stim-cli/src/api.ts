@@ -2,6 +2,8 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { withStimHome } from '@stim-cli/core';
+import { findProjectRoot } from '@stim-cli/core/state';
+import { readProjectStats } from './engine/stats-report.ts';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
@@ -30,6 +32,7 @@ export type {
   StimRunOptions,
   StimRunResult,
   StimSettings,
+  StimStats,
   StimStopOptions,
   StimStopResult,
 } from './api/types.ts';
@@ -51,7 +54,7 @@ export class StimError extends Error {
 /**
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
  * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
- * build, run, stop and diagnostics each run in a separate Stim worker. Reads such as settings run in the calling
+ * build, run, stop and diagnostics each run in a separate Stim worker. Reads such as settings and stats run in the calling
  * process against the client's home and project, so clients for different homes can share a process.
  * Resources remain workspace-owned until stop() is called.
  */
@@ -92,6 +95,13 @@ export function createStim(options: StimOptions): StimClient {
     settings: ({ signal }: StimReadOptions = {}) =>
       read(context, home, signal, async () =>
         readSettingsPayload(await readSettingsContext(projectRoot, context.env, note, signal), signal),
+      ),
+    stats: ({ signal }: StimReadOptions = {}) =>
+      read(
+        context,
+        home,
+        signal,
+        async () => (await readProjectStats(findProjectRoot(projectRoot), context.env, signal)).report,
       ),
     build: (({ signal, ...request }: StimBuildOptions) =>
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],

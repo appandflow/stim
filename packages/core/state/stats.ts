@@ -483,16 +483,18 @@ export function decodeStats(text: string): { record: StatsRecord | null; newerVe
   return { record: normalize(parsed), newerVersion: null };
 }
 
-export interface StatsReport {
+type StatsBuckets = { ios: StatsBucket | null; android: StatsBucket | null };
+
+export type StatsReport = {
   version: number;
-  project: ({ key: string } & StatsReport['machine']) | null;
-  machine: { ios: StatsBucket | null; android: StatsBucket | null };
+  project: ({ key: string } & StatsBuckets) | null;
+  machine: StatsBuckets;
   offload: OffloadSummary;
   capacityRefusals?: StatsCapacityRefusal[];
   capacityWaits?: StatsCapacityWait[];
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
-}
+};
 
 export function readStatsReport(key: string | null, now: number): { report: StatsReport; note: string | null } {
   const { record, note } = readStats();
