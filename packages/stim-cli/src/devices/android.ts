@@ -373,14 +373,14 @@ export function ownedAvdName(label: string): string {
 
 const AVDMANAGER_DELETE_TIMEOUT_MS = 120_000;
 
-export function deleteAvd(avdName: string): void {
+export async function deleteAvd(avdName: string): Promise<void> {
   if (!isStimOwnedAvd(avdName)) {
     throw new Error(`Refusing to delete AVD "${avdName}": not a Stim-owned AVD; Stim has no record of creating it.`);
   }
   const root = process.env.ANDROID_AVD_HOME
     ? undefined
     : avdStorageRoots().find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
-  getExecutor().runFile(androidToolPath('avdmanager'), ['delete', 'avd', '-n', avdName], {
+  await getExecutor().runFileAsync(androidToolPath('avdmanager'), ['delete', 'avd', '-n', avdName], {
     timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
     killSignal: 'SIGKILL',
     ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
@@ -959,7 +959,7 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
     unavailableTarget = false;
     try {
       assertTarget();
-      const output = exec.runFile('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
+      const output = await exec.runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
         timeoutMs: commandTimeout(30000),
       });
       const packages = output
@@ -974,7 +974,7 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
       for (const packageName of packages) {
         assertTarget();
         const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
-        const result = exec.runFile('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
+        const result = await exec.runFileAsync('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
         if (result.trim() !== 'Success')
           throw new Error(`Could not clean ${packageName} on ${avdName}: ${result.trim()}`);
       }
@@ -1012,15 +1012,15 @@ export function parseDfAvailableBytes(text: unknown): number | null {
   return available && /^\d+$/.test(available) ? Number(available) * 1024 : null;
 }
 
-export function androidDataFreeBytes(serial: string): number | null {
-  const output = getExecutor().runFileQuiet('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
+export async function androidDataFreeBytes(serial: string): Promise<number | null> {
+  const output = await getExecutor().runFileQuietAsync('adb', ['-s', serial, 'shell', 'df', '-k', '/data'], {
     timeoutMs: 30000,
   });
   return parseDfAvailableBytes(output);
 }
 
-export function trimAndroidCaches(serial: string, desiredFreeBytes: number): void {
-  getExecutor().runFile('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
+export async function trimAndroidCaches(serial: string, desiredFreeBytes: number): Promise<void> {
+  await getExecutor().runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'trim-caches', String(desiredFreeBytes)], {
     timeoutMs: 120000,
     killSignal: 'SIGKILL',
   });
@@ -1183,8 +1183,10 @@ export function emulatorFailureRemedy(lines: string[]): string {
 // for most of a boot: adb answers "device offline" or "device not found" until
 // the emulator has registered. Null is "not booted yet", so it reads as an
 // empty string and the poll continues.
-function getprop(exec: Executor, serial: string, prop: string, timeoutMs: number): string {
-  const out = exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', prop], { timeoutMs });
+async function getprop(exec: Executor, serial: string, prop: string, timeoutMs: number): Promise<string> {
+  const out = await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', prop], {
+    timeoutMs,
+  });
   return typeof out === 'string' ? out.trim() : '';
 }
 
@@ -1193,8 +1195,10 @@ function getprop(exec: Executor, serial: string, prop: string, timeoutMs: number
 // that window (#897).
 const PACKAGE_MANAGER_PROBE = ['shell', 'pm', 'path', 'android'];
 
-function packageManagerReady(exec: Executor, serial: string, timeoutMs: number): boolean {
-  const out = exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, ...PACKAGE_MANAGER_PROBE], { timeoutMs });
+async function packageManagerReady(exec: Executor, serial: string, timeoutMs: number): Promise<boolean> {
+  const out = await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, ...PACKAGE_MANAGER_PROBE], {
+    timeoutMs,
+  });
   return typeof out === 'string' && /^package:/m.test(out);
 }
 
@@ -1213,9 +1217,9 @@ export async function waitForBoot(
   const probeTimeout = () => Math.max(1, Math.min(commandTimeoutMs ?? timeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
     const booted =
-      getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1' ||
-      getprop(exec, serial, 'dev.bootcomplete', probeTimeout()) === '1';
-    if (booted && packageManagerReady(exec, serial, probeTimeout())) return { ok: true };
+      (await getprop(exec, serial, 'sys.boot_completed', probeTimeout())) === '1' ||
+      (await getprop(exec, serial, 'dev.bootcomplete', probeTimeout())) === '1';
+    if (booted && (await packageManagerReady(exec, serial, probeTimeout()))) return { ok: true };
     if (aborted()) {
       exited = true;
       break;
@@ -1228,21 +1232,21 @@ export async function waitForBoot(
     );
   }
   const diagnosticDeadline = Date.now() + Math.min(commandTimeoutMs ?? 5000, 5000);
-  const diagnosticQuery = (args: string[]): string => {
+  const diagnosticQuery = async (args: string[]): Promise<string> => {
     const remaining = diagnosticDeadline - Date.now();
     if (remaining <= 0) return '';
-    const value = exec.runFileQuiet(androidToolPath('adb'), args, { timeoutMs: remaining });
+    const value = await exec.runFileQuietAsync(androidToolPath('adb'), args, { timeoutMs: remaining });
     return typeof value === 'string' ? value.trim() : '';
   };
   return {
     ok: false,
     ...(exited ? { exited: true as const } : {}),
     diagnostic: {
-      devices: diagnosticQuery(['devices']),
-      sysBoot: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']),
-      devBoot: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'dev.bootcomplete']),
-      bootAnim: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'init.svc.bootanim']),
-      packageManager: diagnosticQuery(['-s', serial, ...PACKAGE_MANAGER_PROBE]),
+      devices: await diagnosticQuery(['devices']),
+      sysBoot: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']),
+      devBoot: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'dev.bootcomplete']),
+      bootAnim: await diagnosticQuery(['-s', serial, 'shell', 'getprop', 'init.svc.bootanim']),
+      packageManager: await diagnosticQuery(['-s', serial, ...PACKAGE_MANAGER_PROBE]),
     },
   };
 }

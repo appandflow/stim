@@ -541,9 +541,9 @@ async function installOnAdoptedAvd(
     Boolean(result.failed) && INSUFFICIENT_STORAGE.test(result.reason ?? '');
   let target = serial;
   let wiped = false;
-  if (!roomy(room.dataFreeBytes(target))) {
-    room.trimCaches(target, neededBytes);
-    const free = room.dataFreeBytes(target);
+  if (!roomy(await room.dataFreeBytes(target))) {
+    await room.trimCaches(target, neededBytes);
+    const free = await room.dataFreeBytes(target);
     if (roomy(free)) room.phase('install', `trimmed app caches on ${room.avdName} to make room for the APK`);
     else {
       target = await wipeAdoptedAvd(room, free);
@@ -552,10 +552,10 @@ async function installOnAdoptedAvd(
   }
   let installed = await installApk(target);
   if (wiped || !outOfSpace(installed)) return { serial: target, installed };
-  room.trimCaches(target, neededBytes);
+  await room.trimCaches(target, neededBytes);
   installed = await installApk(target);
   if (!outOfSpace(installed)) return { serial: target, installed };
-  target = await wipeAdoptedAvd(room, room.dataFreeBytes(target));
+  target = await wipeAdoptedAvd(room, await room.dataFreeBytes(target));
   return { serial: target, installed: await installApk(target) };
 }
 

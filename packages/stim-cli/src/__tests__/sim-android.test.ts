@@ -409,17 +409,17 @@ test('pickDefaultSystemImage honors an explicit package and returns null on no m
   expect(pickDefaultSystemImage(images, { systemImage: 'system-images;android-99;x;y' })).toBe(null);
 });
 
-test('deleteAvd refuses to delete an AVD not owned by Stim', () => {
+test('deleteAvd refuses to delete an AVD not owned by Stim', async () => {
   setExecutor({
     runFile: () => {
       throw new Error('should not be called');
     },
     spawn: () => null,
   });
-  expect(() => deleteAvd('Pixel_6_API_34')).toThrow(/Stim/);
+  await expect(deleteAvd('Pixel_6_API_34')).rejects.toThrow(/Stim/);
 });
 
-test('deleteAvd deletes a Stim-owned AVD', () => {
+test('deleteAvd deletes a Stim-owned AVD', async () => {
   let ran = null;
   setExecutor({
     runFile: (_file, args) => {
@@ -429,11 +429,11 @@ test('deleteAvd deletes a Stim-owned AVD', () => {
     runQuiet: () => null,
     spawn: () => null,
   });
-  deleteAvd('stim-my-project');
+  await deleteAvd('stim-my-project');
   expect(ran).toEqual(['delete', 'avd', '-n', 'stim-my-project']);
 });
 
-test('deleteAvd propagates an avdmanager failure instead of swallowing it', () => {
+test('deleteAvd propagates an avdmanager failure instead of swallowing it', async () => {
   setExecutor({
     runFile: () => {
       throw new Error('avdmanager: could not delete');
@@ -441,7 +441,7 @@ test('deleteAvd propagates an avdmanager failure instead of swallowing it', () =
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(() => deleteAvd('stim-my-project')).toThrow(/could not delete/);
+  await expect(deleteAvd('stim-my-project')).rejects.toThrow(/could not delete/);
 });
 
 test('resolveOwnedAvdSerial reports missing when the AVD does not exist at all', () => {

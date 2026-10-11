@@ -423,7 +423,7 @@ test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes fr
       return '';
     },
   });
-  deleteAvd(created.avdName);
+  await deleteAvd(created.avdName);
   expect(deleteEnv).toEqual({ ANDROID_AVD_HOME: join(home, '.android', 'avd') });
 });
 

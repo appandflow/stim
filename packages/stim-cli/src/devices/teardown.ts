@@ -618,7 +618,7 @@ async function teardownClaimedAvd(
       if (directory) paths.push(directory);
       markClaimChildPending(claim);
       try {
-        deleteAvd(avdName);
+        await deleteAvd(avdName);
       } finally {
         clearClaimChild(claim);
       }

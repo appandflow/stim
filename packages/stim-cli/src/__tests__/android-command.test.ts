@@ -362,7 +362,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     },
     resolveAvdSerial: () => ({ serial: 'emulator-5584' }),
     waitForDeviceBoot: never('an unchanged serial readiness wait'),
-    dataFreeBytes: () => null,
+    dataFreeBytes: async () => null,
     trimCaches: never('a cache trim'),
     wipeDevice: never('an emulator wipe'),
     resolveMetro: async (port: number, path: string) => {
@@ -728,8 +728,8 @@ describe('adopted Android storage', () => {
       install: installAndroidApp,
       ensureDeviceBooted: async () => ({ ok: true, serial: boots++ === 0 ? 'emulator-5584' : 'emulator-5586' }),
       resolveAvdSerial: () => ({ serial: boots > 1 ? rebootedAvd : 'emulator-5584' }),
-      dataFreeBytes: () => free.shift() ?? null,
-      trimCaches: (serial: string) => {
+      dataFreeBytes: async () => free.shift() ?? null,
+      trimCaches: async (serial: string) => {
         trims.push(serial);
       },
       wipeDevice: (avdName: string, options: unknown) => {
