@@ -147,7 +147,7 @@ export async function ensureOwnedIosDevice({
           ...(record.schemeApprovals ? { schemeApprovals: record.schemeApprovals } : {}),
         };
         const configure = async () => {
-          if (record.adoptionPending) resetAdoptedSim(sim.udid, out);
+          if (record.adoptionPending) await resetAdoptedSim(sim.udid, out);
           return configureOwnedIosSim({
             record: updated,
             projectPath,
@@ -219,7 +219,7 @@ export async function ensureOwnedIosDevice({
     const booting = startIosBoot(
       adopted.deviceUdid,
       async () => {
-        resetAdoptedSim(adopted.deviceUdid, out);
+        await resetAdoptedSim(adopted.deviceUdid, out);
         await configureOwnedIosSim({
           record: adopted,
           projectPath,
@@ -238,9 +238,9 @@ export async function ensureOwnedIosDevice({
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
 
-  const created = await withIosDeviceNameLock(() => {
+  const created = await withIosDeviceNameLock(async () => {
     const suffix = ownedIosNameSuffix(label, { model: choice.deviceType, runtime: choice.runtime }, projectPath);
-    const result = createOwnedIosSim(label, { suffix }, choice);
+    const result = await createOwnedIosSim(label, { suffix }, choice);
     setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
     return result;
   });
@@ -303,21 +303,21 @@ function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPat
   return ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, sim.udid, listed));
 }
 
-function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): string {
+async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): Promise<string> {
   const wanted = ownedIosName(sim, label, model, projectPath);
   if (sim.name === wanted) return wanted;
   try {
-    renameIosSim(sim.udid, wanted);
+    await renameIosSim(sim.udid, wanted);
     return wanted;
   } catch {
     return sim.name;
   }
 }
 
-function resetAdoptedSim(udid: string, out: Notify): void {
+async function resetAdoptedSim(udid: string, out: Notify): Promise<void> {
   out(chalk.dim(phaseLine('device', `resetting privacy grants and the keychain on ${udid}`)));
-  resetIosPrivacy(udid);
-  resetIosKeychain(udid);
+  await resetIosPrivacy(udid);
+  await resetIosKeychain(udid);
 }
 
 type AdoptedRecord = OwnedDeviceRecord & { deviceUdid: string; deviceName: string };
@@ -389,7 +389,7 @@ async function takeParkedIosSim({
     const adopted = adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
     try {
-      renameIosSim(parked.udid, name);
+      await renameIosSim(parked.udid, name);
     } catch {}
     return adopted.schemeApprovals && adopted.schemeApprovals.length > 0
       ? { ...device, schemeApprovals: adopted.schemeApprovals }

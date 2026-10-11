@@ -151,9 +151,12 @@ export function createIosSimSnapshot(): IosSimSnapshot {
   };
 }
 
-export async function listAllIosSimsAsync({ timeoutMs = 30000 }: { timeoutMs?: number } = {}): Promise<IosSimRecord[]> {
+export async function listAllIosSimsAsync({
+  timeoutMs = 30000,
+  includeUnavailable = false,
+}: { timeoutMs?: number; includeUnavailable?: boolean } = {}): Promise<IosSimRecord[]> {
   const out = await getExecutor().runFileAsync('xcrun', SIMCTL_LIST_ARGS, { timeoutMs, killSignal: 'SIGKILL' });
-  return parseSimctlList(out);
+  return parseSimctlList(out, { includeUnavailable });
 }
 
 export function parseRuntimeVersion(runtimeId: string): string {
@@ -485,59 +488,63 @@ export function resolveIosCreation({
   };
 }
 
-export function createOwnedIosSim(
+export async function createOwnedIosSim(
   label: string,
   { deviceType, runtime, suffix = '' }: { deviceType?: string; runtime?: string; suffix?: string } = {},
   choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
-): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
+): Promise<{ udid: string; name: string; deviceType: string | null; runtime: string | null }> {
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
-  const udid = getExecutor()
-    .runFile('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
+  const udid = (
+    await getExecutor().runFileAsync('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
       timeoutMs: SIMCTL_CREATE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     })
-    .trim();
+  ).trim();
   recordCreatedDevice('ios', udid);
   return { udid, name, deviceType: choice.deviceType, runtime: choice.runtime };
 }
 
-export function renameIosSim(udid: string, name: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'rename', udid, name], SIMCTL_OPTIONS);
+export async function renameIosSim(udid: string, name: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'rename', udid, name], SIMCTL_OPTIONS);
 }
 
-export function eraseIosSim(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'erase', udid], SIMCTL_OPTIONS);
+export async function eraseIosSim(udid: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'erase', udid], SIMCTL_OPTIONS);
 }
 
-export function resetIosPrivacy(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
+export async function resetIosPrivacy(udid: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
 }
 
-export function resetIosKeychain(udid: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+export async function resetIosKeychain(udid: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
 }
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
 
-export function clearIosAppData(
+export async function clearIosAppData(
   udid: string,
   bundleId: string,
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
-): void {
+): Promise<void> {
   const exec = getExecutor();
   if (defaultsPlist) {
-    exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
+    await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,
       input: defaultsPlist,
     });
   } else {
     try {
-      exec.runFile('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
+      await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'delete', bundleId], SIMCTL_OPTIONS);
     } catch (error) {
       if (!/Domain .* not found/.test(String((error as Error)?.message))) throw error;
     }
   }
-  const output = exec.runFile('xcrun', ['simctl', 'get_app_container', udid, bundleId, 'data'], SIMCTL_OPTIONS);
+  const output = await exec.runFileAsync(
+    'xcrun',
+    ['simctl', 'get_app_container', udid, bundleId, 'data'],
+    SIMCTL_OPTIONS,
+  );
   const container = parseAppContainerPath(output);
   if (!container) {
     throw new Error(`simctl get_app_container returned no data container for ${bundleId}: ${JSON.stringify(output)}`);
@@ -559,8 +566,8 @@ export function clearIosAppData(
   }
 }
 
-export function uninstallIosApp(udid: string, bundleId: string): void {
-  getExecutor().runFile('xcrun', ['simctl', 'uninstall', udid, bundleId], SIMCTL_OPTIONS);
+export async function uninstallIosApp(udid: string, bundleId: string): Promise<void> {
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'uninstall', udid, bundleId], SIMCTL_OPTIONS);
 }
 
 export function parseUserApps(jsonOutput: string): string[] {
@@ -584,13 +591,18 @@ export function parseUserApps(jsonOutput: string): string[] {
 
 const LISTAPPS_TIMEOUT_MS = 60000;
 
-export function listUserApps(udid: string): string[] {
+export async function listUserApps(udid: string): Promise<string[]> {
   const exec = getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-listapps-'));
   const plist = join(dir, 'apps.plist');
   try {
-    writeFileSync(plist, exec.runFile('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }));
-    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist], { timeoutMs: 10_000 }));
+    writeFileSync(
+      plist,
+      await exec.runFileAsync('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }),
+    );
+    return parseUserApps(
+      await exec.runFileAsync('plutil', ['-convert', 'json', '-o', '-', plist], { timeoutMs: 10_000 }),
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -603,29 +615,29 @@ export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAl
   return { sim };
 }
 
-export function deleteIosSim(udid: string): void {
-  const result = resolveOwnedIosSim(udid);
+export async function deleteIosSim(udid: string): Promise<void> {
+  const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
   if (result.missing) return;
   if (result.notOwned) {
     throw new Error(
       `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim; Stim has no record of creating it.`,
     );
   }
-  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'delete', udid], SIMCTL_OPTIONS);
   forgetCreatedDevice('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
 
-export function deleteParkedIosSim(udid: string): void {
-  const sim = listAllIosSims({ includeUnavailable: true, timeoutMs: PARKED_DELETE_TIMEOUT_MS }).find(
+export async function deleteParkedIosSim(udid: string): Promise<void> {
+  const sim = (await listAllIosSimsAsync({ includeUnavailable: true, timeoutMs: PARKED_DELETE_TIMEOUT_MS })).find(
     (entry) => entry.udid === udid,
   );
   if (!sim) return;
   if (!isStimOwnedSim(sim)) {
     throw new Error(`Simulator ${udid} is now named "${sim.name}" and is not Stim-owned; refusing to delete it.`);
   }
-  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], { timeoutMs: PARKED_DELETE_TIMEOUT_MS });
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'delete', udid], { timeoutMs: PARKED_DELETE_TIMEOUT_MS });
   forgetCreatedDevice('ios', udid);
 }
 

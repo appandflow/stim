@@ -182,25 +182,25 @@ export async function installIosApp(
   return skipped ? { ok: true, appPath, skipped: true, ...timing } : { ok: true, appPath, ...timing };
 }
 
-export function clearOtherUserApps(
+export async function clearOtherUserApps(
   { udid, keep }: { udid: string; keep?: string | null },
   {
     list = listUserApps,
     uninstall = uninstallIosApp,
   }: { list?: typeof listUserApps; uninstall?: typeof uninstallIosApp } = {},
-): { listed: boolean; kept: boolean; removed: string[]; failed: string[] } {
+): Promise<{ listed: boolean; kept: boolean; removed: string[]; failed: string[] }> {
   const removed: string[] = [];
   const failed: string[] = [];
   let installed: string[];
   try {
-    installed = list(udid);
+    installed = await list(udid);
   } catch {
     return { listed: false, kept: false, removed, failed };
   }
   for (const bundleId of installed) {
     if (bundleId === keep) continue;
     try {
-      uninstall(udid, bundleId);
+      await uninstall(udid, bundleId);
       removed.push(bundleId);
     } catch {
       failed.push(bundleId);

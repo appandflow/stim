@@ -75,7 +75,7 @@ export interface GcDeviceDependencies {
   directorySize?: typeof directorySize;
   listAllIosSims?: typeof listAllIosSims;
   listIosDeviceTypes?: typeof listIosDeviceTypes;
-  deleteParkedIosSim?: (udid: string) => void;
+  deleteParkedIosSim?: (udid: string) => Promise<void>;
 }
 
 // simctl and emulator listings can exceed 10 seconds on loaded hosts; 30 seconds still bounds hangs.

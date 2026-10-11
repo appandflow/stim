@@ -113,9 +113,9 @@ export async function teardownParkedIosSim(
   { label, deleteSim = deleteParkedIosSim }: { label?: string; deleteSim?: typeof deleteParkedIosSim } = {},
 ): Promise<TeardownOutcome> {
   try {
-    const removed = await removeParkedAfter('ios', udid, () => {
+    const removed = await removeParkedAfter('ios', udid, async () => {
       closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
-      deleteSim(udid);
+      await deleteSim(udid);
     });
     if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? removed.name };
@@ -126,7 +126,7 @@ export async function teardownParkedIosSim(
 
 export async function eraseParkedIosSim(udid: string, { label }: { label?: string } = {}): Promise<TeardownOutcome> {
   try {
-    const erased = await eraseParkedAfter('ios', udid, (_record, eraseStarted) => {
+    const erased = await eraseParkedAfter('ios', udid, async (_record, eraseStarted) => {
       closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
       const resolved = resolveOwnedIosSim(udid);
       if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
@@ -134,7 +134,7 @@ export async function eraseParkedIosSim(udid: string, { label }: { label?: strin
       const state = (resolved.sim as IosSimRecord).state;
       if (state !== 'Shutdown') throw new Error(`simulator ${udid} is ${state}, not Shutdown; it was kept`);
       eraseStarted();
-      eraseIosSim(udid);
+      await eraseIosSim(udid);
     });
     if (!erased) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
     return { status: 'torn-down', label: label ?? erased.name };
@@ -212,11 +212,11 @@ function iosShutdownFailureReason(udid: string, state: string): string {
   return `simulator ${udid} is still ${state} after ${IOS_SHUTDOWN_ATTEMPTS} shutdown attempts and ${(IOS_SHUTDOWN_ATTEMPTS * IOS_SHUTDOWN_SETTLE_MS) / 1000}s of waiting`;
 }
 
-function parkOwnedIosSim(
+async function parkOwnedIosSim(
   settled: ResolvedIosSim,
   udid: string,
   park: ParkRequest,
-): { record: ParkedSim; evicted: ParkedSim[] } {
+): Promise<{ record: ParkedSim; evicted: ParkedSim[] }> {
   if (settled.missing) throw new Error(`simulator ${udid} disappeared after shutdown`);
   if (settled.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(settled.notOwned)}`);
   const sim = settled.sim as IosSimRecord;
@@ -226,7 +226,7 @@ function parkOwnedIosSim(
   const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
   const name = parkedSimName(sim.udid, { model, runtime });
-  renameIosSim(sim.udid, name);
+  await renameIosSim(sim.udid, name);
   const record: ParkedSim = {
     udid: sim.udid,
     name,
@@ -278,7 +278,7 @@ export async function teardownOwnedIosSim(
     if (del && park && park.max > 0) {
       try {
         const settled = await settleIosSimShutdown(udid, shutdownClock);
-        const { record, evicted } = parkOwnedIosSim(settled, udid, park);
+        const { record, evicted } = await parkOwnedIosSim(settled, udid, park);
         const removed: ParkedDevice[] = [];
         const failures: string[] = [];
         for (const entry of evicted) {
@@ -301,7 +301,7 @@ export async function teardownOwnedIosSim(
       }
     }
     if (del) {
-      deleteIosSim(udid);
+      await deleteIosSim(udid);
       return { status: 'torn-down', label: label ?? sim.name ?? udid, ...(parkFallback ? { parkFallback } : {}) };
     }
     const settled = await settleIosSimShutdown(udid, shutdownClock);
