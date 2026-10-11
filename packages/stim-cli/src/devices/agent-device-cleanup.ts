@@ -116,12 +116,12 @@ function report(message: string): void {
   process.stderr.write(`${phaseLine('device', message)}\n`);
 }
 
-export function closeOwnedDeviceSessions(
+export async function closeOwnedDeviceSessions(
   device: Device,
-  stillOwned: (id: string) => boolean,
+  stillOwned: (id: string) => boolean | Promise<boolean>,
   workspace?: string,
   repoRoot?: string,
-): void {
+): Promise<void> {
   const exec = getExecutor();
   try {
     if (!exec.findExecutable('agent-device')) return;
@@ -138,11 +138,11 @@ export function closeOwnedDeviceSessions(
     ];
     for (const dir of stateDirs) {
       const deadline = Date.now() + 15000;
-      const run = (args: string[]) => {
+      const run = async (args: string[]) => {
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error('agent-device cleanup timed out');
         try {
-          return exec.runFile(
+          return await exec.runFileAsync(
             'agent-device',
             [...args, ...(dir ? ['--state-dir', dir] : []), '--json', '--daemon-transport', 'socket'],
             {
@@ -154,13 +154,14 @@ export function closeOwnedDeviceSessions(
           throw explainFailure(error);
         }
       };
-      const list = () => parseAgentDeviceSessions(run(['session', 'list', '--session', 'stim-teardown-inventory']));
+      const list = async () =>
+        parseAgentDeviceSessions(await run(['session', 'list', '--session', 'stim-teardown-inventory']));
       try {
-        const sessions = list().filter((session) => isOwnDeviceSession(session, device, owner));
+        const sessions = (await list()).filter((session) => isOwnDeviceSession(session, device, owner));
         for (const session of sessions) {
           try {
             if (
-              !list().some(
+              !(await list()).some(
                 (current) =>
                   current.name === session.name &&
                   current.platform === session.platform &&
@@ -169,9 +170,9 @@ export function closeOwnedDeviceSessions(
               )
             )
               continue;
-            if (!stillOwned(session.id)) continue;
+            if (!(await stillOwned(session.id))) continue;
             const result = JSON.parse(
-              run([
+              await run([
                 'close',
                 '--session',
                 session.name,

@@ -1313,7 +1313,7 @@ test('listAvds runs the resolved emulator binary with literal arguments', () => 
   expect(calls).toEqual([[join(sdk, 'emulator', SDK_TOOL_FILES.emulator), ['-list-avds']]]);
 });
 
-test('bootAndroidEmulator spawns the resolved emulator binary', () => {
+test('bootAndroidEmulator spawns the resolved emulator binary', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const savedDisplay = process.env.DISPLAY;
@@ -1328,7 +1328,7 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
     },
   });
   try {
-    bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -1341,12 +1341,13 @@ test('bootAndroidEmulator spawns the resolved emulator binary', () => {
   ]);
 });
 
-test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', () => {
+test('bootAndroidEmulator starts the emulator tree from the home directory on Windows so its launcher and crashpad handler never hold a worktree open', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const cwds: unknown[] = [];
   const args: string[][] = [];
   setExecutor({
+    runFile: () => '',
     runFileQuiet: (_file: string, fileArgs: string[]) =>
       fileArgs[0] === '-version' ? 'Android emulator version 37.1.11.0 (build_id 1)' : null,
     spawn: (_cmd: string, spawnArgs: string[], opts: { cwd?: string }) => {
@@ -1355,9 +1356,9 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
       return { unref: () => {}, pid: 42 };
     },
   });
-  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
-  bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
-  bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
+  expect(await bootAndroidEmulator('stim-app', 5556, { platform: 'win32' })).toBe(42);
+  await bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+  await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' });
   expect(cwds).toEqual([homedir(), undefined, undefined]);
   expect(args[0]?.slice(0, 4)).toEqual(['-avd', 'stim-app', '-port', '5556']);
   expect(args[0]?.slice(-2)).toEqual(['-crash-report-mode', 'never']);
@@ -1365,7 +1366,7 @@ test('bootAndroidEmulator starts the emulator tree from the home directory on Wi
   expect(args[2]).not.toContain('-crash-report-mode');
 });
 
-test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Desktop, boots a headless macOS emulator and opens it in Stim Desktop', () => {
+test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Desktop, boots a headless macOS emulator and opens it in Stim Desktop', async () => {
   const sdk = makeFakeSdk(tmpHome);
   process.env.ANDROID_HOME = sdk;
   const savedDisplay = process.env.DISPLAY;
@@ -1376,8 +1377,8 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
   let desktop: string | null = null;
   setExecutor({
     runQuiet: () => null,
+    runFile: (file: string) => (file === 'osascript' ? (desktop ?? '') : ''),
     runFileQuiet: (file: string, args: string[] = [], opts?: { omitEnv?: readonly string[] }) => {
-      if (file === 'osascript') return desktop;
       opened.push([file, ...args]);
       omittedEnv.push(opts?.omitEnv);
       return null;
@@ -1389,16 +1390,16 @@ test('androidEmulatorApp stim-desktop, set or defaulted by an installed Stim Des
   });
   const config = join(tmpHome, 'config.json');
   try {
-    bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5554, { platform: 'darwin' });
     writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'stim-desktop' }));
-    bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
-    bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5556, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5558, { platform: 'linux' });
     desktop = '/Applications/Stim.app';
     writeFileSync(config, JSON.stringify({}));
-    bootAndroidEmulator('stim-app', 5560, { platform: 'darwin' });
-    bootAndroidEmulator('stim-app', 5562, { platform: 'linux' });
+    await bootAndroidEmulator('stim-app', 5560, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5562, { platform: 'linux' });
     writeFileSync(config, JSON.stringify({ androidEmulatorApp: 'emulator' }));
-    bootAndroidEmulator('stim-app', 5564, { platform: 'darwin' });
+    await bootAndroidEmulator('stim-app', 5564, { platform: 'darwin' });
   } finally {
     if (savedDisplay === undefined) delete process.env.DISPLAY;
     else process.env.DISPLAY = savedDisplay;
@@ -1579,7 +1580,7 @@ test('waitForBoot returns ok when the device booted even if the process reads as
   expect(await waitForBoot('emulator-5554', 5000, { aborted: () => true, pollMs: 1 })).toEqual({ ok: true });
 });
 
-test('bootAndroidEmulator writes stdout and stderr to the log file it is given', () => {
+test('bootAndroidEmulator writes stdout and stderr to the log file it is given', async () => {
   const logFile = join(tmpHome, 'logs', 'emulator.log');
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
@@ -1590,7 +1591,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
       return { pid: 4242, unref: () => {} };
     },
   });
-  const pid = bootAndroidEmulator('stim-app', 5556, { logFile, platform: 'linux' });
+  const pid = await bootAndroidEmulator('stim-app', 5556, { logFile, platform: 'linux' });
   expect(pid).toBe(4242);
   expect(existsSync(logFile)).toBe(true);
   const opts = spawned[0];
@@ -1604,7 +1605,7 @@ test('bootAndroidEmulator writes stdout and stderr to the log file it is given',
   expect(readFileSync(logFile, 'utf-8')).toContain('FATAL');
 });
 
-test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => {
+test('bootAndroidEmulator keeps stdio ignored when no log file is given', async () => {
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
     run: () => '',
@@ -1614,11 +1615,11 @@ test('bootAndroidEmulator keeps stdio ignored when no log file is given', () => 
       return { unref: () => {} };
     },
   });
-  expect(bootAndroidEmulator('stim-app', 5556, { platform: 'linux' })).toBe(null);
+  expect(await bootAndroidEmulator('stim-app', 5556, { platform: 'linux' })).toBe(null);
   expect(spawned[0]?.stdio).toBe('ignore');
 });
 
-test('bootAndroidEmulator still boots when the log file cannot be opened', () => {
+test('bootAndroidEmulator still boots when the log file cannot be opened', async () => {
   const spawned: Array<Record<string, unknown>> = [];
   setExecutor({
     run: () => '',
@@ -1630,7 +1631,7 @@ test('bootAndroidEmulator still boots when the log file cannot be opened', () =>
   });
   const blocker = join(tmpHome, 'blocker');
   writeFileSync(blocker, '');
-  bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
+  await bootAndroidEmulator('stim-app', 5556, { logFile: join(blocker, 'emulator.log'), platform: 'linux' });
   expect(spawned.length).toBe(1);
   expect(spawned[0]?.stdio).toBe('ignore');
 });

@@ -2,13 +2,13 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { STIM_DESKTOP_OPEN_OPTIONS, settingDefault } from './stim-desktop.ts';
+import { STIM_DESKTOP_OPEN_OPTIONS, settingDefault, stimDesktopInstalledAsync } from './stim-desktop.ts';
 import { IOS_SIMULATOR_APPS, settingDefinition } from '@stim-cli/core/state';
 
 export type IosSimulatorApp = (typeof IOS_SIMULATOR_APPS)[number];
 
 interface IosSimulatorViewer {
-  open(udid: string): void;
+  open(udid: string): Promise<void>;
 }
 
 const OPEN_OPTIONS = { timeoutMs: 5000, killSignal: 'SIGKILL' } as const;
@@ -24,22 +24,32 @@ export function configuredIosSimulatorViewer(override?: IosSimulatorApp): IosSim
   const configured = loadConfig()?.iosSimulatorApp;
   const chosen = override ?? (configured === undefined ? undefined : parseIosSimulatorApp(configured));
   return {
-    open: (udid) =>
-      openSimulator(chosen ?? (settingDefault(settingDefinition('iosSimulatorApp')!).value as IosSimulatorApp), udid),
+    open: async (udid) => {
+      if (chosen) return openSimulator(chosen, udid);
+      const installed = await stimDesktopInstalledAsync();
+      return openSimulator(
+        settingDefault(settingDefinition('iosSimulatorApp')!, () => installed).value as IosSimulatorApp,
+        udid,
+      );
+    },
   };
 }
 
-function openSimulator(app: IosSimulatorApp, udid: string): void {
+async function openSimulator(app: IosSimulatorApp, udid: string): Promise<void> {
   const exec = getExecutor();
   if (app === 'stim-desktop') {
-    exec.runFileQuiet('open', ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`], STIM_DESKTOP_OPEN_OPTIONS);
+    await exec.runFileQuietAsync(
+      'open',
+      ['-g', '-a', 'Stim', `stim-desktop://open?udid=${udid}`],
+      STIM_DESKTOP_OPEN_OPTIONS,
+    );
     return;
   }
   if (app === 'siniulator') {
-    exec.runFileQuiet('open', ['-a', 'Siniulator', `siniulator://open?udid=${udid}`], OPEN_OPTIONS);
+    await exec.runFileQuietAsync('open', ['-a', 'Siniulator', `siniulator://open?udid=${udid}`], OPEN_OPTIONS);
     return;
   }
-  const simctlPath = exec.runFileQuiet('xcrun', ['--find', 'simctl'], OPEN_OPTIONS);
+  const simctlPath = await exec.runFileQuietAsync('xcrun', ['--find', 'simctl'], OPEN_OPTIONS);
   const deviceHubApp = simctlPath
     ? resolve(dirname(simctlPath), '..', '..', '..', 'Applications', 'DeviceHub.app')
     : null;
@@ -47,5 +57,5 @@ function openSimulator(app: IosSimulatorApp, udid: string): void {
     deviceHubApp && existsSync(deviceHubApp)
       ? ['-a', deviceHubApp, `devices://device/open?id=${udid}`]
       : ['-a', 'Simulator'];
-  exec.runFileQuiet('open', args, OPEN_OPTIONS);
+  await exec.runFileQuietAsync('open', args, OPEN_OPTIONS);
 }

@@ -509,7 +509,7 @@ export async function ensureIosBooted({
   }
   const readiness = device?.booted === udid ? await ready() : null;
   if (readiness?.ok) {
-    if (simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
+    if (simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp).open(udid);
     return readiness;
   }
 
@@ -534,7 +534,7 @@ export async function ensureIosBooted({
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') {
     const result = readiness ?? (await ready());
-    if (result.ok && simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
+    if (result.ok && simulatorApp !== undefined) await configuredIosSimulatorViewer(simulatorApp).open(udid);
     return result;
   }
 

@@ -114,7 +114,9 @@ export async function teardownParkedIosSim(
 ): Promise<TeardownOutcome> {
   try {
     const removed = await removeParkedAfter('ios', udid, async () => {
-      closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+      await closeOwnedDeviceSessions({ platform: 'ios', id: udid }, async () =>
+        Boolean((await resolveOwnedIosSimNow(udid)).sim),
+      );
       await deleteSim(udid);
     });
     if (!removed) return { status: 'skipped', kind: 'not-parked', reason: 'simulator is no longer parked' };
@@ -127,7 +129,9 @@ export async function teardownParkedIosSim(
 export async function eraseParkedIosSim(udid: string, { label }: { label?: string } = {}): Promise<TeardownOutcome> {
   try {
     const erased = await eraseParkedAfter('ios', udid, async (_record, eraseStarted) => {
-      closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
+      await closeOwnedDeviceSessions({ platform: 'ios', id: udid }, async () =>
+        Boolean((await resolveOwnedIosSimNow(udid)).sim),
+      );
       const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
       if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
       if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
@@ -268,7 +272,11 @@ export async function teardownOwnedIosSim(
       };
     }
     if (resolved.missing) return { status: 'missing' };
-    closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim), workspace);
+    await closeOwnedDeviceSessions(
+      { platform: 'ios', id: udid },
+      async () => Boolean((await resolveOwnedIosSimNow(udid)).sim),
+      workspace,
+    );
     const current = await resolveOwnedIosSimNow(udid);
     if (current.missing) return { status: 'missing' };
     if (current.notOwned)
@@ -314,9 +322,9 @@ export async function teardownOwnedIosSim(
     }
     const root = sim.state === 'Shutdown' ? undefined : repoRootAbove(workspace);
     if (root && settled.sim) {
-      closeOwnedDeviceSessions(
+      await closeOwnedDeviceSessions(
         { platform: 'ios', id: udid },
-        () => resolveOwnedIosSim(udid).sim?.state === 'Shutdown',
+        async () => (await resolveOwnedIosSimNow(udid)).sim?.state === 'Shutdown',
         workspace,
         root,
       );
@@ -526,7 +534,7 @@ async function teardownClaimedAvd(
         const current = resolveAvd(avdName);
         return !current.notOwned && !current.missing && current.serial === serial;
       };
-      closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillOwned, workspace);
+      await closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillOwned, workspace);
       if (!stillOwned()) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       await waitForShutdown(avdName, async (timeoutMs) => {
         markClaimChildPending(claim);
@@ -542,10 +550,10 @@ async function teardownClaimedAvd(
         const deadline = Date.now() + ADB_RELEASE_WAIT_MS;
         while (!(await serialFree(serial, Math.max(1, deadline - Date.now()))) && Date.now() < deadline)
           await sleepAsync(250);
-        closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillStopped, workspace, root);
+        await closeOwnedDeviceSessions({ platform: 'android', id: serial, avdName }, stillStopped, workspace, root);
       }
     } else {
-      closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
+      await closeOwnedDeviceSessions({ platform: 'android', id: null, avdName }, stillStopped, workspace);
       await waitForShutdown(avdName, null);
     }
     if (wipe && !del) {

@@ -1086,7 +1086,7 @@ export function suppressEmulatorCrashConsent({
   return [];
 }
 
-export function bootAndroidEmulator(
+export async function bootAndroidEmulator(
   avdName: string,
   consolePort: number,
   {
@@ -1094,9 +1094,9 @@ export function bootAndroidEmulator(
     platform = process.platform,
     openViewer = true,
   }: { logFile?: string | null; platform?: NodeJS.Platform; openViewer?: boolean } = {},
-): number | null {
+): Promise<number | null> {
   const exec = getExecutor();
-  const app = configuredAndroidEmulatorApp(platform);
+  const app = await configuredAndroidEmulatorApp(platform);
   const child = exec.spawn(
     androidToolPath('emulator'),
     [
@@ -1119,7 +1119,7 @@ export function bootAndroidEmulator(
   child?.unref?.();
   const pid = child?.pid ?? null;
   if (openViewer && pid !== null && platform === 'darwin' && app === 'stim-desktop') {
-    openEmulatorInStimDesktop(`emulator-${consolePort}`);
+    await openEmulatorInStimDesktop(`emulator-${consolePort}`);
   }
   return pid;
 }
