@@ -104,6 +104,8 @@ const GROUP_POLL_MS = 200;
 
 type Refusal = { error: ProtocolError };
 
+type BuildSocket = Pick<WebSocket, 'readyState' | 'OPEN' | 'send' | 'bufferedAmount'>;
+
 const refusal = (code: ErrorCode, message: string): Refusal => ({ error: { code, message } });
 
 /** A manifest path the mirror can hold: relative, normalized, and never inside `.git`. */
@@ -409,7 +411,7 @@ export class BuildHost {
     };
   }
 
-  session(client: string, socket: WebSocket, send: (event: BuildProgressEvent) => void): BuildSession {
+  session(client: string, socket: BuildSocket, send: (event: BuildProgressEvent) => void): BuildSession {
     const session = new BuildSession(this, client, socket, send);
     this.sessions.set(session, client);
     this.served.add(client);
@@ -826,10 +828,10 @@ export class BuildSession {
   private closed = false;
   private readonly host: BuildHost;
   private readonly client: string;
-  private readonly socket: WebSocket;
+  private readonly socket: BuildSocket;
   private readonly send: (event: BuildProgressEvent) => void;
 
-  constructor(host: BuildHost, client: string, socket: WebSocket, send: (event: BuildProgressEvent) => void) {
+  constructor(host: BuildHost, client: string, socket: BuildSocket, send: (event: BuildProgressEvent) => void) {
     this.host = host;
     this.client = client;
     this.socket = socket;
