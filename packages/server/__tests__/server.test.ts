@@ -2299,7 +2299,7 @@ describe('offloaded builds', () => {
       expect(await client.closed).toBe(4401);
       await eventually(() => !alive(pid));
       await eventually(() => readClaimSet(`${area}.claims`).live.length === 0);
-      await eventually(() => !existsSync(join(process.env.STIM_HOME!, 'build-worker', id)));
+      await eventually(() => !existsSync(join(area, '..', '..')));
     },
   );
 

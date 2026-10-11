@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { WebSocket } from 'ws';
+import { WebSocket } from 'ws';
 import { BuildHost, type BuildLimits } from '../src/build.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const file = (path: string, text: string, size = text.length) => ({ path, kind: 'file', size, sha256: sha(text) });
 const frame = (digest: string, bytes: string) => Buffer.concat([Buffer.from(digest, 'hex'), Buffer.from(bytes)]);
+
+const socket = { readyState: WebSocket.OPEN, OPEN: WebSocket.OPEN, send: () => {}, bufferedAmount: 0 };
 
 let home: string;
 let root: string;
@@ -33,7 +35,7 @@ afterEach(async () => {
 });
 
 test('refuses build.sync while the worker volume is under its free floor', () => {
-  const session = start({ minFreeBytes: Number.MAX_SAFE_INTEGER }).session('client', {} as WebSocket, () => {});
+  const session = start({ minFreeBytes: Number.MAX_SAFE_INTEGER }).session('client', socket, () => {});
   expect(session.sync({ repo: 'app-1', files: [file('a', 'x')], done: true })).toHaveProperty(
     'error.code',
     'build-busy',
@@ -44,7 +46,7 @@ test('refuses a blob whose declared size would take the worker volume under its 
   const stats = statfsSync(root);
   const free = stats.bavail * stats.bsize;
   const declared = 2 * 1024 ** 3;
-  const session = start({ minFreeBytes: free - declared / 2 }).session('client', {} as WebSocket, () => {});
+  const session = start({ minFreeBytes: free - declared / 2 }).session('client', socket, () => {});
   expect(session.sync({ repo: 'app-1', files: [{ ...file('a', 'big'), size: declared }], done: true })).toHaveProperty(
     'result.missing',
     [sha('big')],
@@ -54,7 +56,7 @@ test('refuses a blob whose declared size would take the worker volume under its 
 });
 
 test('caps the declared bytes of one manifest across its pages', () => {
-  const session = start({ maxManifestBytes: 10 }).session('client', {} as WebSocket, () => {});
+  const session = start({ maxManifestBytes: 10 }).session('client', socket, () => {});
   expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: true })).toHaveProperty('result');
   expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: false })).toHaveProperty('result');
   expect(session.sync({ repo: 'app-1', files: [file('b', 'bbbbbb')], done: true })).toHaveProperty(
@@ -64,7 +66,7 @@ test('caps the declared bytes of one manifest across its pages', () => {
 });
 
 test('refuses a blob that streams more bytes than its manifest entry declares', () => {
-  const session = start().session('client', {} as WebSocket, () => {});
+  const session = start().session('client', socket, () => {});
   session.sync({ repo: 'app-1', files: [file('a', 'x')], done: true });
   expect(session.blob(frame(sha('x'), 'xx'))).toMatch(/larger than its manifest entry/);
   expect(existsSync(join(root, 'client', 'blobs', sha('x').slice(0, 2), sha('x')))).toBe(false);
@@ -90,7 +92,7 @@ test("deletes a revoked client's area, but not through a symlink or outside the 
 
 test("deletes a served client's area once it loses build, and only when told the registry was read", async () => {
   const host = start();
-  host.session('gone', {} as WebSocket, () => {});
+  host.session('gone', socket, () => {});
   mkdirSync(join(root, 'gone', 'blobs'), { recursive: true });
 
   host.abandonDetached(() => false);
@@ -116,7 +118,7 @@ test('prunes blobs no mirror or open manifest references, and none while a mirro
     join(client, 'repos', 'app-1', 'mirror.json'),
     JSON.stringify({ a: { sha256: sha('mirrored'), kind: 'file', mtimeMs: 0, size: 8 } }),
   );
-  const session = host.session('client', {} as WebSocket, () => {});
+  const session = host.session('client', socket, () => {});
   session.sync({ repo: 'app-2', files: [file('b', 'synced')], done: true });
 
   mkdirSync(join(client, 'repos', 'app-3'));
