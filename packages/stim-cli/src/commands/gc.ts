@@ -799,7 +799,7 @@ async function runGcCore(opts: RunGcOptions, deps: GcDependencies): Promise<GcPa
   if (idleFailures) process.exitCode = 1;
   const inventory =
     opts.json && !opts.delete && idle === null && report.cacheScope === null
-      ? collectInventory(loadConfig(), deadProjects)
+      ? await collectInventory(loadConfig(), deadProjects)
       : null;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',

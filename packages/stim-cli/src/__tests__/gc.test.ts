@@ -27,7 +27,7 @@ import {
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from '../commands/gc/hosted-devices.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { getExecutor, setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
 import { getProject, saveConfig, loadConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
@@ -2799,10 +2799,10 @@ test('gc --json lists every device with its owner and every runtime and system i
   };
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
   const execCalls: string[] = [];
-  setExecutor({
+  const inventoryExecutor: Executor = {
     ...getExecutor(),
-    runFile(file, args: string[] = []) {
-      if (args[0] === '-list-avds') return this.run!([file, ...args].join(' '));
+    runFile(file, args: string[] = [], options) {
+      if (args[0] === '-list-avds') return this.run([file, ...args].join(' '), options);
       const cmd = [file, ...args].join(' ');
       execCalls.push(cmd);
       if (cmd === 'xcrun simctl list devices --json') return iosListJson(devices);
@@ -2818,6 +2818,10 @@ test('gc --json lists every device with its owner and every runtime and system i
       }
       throw new Error(`unexpected runFile: ${cmd}`);
     },
+  };
+  setExecutor({
+    ...inventoryExecutor,
+    runFileAsync: async (file, args, options) => inventoryExecutor.runFile(file, args, options),
   });
 
   try {
@@ -2906,7 +2910,7 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
     process.env.ANDROID_HOME = sdk;
     delete process.env.ANDROID_SDK_ROOT;
     vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-    setExecutor({
+    const inventoryExecutor: Executor = {
       ...getExecutor(),
       runFile(file, args: string[] = []) {
         const cmd = [file, ...args].join(' ');
@@ -2915,6 +2919,10 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
         if (cmd === 'xcrun simctl list runtimes -j') return '{"runtimes":[]}';
         throw new Error(`unexpected runFile: ${cmd}`);
       },
+    };
+    setExecutor({
+      ...inventoryExecutor,
+      runFileAsync: async (file, args, options) => inventoryExecutor.runFile(file, args, options),
     });
     chmodSync(lockedAvdRoot, 0o000);
     chmodSync(join(userAvdRoot, 'Locked.ini'), 0o000);
