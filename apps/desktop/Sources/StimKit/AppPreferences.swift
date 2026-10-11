@@ -44,6 +44,8 @@ public enum AppPreferences {
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
     public static let showsInspector = "showsInspector"
+    public static let tutorialFloats = "tutorial.floats"
+    public static let tutorialFloatPinned = "tutorial.floatPinned"
     public static let showsLogs = "workspace.showsLogs"
     public static let logsDrawerHeight = "workspace.logsDrawerHeight"
     public static let viewerShowsActions = "viewer.showsActions"
