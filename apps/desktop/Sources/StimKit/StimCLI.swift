@@ -94,17 +94,6 @@ public struct StimCLI: Sendable {
     try decodeReporting(StatusPayload.self, from: await run(["status", "--json"]), source: .cli, diagnostics: diagnostics)
   }
 
-  public func stats(workspace: String) async throws -> ProjectStats {
-    try decodeReporting(
-      ProjectStats.self, from: await run(["stats", "--json"], cwd: workspace), source: .cli, diagnostics: diagnostics)
-  }
-
-  /// `stim stats --json` in the home directory, where it reports this Mac's machine-wide part only.
-  public func machineStats() async throws -> MachineStats {
-    try decodeReporting(
-      MachineStats.self, from: await run(["stats", "--json"], cwd: NSHomeDirectory()), source: .cli, diagnostics: diagnostics)
-  }
-
   /// `stim <platform> --plan --json` in `workspace`: what the next build would find. It builds nothing.
   public func plan(platform: String, workspace: String) async throws -> BuildPlanOutcome {
     let args = [platform, "--plan", "--json"]

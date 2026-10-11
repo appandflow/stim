@@ -285,7 +285,7 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   cleanup previews or confirms the selection before deleting anything.
   Build-cache stats and placement totals use the
   existing local server connection when it allows reads for the same Stim home;
-  otherwise they use the CLI. A
+  an unavailable or ineligible session shows a read error. A
   cancelled stats refresh stops waiting without disconnecting device viewing;
   its server read may continue until it finishes or reaches its existing limit
   (normally 60 seconds). The shared connection limits each complete response to

@@ -77,17 +77,17 @@ struct DiagnosticsTests {
     diagnostics.install(recorder.sink)
     let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim, diagnostics: diagnostics)
 
-    await #expect(throws: StimCLI.Failure.self) { try await cli.stats(workspace: dir.path) }
+    await #expect(throws: StimCLI.Failure.self) { try await cli.status() }
 
     #expect(
       recorder.reports == [
         DiagnosticReport(
           message: "stim command failed",
-          tags: ["command": "stats", "outcome": "exited", "exit_code": "4", "stim_code": "STIM_NOT_READY"],
-          fingerprint: ["stim-cli", "stats", "exited", "4", "STIM_NOT_READY"])
+          tags: ["command": "status", "outcome": "exited", "exit_code": "4", "stim_code": "STIM_NOT_READY"],
+          fingerprint: ["stim-cli", "status", "exited", "4", "STIM_NOT_READY"])
       ])
-    #expect(recorder.tags["last_cli_command"] == "stats")
-    #expect(recorder.breadcrumbs.map(\.message) == ["start stats", "finish stats"])
+    #expect(recorder.tags["last_cli_command"] == "status")
+    #expect(recorder.breadcrumbs.map(\.message) == ["start status", "finish status"])
     #expect(recorder.breadcrumbs.last?.data["exit_code"] == "4")
     #expect(Int(recorder.breadcrumbs.last?.data["duration_ms"] ?? "") != nil)
     for secret in [dir.lastPathComponent, "acme", "tail1234", "100.101", "s3cr3t", "feat/"] {
