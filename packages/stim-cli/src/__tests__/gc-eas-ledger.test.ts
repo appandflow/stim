@@ -12,7 +12,8 @@ import { listMountedVolumes } from '../fs-util.ts';
 import type { EasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 const VALID_ID = '3f2b8c1e-5a4d-4e9b-9c7a-1d2e3f4a5b6c';
-const MOUNTED = ['/'];
+const MOUNTED = listMountedVolumes();
+const GONE_ROOT = join(tmpdir(), 'stim-gone');
 
 function claim(sessionId: string, workspaceRoot: string): EasSessionClaim {
   return {
@@ -30,12 +31,12 @@ describe('isStaleEasLedgerEntry', () => {
   const present = (): boolean => true;
 
   test('an invalid id with a proven-absent root is stale', () => {
-    expect(isStaleEasLedgerEntry(claim('drs_2', '/tmp/stim-gone'), MOUNTED, gone)).toBe(true);
+    expect(isStaleEasLedgerEntry(claim('drs_2', GONE_ROOT), MOUNTED, gone)).toBe(true);
   });
 
   test('a valid UUID is kept even when its root is gone', () => {
-    expect(isStaleEasLedgerEntry(claim(VALID_ID, '/tmp/stim-gone'), MOUNTED, gone)).toBe(false);
-    expect(isStaleEasLedgerEntry(claim(VALID_ID.toUpperCase(), '/tmp/stim-gone'), MOUNTED, gone)).toBe(false);
+    expect(isStaleEasLedgerEntry(claim(VALID_ID, GONE_ROOT), MOUNTED, gone)).toBe(false);
+    expect(isStaleEasLedgerEntry(claim(VALID_ID.toUpperCase(), GONE_ROOT), MOUNTED, gone)).toBe(false);
   });
 
   test('an invalid id is kept while its root exists', () => {
