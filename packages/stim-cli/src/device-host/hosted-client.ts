@@ -101,12 +101,15 @@ export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,
   strict = false,
+  signal?: AbortSignal,
 ): Promise<HostConnection> {
+  signal?.throwIfAborted();
   const credential = hostingCredential(machine);
-  const target = await pinnedEndpoint(credential);
+  const target = await pinnedEndpoint(credential, undefined, signal);
+  signal?.throwIfAborted();
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
-  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
+  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host', signal).catch(
     (error: unknown) => {
       throw Object.assign(
         new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
@@ -116,6 +119,8 @@ export async function connectHost(
       );
     },
   );
+  if (signal?.aborted && opened instanceof BuildConnection) opened.close();
+  signal?.throwIfAborted();
   if (!(opened instanceof BuildConnection)) {
     throw Object.assign(
       new Error(

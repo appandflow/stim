@@ -47,16 +47,16 @@ chunk which can contain partial lines. Without a callback the API stays silent.
 
 `build`, `run` and `diagnostics` each run in a separate bundled worker and
 invoke the same lifecycle operations as the CLI. `stop` and reads such as
-`settings` and `stats` run in the importing process against the client's home
-and project, so clients for different homes can share a process. Neither parses Commander arguments. The
+`settings`, `stats` and `logs` run in the importing process against the client's home
+and project, so clients for different homes can share a process. None parses Commander arguments. The
 importing process keeps its working directory, environment, output and signal
 handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
 `StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
-`StimDiagnostics`, `StimReadOptions`, `StimSettings`, `StimStats`, `StimProgress`, and
-`StimPlatform`.
+`StimDiagnostics`, `StimLogsOptions`, `StimReadOptions`, `StimSettings`,
+`StimStats`, `StimProgress`, and `StimPlatform`.
 
 ## Build only
 
@@ -149,6 +149,34 @@ worker. An invalid environment override rejects with a `StimError` carrying
 machine, build placement, and the agent-device and SwiftPM cache usage Stim
 last recorded, the same payload as `stim stats --json` except that it does not
 measure those usage figures again. It reads in the importing process.
+
+## Logs
+
+`logs({ tail, sources, minLevel, slot, since, grep, errorsOnly, signal })`
+returns the same merged records as `stim logs --json`, including hosted logs,
+native crash capture, agent actions and Expo error context. It requires logs
+from a previous workspace run. Pass `tail` to bound the returned records;
+omitting it returns every matching record. `tail: 0` returns no records.
+`sources` is a list of log sources, `grep` is a regular expression string, and
+`since` accepts a duration such as `30s`, `5m` or `2h`.
+
+```ts
+const records = await stim.logs({ tail: 2000, errorsOnly: true });
+const stopLogs = await stim.followLogs({ tail: 200 }, (record) => {
+  console.log(record);
+});
+stopLogs();
+```
+
+`followLogs(options, onRecord)` emits matching backfill followed by appended
+records and resolves to a stop function. Its backfill is bounded when `tail`
+is supplied. Aborting its signal also stops the subscription; cancellation
+before setup finishes rejects with `STIM_CANCELLED`.
+
+These operations run in the importing process, read files asynchronously and
+yield between parsing chunks. A cold file generation is scanned for timestamp
+bounds, markers and launches; later reads reuse that index and scan appended
+complete lines. Caller context and process settings remain unchanged.
 
 ## Diagnostics and CI state
 

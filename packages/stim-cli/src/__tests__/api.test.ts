@@ -390,3 +390,38 @@ test('settings reads sharing one signal leave no abort listeners behind, even wh
   expect(added.mock.calls.length).toBeGreaterThan(0);
   await vi.waitFor(() => expect(removed.mock.calls.length).toBe(added.mock.calls.length));
 });
+
+test('logs clients read independent homes with bounded tails and reject invalid filters', async () => {
+  const first = fixture('logs-first');
+  const second = fixture('logs-second');
+  for (const item of [first, second])
+    writeFileSync(
+      join(item.directory, 'client.ndjson'),
+      [1, 2, 3].map((ts) => JSON.stringify({ ts, src: 'client', level: 'info', msg: item.root })).join('\n') + '\n',
+    );
+  const environment = { ...process.env };
+  const spawn = vi.spyOn(getExecutor(), 'spawn');
+  try {
+    const results = await Promise.all(
+      [first, second].map((item) => createStim({ projectRoot: item.root, home: item.home }).logs({ tail: 1 })),
+    );
+    expect(results).toEqual([first, second].map((item) => [{ ts: 3, src: 'client', level: 'info', msg: item.root }]));
+    expect(spawn).not.toHaveBeenCalled();
+    expect(process.env).toEqual(environment);
+    const stim = createStim({ projectRoot: first.root, home: first.home });
+    for (const options of [
+      { tail: -1 },
+      { tail: 0.5 },
+      { sources: ['missing'] },
+      { minLevel: 'loud' },
+      { since: '5m', grep: '(' },
+    ])
+      await expect(stim.logs(options)).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+    expect(await stim.logs({ tail: 0 })).toEqual([]);
+    const abort = new AbortController();
+    abort.abort();
+    await expect(stim.logs({ signal: abort.signal })).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  } finally {
+    spawn.mockRestore();
+  }
+});

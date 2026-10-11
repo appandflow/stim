@@ -105,6 +105,12 @@ Stim failures are `StimError` instances with `code`, `message`, `remedy`, and
 `details`. An exception thrown by `onProgress` stops further progress and is
 propagated unchanged: a worker operation is cancelled, and an in-process
 `stop()` or read finishes its work first.
+`logs({ tail, sources, minLevel, slot, since, grep, errorsOnly })` reads the same
+merged records as `stim logs --json`, including crash capture and agent actions.
+Pass `tail` to bound the returned records. `followLogs(options, onRecord)` emits
+that backfill and new records, then returns a stop function; aborting its signal
+also stops it. These reads run in process and yield between log chunks.
+
 `diagnostics()` returns the workspace log directory and up to 200 local records,
 even if no run has succeeded. It does not fetch remote logs or capture new crashes.
 See [the API reference](https://stim.appandflow.com/docs/programmatic-api) or

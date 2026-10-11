@@ -85,11 +85,13 @@ export async function pullHostedMacosLogs(
   target: LogTarget = MACOS,
   maxPages: number = MAX_PAGES,
   final = false,
+  signal?: AbortSignal,
 ): Promise<void> {
   const deadline = Date.now() + (final ? 30_000 : 120_000);
   let checkpoint: number | undefined;
   let progressAt = 0;
   for (let page = 0; page < maxPages && Date.now() < deadline; page++) {
+    signal?.throwIfAborted();
     const before = readCursor(root, placement.session, target);
     if (final && Date.now() >= progressAt) {
       ambientWrite('stderr', `Copying final native logs from ${host.machine} (page ${page + 1})\n`);
@@ -113,6 +115,7 @@ export async function pullHostedMacosLogs(
       typeof result.more !== 'boolean'
     )
       throw new Error(`${host.machine} answered device-host.logs.query with an unexpected result.`);
+    signal?.throwIfAborted();
     commitPage(root, placement.session, before, result.records, cursor, target);
     if (!result.more) return;
     const nextCheckpoint = typeof result.checkpoint === 'number' ? result.checkpoint : undefined;
@@ -137,10 +140,11 @@ export async function pullHostedNativeLogs(
   host: HostConnection,
   final = false,
   platform: 'ios' | 'android' = 'ios',
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-data' : 'hosted-android-data'))
     throw new Error(
       `${host.machine} needs a newer stim-server to collect hosted ${platform === 'ios' ? 'iOS' : 'Android'} native logs.`,
     );
-  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final);
+  await pullHostedMacosLogs(root, placement, host, { platform, slot }, final ? 1024 : MAX_PAGES, final, signal);
 }

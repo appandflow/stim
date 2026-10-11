@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import {
   cpSync,
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -3171,8 +3172,22 @@ describe('workspace diff reads', () => {
   });
 });
 
+function liveLogFixture(logged: unknown[] = RECORDS): string {
+  const dir = join(workspaceStateDir(workspace), 'logs');
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'client.ndjson');
+  writeFileSync(path, logged.map((record) => JSON.stringify(record)).join('\n') + '\n');
+  return path;
+}
+
 describe('logs.query', () => {
-  it('runs stim logs --json in the workspace with the Desktop viewer filters and returns the records', async () => {
+  it('reads the workspace in process with the Desktop viewer filters', async () => {
+    liveLogFixture([
+      { ts: 1, src: 'device', marker: true, platform: 'ios', slot: 'tablet' },
+      { ts: 2, src: 'metro', level: 'error', msg: '-render failure' },
+      { ts: 3, src: 'client', level: 'warn', msg: '-render warning' },
+      { ts: 4, src: 'client', level: 'error', msg: '-render error', slot: 'tablet' },
+    ]);
     const port = await start();
     const client = await authed(port);
     const reply = await client.request('logs.query', {
@@ -3184,16 +3199,20 @@ describe('logs.query', () => {
       errors: true,
       tail: 50,
     });
-    expect(reply).toEqual({ id: 2, result: { records: RECORDS } });
-    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([
-      {
-        args: 'logs --json --tail=50 --source metro client --slot=tablet --level=warn --grep=-render --errors',
-        cwd: workspace,
+    expect(reply).toEqual({
+      id: 2,
+      result: {
+        records: [
+          { ts: 2, src: 'metro', level: 'error', msg: '-render failure' },
+          { ts: 4, src: 'client', level: 'error', msg: '-render error', slot: 'tablet' },
+        ],
       },
-    ]);
+    });
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
   });
 
   it('refuses an unregistered workspace and invalid filters without running stim', async () => {
+    liveLogFixture();
     const port = await start();
     const client = await authed(port);
     const other = join(root, 'other');
@@ -3221,9 +3240,7 @@ describe('logs.query', () => {
     expect(await client.request('logs.subscribe', { workspace: other })).toMatchObject({
       error: { code: 'unknown-workspace' },
     });
-    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([
-      { args: 'logs --json --tail=5000', cwd: workspace },
-    ]);
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
   });
 });
 
@@ -3757,112 +3774,71 @@ describe('archived reads', () => {
 });
 
 describe('logs.subscribe', () => {
-  it('shares one follow child per filter, replays the tail to a late subscriber, and stops with the last', async () => {
+  it('backfills the requested tail and follows appends independently for each subscriber', async () => {
+    const path = liveLogFixture();
     const port = await start();
     const first = await authed(port);
     expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
       id: 2,
       result: { subscription: 's1' },
     });
-    expect(await records(first, 3)).toEqual(RECORDS);
-    const [pid] = childPids();
-    expect(stimCalls().at(-1)).toEqual({ args: 'logs --json --follow --tail=2', cwd: workspace });
-
+    expect(await records(first, 2)).toEqual(RECORDS.slice(1));
     const second = await authed(port);
-    await second.request('logs.subscribe', { workspace, tail: 2 });
-    expect(await records(second, 2)).toEqual(RECORDS.slice(1));
-    expect(childPids()).toEqual([pid]);
-
-    const errors = await authed(port);
-    await errors.request('logs.subscribe', { workspace, tail: 2, errors: true });
-    await records(errors, 3);
-    expect(childPids()).toHaveLength(2);
-    errors.socket.close();
-    await until(() => childPids().length === 1);
-
+    await second.request('logs.subscribe', { workspace, tail: 1 });
+    expect(await records(second, 1)).toEqual(RECORDS.slice(2));
+    const appended = { ts: 4, src: 'client', level: 'info', msg: 'new line' };
+    appendFileSync(path, JSON.stringify(appended) + '\n');
+    expect(await records(first, 1)).toEqual([appended]);
+    expect(await records(second, 1)).toEqual([appended]);
     expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
-    expect(alive(pid!)).toBe(true);
+    const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
+    appendFileSync(path, JSON.stringify(later) + '\n');
+    expect(await records(second, 1)).toEqual([later]);
     second.socket.close();
-    await until(() => !alive(pid!));
+    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+    expect(childPids()).toEqual([]);
   });
 
-  it('delivers the records it has, then an error event, when the follow child exits', async () => {
-    const port = await start({ exit: true });
-    const client = await authed(port);
-    await client.request('logs.subscribe', { workspace });
-    expect(await records(client, 3)).toEqual(RECORDS);
-    expect(await client.next()).toEqual({
+  it('times out an unfinished backfill and keeps another socket responsive', async () => {
+    liveLogFixture(
+      Array.from({ length: 100_000 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'x'.repeat(300) })),
+    );
+    const port = await start({ commandLimits: { timeoutMs: 5 } });
+    const slow = await authed(port);
+    const other = await authed(port);
+    await slow.request('logs.subscribe', { workspace });
+    expect(await other.request('hello', { client: CLIENT })).toHaveProperty('error.code', 'already-authenticated');
+    expect(await slow.next()).toMatchObject({
       event: 'error',
       subscription: 's1',
-      error: { code: 'logs-failed', message: 'stim logs --follow exited (code 3): logs failed on purpose' },
+      error: { code: 'logs-failed', message: expect.stringContaining('did not finish') },
+    });
+    expect(await slow.request('unsubscribe', { subscription: 's1' })).toMatchObject({
+      error: { code: 'unknown-subscription' },
     });
   });
 
-  // Windows has no catchable SIGTERM: kill() always terminates the process.
-  test.skipIf(process.platform === 'win32')(
-    'kills a follow child that ignores SIGTERM when its last subscriber leaves or the server closes',
-    async () => {
-      const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
-      const client = await authed(port);
-      await client.request('logs.subscribe', { workspace });
-      await records(client, 3);
-      const [pid] = childPids();
-      client.socket.close();
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      expect(alive(pid!)).toBe(true);
-      await until(() => !alive(pid!));
-
-      const again = await authed(port);
-      await again.request('logs.subscribe', { workspace });
-      await records(again, 3);
-      const next = childPids().find((other) => other !== pid);
-      again.socket.send(JSON.stringify({ id: 9, method: 'build.plan', params: { workspace, platform: 'ios' } }));
-      await until(() => childPids().length === 2);
-      const command = childPids().find((other) => other !== pid && other !== next);
-      await server!.close();
-      server = null;
-      expect([alive(next!), alive(command!)]).toEqual([false, false]);
-    },
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'waits on close for a follow child it is still stopping after its last subscriber left',
-    async () => {
-      const port = await start({ env: { FAKE_STIM_STUBBORN: '1' } });
-      const client = await authed(port);
-      await client.request('logs.subscribe', { workspace });
-      await records(client, 3);
-      const [pid] = childPids();
-      expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
-      await server!.close();
-      server = null;
-      expect(alive(pid!)).toBe(false);
-    },
-  );
-
-  it('drops a client that stops reading and stops the child it no longer needs', async () => {
-    const port = await start({
-      env: { FAKE_STIM_FLOOD: '1' },
-      logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 },
-    });
+  it('drops a backfill exceeding the pending limit and releases its subscription', async () => {
+    liveLogFixture(Array.from({ length: 500 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'line' })));
+    const port = await start({ logLimits: { maxBufferedBytes: 64 * 1024, maxPendingRecords: 200 } });
     const client = await authed(port);
     await client.request('logs.subscribe', { workspace });
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
-    client.socket.pause();
-    await until(() => !alive(pid!));
-
-    client.socket.resume();
-    let message = await client.next();
-    while ('event' in message && message.event === 'logs') message = await client.next();
-    expect(message).toEqual({
-      event: 'error',
-      subscription: 's1',
-      error: { code: 'slow-client', message: expect.stringContaining('fell behind') },
-    });
+    expect(await client.next()).toMatchObject({ event: 'error', subscription: 's1', error: { code: 'slow-client' } });
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
+  });
+
+  it('stops an in-flight backfill when its last subscriber leaves or the server closes', async () => {
+    liveLogFixture(Array.from({ length: 100_000 }, (_, ts) => ({ ts, src: 'client', level: 'info', msg: 'line' })));
+    const port = await start();
+    const client = await authed(port);
+    await client.request('logs.subscribe', { workspace });
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+    await client.request('logs.subscribe', { workspace });
+    await server!.close();
+    server = null;
+    expect(childPids()).toEqual([]);
   });
 });
 
@@ -7602,6 +7578,7 @@ describe('frames.subscribe', () => {
           { ts: BASE + 400, src: 'agent', event: 'agent_action', platform: 'android', command: 'press', msg: 'other' },
           { ts: BASE + 30_500, src: 'build', level: 'error', msg: 'Compile failed' },
         ];
+        liveLogFixture(logged);
         const port = await startWithTools(
           {
             FAKE_STIM_PAYLOADS: statusWith({ ios: STOPPED_SIM, recording: { enabled: true } }),
@@ -7632,12 +7609,7 @@ describe('frames.subscribe', () => {
         const logs = readFileSync(calls, 'utf8')
           .split('\n')
           .filter((line) => line.includes('"logs'));
-        expect(logs.map((line) => JSON.parse(line).args)).toEqual(
-          expect.arrayContaining([
-            expect.stringMatching(/^logs --json --source agent --since=\d+m --tail=5000$/),
-            expect.stringMatching(/^logs --json --source metro client build device --level=error --since=\d+m/),
-          ]),
-        );
+        expect(logs).toEqual([]);
         expect(await client.request('replay.range', { workspace, platform: 'android' })).toMatchObject({
           result: { spans: [], markers: [] },
         });

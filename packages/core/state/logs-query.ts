@@ -235,7 +235,7 @@ export function readLogTimeline(dir: string, records?: NdjsonRecord[]): NdjsonRe
   return sortByTs([...timeline, ...readLogRecords(dir, (name) => name.startsWith(NATIVE_CRASH_LOG_PREFIX))]);
 }
 
-function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
+export function isExpoErrorContext(record: NdjsonRecord, event: unknown): boolean {
   if (record.src !== 'metro' || record.raw !== true || record.event !== event || typeof record.msg !== 'string') {
     return false;
   }
@@ -401,38 +401,40 @@ function launchMarkersBySlot(records: NdjsonRecord[]): Map<unknown, number> {
   return markers;
 }
 
-export function queryLogs({
-  slot,
-  dir,
-  records,
-  sources,
-  minLevel,
-  since,
-  grep,
-  tail,
-  errorsOnly,
-  errorContext,
-  now,
-}: {
+export interface LogQueryOptions {
   slot?: string;
-  dir?: string;
-  records?: NdjsonRecord[];
   sources?: string[];
   minLevel?: string;
   since?: string;
   grep?: string | RegExp;
-  tail?: number;
   errorsOnly?: boolean;
-  errorContext?: boolean;
   now?: number;
-} = {}): NdjsonRecord[] {
-  const source = records ?? readLogRecords(dir as string);
+}
+
+export interface LogQueryPlan {
+  /** Whether a record belongs to the queried slot's timeline, before any other filter. */
+  inTimeline: (record: NdjsonRecord) => boolean;
+  matches: (record: NdjsonRecord) => boolean;
+  launchTs: number | null;
+  sinceTs: number | undefined;
+  /**
+   * Whether no record with a timestamp at most `maxTs`, or without one when `maxTs` is Infinity, can match.
+   * `slots` lists every `slot ?? 'default'` value the records can carry; without it, a query that depends on
+   * per-slot launch markers cannot rule out any timestamp.
+   */
+  excludesUpTo: (maxTs: number, slots?: ReadonlySet<unknown>) => boolean;
+}
+
+/** Decides which records a query matches from the timeline's marker records alone. */
+export function planLogQuery(
+  markers: readonly NdjsonRecord[],
+  { slot, sources, minLevel, since, grep, errorsOnly, now }: LogQueryOptions = {},
+): LogQueryPlan {
   const slotLaunched =
-    slot !== undefined && source.some((record) => isLaunchMarker(record) && (record.slot ?? 'default') === slot);
-  const all = source.filter(
-    (record) => slot === undefined || (record.slot ?? 'default') === slot || (slotLaunched && isSharedRecord(record)),
-  );
-  if (all.length === 0) return [];
+    slot !== undefined && markers.some((record) => isLaunchMarker(record) && (record.slot ?? 'default') === slot);
+  const inTimeline = (record: NdjsonRecord) =>
+    slot === undefined || (record.slot ?? 'default') === slot || (slotLaunched && isSharedRecord(record));
+  const all = markers.filter((record) => record.marker === true && inTimeline(record));
 
   const { launchTs, bundleTs, pageLoadTs } = errorsOnly
     ? markerWindow(all)
@@ -450,13 +452,12 @@ export function queryLogs({
   });
 
   const slotMarkers = launchMarkersBySlot(all);
-  const markers = all.filter((record) => record.marker === true);
   const launches = newestByPlatform(
-    markers.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
+    all.filter((record) => record.src !== 'metro' && !isWebPageRecord(record)),
     (record) => (typeof record.platform === 'string' ? record.platform : null),
   );
   const bundles = newestByPlatform(
-    markers.filter((record) => record.src === 'metro'),
+    all.filter((record) => record.src === 'metro'),
     bundleMarkerPlatform,
   );
   const slotPlatforms = slot === undefined ? [] : [...launches.keys()].filter((platform) => platform !== null);
@@ -479,16 +480,73 @@ export function queryLogs({
         (platform ? marker === platform : slotPlatforms.length === 0 || slotPlatforms.includes(marker)),
     );
   };
-  let matched = all.filter(
-    (record) =>
+  const lowestWindowStart = (slots: ReadonlySet<unknown> | undefined): number | undefined => {
+    if (!criteria.errorsOnly) return undefined;
+    const starts: number[] = [];
+    if (pageLoadTs !== null) starts.push(pageLoadTs - 1);
+    const kinds = criteria.sources ?? [];
+    if (criteria.includeAppDeviceErrors || kinds.some((src) => src !== 'metro' && src !== 'client')) {
+      const possible = slot !== undefined ? [slot] : slots ? [...slots] : null;
+      if (!possible) return undefined;
+      for (const value of possible) {
+        const start = slotMarkers.get(value);
+        if (start === undefined) return undefined;
+        starts.push(start);
+      }
+    }
+    if (kinds.includes('metro') || kinds.includes('client')) {
+      if (criteria.markerTs === undefined) return undefined;
+      starts.push(criteria.markerTs, ...launches.values());
+    }
+    return starts.length ? Math.min(...starts) : undefined;
+  };
+  return {
+    inTimeline,
+    matches: (record) =>
+      inTimeline(record) &&
       !otherPlatform(record) &&
       recordMatches(record, { ...criteria, markerTs: windowStart(record), bundleMarkerTs: bundleWindowStart(record) }),
+    launchTs,
+    sinceTs: criteria.sinceTs,
+    excludesUpTo: (maxTs, slots) => {
+      if (criteria.sinceTs !== undefined && maxTs < criteria.sinceTs) return true;
+      const start = lowestWindowStart(slots);
+      return start !== undefined && maxTs <= start;
+    },
+  };
+}
+
+export function queryLogs({
+  slot,
+  dir,
+  records,
+  sources,
+  minLevel,
+  since,
+  grep,
+  tail,
+  errorsOnly,
+  errorContext,
+  now,
+}: LogQueryOptions & {
+  dir?: string;
+  records?: NdjsonRecord[];
+  tail?: number;
+  errorContext?: boolean;
+} = {}): NdjsonRecord[] {
+  const source = records ?? readLogRecords(dir as string);
+  const plan = planLogQuery(
+    source.filter((record) => record.marker === true),
+    { slot, sources, minLevel, since, grep, errorsOnly, now },
   );
+  const all = source.filter(plan.inTimeline);
+  if (all.length === 0) return [];
+  let matched = all.filter(plan.matches);
   if (typeof tail === 'number' && tail >= 0 && matched.length > tail) {
     matched = matched.slice(matched.length - tail);
   }
   return errorContext
-    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), launchTs, criteria.sinceTs)
+    ? includeBareErrorContext(all, attachExpoErrorContext(all, matched), plan.launchTs, plan.sinceTs)
     : matched;
 }
 

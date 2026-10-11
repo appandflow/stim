@@ -1,3 +1,5 @@
+import { configDir } from '@stim-cli/core';
+import { openWorkspaceLogs } from '../engine/logs.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -12,25 +14,20 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
+  runId,
   buildCriteria,
   compileGrep,
-  fileSizes,
   followLogs,
   logFiles,
   parseSince,
   queryLogs,
-  queryJsonLogs,
-  readLogRecords,
-  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
-import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;
@@ -238,8 +235,6 @@ export default function logsCommand(program: Command): void {
 
       requireLogsWorkspace(root, dir);
 
-      const hostedReachable = await syncHostedLogs(root);
-
       const query = {
         slot: opts.slot,
         dir,
@@ -265,20 +260,30 @@ export default function logsCommand(program: Command): void {
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      const captured = await captureWorkspaceCrashes(root, dir);
-      const offsets = opts.follow ? fileSizes(dir) : null;
-      const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
-      const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);
-      const project = loadConfig()?.projects?.[root];
-      const readAgent =
-        (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
-          ? createAgentActionReader({
-              targets: () => workspaceAgentTargets(project, readMacosRecord(root)),
-              sinceTs: agentSince,
-            })
-          : null;
-      const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;
-      const rawRecords = (opts.json ? queryJsonLogs : queryLogs)({ ...query, records: timeline });
+      const context = {
+        home: configDir(),
+        buildCache: null,
+        projectRoot: root,
+        cwd: root,
+        runId: runId(),
+        env: process.env,
+        signal: new AbortController().signal,
+        output: (stream: 'stdout' | 'stderr', text: string) => process[stream].write(text),
+      };
+      const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, query, Boolean(opts.follow));
+      const offsets = opts.follow ? view.sizes : null;
+      let timeline: NdjsonRecord[] = [];
+      let rawRecords: NdjsonRecord[];
+      try {
+        const extra = (await readAgent?.()) ?? [];
+        if (opts.json) rawRecords = await view.query({ ...query, extra });
+        else {
+          timeline = sortByTs([...(await view.query()), ...extra]);
+          rawRecords = queryLogs({ ...query, records: timeline });
+        }
+      } finally {
+        await view.close();
+      }
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
         ? rawRecords
@@ -331,9 +336,22 @@ export default function logsCommand(program: Command): void {
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
       });
+      let readingAgent = false;
       const agentTimer = readAgent
         ? setInterval(() => {
-            for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
+            if (readingAgent) return;
+            readingAgent = true;
+            void readAgent()
+              .then(
+                (actions) => {
+                  for (const record of actions) if (recordMatches(record, criteria)) emit(record);
+                  return undefined;
+                },
+                () => {},
+              )
+              .finally(() => {
+                readingAgent = false;
+              });
           }, 500)
         : null;
       const stopHosted = followHostedLogs(root, !hostedReachable);

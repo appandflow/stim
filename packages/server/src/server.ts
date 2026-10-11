@@ -29,7 +29,6 @@ import {
   readWorkspaceState,
   hostedIosPlacements,
   hostedAndroidPlacements,
-  parseNdjsonLine,
   RECORDING_PLATFORMS,
   stimBuildDigest,
   validRunId,
@@ -72,15 +71,7 @@ import {
   type Frame,
   type FrameLimits,
 } from './frames.ts';
-import {
-  archivedLogs,
-  archivedTimeline,
-  LogBatcher,
-  logArgs,
-  parseLogFilter,
-  readTargetError,
-  type LogLimits,
-} from './logs.ts';
+import { archivedLogs, archivedTimeline, LogBatcher, parseLogFilter, readTargetError, type LogLimits } from './logs.ts';
 import { readDiskVolumes, readMachineUsage, readMemoryPressure, UsageSampler } from './machine.ts';
 import {
   BuildMachinesCache,
@@ -123,7 +114,7 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
-import { createStim, StimError } from 'stim';
+import { createStim, StimError, type StimLogsOptions } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -1549,22 +1540,66 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         batcher.finish();
         return;
       }
-      const unsubscribe = feeds.subscribe(
-        { args: logArgs(parsed.filter, true), cwd, keep: parsed.filter.tail!, label: 'stim logs --follow' },
-        {
-          item: (record) => batcher.push(record),
-          failed: (message) => {
+      const abort = new AbortController();
+      let stop: (() => void) | undefined;
+      const deadline = setTimeout(() => {
+        abort.abort();
+        batcher.stop();
+        subscriptions.delete(subscription);
+        send(socket, {
+          event: 'error',
+          subscription,
+          error: {
+            code: 'logs-failed',
+            message: `stim logs did not finish within ${commandLimits.timeoutMs / 1000} s.`,
+          },
+        });
+      }, commandLimits.timeoutMs);
+      subscriptions.set(subscription, () => {
+        clearTimeout(deadline);
+        abort.abort();
+        batcher.stop();
+        stop?.();
+      });
+      const task = Promise.resolve()
+        .then(() =>
+          createStim({ projectRoot: cwd, env: options.env }).followLogs(
+            {
+              sources: parsed.filter.sources,
+              minLevel: parsed.filter.level,
+              slot: parsed.filter.slot,
+              grep: parsed.filter.grep,
+              errorsOnly: parsed.filter.errors,
+              tail: parsed.filter.tail,
+              signal: abort.signal,
+            },
+            (record) => {
+              if (!abort.signal.aborted) batcher.push(record);
+            },
+          ),
+        )
+        .then(
+          (unsubscribe) => {
+            clearTimeout(deadline);
+            stop = unsubscribe;
+            if (abort.signal.aborted) stop();
+            return undefined;
+          },
+          (cause: unknown) => {
+            clearTimeout(deadline);
+            if (abort.signal.aborted) return;
             batcher.flush(true);
             batcher.stop();
             subscriptions.delete(subscription);
-            send(socket, { event: 'error', subscription, error: { code: 'logs-failed', message } });
+            send(socket, { event: 'error', subscription, error: { code: 'logs-failed', message: readFailure(cause) } });
           },
-        },
-      );
-      subscriptions.set(subscription, () => {
-        batcher.stop();
-        unsubscribe();
-      });
+        )
+        .finally(() => running.delete(cancel));
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      running.add(cancel);
     }
 
     function subscribeFrames(
@@ -1840,7 +1875,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'logs.query' | 'build.plan'>(
+    function command<M extends 'build.plan'>(
       id: RequestId,
       args: string[],
       cwd: string,
@@ -1926,11 +1961,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
         return;
       }
-      command<'logs.query'>(id, logArgs(parsed.filter, false), cwd, (stdout) => ({
-        records: stdout
-          .split('\n')
-          .filter((line) => line.trim())
-          .map((line) => JSON.parse(line) as JsonObject),
+      inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
+        records: await createStim({ projectRoot: cwd, env: options.env }).logs({
+          sources: parsed.filter.sources,
+          minLevel: parsed.filter.level,
+          slot: parsed.filter.slot,
+          grep: parsed.filter.grep,
+          errorsOnly: parsed.filter.errors,
+          tail: parsed.filter.tail,
+          signal,
+        }),
       }));
     }
 
@@ -1989,7 +2029,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
-    function inProcessRead<M extends 'settings.get' | 'stats.get'>(
+    function inProcessRead<M extends 'settings.get' | 'stats.get' | 'logs.query'>(
       id: RequestId,
       label: string,
       read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
@@ -2116,20 +2156,31 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       void run.outcome.then((outcome) => finish(actionOutcome(outcome)));
     }
 
-    function collect(args: string[], cwd: string): Promise<NdjsonRecord[] | string> {
-      const run = runStim(options.stimCli, options.env, args, cwd, commandLimits);
-      const cancel = () => run.cancel();
+    function collect(query: StimLogsOptions, cwd: string): Promise<NdjsonRecord[] | string> {
+      const abort = new AbortController();
+      const deadline = setTimeout(() => abort.abort(), commandLimits.timeoutMs);
+      let task: Promise<NdjsonRecord[] | string>;
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
       commands.add(cancel);
       running.add(cancel);
-      return run.outcome.then((outcome) => {
-        commands.delete(cancel);
-        running.delete(cancel);
-        if (!outcome.ok) return outcome.message;
-        return outcome.stdout.split('\n').flatMap((line) => {
-          const record = parseNdjsonLine(line);
-          return record ? [record] : [];
+      task = Promise.resolve()
+        .then(() => createStim({ projectRoot: cwd, env: options.env }).logs({ ...query, signal: abort.signal }))
+        .then(
+          (records) =>
+            Buffer.byteLength(records.map((record) => JSON.stringify(record)).join('\n')) > commandLimits.maxOutputBytes
+              ? `stim logs printed more than ${commandLimits.maxOutputBytes} bytes.`
+              : records,
+          (cause: unknown) => readFailure(cause),
+        )
+        .finally(() => {
+          clearTimeout(deadline);
+          commands.delete(cancel);
+          running.delete(cancel);
         });
-      });
+      return task;
     }
 
     function archiveDetail(id: RequestId, params: unknown): void {
@@ -2201,13 +2252,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         send(socket, { id, result: { ...state, markers } });
         return;
       }
-      const since = `--since=${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
+      const since = `${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
       void Promise.all([
-        collect(['logs', '--json', '--source', 'agent', since, '--tail=5000'], cwd),
-        collect(
-          ['logs', '--json', '--source', 'metro', 'client', 'build', 'device', '--level=error', since, '--tail=5000'],
-          cwd,
-        ),
+        collect({ sources: ['agent'], since, tail: 5000 }, cwd),
+        collect({ sources: ['metro', 'client', 'build', 'device'], minLevel: 'error', since, tail: 5000 }, cwd),
       ]).then(([actions, errors]) => {
         const failed = [actions, errors].find((result) => typeof result === 'string');
         if (typeof failed === 'string') return error(id, 'stim-failed', failed);

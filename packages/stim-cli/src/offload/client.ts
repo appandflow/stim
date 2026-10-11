@@ -360,9 +360,10 @@ export class BuildConnection {
     token: string,
     timeoutMs: number,
     capability: 'build' | 'device-host' = 'build',
+    signal?: AbortSignal,
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
     const started = performance.now();
-    const result = await BuildConnection.connect(target, token, timeoutMs, capability);
+    const result = await BuildConnection.connect(target, token, timeoutMs, capability, signal);
     const ms = Math.round(performance.now() - started);
     debugLog.log('remote_connect', {
       host: target.host,
@@ -388,7 +389,9 @@ export class BuildConnection {
     token: string,
     timeoutMs: number,
     capability: 'build' | 'device-host',
+    signal?: AbortSignal,
   ): Promise<BuildConnection | { failure: string; refused: boolean; code?: string }> {
+    signal?.throwIfAborted();
     return new Promise((resolve) => {
       const options: ClientOptions & ConnectionOptions = {
         handshakeTimeout: timeoutMs,
@@ -397,13 +400,17 @@ export class BuildConnection {
       };
       const socket = new WebSocket(target.url, options);
       const fail = (reason: string, refused = false, code?: string) => {
+        signal?.removeEventListener('abort', cancel);
         clearTimeout(timer);
         socket.removeAllListeners();
         socket.on('error', () => {});
         socket.terminate();
         resolve({ failure: reason, refused, ...(code ? { code } : {}) });
       };
+      const cancel = () => fail('cancelled', false, 'STIM_CANCELLED');
       const timer = setTimeout(() => fail('no reply in time'), timeoutMs);
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) return cancel();
       socket.once('error', (error) =>
         fail(
           /Unexpected server response: 502/.test(error.message)
@@ -426,6 +433,7 @@ export class BuildConnection {
         );
       });
       socket.once('message', (data) => {
+        signal?.removeEventListener('abort', cancel);
         clearTimeout(timer);
         socket.removeAllListeners();
         let reply: unknown;
