@@ -1388,7 +1388,8 @@ Events are `{ "event", "subscription", ... }`.
   the `stim` commands it runs, so a phone's reload is not recorded as the work
   of the agent session that started the server. The server runs the status
   watch itself, in a worker thread, from the moment it is ready, so a
-  subscriber gets the latest payload at once; all subscribers share it. While any status subscription is open, the server keeps a CPU
+  subscriber gets the latest payload at once; all subscribers share it.
+  While any status subscription is open, the server keeps a CPU
   and memory history from each payload's `machine.owners`, and every `status`
   event carries it beside the payload as `usage`, once it holds a reading:
   `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
@@ -1951,7 +1952,8 @@ problem that still holds when they end pushes then, and what started or
 finished during them does not.
 
 While at least one device is paired, the server reads its status watch, even
-with no client connected, and reads the free space of Stim's volumes and the memory pressure every minute.
+with no client connected, and reads the free space of Stim's volumes and the
+memory pressure every minute.
 While a device wants `finished`, it looks up the pull requests of worktree
 branches that have an upstream every 5 minutes, with one `gh api graphql` call
 per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed

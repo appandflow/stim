@@ -91,6 +91,11 @@ const beat = join(env.FAKE_STIM_PIDS, 'status-worker.' + threadId);
 appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker', cwd: workerData.cwd }) + '\\n');
 const payloads = JSON.parse(env.FAKE_STIM_PAYLOADS);
 let index = 0;
+parentPort.on('message', (message) => {
+  if (message !== 'stop') return;
+  appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker stop', cwd: workerData.cwd }) + '\\n');
+  process.exit(0);
+});
 setInterval(() => {
   writeFileSync(beat, String(Date.now()));
   if (index < payloads.length) return void parentPort.postMessage({ line: JSON.stringify(payloads[index++]) });
@@ -2819,6 +2824,7 @@ describe('status.subscribe', () => {
 
     second.socket.close();
     await until(() => statusWorkers().length === 0, 1000);
+    expect(stimCalls().map((call) => call.args)).toContain('status-worker stop');
   });
 
   it('starts the status watch when the server becomes ready, before any subscriber, and keeps it', async () => {

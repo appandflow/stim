@@ -4,6 +4,7 @@ import type { FeedListener, JsonObject } from './feed.ts';
 
 const RESTART_MIN_MS = 1_000;
 const RESTART_MAX_MS = 60_000;
+const STOP_GRACE_MS = 2_000;
 
 /**
  * The status of this server's Stim home, read by the status watch in a worker thread: the latest payload goes to every
@@ -33,6 +34,10 @@ export class StatusFeed {
 
   subscribe(listener: FeedListener): () => void {
     this.listeners.add(listener);
+    if (this.restart) {
+      clearTimeout(this.restart);
+      this.restart = null;
+    }
     this.start();
     if (this.latest) listener.item(this.latest.value, this.latest.text);
     return () => {
@@ -75,12 +80,23 @@ export class StatusFeed {
     worker.on('exit', (code) => this.ended(worker, `the status worker exited (code ${code})`));
   }
 
+  /**
+   * Asks the worker to stop its watch, which ends the adb and simctl children it started, and terminates it if it has
+   * not exited after a grace period.
+   */
   private stop(): void {
     const worker = this.worker;
     if (!worker) return;
     this.worker = null;
     this.latest = null;
-    const stopped = worker.terminate().finally(() => this.stopping.delete(stopped));
+    const stopped = new Promise<void>((resolve) => {
+      const grace = setTimeout(() => void worker.terminate(), STOP_GRACE_MS);
+      worker.once('exit', () => {
+        clearTimeout(grace);
+        resolve();
+      });
+      worker.postMessage('stop');
+    }).finally(() => this.stopping.delete(stopped));
     this.stopping.add(stopped);
   }
 
