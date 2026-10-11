@@ -5,7 +5,6 @@ import {
   getProject,
   loadConfig,
   saveConfig,
-  withConfigLock,
   withConfigLockAsync,
 } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
@@ -80,7 +79,7 @@ export function reserveBrowserPort(projectPath: string, options: AllocateOptions
 
 export function releaseBrowserPort(projectPath: string, port: number): Promise<void> {
   return withPortsLock(async () =>
-    withConfigLock(() => {
+    withConfigLockAsync(() => {
       const cfg = loadConfig();
       const ports = cfg?.projects?.[projectPath]?.ports;
       if (!cfg || ports?.[BROWSER_LABEL] !== port) return;

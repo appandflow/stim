@@ -498,3 +498,12 @@ test('an async acquisition inside a held lock runs its body before the outer bod
   expect(order).toEqual(['inner', 'outer']);
   expect(existsSync(lock)).toBe(false);
 });
+
+test('a waiting async acquisition does not keep the claim that a sync call in the same process needs', async () => {
+  mkdirSync(lock);
+  const waiting = withDirLockAsync(lock, () => 'entered', { waitMs: 2000, pollMs: 10 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(() => withDirLock(lock, () => 'sync', { waitMs: 0 })).toThrow('No current Stim holds it');
+  rmSync(lock, { recursive: true });
+  await expect(waiting).resolves.toBe('entered');
+});

@@ -188,6 +188,8 @@ export async function withDirLockAsync<T>(
   try {
     while (!(held = attemptDirLock(lockPath, pending))) {
       if (Date.now() >= deadline) throw dirLockTimeout(lockPath, pending.claim);
+      releaseClaim(pending.claim);
+      pending.claim = undefined;
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
   } catch (error) {
