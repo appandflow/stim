@@ -15,7 +15,6 @@ import {
 import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
-import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
 import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
@@ -140,7 +139,7 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
   }
 }
 
-function mainCheckoutProjectRoot(projectRoot: string): string {
+export function mainCheckoutProjectRoot(projectRoot: string): string {
   const currentRepoRoot = repoRoot(projectRoot);
   if (!currentRepoRoot) return projectRoot;
   try {
@@ -1174,7 +1173,6 @@ export function reactNativeDoctorFindings({
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
     ...checkMainCheckout(projectRoot, { platform, localIos, iosProjectPath: iosProject.relative, androidLayout }),
-    ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot), iosProject.relative) : []),
     ...checkStorageLayout(projectRoot, {
       platform,
       host,
