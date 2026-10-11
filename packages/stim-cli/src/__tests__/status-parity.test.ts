@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { execFileSync } from 'child_process';
 import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'fs';
-import { tmpdir, totalmem } from 'os';
+import { tmpdir } from 'os';
 import { join } from 'path';
 import { Command } from 'commander';
 import { archiveWorkspace } from '../archive.ts';
@@ -17,6 +17,17 @@ import type { ProjectRecord } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { IMPOSSIBLE_PID, makeConfig } from './_factories.ts';
+
+const HOST_MEMORY = 32 * 1024 ** 3;
+
+vi.mock('os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('os')>()),
+  totalmem: () => HOST_MEMORY,
+}));
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  totalmem: () => HOST_MEMORY,
+}));
 
 const NOW = Date.parse('2026-10-01T12:00:00.000Z');
 const ENVIRONMENTS = 66;
@@ -165,9 +176,7 @@ function normalize(output: string): string {
     .replaceAll(home, '<home>')
     .replaceAll(`"pid":${process.pid}`, '"pid":"<test-pid>"')
     .replaceAll(`pid ${process.pid}`, 'pid <test-pid>')
-    .replaceAll(`"totalMemoryMb":${Math.round(totalmem() / (1024 * 1024))}`, '"totalMemoryMb":"<host>"')
     .replace(/--[0-9a-f]{16}\b/g, '--<path-hash>')
-    .replace(/of [0-9.]+ GB/g, 'of <host> GB')
     .replace(/^Archived: (\d+ workspaces), .*$/m, 'Archived: $1, <bytes>');
 }
 

@@ -26069,7 +26069,7 @@
   "capacity": {
     "liveCount": 7,
     "committedMb": 10500,
-    "totalMemoryMb": "<host>",
+    "totalMemoryMb": 32768,
     "overCapacity": false
   },
   "deviceLeases": [

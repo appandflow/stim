@@ -492,4 +492,4 @@ Worktrees with no environment (20):
   <home>/wt/env-84 [feature/env-84]
   <home>/wt/env-85 [feature/env-85]
 
-7 active environment(s), roughly 10.3 GB of <host> GB committed.
+7 active environment(s), roughly 10.3 GB of 32.0 GB committed.
