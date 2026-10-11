@@ -75,7 +75,7 @@ export function createStim(options: StimOptions): StimClient {
     }
   }
   const base = options.env ?? process.env;
-  const home = options.home ?? (base.STIM_HOME || join(homedir(), '.stim'));
+  const home = options.home ?? (base.STIM_HOME || join(base.HOME || homedir(), '.stim'));
   const context = {
     ...options,
     projectRoot,
@@ -91,7 +91,7 @@ export function createStim(options: StimOptions): StimClient {
     projectRoot,
     settings: ({ signal }: StimReadOptions = {}) =>
       read(context, home, signal, async () =>
-        readSettingsPayload(await readSettingsContext(projectRoot, context.env, note, signal)),
+        readSettingsPayload(await readSettingsContext(projectRoot, context.env, note, signal), signal),
       ),
     build: (({ signal, ...request }: StimBuildOptions) =>
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],

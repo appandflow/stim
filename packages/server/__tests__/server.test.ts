@@ -35,7 +35,6 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
-import { createStim } from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
@@ -3807,10 +3806,10 @@ describe('stats.get and settings.get', () => {
       id: 2,
       result: readStatsReport(null, Date.now()).report,
     });
-    const settings = await client.request('settings.get');
-    expect(settings).toEqual({ id: 3, result: await createStim({ projectRoot: homedir() }).settings() });
-    expect(settings).toMatchObject({
+    expect(await client.request('settings.get')).toMatchObject({
+      id: 3,
       result: {
+        project: null,
         files: { machine: config },
         settings: expect.arrayContaining([
           { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
@@ -4001,14 +4000,15 @@ require('node:net').createServer().listen(0, '127.0.0.1');
       const first = await authed(port);
       const second = await authed(port);
       const reply = first.request('settings.get', { workspace });
-      await until(() => gits().length === 2);
+      await until(() => gits().length > 0);
       expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
       expect(await reply).toMatchObject({
         error: { code: 'stim-failed', message: 'stim settings did not finish within 1 s.' },
       });
       await until(() => gits().every((pid) => !alive(pid)));
+      const timedOut = gits().length;
       first.socket.send(JSON.stringify({ id: 20, method: 'settings.get', params: { workspace } }));
-      await until(() => gits().length === 4);
+      await until(() => gits().length > timedOut);
       first.socket.terminate();
       await until(() => gits().every((pid) => !alive(pid)));
       expect(stimCalls()).toEqual([]);

@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { join, sep } from 'node:path';
 import {
   coerceSettingText,
@@ -12,7 +13,7 @@ import {
 } from '@stim-cli/core/state';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig, type Config } from './config.ts';
 import { gitAsync } from './git.ts';
-import { findCommandWorkspace } from './project.ts';
+import { findCommandWorkspaceAsync } from './project.ts';
 import { readCommittedSettings, unknownSettingKeys } from './settings.ts';
 import { settingDefault, stimDesktopInstalled, stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 
@@ -43,17 +44,27 @@ export interface SettingsContext {
   desktopInstalled: () => boolean;
 }
 
+function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, string>; omitEnv: string[] } {
+  return {
+    env: Object.fromEntries(
+      Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])),
+    ),
+    omitEnv: Object.keys(process.env).filter((name) => env[name] === undefined),
+  };
+}
+
+function killOnAbort(signal: AbortSignal | undefined): (child: ChildProcess) => void {
+  return (child) => {
+    if (!signal) return;
+    if (signal.aborted) return void child.kill('SIGKILL');
+    const kill = () => child.kill('SIGKILL');
+    signal.addEventListener('abort', kill, { once: true });
+    child.once('exit', () => signal.removeEventListener('abort', kill));
+  };
+}
+
 function gitPath(cwd: string, args: string[], env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<string | null> {
-  const childEnv = Object.fromEntries(
-    Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])),
-  );
-  return gitAsync(cwd, ['rev-parse', ...args], {
-    env: childEnv,
-    onSpawn: (child) => {
-      if (signal?.aborted) child.kill('SIGKILL');
-      else signal?.addEventListener('abort', () => child.kill('SIGKILL'), { once: true });
-    },
-  }).then(
+  return gitAsync(cwd, ['rev-parse', ...args], { ...childEnvironment(env), onSpawn: killOnAbort(signal) }).then(
     (out) => {
       const path = out.trim();
       if (!path) return null;
@@ -63,18 +74,19 @@ function gitPath(cwd: string, args: string[], env: NodeJS.ProcessEnv, signal?: A
   );
 }
 
-/** Reads the layers a settings lookup in `cwd` sees; `signal` kills its Git children. */
+/** Reads the layers a settings lookup in `cwd` sees, running Git with exactly `env`; `signal` kills its Git children. */
 export async function readSettingsContext(
   cwd: string,
   env: NodeJS.ProcessEnv,
   note: (line: string) => void = () => {},
   signal?: AbortSignal,
 ): Promise<SettingsContext> {
-  const projectPath = findCommandWorkspace(cwd, note);
+  const repoRootOf = (dir: string) => gitPath(dir, ['--show-toplevel'], env, signal);
+  const projectPath = await findCommandWorkspaceAsync(cwd, repoRootOf, note);
   const start = projectPath ?? cwd;
   const [common, root] = await Promise.all([
     gitPath(start, ['--path-format=absolute', '--git-common-dir'], env, signal),
-    gitPath(start, ['--show-toplevel'], env, signal),
+    repoRootOf(start),
   ]);
   signal?.throwIfAborted();
   const repoRoot = common ? (root ?? projectPath) : null;
@@ -273,7 +285,7 @@ function settingsPayload(context: SettingsContext): SettingsPayload {
 }
 
 /** Every setting with its effective value and layers; looks Stim Desktop up asynchronously, and only when a default depends on it. */
-export async function readSettingsPayload(context: SettingsContext): Promise<SettingsPayload> {
+export async function readSettingsPayload(context: SettingsContext, signal?: AbortSignal): Promise<SettingsPayload> {
   let asked = false;
   const payload = settingsPayload({
     ...context,
@@ -283,6 +295,7 @@ export async function readSettingsPayload(context: SettingsContext): Promise<Set
     },
   });
   if (!asked) return payload;
-  const installed = await stimDesktopInstalledAsync(process.platform, context.env);
+  const installed = await stimDesktopInstalledAsync(process.platform, context.env, killOnAbort(signal));
+  signal?.throwIfAborted();
   return settingsPayload({ ...context, desktopInstalled: () => installed });
 }

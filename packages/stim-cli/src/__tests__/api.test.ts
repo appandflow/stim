@@ -249,3 +249,61 @@ test('a settings refusal rejects with its code and remedy, and an aborted read d
   vi.stubEnv('STIM_HOME', 'relative');
   await expect(createStim({ projectRoot: root }).settings()).rejects.toMatchObject({ code: 'STIM_RELATIVE_PATH' });
 });
+
+test('a settings read uses only the client environment for its default home and its Git children', async () => {
+  const { root } = fixture('settings-env');
+  const userHome = join(scratch, 'user');
+  mkdirSync(join(userHome, '.stim'), { recursive: true });
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
+  const stim = createStim({ projectRoot: root, env: { PATH: process.env.PATH, HOME: userHome } });
+  vi.stubEnv('GIT_DIR', join(scratch, 'missing.git'));
+  const payload = await stim.settings();
+  expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
+  expect(payload.files.repo).toContain(`repos["${realpathSync(join(root, '.git'))}"]`);
+});
+
+test('aborting a settings read kills its Stim Desktop lookup', async () => {
+  const { root, home } = fixture('settings-abort');
+  const executor = getExecutor();
+  const real = executor.runFileAsync.bind(executor);
+  let lookup: ChildProcess | null = null;
+  let ended: NodeJS.Signals | null = null;
+  const spy = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
+    if (file !== 'osascript') return real(file, args, opts);
+    const child = executor.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    lookup = child;
+    opts.onSpawn?.(child);
+    return new Promise((resolve) =>
+      child.once('exit', (_code, signal) => {
+        ended = signal;
+        resolve('');
+      }),
+    );
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    const controller = new AbortController();
+    const read = createStim({ projectRoot: root, home, env: { PATH: process.env.PATH } }).settings({
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(lookup).not.toBeNull());
+    controller.abort();
+    await expect(read).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    await vi.waitFor(() => expect(ended).toBe('SIGKILL'));
+  } finally {
+    spy.mockRestore();
+    vi.restoreAllMocks();
+  }
+});
+
+test('settings reads sharing one signal leave no abort listeners behind', async () => {
+  const { root, home } = fixture('settings-listeners');
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
+  const controller = new AbortController();
+  const added = vi.spyOn(controller.signal, 'addEventListener');
+  const removed = vi.spyOn(controller.signal, 'removeEventListener');
+  const stim = createStim({ projectRoot: root, home });
+  for (let i = 0; i < 3; i++) await stim.settings({ signal: controller.signal });
+  expect(added.mock.calls.length).toBeGreaterThan(0);
+  expect(removed.mock.calls.length).toBe(added.mock.calls.length);
+});
