@@ -19,6 +19,7 @@ interface Message {
   subscription?: string;
   data?: string;
   records?: { workspace?: string }[];
+  environment?: { path: string } | null;
 }
 
 function phone(machine: DemoMachine, device: Device | null = null) {

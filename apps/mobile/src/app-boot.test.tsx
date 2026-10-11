@@ -300,6 +300,11 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
   expect(screen.getByText('Work')).toBeTruthy();
 }, 60_000);
 
+afterEach(() => {
+  FakeSocket.features = ['status-views'];
+  FakeSocket.fullStatus = statusFixture.payload;
+});
+
 it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
   jest.restoreAllMocks();
   mockStores.clear();
