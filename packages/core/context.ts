@@ -35,6 +35,13 @@ export function ambientContext(): StimContext | undefined {
   return ambient.getStore();
 }
 
+/** Writes `text` to the ambient context's output, or to the process stream outside one. */
+export function ambientWrite(stream: 'stdout' | 'stderr', text: string): void {
+  const context = ambient.getStore();
+  if (context) context.output(stream, text);
+  else process[stream].write(text);
+}
+
 /** The environment of the ambient context, or `process.env` outside one. */
 export function ambientEnv(): NodeJS.ProcessEnv {
   return ambient.getStore()?.env ?? process.env;

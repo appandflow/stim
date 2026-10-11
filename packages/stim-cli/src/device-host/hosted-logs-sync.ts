@@ -1,3 +1,4 @@
+import { ambientWrite } from '@stim-cli/core';
 import {
   readMacosRecord,
   type HostedMacosPlacement,
@@ -43,7 +44,7 @@ export async function syncHostedMacosLogs(
     return true;
   } catch (error) {
     if (!warnings?.has(placement.machine)) {
-      process.stderr.write(`${warning(placement.machine, error)}\n`);
+      ambientWrite('stderr', `${warning(placement.machine, error)}\n`);
       warnings?.add(placement.machine);
     }
     return false;
@@ -95,7 +96,8 @@ export function followHostedMacosLogs(
       host?.connection.close();
       host = undefined;
       if (!failing)
-        process.stderr.write(
+        ambientWrite(
+          'stderr',
           `${warning((slot !== undefined ? (platform === 'ios' ? readHostedIos(root) : readHostedAndroid(root))[slot] : readMacosRecord(root)?.host)?.machine ?? 'the host', error)}\n`,
         );
       failing = true;

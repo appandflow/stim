@@ -7,7 +7,14 @@ import { withDirLock } from './dir-lock.ts';
 import { isJsonObject } from './state/json-file.ts';
 import { ambientContext, ambientEnv } from './context.ts';
 export { withDirLock, withDirLockAsync, type DirLockOptions } from './dir-lock.ts';
-export { ambientContext, ambientEnv, withAmbientContext, type StimContext, type StimOutput } from './context.ts';
+export {
+  ambientContext,
+  ambientEnv,
+  ambientWrite,
+  withAmbientContext,
+  type StimContext,
+  type StimOutput,
+} from './context.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';

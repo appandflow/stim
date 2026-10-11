@@ -22,10 +22,11 @@ env object (default process.env) that Stim reads its settings overrides from
 and passes to its workers, and onProgress({ stream, message }). message is an
 output chunk. Without onProgress, operations write nothing to the caller's
 stdout or stderr. The home is fixed when the client is created: home, else
-STIM_HOME from env, else the default home. build, run, stop and diagnostics each
-use a bundled worker that calls the same lifecycle operations as the CLI. Reads
-such as settings and stats run in the calling process against the client's home and
-project. None parses CLI arguments or changes the caller's cwd/environment.
+STIM_HOME from env, else the default home. build, run and diagnostics each use
+a bundled worker that calls the same lifecycle operations as the CLI. stop and
+reads such as settings and stats run in the calling process against the client's
+home and project. None parses CLI arguments or changes the caller's
+cwd/environment.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
@@ -69,15 +70,18 @@ Do not interpret 'bundling' or 'unverified' as proven application readiness.
 
 stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
 including resources from earlier runs. Use a dedicated workspace in CI.
-Cancellation waits for the operation worker to exit, and a read kills its child
-processes and rejects with STIM_CANCELLED; stop with a fresh signal
+Cancellation waits for the operation worker to exit, a read kills its child
+processes, and both reject with STIM_CANCELLED; an aborted stop finishes its
+teardown and then rejects with STIM_CANCELLED. Stop with a fresh signal
 after cancellation or partial failure. Always inspect cleanup.ok.
 
 diagnostics({ tail: 200, errors: false }) returns { directory, records } from
 the local timeline, even before a successful run. tail: 0 returns paths only.
 It does not fetch remote logs or capture new crashes. Stim failures reject with
 StimError carrying code, message, remedy and details (including the log path).
-An exception thrown by onProgress cancels its worker and propagates unchanged.
+An exception thrown by onProgress stops further progress and propagates
+unchanged: a worker operation is cancelled, and an in-process stop or read
+finishes its work first.
 
 Normal ownership, device creation, cache locks and coordination remain active.
 All concurrent artifact-cache writers must share the same coordinating home.

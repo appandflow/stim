@@ -1,3 +1,4 @@
+import { ambientWrite } from '@stim-cli/core';
 import {
   type AndroidEmulatorApp,
   configuredAndroidEmulatorApp,
@@ -1265,7 +1266,7 @@ export async function shutdownAndroidEmulator(
       timeoutMs: Math.min(5000, timeoutMs),
     })) === null
   ) {
-    console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
+    ambientWrite('stderr', `warning: could not flush ${serial} before shutdown; shutting it down anyway\n`);
   }
   await exec.runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
     timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),

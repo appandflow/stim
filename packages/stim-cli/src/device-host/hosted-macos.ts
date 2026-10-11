@@ -35,7 +35,7 @@ import {
 } from './hosted-client.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
-import { ambientContext } from '@stim-cli/core';
+import { ambientContext, ambientWrite } from '@stim-cli/core';
 export {
   connectHost,
   probeHostedSession as probeHostedMacos,
@@ -217,7 +217,8 @@ export async function stopHostedMacos(root: string, placement: HostedMacosPlacem
       session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS);
       if (session.state !== 'stopped') throw unknownSession(host, session);
       await pullHostedMacosLogs(root, placement, host).catch((error: unknown) => {
-        process.stderr.write(
+        ambientWrite(
+          'stderr',
           `${phaseLine('device', `Could not copy the final logs from ${host.machine}: ${(error as Error).message}`)}\n`,
         );
       });

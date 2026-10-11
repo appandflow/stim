@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, withDirLock } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, withDirLock, ambientWrite } from '@stim-cli/core';
 import { isJsonObject, parseHostedLogsCursor, type HostedLogsCursor } from '@stim-cli/core/state';
 import { deviceSlotFileKey, validateDeviceSlot } from '../devices/device-slots.ts';
 import { macosDir } from '../macos/state.ts';
@@ -92,7 +92,7 @@ export async function pullHostedMacosLogs(
   for (let page = 0; page < maxPages && Date.now() < deadline; page++) {
     const before = readCursor(root, placement.session, target);
     if (final && Date.now() >= progressAt) {
-      process.stderr.write(`Copying final native logs from ${host.machine} (page ${page + 1})\n`);
+      ambientWrite('stderr', `Copying final native logs from ${host.machine} (page ${page + 1})\n`);
       progressAt = Date.now() + 5000;
     }
     const result = await call(

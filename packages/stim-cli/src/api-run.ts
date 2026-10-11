@@ -7,7 +7,6 @@ import { buildIosOperation } from './commands/ios/build.ts';
 import { runIosOperation } from './commands/ios.ts';
 import { buildMacosOperation } from './commands/macos-build.ts';
 import { runMacos } from './commands/macos.ts';
-import { stopWorkspaceNow } from './commands/stop.ts';
 import { runWeb } from './commands/web.ts';
 import type { FailArgs } from './commands/ios/types.ts';
 import { StimError } from './api.ts';
@@ -32,14 +31,6 @@ async function dispatch(
           records: tail === 0 ? [] : queryJsonLogs({ dir: directory, tail, errorsOnly: errors }),
         },
       };
-    }
-    if (request.operation === 'stop') {
-      const result = await stopWorkspaceNow({
-        root,
-        slot: request.options.slot,
-      });
-      if ('refusal' in result) throw new StimError({ ...result.refusal, details: result.remote });
-      return { ok: true, result };
     }
     if (request.operation === 'build') {
       switch (request.options.platform) {

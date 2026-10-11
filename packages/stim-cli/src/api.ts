@@ -1,13 +1,16 @@
 import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { stripVTControlCharacters } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { findProjectRoot, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
+import { stopWorkspaceNow } from './commands/stop.ts';
 import { readProjectStats } from './engine/stats-report.ts';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
+import { workspaceLogsDir } from './workspace/paths.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import type {
   StimBuildOptions,
@@ -55,8 +58,8 @@ export class StimError extends Error {
 /**
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
  * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
- * build, run, stop and diagnostics each run in a separate Stim worker. Reads such as settings and stats run in the calling
- * process against the client's home and project, so clients for different homes can share a process.
+ * build, run and diagnostics each run in a separate Stim worker. stop and reads such as settings and stats run in the
+ * calling process against the client's home and project, so clients for different homes can share a process.
  * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
@@ -90,20 +93,30 @@ export function createStim(options: StimOptions): StimClient {
       FORCE_COLOR: '0',
     },
   };
-  const output = (stream: 'stdout' | 'stderr', message: string) => options.onProgress?.({ stream, message });
-  const note = (line: string) => output('stderr', `${line}\n`);
+  const begin = (signal: AbortSignal | undefined): Operation => {
+    const callback: Operation['callback'] = {};
+    const output: StimContext['output'] = (stream, message) => {
+      if ('error' in callback) return;
+      try {
+        options.onProgress?.({ stream, message: stripVTControlCharacters(message) });
+      } catch (error) {
+        callback.error = error;
+      }
+    };
+    return { context: operationContext(context, home, output, signal), callback };
+  };
   return {
     projectRoot,
     settings: ({ signal }: StimReadOptions = {}) =>
-      read(operationContext(context, home, output, signal), async (operation) =>
+      read(begin(signal), async (operation) =>
         readSettingsPayload(
-          await readSettingsContext(operation.projectRoot, operation.env, note, operation.signal),
+          await readSettingsContext(operation.projectRoot, operation.env, note(operation), operation.signal),
           operation.signal,
         ),
       ),
     stats: ({ signal }: StimReadOptions = {}) =>
       read(
-        operationContext(context, home, output, signal),
+        begin(signal),
         async (operation) =>
           (await readProjectStats(findProjectRoot(operation.projectRoot), operation.env, operation.signal)).report,
       ),
@@ -111,9 +124,26 @@ export function createStim(options: StimOptions): StimClient {
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
       invoke(context, { operation: 'run', options: request }, signal)) as StimClient['run'],
-    stop({ signal, ...request } = {}) {
-      return invoke(context, { operation: 'stop', options: request }, signal) as ReturnType<StimClient['stop']>;
-    },
+    stop: ({ signal, ...request } = {}) =>
+      read(begin(signal), async (operation) => {
+        const root = operation.projectRoot;
+        const logs = workspaceLogsDir(root);
+        let result: Awaited<ReturnType<typeof stopWorkspaceNow>>;
+        try {
+          result = await stopWorkspaceNow({ root, slot: request.slot, report: note(operation) });
+        } catch (error) {
+          if (operation.signal.aborted) throw error;
+          const failure = error as Partial<StimFailure>;
+          throw new StimError({
+            code: failure.code ?? 'STIM_RUN_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+            remedy: failure.remedy ?? null,
+            details: { logs, cause: failure.details },
+          });
+        }
+        if ('refusal' in result) throw new StimError({ ...result.refusal, details: { logs, cause: result.remote } });
+        return result;
+      }),
     diagnostics({ signal, ...request } = {}) {
       if (request.tail !== undefined && (!Number.isSafeInteger(request.tail) || request.tail < 0)) {
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'tail must be a non-negative integer.' }));
@@ -144,7 +174,13 @@ function operationContext(
   };
 }
 
-async function read<T>(context: StimContext, operation: (context: StimContext) => Promise<T>): Promise<T> {
+interface Operation {
+  context: StimContext;
+  /** The first exception the client's onProgress threw; output stops at it and the operation rejects with it. */
+  callback: { error?: unknown };
+}
+
+async function read<T>({ context, callback }: Operation, operation: (context: StimContext) => Promise<T>): Promise<T> {
   const { signal } = context;
   if (signal.aborted) throw cancelled();
   let result: T;
@@ -152,15 +188,22 @@ async function read<T>(context: StimContext, operation: (context: StimContext) =
     refuseRelativeStimPaths(context.env);
     result = await withAmbientContext(context, () => operation(context));
   } catch (error) {
+    if ('error' in callback) throw callback.error;
     if (signal.aborted) throw cancelled();
+    if (error instanceof StimError) throw error;
     if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
       const remedy = error instanceof SettingsRefusal ? error.remedy : null;
       throw new StimError({ code: error.code, message: error.message, remedy });
     }
     throw error;
   }
+  if ('error' in callback) throw callback.error;
   if (signal.aborted) throw cancelled();
   return result;
+}
+
+function note(operation: StimContext): (line: string) => void {
+  return (line) => operation.output('stderr', `${line}\n`);
 }
 
 function cancelled(): StimError {
