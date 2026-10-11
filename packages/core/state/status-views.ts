@@ -151,7 +151,7 @@ export function statusViews(payload: StatusPayload): StatusViews {
     },
     machine: {
       capacity: payload.capacity,
-      machine: payload.machine,
+      machine: payload.machine ?? null,
       deviceLeases: payload.deviceLeases,
       simctlAvailable: payload.simctlAvailable,
       maintenance: payload.maintenance

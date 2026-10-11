@@ -116,9 +116,10 @@ export type PhoneStageFacts = Omit<State.WorkspaceStage, 'kind' | 'platform' | '
   platform: string | null;
   closedApps: { platform: string; slot: string }[];
 };
-export type PhonePullRequestFacts = Omit<State.WorktreePullRequest, 'state' | 'reviewDecision'> & {
+export type PhonePullRequestFacts = Omit<State.WorktreePullRequest, 'state' | 'reviewDecision' | 'checkedAt'> & {
   state: string;
-  reviewDecision: string | null;
+  reviewDecision?: string | null;
+  checkedAt?: string;
 };
 export type PhoneStatusIssue = Omit<State.StatusIssue, 'code' | 'severity'> & { code: string; severity: string };
 export type PhoneWebBrowserState = Omit<
@@ -130,7 +131,8 @@ export type PhoneWebBrowserState = Omit<
   page?: (Omit<NonNullable<State.WebBrowserState['page']>, 'state'> & { state: string }) | null;
   activity?: PhoneDeviceActivity;
 };
-export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunched' | 'host'> & {
+export type PhoneMacosAppState = Omit<State.MacosAppRecord, 'build' | 'hostLaunched' | 'host' | 'arguments'> & {
+  arguments?: string[];
   state: string;
   build: Omit<State.MacosBuild, 'state'> & { state: string };
   hostLaunched?: boolean | string;
@@ -159,7 +161,9 @@ export type PhoneEnvironmentState = Omit<
   | 'builds'
   | 'agents'
   | 'endedAgents'
+  | 'logs'
 > & {
+  logs?: { dir?: string; errorsSinceMarker: number } | null;
   phase?: string;
   stage?: PhoneStageFacts;
   warmStep?: string;
@@ -204,9 +208,21 @@ export type PhoneStatusUsage = Omit<Wire.UsageHistory, 'devices'> & {
   devices: (Omit<Wire.DeviceUsageSeries, 'kind'> & { kind: string })[];
 };
 export type PhoneBuildResult = string;
-export type PhoneBuildHistoryEntry = Omit<State.BuildHistoryEntry, keyof State.LastBuildReport | 'result' | 'phases'> &
-  PhoneLastBuild & { result: PhoneBuildResult; phases: Partial<Record<string, number>> };
-export type PhoneLastBuild = Omit<State.LastBuildReport, 'platform' | 'status' | 'cacheHit' | 'missReason'> & {
+export type PhoneBuildHistoryEntry = Omit<
+  State.BuildHistoryEntry,
+  keyof State.LastBuildReport | 'result' | 'phases' | 'configuration' | 'cacheKey'
+> &
+  PhoneLastBuild & {
+    result: PhoneBuildResult;
+    phases: Partial<Record<string, number>>;
+    configuration?: string | null;
+    cacheKey?: string | null;
+  };
+export type PhoneLastBuild = Omit<
+  State.LastBuildReport,
+  'platform' | 'status' | 'cacheHit' | 'missReason' | 'fingerprint'
+> & {
+  fingerprint?: string | null;
   platform: string;
   status: string;
   cacheHit: PhoneBuildCacheHit;
@@ -248,13 +264,7 @@ export type PhoneStatusPayload = Omit<
   machine?: PhoneMachineUsageState | null;
   ownLeases?: string[];
 };
-export type PhoneWorkspaceSummary = Omit<PhoneEnvironmentState, 'worktree'> & {
-  worktree?:
-    | (Omit<PhoneWorktreeFacts, 'pullRequest'> & {
-        pullRequest?: OptionalFields<PhonePullRequestFacts, 'reviewDecision' | 'checkedAt'> | null;
-      })
-    | null;
-};
+export type PhoneWorkspaceSummary = PhoneEnvironmentState;
 export type PhoneWorktreeRow = Pick<PhoneWorktreeFacts, 'path' | 'branch' | 'repository' | 'gitChip'> & {
   pullRequest?: { number: number; state: string } | null;
 };
