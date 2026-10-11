@@ -37,7 +37,7 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     getProject: () => project,
     readLaunches: () => ({ android: androidLaunch }),
     resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Booted' } }) as never,
-    resolveAndroid: () => ({ serial: 'emulator-5554' }),
+    resolveAndroid: async () => ({ serial: 'emulator-5554' }),
     iosProcess: async () => ({ state: 'running', pid: 42 }),
     androidProcess: async () => ({ state: 'running', pid: 43 }),
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
@@ -610,7 +610,7 @@ test('reload turns owned-device inspection failures into actionable errors', asy
     root: '/project',
     platform: 'android',
     deps: reloadDeps({
-      resolveAndroid: () => {
+      resolveAndroid: async () => {
         throw new Error('adb unavailable');
       },
     }),
@@ -740,7 +740,7 @@ test('an Android reload restores the reverse on every live slot that lost it', a
         android: androidLaunch,
         'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
       }),
-      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      resolveAndroid: async (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
       ensureReverse: async (serial) => {
         checked.push(serial);
         return { restored: serial === 'emulator-5556' };
@@ -766,7 +766,7 @@ test('with one slot still connected, the reload waits for the restored slot befo
         android: androidLaunch,
         'android:tablet': { ...androidLaunch, deviceId: 'emulator-5556' },
       }),
-      resolveAndroid: (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
+      resolveAndroid: async (avdName) => ({ serial: avdName === 'stim-tablet' ? 'emulator-5556' : 'emulator-5554' }),
       ensureReverse: async (serial) => ({ restored: serial === 'emulator-5556' }),
       reloadMetro: async (_port, options) => {
         calls.push(options?.peersOnly ?? 'reload');

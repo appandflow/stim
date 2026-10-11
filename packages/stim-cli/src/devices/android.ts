@@ -434,6 +434,14 @@ export function listAvds({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs
   );
 }
 
+export async function listAvdsAsync({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs?: number } = {}): Promise<
+  string[]
+> {
+  return parseAvdList(
+    await getExecutor().runFileAsync(androidToolPath('emulator'), ['-list-avds'], { timeoutMs, killSignal: 'SIGKILL' }),
+  );
+}
+
 /**
  * Working directory for the adb client and the emulator Stim starts. Both leave processes behind
  * that inherit it: the adb server is spawned by whichever client finds none running, and the
@@ -950,15 +958,15 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
   let unavailableTarget = false;
   const commandTimeout = (timeoutMs: number) =>
     recoveryDeadline === undefined ? timeoutMs : Math.max(1, Math.min(timeoutMs, recoveryDeadline - Date.now()));
-  const assertTarget = () => {
-    const resolved = resolveOwnedAvdSerial(avdName, { timeoutMs: commandTimeout(30000) });
+  const assertTarget = async () => {
+    const resolved = await resolveOwnedAvdSerialAsync(avdName, { timeoutMs: commandTimeout(30000) });
     unavailableTarget = Boolean(resolved.notRunning);
     if (resolved.serial !== serial) throw new Error(`AVD ${avdName} is no longer running on ${serial}.`);
   };
   for (;;) {
     unavailableTarget = false;
     try {
-      assertTarget();
+      await assertTarget();
       const output = await exec.runFileAsync('adb', ['-s', serial, 'shell', 'pm', 'list', 'packages', '-3'], {
         timeoutMs: commandTimeout(30000),
       });
@@ -972,7 +980,7 @@ export async function resetAdoptedAvd(avdName: string, serial: string, keepPacka
           return match[1]!;
         });
       for (const packageName of packages) {
-        assertTarget();
+        await assertTarget();
         const args = packageName === keepPackage ? ['shell', 'pm', 'clear', packageName] : ['uninstall', packageName];
         const result = await exec.runFileAsync('adb', ['-s', serial, ...args], { timeoutMs: commandTimeout(120000) });
         if (result.trim() !== 'Success')
@@ -1555,8 +1563,44 @@ export function getAvdNameForSerial(
   return out.split('\n')[0]?.trim() || null;
 }
 
+export async function getAvdNameForSerialAsync(
+  serial: string,
+  { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): Promise<string | null> {
+  const out = await getExecutor().runFileQuietAsync(androidToolPath('adb'), ['-s', serial, 'emu', 'avd', 'name'], {
+    timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
+    killSignal: 'SIGKILL',
+  });
+  if (!out) return null;
+  return out.split('\n')[0]?.trim() || null;
+}
+
 export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: number } = {}): ResolvedAvdSerial {
   return ownedAvdSerialResolver(opts)(avdName);
+}
+
+/** `resolveOwnedAvdSerial` without blocking the event loop, with the same reads and the same timeout budget. */
+export async function resolveOwnedAvdSerialAsync(
+  avdName: string,
+  { timeoutMs }: { timeoutMs?: number } = {},
+): Promise<ResolvedAvdSerial> {
+  const started = Date.now();
+  const remaining = () => ({
+    timeoutMs:
+      timeoutMs === undefined ? undefined : Math.max(MIN_LOOKUP_TIMEOUT_MS, timeoutMs - (Date.now() - started)),
+  });
+  if (!(await listAvdsAsync(remaining())).includes(avdName)) return { missing: true };
+  if (!isStimOwnedAvd(avdName)) return { notOwned: true };
+  const devices = await listAdbDevicesAsync(remaining());
+  const candidates = [
+    ...devices.emulators,
+    ...devices.unhealthy.filter((entry) => entry.kind === 'emulator' && entry.consolePort !== undefined),
+  ];
+  for (const candidate of candidates) {
+    if ((await getAvdNameForSerialAsync(candidate.serial, remaining())) === avdName)
+      return { serial: candidate.serial };
+  }
+  return { notRunning: true };
 }
 
 function once<T>(read: () => T): () => T {

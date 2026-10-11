@@ -360,7 +360,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
     },
-    resolveAvdSerial: () => ({ serial: 'emulator-5584' }),
+    resolveAvdSerial: async () => ({ serial: 'emulator-5584' }),
     waitForDeviceBoot: never('an unchanged serial readiness wait'),
     dataFreeBytes: async () => null,
     trimCaches: never('a cache trim'),
@@ -727,7 +727,7 @@ describe('adopted Android storage', () => {
       resolveCached: () => apkPath,
       install: installAndroidApp,
       ensureDeviceBooted: async () => ({ ok: true, serial: boots++ === 0 ? 'emulator-5584' : 'emulator-5586' }),
-      resolveAvdSerial: () => ({ serial: boots > 1 ? rebootedAvd : 'emulator-5584' }),
+      resolveAvdSerial: async () => ({ serial: boots > 1 ? rebootedAvd : 'emulator-5584' }),
       dataFreeBytes: async () => free.shift() ?? null,
       trimCaches: async (serial: string) => {
         trims.push(serial);
@@ -1852,7 +1852,7 @@ describe('owned AVD identity after the build', () => {
         currentSerial = 'emulator-5586';
         return makeAndroidBuildSuccess({ apkPath: fakeApk(), durationMs: 161000, lastLines: [] });
       },
-      resolveAvdSerial: (avdName: string) => {
+      resolveAvdSerial: async (avdName: string) => {
         expect(avdName).toBe(device.avdName);
         resolutions.push(currentSerial);
         return { serial: currentSerial };
@@ -1884,7 +1884,7 @@ describe('owned AVD identity after the build', () => {
       setDevice(root, 'android', device);
       let probes = 0;
       const h = harness({
-        resolveAvdSerial: () => {
+        resolveAvdSerial: async () => {
           probes++;
           if (failure === 'probe-failed') throw new Error('AVD lookup timed out');
           if (failure === 'missing' || failure === 'notRunning' || failure === 'notOwned') return { [failure]: true };
@@ -7965,7 +7965,7 @@ describe('registered Android project recipes', () => {
         deps: {
           findWorkspace: () => root,
           getProject: () => getProject(root),
-          resolveAndroid: () => ({ serial: 'emulator-5584' }),
+          resolveAndroid: async () => ({ serial: 'emulator-5584' }),
           androidProcess: async () => ({ state: 'running', pid: 4242 }),
           readBrowser: () => null,
           resolveMetro: never('a native reload Metro probe'),

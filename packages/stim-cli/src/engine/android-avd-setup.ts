@@ -18,11 +18,11 @@ import { readParked } from '../devices/sim-pool.ts';
 import {
   assertOwnedAvdStopped,
   createOwnedAvd,
-  listAvds,
+  listAvdsAsync,
   ownedAvdDeviceProfile,
   ownedAvdName,
   ownedAvdSystemImage,
-  resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
 } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 
@@ -168,7 +168,7 @@ export async function prepareOwnedAvd({
       const message = String((error as Error)?.message || error);
       if (!message.includes('already exists')) throw error;
       try {
-        if (!listAvds().includes(avdName)) {
+        if (!(await listAvdsAsync()).includes(avdName)) {
           throw new AvdRecoveryError(
             `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
             'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
@@ -176,7 +176,7 @@ export async function prepareOwnedAvd({
           );
         }
         await withConfigLockAsync(assertReservation);
-        const resolved = resolveOwnedAvdSerial(avdName);
+        const resolved = await resolveOwnedAvdSerialAsync(avdName);
         if (resolved.missing || resolved.notOwned) {
           throw new Error(`AVD ${avdName} could not be verified for recovery. Retry after checking its registration.`, {
             cause: error,

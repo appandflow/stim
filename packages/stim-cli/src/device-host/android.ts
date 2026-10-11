@@ -16,16 +16,16 @@ import {
   assertOwnedAvdStopped,
   ownedAvdSystemImage,
   resetAdoptedAvd,
-  resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
   avdPathExists,
   avdStorageRoots,
   bootAndroidEmulator,
   createOwnedAvd,
   DEFAULT_AVD_DEVICE_PROFILE,
-  getAvdNameForSerial,
+  getAvdNameForSerialAsync,
   hostSystemImageArch,
   listAdbDevices,
-  listAvds,
+  listAvdsAsync,
   listAvdDeviceProfiles,
   listInstalledSystemImages,
   ownedAvdName,
@@ -93,7 +93,7 @@ export async function runHostedAndroidDevice(
         throw new Error('Hosted Android prepare needs its server-selected session and console port.');
       const choice = selectHostedAndroidDevice(request);
       const avdName = ownedAvdName(`hosted-${request.session}`);
-      if (listAvds({ timeoutMs: 5000 }).includes(avdName) || portIsOccupied(request.consolePort))
+      if ((await listAvdsAsync({ timeoutMs: 5000 })).includes(avdName) || portIsOccupied(request.consolePort))
         throw new Error('The hosted AVD name or selected console port is already in use.');
       const selected: HostedAndroidDevice = {
         avdName,
@@ -127,7 +127,7 @@ export async function runHostedAndroidDevice(
         );
       }
       if (
-        getAvdNameForSerial(selected.serial) !== avdName ||
+        (await getAvdNameForSerialAsync(selected.serial)) !== avdName ||
         androidDeviceAbi(selected.serial) !== selected.architecture
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
@@ -138,13 +138,13 @@ export async function runHostedAndroidDevice(
     if (mode === 'inspect' || mode === 'adopt') {
       if (
         device.avdName !== ownedAvdName(`hosted-${request.session}`) ||
-        !listAvds({ timeoutMs: 5000 }).includes(device.avdName)
+        !(await listAvdsAsync({ timeoutMs: 5000 })).includes(device.avdName)
       )
         throw new Error('The parked hosted AVD is missing or names another session.');
-      const resolved = resolveOwnedAvdSerial(device.avdName, { timeoutMs: 5000 });
+      const resolved = await resolveOwnedAvdSerialAsync(device.avdName, { timeoutMs: 5000 });
       if (!resolved.notRunning) throw new Error('The parked hosted AVD is missing, not owned or running.');
       assertOwnedAvdStopped(device.avdName);
-      if (getAvdNameForSerial(device.serial) === device.avdName)
+      if ((await getAvdNameForSerialAsync(device.serial)) === device.avdName)
         throw new Error('The parked hosted emulator is still running.');
       if (ownedAvdSystemImage(device.avdName) !== device.systemImage)
         throw new Error('The parked hosted AVD system image no longer matches its device record.');
@@ -184,7 +184,7 @@ export async function runHostedAndroidDevice(
         );
       }
       if (
-        getAvdNameForSerial(device.serial) !== device.avdName ||
+        (await getAvdNameForSerialAsync(device.serial)) !== device.avdName ||
         androidDeviceAbi(device.serial) !== device.architecture
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
@@ -197,7 +197,7 @@ export async function runHostedAndroidDevice(
       if (outcome.status !== 'torn-down')
         throw new Error(outcome.reason ?? 'Hosted Android shutdown was not established.');
       assertOwnedAvdStopped(device.avdName);
-      if (getAvdNameForSerial(device.serial) === device.avdName)
+      if ((await getAvdNameForSerialAsync(device.serial)) === device.avdName)
         throw new Error('The hosted Android emulator is still running.');
       removeHostedAppData(home, { keepBlobs: true });
       return { state: 'parked', device };
@@ -212,13 +212,13 @@ export async function runHostedAndroidDevice(
     }
     const name = device.avdName;
     if (
-      listAvds({ timeoutMs: 5000 }).includes(name) ||
+      (await listAvdsAsync({ timeoutMs: 5000 })).includes(name) ||
       avdStorageRoots().some(
         (root) => avdPathExists(join(root, `${name}.ini`)) || avdPathExists(join(root, `${name}.avd`)),
       )
     )
       throw new Error('The hosted AVD or its data still exists; deletion could not be verified.');
-    if (getAvdNameForSerial(device.serial) === device.avdName)
+    if ((await getAvdNameForSerialAsync(device.serial)) === device.avdName)
       throw new Error('The hosted Android emulator is still running.');
     if (ledger === 'listed') forgetCreatedDevice('android', device.avdName);
     removeHostedAppData(home);

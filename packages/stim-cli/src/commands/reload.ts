@@ -15,7 +15,7 @@ import { findCommandWorkspace } from '../workspace/project.ts';
 import { liveWebRecord, sendToOwnedPage } from '../web/page.ts';
 import { cdpEndpoint, readWebRecord, webFacts, type WebRecord } from '../web/state.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
-import { resolveOwnedAvdSerial, type ResolvedAvdSerial } from '../devices/android.ts';
+import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
 import { resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import {
   readWorkspaceLaunches,
@@ -63,7 +63,7 @@ export interface ReloadDeps {
   getProject: typeof getProject;
   readLaunches: typeof readWorkspaceLaunches;
   resolveIos: (udid: string) => ResolvedIosSim;
-  resolveAndroid: (avdName: string) => ResolvedAvdSerial;
+  resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   iosProcess: typeof iosAppProcess;
   androidProcess: typeof androidAppProcess;
   resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
@@ -80,7 +80,7 @@ const DEFAULT_DEPS: ReloadDeps = {
   getProject,
   readLaunches: readWorkspaceLaunches,
   resolveIos: resolveOwnedIosSim,
-  resolveAndroid: resolveOwnedAvdSerial,
+  resolveAndroid: resolveOwnedAvdSerialAsync,
   iosProcess: iosAppProcess,
   androidProcess: androidAppProcess,
   resolveMetro: resolveProjectMetro,
@@ -233,7 +233,7 @@ async function inspectTarget(
   }
   let resolved: ResolvedAvdSerial;
   try {
-    resolved = d.resolveAndroid(configured.avdName);
+    resolved = await d.resolveAndroid(configured.avdName);
   } catch (error) {
     return {
       platform,

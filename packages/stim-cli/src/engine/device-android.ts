@@ -24,12 +24,13 @@ import {
   listInstalledSystemImages,
   bootAndroidEmulator,
   configureNewOwnedAvd,
-  getAvdNameForSerial,
+  getAvdNameForSerialAsync,
   listAdbDevices,
-  listAvds,
+  listAdbDevicesAsync,
+  listAvdsAsync,
   nextConsolePort,
   ownedAvdSystemImage,
-  resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
   waitForBoot,
 } from '../devices/android.ts';
 import { androidAvdConfigSetting, androidDataPartitionSizeGbSetting } from '../workspace/settings.ts';
@@ -144,7 +145,7 @@ export async function ensureOwnedAndroidDevice({
   );
   if (record?.avdName) {
     if (record.owned) {
-      const resolved = resolveOwnedAvdSerial(record.avdName);
+      const resolved = await resolveOwnedAvdSerialAsync(record.avdName);
       const currentProfile = resolved.notOwned || resolved.missing ? null : ownedAvdDeviceProfile(record.avdName);
       if (requestedProfile && currentProfile && currentProfile !== requestedProfile) {
         throw new AvdRecoveryError(
@@ -204,9 +205,9 @@ export async function ensureOwnedAndroidDevice({
         };
       }
     } else {
-      const avdExists = listAvds().includes(record.avdName);
+      const avdExists = (await listAvdsAsync()).includes(record.avdName);
       if (avdExists) {
-        const adb = listAdbDevices();
+        const adb = await listAdbDevicesAsync();
         const running = adb.emulators.some((e) => e.consolePort === record.consolePort);
         if (!running) {
           note(
@@ -245,7 +246,7 @@ export async function ensureOwnedAndroidDevice({
       .toSorted((a, b) => a.parkedAt.localeCompare(b.parkedAt));
     for (const parked of candidates) {
       if (isLegacyDeletionClaim(parked.deletionClaim)) continue;
-      const resolved = resolveOwnedAvdSerial(parked.name);
+      const resolved = await resolveOwnedAvdSerialAsync(parked.name);
       if (resolved.missing) {
         const result = await teardownParkedAvd(parked.name);
         if (result.status === 'failed') out(phaseLine('device', `kept ${parked.name}: ${result.reason}`));
@@ -436,7 +437,7 @@ async function bootOwnedAvdOnFreshPort({
         out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
         const result = await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
         if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
-        const running = getAvdNameForSerial(serial);
+        const running = await getAvdNameForSerialAsync(serial);
         if (running && running !== avdName) {
           throw new Error(
             `${serial} is running AVD ${running}, not this workspace's owned AVD ${avdName}; refusing to use it.`,
@@ -561,7 +562,7 @@ export async function ensureAndroidBooted({
 
   let resolved;
   try {
-    resolved = resolveOwnedAvdSerial(device.avdName);
+    resolved = await resolveOwnedAvdSerialAsync(device.avdName);
   } catch (e) {
     return { failed: true, reason: `Could not list AVDs: ${(e as Error)?.message || e}` };
   }

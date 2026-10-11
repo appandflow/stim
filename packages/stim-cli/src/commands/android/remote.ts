@@ -7,7 +7,7 @@ import type { EasFallbackCheck } from '../../device-host/placement.ts';
 import { prepareHostedAndroid, type HostedAndroidTarget } from '../../device-host/hosted-android.ts';
 import { readHostedAndroid } from '../../device-host/ios-state.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
-import { resolveOwnedAvdSerial } from '../../devices/android.ts';
+import { resolveOwnedAvdSerialAsync } from '../../devices/android.ts';
 import { getProject } from '../../workspace/config.ts';
 
 export async function connectAndroidHosting({
@@ -19,7 +19,7 @@ export async function connectAndroidHosting({
   metroCheck,
   selectors,
   read = readHostedAndroid,
-  resolveSerial = resolveOwnedAvdSerial,
+  resolveSerial = resolveOwnedAvdSerialAsync,
   prepare = prepareHostedAndroid,
 }: {
   root: string;
@@ -30,7 +30,7 @@ export async function connectAndroidHosting({
   metroCheck: boolean;
   selectors: HostedDeviceSelectors;
   read?: typeof readHostedAndroid;
-  resolveSerial?: typeof resolveOwnedAvdSerial;
+  resolveSerial?: typeof resolveOwnedAvdSerialAsync;
   prepare?: typeof prepareHostedAndroid;
 }): Promise<{ target: HostedAndroidTarget | null } | { failure: { code: string; message: string; remedy?: string } }> {
   let recorded;
@@ -65,7 +65,7 @@ export async function connectAndroidHosting({
   if (local?.owned && local.avdName) {
     let running = true;
     try {
-      const resolved = resolveSerial(local.avdName, { timeoutMs: 5000 });
+      const resolved = await resolveSerial(local.avdName, { timeoutMs: 5000 });
       running = Boolean(resolved.serial) || (!resolved.notRunning && !resolved.missing);
     } catch {}
     if (running)
