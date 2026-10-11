@@ -849,7 +849,7 @@ describe('ios', () => {
     },
     { output: '99\t0\tother.application\n', state: 'absent', probe: { state: 'stopped' } },
     { output: null, state: 'unknown', probe: { state: 'unknown' } },
-  ])('process diagnostics distinguish $state without publishing native output', ({ output, state, probe }) => {
+  ])('process diagnostics distinguish $state without publishing native output', async ({ output, state, probe }) => {
     const log = vi.spyOn(debugLog, 'log').mockImplementation(() => {});
     const exec = recordingExec();
     exec.runFile = () => {
@@ -862,7 +862,7 @@ describe('ios', () => {
       return output;
     };
     try {
-      expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual(probe);
+      expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual(probe);
       expect(log).toHaveBeenCalledExactlyOnceWith('ios.app-process', {
         deviceId: 'U1',
         bundleId: 'com.example.app',
@@ -882,18 +882,18 @@ describe('ios', () => {
         'launchctl list': '-\t0\tcom.apple.foo\n4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
       },
     });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'running', pid: 4242 });
+    expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'running', pid: 4242 });
     expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
   test('iosAppProcess reports stopped when the app is not running', async () => {
     const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
+    expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
   });
 
   test('iosAppProcess reports unknown when the process probe fails', async () => {
     const exec = recordingExec({ fail: 'launchctl list' });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
+    expect(await iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
   });
 });
 
@@ -991,7 +991,7 @@ describe('android: install and launch', () => {
       { exec },
     );
     await launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
-    androidAppProcess('emulator-5554', 'com.example.app', { exec });
+    await androidAppProcess('emulator-5554', 'com.example.app', { exec });
     expect(exec.calls.map((call) => call.slice(3, 5).join(' '))).toEqual([
       'shell pidof',
       'shell ps',
@@ -2579,7 +2579,7 @@ describe('the android release process proof', () => {
 
   test('a failed process probe is unverified without claiming the app exited', async () => {
     const exec = recordingExec({ fail: 'adb' });
-    expect(androidAppProcess('emulator-5584', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
+    expect(await androidAppProcess('emulator-5584', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
     const result = await verifyAndroidReleaseLaunch({
       serial: 'emulator-5584',
       packageName: 'com.example.app',

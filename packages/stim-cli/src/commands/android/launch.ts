@@ -282,8 +282,8 @@ async function verifyAndroidMetroRun({
         platform: 'android',
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
-        processAlive: () => {
-          const running = androidAppProcess(serial, androidPackage);
+        processAlive: async () => {
+          const running = await androidAppProcess(serial, androidPackage);
           return running.state === 'unknown' ? null : running.state === 'running';
         },
       })

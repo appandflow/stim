@@ -467,10 +467,10 @@ export async function ensureIosBooted({
 }): Promise<BootResult> {
   const udid = device?.deviceUdid;
   if (!udid) return { failed: true, reason: 'No iOS simulator is recorded for this project.' };
-  const ready = (): BootResult => {
+  const ready = async (): Promise<BootResult> => {
     try {
       // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
-      getExecutor().runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
+      await getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
       return { ok: true, udid };
     } catch (error) {
       return {
@@ -488,7 +488,7 @@ export async function ensureIosBooted({
     }
     return ready();
   }
-  const readiness = device?.booted === udid ? ready() : null;
+  const readiness = device?.booted === udid ? await ready() : null;
   if (readiness?.ok) {
     if (simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
     return readiness;
@@ -514,7 +514,7 @@ export async function ensureIosBooted({
   }
   const sim = resolved.sim as SimRecord;
   if (sim.state === 'Booted') {
-    const result = readiness ?? ready();
+    const result = readiness ?? (await ready());
     if (result.ok && simulatorApp !== undefined) configuredIosSimulatorViewer(simulatorApp).open(udid);
     return result;
   }

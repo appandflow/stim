@@ -66,7 +66,7 @@ export async function verifyAndroidReleaseLaunch({
   const e = exec || getExecutor();
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const running = androidAppProcess(serial, packageName, { exec: e });
+  const running = await androidAppProcess(serial, packageName, { exec: e });
   const waitedMs = now() - startedAt;
   if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
   return running.state === 'running'
@@ -145,7 +145,7 @@ function expoBundleLine(msg: string) {
   return /\bBundl(?:ing|ed)\b/.test(msg);
 }
 
-function nativeLaunchFailure({
+async function nativeLaunchFailure({
   readCrashes,
   since,
   platform,
@@ -156,17 +156,17 @@ function nativeLaunchFailure({
   readCrashes: (() => NdjsonRecord[]) | null;
   since: number | string | undefined;
   platform: 'ios' | 'android' | null;
-  processAlive: (() => boolean | null) | null;
+  processAlive: (() => boolean | null | Promise<boolean | null>) | null;
   mode: string | null;
   waitedMs: number;
-}): VerifyLaunchResult | null {
+}): Promise<VerifyLaunchResult | null> {
   if (!readCrashes) return null;
   const crashes = readCrashes().filter(
     (record) =>
       record.event === 'native_crash' && after(record, since) && recordCouldBelongToPlatform(record, platform),
   );
   return crashes.length
-    ? { verified: false, fatal: true, errors: crashes, processAlive: processAlive?.() ?? null, mode, waitedMs }
+    ? { verified: false, fatal: true, errors: crashes, processAlive: (await processAlive?.()) ?? null, mode, waitedMs }
     : null;
 }
 
@@ -209,7 +209,7 @@ export async function verifyLaunch({
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
   readNativeCrashes?: (() => NdjsonRecord[]) | null;
-  processAlive?: (() => boolean | null) | null;
+  processAlive?: (() => boolean | null | Promise<boolean | null>) | null;
   onReadinessPending?: (() => void) | null;
   /**
    * Called when what the launch waits on changes: `bundling` from the app's bundle request (`bundle_response_started`)
@@ -252,7 +252,7 @@ export async function verifyLaunch({
     const clientRecords = readClient().filter((record) => after(record, since) && !platformShared);
     if (now() >= nextCrashCheck) {
       nextCrashCheck = now() + 2000;
-      const crash = nativeLaunchFailure({
+      const crash = await nativeLaunchFailure({
         readCrashes: readNativeCrashes,
         since,
         platform,
@@ -347,7 +347,7 @@ export async function verifyLaunch({
           isBundleProof(record, since, platform)),
     );
     if (bundleErrors.length) {
-      const alive = processAlive ? processAlive() : null;
+      const alive = processAlive ? await processAlive() : null;
       const fatalRecord = bundleErrors[bundleErrors.length - 1];
       const fatalAt = Number(fatalRecord?.ts ?? since ?? 0);
       const errors = metroRecords.filter(
@@ -373,7 +373,7 @@ export async function verifyLaunch({
         ...deviceRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
         ...clientRecords.filter((record) => after(record, errorSince) && recordCouldBelongToPlatform(record, platform)),
       ].filter((record) => isLaunchError(record, platform));
-      const alive = processAlive ? processAlive() : null;
+      const alive = processAlive ? await processAlive() : null;
       const waitedMs = now() - startedAt;
       if (alive === false) {
         return {
@@ -403,7 +403,7 @@ export async function verifyLaunch({
     }
 
     if ((!proof || runtimeWaiting) && now() >= bundleDeadline) {
-      return bundleTimeoutOutcome({
+      return await bundleTimeoutOutcome({
         requested: findBundleRequest(deviceRecords, since, metroPort, platform) ?? activity,
         unattributed:
           metroRecords.find(
@@ -447,7 +447,7 @@ function deliveryOwner(
   return platformShared ? 'unknown' : 'this';
 }
 
-function bundleTimeoutOutcome({
+async function bundleTimeoutOutcome({
   requested,
   unattributed,
   processAlive,
@@ -458,13 +458,13 @@ function bundleTimeoutOutcome({
 }: {
   requested: NdjsonRecord | null;
   unattributed: NdjsonRecord | null;
-  processAlive: (() => boolean | null) | null;
+  processAlive: (() => boolean | null | Promise<boolean | null>) | null;
   deviceRecords: NdjsonRecord[];
   platform: 'ios' | 'android' | null;
   mode: string | null;
   waitedMs: number;
-}): VerifyLaunchResult {
-  if (processAlive?.() === false) {
+}): Promise<VerifyLaunchResult> {
+  if ((await processAlive?.()) === false) {
     const errors = deviceRecords.filter(
       (record) =>
         recordCouldBelongToPlatform(record, platform) &&
