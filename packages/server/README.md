@@ -1386,9 +1386,10 @@ Events are `{ "event", "subscription", ... }`.
   days, with the same fields as last found, no `pid`, and `endedAt`. The server
   drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
   the `stim` commands it runs, so a phone's reload is not recorded as the work
-  of the agent session that started the server. All subscribers share
-  one `stim status --watch --json` child, which stops with the last
-  subscriber. While any status subscription is open, the server keeps a CPU
+  of the agent session that started the server. The server runs the status
+  watch itself, in a worker thread, from the moment it is ready, so a
+  subscriber gets the latest payload at once; all subscribers share it.
+  While any status subscription is open, the server keeps a CPU
   and memory history from each payload's `machine.owners`, and every `status`
   event carries it beside the payload as `usage`, once it holds a reading:
   `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
@@ -1842,8 +1843,8 @@ so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
 `driven`), or while a client has a `frames.subscribe` subscription to it. It
 records nothing else, holds no device awake and changes no device setting. To
-see drivers, the server keeps one `stim status --watch --json` child running
-for as long as it runs, shared with status subscribers.
+see drivers, it reads the status watch the server runs for as long as it
+runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live
 subscribers. The helper runs a second H.264 encoder for it, at 720 pixels on
@@ -1950,9 +1951,9 @@ registers does not push. During the phone's quiet hours nothing pushes: a
 problem that still holds when they end pushes then, and what started or
 finished during them does not.
 
-While at least one device is paired, the server keeps its own
-`stim status --watch --json` child running, even with no client connected, and
-reads the free space of Stim's volumes and the memory pressure every minute.
+While at least one device is paired, the server reads its status watch, even
+with no client connected, and reads the free space of Stim's volumes and the
+memory pressure every minute.
 While a device wants `finished`, it looks up the pull requests of worktree
 branches that have an upstream every 5 minutes, with one `gh api graphql` call
 per repository, the lookup `stim gc` uses. Without `gh`, or when it is signed

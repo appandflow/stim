@@ -21,6 +21,7 @@ export default defineConfig({
     'macos-run': 'src/macos/run.ts',
     'device-host-worker': 'src/device-host/run.ts',
     'offload-worker': 'src/offload/worker.ts',
+    'status-worker': 'src/status-worker.ts',
   },
   format: 'esm',
   dts: true,

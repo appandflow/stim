@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
@@ -449,19 +450,25 @@ describe('stim status --watch --json', () => {
     };
   }
 
-  function startWatch(controlledWatch = false) {
-    if (controlledWatch) {
-      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
-    }
+  /** An adb whose `track-devices` records its pid and stays up; the pid file's path. */
+  function adbShim(silent = false): string {
     const androidHome = join(root, 'sdk');
     mkdirSync(join(androidHome, 'platform-tools'), { recursive: true });
     const adb = join(androidHome, 'platform-tools', 'adb');
     const adbPid = join(root, 'adb.pid');
     writeFileSync(
       adb,
-      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; ${controlledWatch ? '' : 'printf 0000;'} exec /bin/sleep 600; fi\n`,
+      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; ${silent ? '' : 'printf 0000;'} exec /bin/sleep 600; fi\n`,
     );
     chmodSync(adb, 0o755);
+    return adbPid;
+  }
+
+  function startWatch(controlledWatch = false) {
+    if (controlledWatch) {
+      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
+    }
+    const adbPid = adbShim(controlledWatch);
     const preload = new URL('./_status-watch-preload.mjs', import.meta.url).href;
     const args = [...(controlledWatch ? ['--import', preload] : []), cli, 'status', '--watch', '--json'];
     const proc = spawn(process.execPath, args, {
@@ -776,6 +783,35 @@ describe('stim status --watch --json', () => {
       await until(() => !alive(tracker), 5000);
     },
     30_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'the status worker stops adb when asked to stop; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const adbPid = adbShim();
+      const worker = new Worker(new URL('../status-worker.ts', import.meta.url), {
+        env: watchEnv(),
+        workerData: { cwd: root },
+      });
+      const exited = new Promise<number>((resolve) => worker.once('exit', resolve));
+      try {
+        await until(() => {
+          try {
+            return readFileSync(adbPid, 'utf-8').trim() !== '';
+          } catch {
+            return false;
+          }
+        }, 20_000);
+        const tracker = Number(readFileSync(adbPid, 'utf-8'));
+        expect(alive(tracker)).toBe(true);
+        worker.postMessage('stop');
+        expect(await exited).toBe(0);
+        await until(() => !alive(tracker), 5000);
+      } finally {
+        await worker.terminate();
+      }
+    },
+    40_000,
   );
 
   test('exits when stdout closes', async () => {

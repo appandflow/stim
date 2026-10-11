@@ -10,7 +10,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { takeHostedInputClaim } from './hosted-input.ts';
 import { isJsonObject, type DeviceActivity, type StatusPayload } from '@stim-cli/core/state';
 import { actionOutcome, type AuditRecord } from './actions.ts';
-import type { FeedPool, FeedSpec } from './feed.ts';
+import type { FeedListener } from './feed.ts';
 import { adbPath, simulatorOptions } from './frame-helper.ts';
 import {
   deviceKey,
@@ -496,9 +496,8 @@ export interface Controller {
 export interface ControlOptions {
   env: NodeJS.ProcessEnv;
   stimCli: string;
-  feeds: FeedPool;
   frames: FramePool;
-  statusFeed: FeedSpec;
+  subscribeStatus: (listener: FeedListener) => () => void;
   audit: (record: AuditRecord) => void;
   lockLimits: CommandLimits;
   idleMs: number;
@@ -730,7 +729,7 @@ export class ControlHub {
     this.sessions.set(id, session);
     this.byDevice.set(key, session);
     if (status)
-      session.unwatch = this.options.feeds.subscribe(this.options.statusFeed, {
+      session.unwatch = this.options.subscribeStatus({
         item: (payload) => {
           const latest = payload as unknown as StatusPayload;
           const resolved = ownedDevice(latest, target, key, resolve);
@@ -965,7 +964,7 @@ export class ControlHub {
         () => finish({ code: 'status-failed', message: 'stim status did not report the device in time.' }),
         STATUS_WAIT_MS,
       );
-      unsubscribe = this.options.feeds.subscribe(this.options.statusFeed, {
+      unsubscribe = this.options.subscribeStatus({
         item: (payload) => finish(payload as unknown as StatusPayload),
         failed: (message) => finish({ code: 'status-failed', message }),
       });

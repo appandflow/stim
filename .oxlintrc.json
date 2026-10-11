@@ -38,7 +38,8 @@
     "oxc/no-map-spread": "warn",
     "promise/no-return-in-finally": "error",
     "promise/no-return-wrap": "error",
-    "unicorn/prefer-array-find": "warn"
+    "unicorn/prefer-array-find": "warn",
+    "unicorn/require-post-message-target-origin": "off"
   },
   "overrides": [
     {
