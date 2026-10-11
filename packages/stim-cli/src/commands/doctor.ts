@@ -290,7 +290,7 @@ export default function doctorCommand(
             process.exitCode = 1;
           }
         }
-        const nestedToFix = inspectNestedWorktrees(root);
+        const nestedToFix = await inspectNestedWorktrees(root);
         const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
         for (const entry of nestedToFix) {
           let result: ReturnType<typeof writeIgnoreDirs>;
@@ -363,7 +363,7 @@ export default function doctorCommand(
       findings.push(...budget.findings);
       const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory());
       const deviceHosts = withoutUnhandledRejection(inspectDeviceHostMachines({ fix: opts.fix === true }));
-      const nestedWorktrees = inspectNestedWorktrees(root);
+      const nestedWorktrees = await inspectNestedWorktrees(root);
       const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
       const targetInspectors = doctors.flatMap((doctor) => {
         const inspect = doctor.offloadTargets?.(context, () => iosTargetRuntime(root, settings));

@@ -1,8 +1,8 @@
 import { readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { gitQuiet } from '../workspace/git.ts';
+import { gitQuietAsync } from '../workspace/git.ts';
 import { parseWatchRoots, runWatchman, type WatchmanCommand } from '../watchman.ts';
-import { listWorktrees, repoRoot } from '../workspace/worktree.ts';
+import { listWorktreesAsync, repoRootAsync } from '../workspace/worktree.ts';
 import type { Finding } from './doctor.ts';
 
 export const WATCHMAN_NESTED_WORKTREES = 'watchman-nested-worktrees';
@@ -95,18 +95,27 @@ function canonical(path: string): string | null {
   }
 }
 
-export function inspectNestedWorktrees(projectRoot: string): NestedWorktrees[] {
-  const worktrees = listWorktrees(repoRoot(projectRoot) ?? projectRoot)
+export async function inspectNestedWorktrees(projectRoot: string): Promise<NestedWorktrees[]> {
+  const worktrees = (await listWorktreesAsync((await repoRootAsync(projectRoot)) ?? projectRoot))
     .filter((entry) => !entry.prunable && !entry.bare)
     .flatMap((entry) => canonical(entry.path) ?? []);
-  return worktrees.flatMap((checkout) => {
+  const entries: NestedWorktrees[] = [];
+  for (const checkout of worktrees) {
     const configPath = join(checkout, '.watchmanconfig');
     const config = readWatchmanConfig(configPath);
-    const { nested, add } = nestedWorktreeIgnores(checkout, worktrees, ignoreDirsOf(config), (dir) =>
-      Boolean(gitQuiet(checkout, ['ls-files', '--', dir]) ?? true),
-    );
-    return nested.length > 0 ? [{ checkout, configPath, config, nested, add }] : [];
-  });
+    let { nested, add } = nestedWorktreeIgnores(checkout, worktrees, ignoreDirsOf(config), () => false);
+    const [parent] = add;
+    if (
+      parent &&
+      add.length === 1 &&
+      parent !== nested[0] &&
+      Boolean((await gitQuietAsync(checkout, ['ls-files', '--', parent])) ?? true)
+    ) {
+      add = nested;
+    }
+    if (nested.length > 0) entries.push({ checkout, configPath, config, nested, add });
+  }
+  return entries;
 }
 
 export async function watchedCheckouts(
