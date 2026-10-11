@@ -466,9 +466,9 @@ pool: 1 parked iOS simulator (parking off; gc --delete removes them)
 pool: 1 parked Android emulator (parking off; gc --delete removes them)
 
 Device leases (3):
-  android PHONE-EXPIRED (Phone PHONE-EXPIRED) -- <home>/wt/env-4 expired at 07:50:00
-  ios PHONE-LIVE (Phone PHONE-LIVE) -- <home>/wt/env-3 until 08:10:00 (10m00s left)
-  ios PHONE-OTHER (Phone PHONE-OTHER) -- /elsewhere/app until 08:01:00 (1m00s left)
+  android PHONE-EXPIRED (Phone PHONE-EXPIRED) -- <home>/wt/env-4 expired at 11:50:00
+  ios PHONE-LIVE (Phone PHONE-LIVE) -- <home>/wt/env-3 until 12:10:00 (10m00s left)
+  ios PHONE-OTHER (Phone PHONE-OTHER) -- /elsewhere/app until 12:01:00 (1m00s left)
 
 Worktrees with no environment (20):
   <home>/wt/env-66 [feature/env-66]

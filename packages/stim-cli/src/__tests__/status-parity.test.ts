@@ -190,8 +190,10 @@ function normalizeJson(output: string): string {
 let home: string;
 let realHome: string;
 let claim: ReturnType<typeof tryAcquireClaim>['acquired'];
+const zone = process.env.TZ;
 
 beforeEach(() => {
+  process.env.TZ = 'UTC';
   vi.useFakeTimers({ toFake: ['Date'], now: NOW });
   home = mkdtempSync(join(tmpdir(), 'stim-parity-'));
   realHome = realpathSync(home);
@@ -219,6 +221,8 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   delete process.env.STIM_ARCHIVE_ENABLED;
+  if (zone === undefined) delete process.env.TZ;
+  else process.env.TZ = zone;
 });
 
 function buildHome(): void {
