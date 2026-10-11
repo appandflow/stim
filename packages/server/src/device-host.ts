@@ -20,6 +20,7 @@ import {
   createDebugLog,
   type DebugLog,
   deviceHostArea,
+  HOSTED_PARKED_CANDIDATES,
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
@@ -432,7 +433,7 @@ export class DeviceHost {
           !this.revoked.has(record.id),
       )
       .toSorted((a, b) => a.parked!.at.localeCompare(b.parked!.at))
-      .slice(0, 3);
+      .slice(0, HOSTED_PARKED_CANDIDATES);
     for (const record of candidates) {
       if (this.closed || !this.options.allowed(client)) break;
       if (this.owned.has(record.id)) continue;

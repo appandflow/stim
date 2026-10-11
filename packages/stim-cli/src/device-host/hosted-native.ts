@@ -41,6 +41,7 @@ import {
   PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   OFFER_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
@@ -180,7 +181,7 @@ async function reserveHostedNative(
 ): Promise<HostedSession> {
   try {
     if (target.selection?.selected === 'auto') requireAutomaticMachine('device', host.machine);
-    return hostedSession(host, await call(host, 'device-host.reserve', params), platform);
+    return hostedSession(host, await call(host, 'device-host.reserve', params, RESERVE_TIMEOUT_MS), platform);
   } catch (error) {
     if (target.selection?.selected !== 'auto') throw error;
     throw Object.assign(

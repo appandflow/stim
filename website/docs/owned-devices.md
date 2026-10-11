@@ -784,8 +784,9 @@ also on revocation or server close, and stop copies it back afterwards. If that
 collection drops a backlog interval and eventually succeeds, a device warning
 record names the interval.
 A damaged collection checkpoint is ignored and rebuilt; collected records remain
-readable. The client waits up to 180 seconds for stop. The final collection and
-worker termination paths fit within that wait; an in-flight handoff copy and
+readable. The client waits up to 280 seconds for stop. The final collection,
+parking, the stop that follows a failed park and worker termination paths fit
+within that wait; an in-flight handoff copy and
 closing Metro or view transports are outside those worker bounds. Collected
 records remain in the session home; app blobs and materialized bundles are removed.
 Native queries read persisted entries, overlap by five seconds and de-duplicate;

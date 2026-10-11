@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DEVICE_HOST_LIMITS,
+  HOSTED_PARKED_CANDIDATES,
   type HostedMacosPlacement,
   type HostedNativePlacement,
   type HostedIosDevice,
@@ -15,6 +16,7 @@ import {
   HOSTED_REQUEST_MARGIN_MS,
   INSTALL_TIMEOUT_MS,
   OFFER_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   POLL_MS,
   PREPARE_TIMEOUT_MS,
   SESSION_TIMEOUT_MS,
@@ -223,7 +225,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'stopping';
     readyAt = Infinity;
     const result = place().catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(181_000);
+    await vi.advanceTimersByTimeAsync(SESSION_TIMEOUT_MS + 1000);
     expect(String(await result)).toContain('stayed stopping');
     expect(recorded?.session).toBe(session);
     expect(
@@ -242,7 +244,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       settled = true;
       return error;
     });
-    await vi.advanceTimersByTimeAsync(420_000);
+    await vi.advanceTimersByTimeAsync(240_000 + SESSION_TIMEOUT_MS);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
     expect(String(await result)).toContain('stayed stopping');
@@ -316,8 +318,15 @@ describe('hosted client limits', () => {
     [
       'stop',
       SESSION_TIMEOUT_MS,
-      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + worker(DEVICE_HOST_LIMITS.stopMs),
+      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + 2 * worker(DEVICE_HOST_LIMITS.stopMs),
       HOSTED_POLL_MARGIN_MS,
+    ],
+    [
+      'reserve',
+      RESERVE_TIMEOUT_MS,
+      HOSTED_PARKED_CANDIDATES * (worker(DEVICE_HOST_LIMITS.offerMs) + worker(DEVICE_HOST_LIMITS.stopMs)) +
+        worker(DEVICE_HOST_LIMITS.offerMs),
+      HOSTED_REQUEST_MARGIN_MS,
     ],
     ['offer', OFFER_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.offerMs), HOSTED_REQUEST_MARGIN_MS],
   ])('the %s wait outlasts the server worker bound plus its margin', (_phase, client, server, margin) => {
