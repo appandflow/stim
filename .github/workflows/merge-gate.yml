@@ -1,0 +1,48 @@
+name: Merge gate
+
+on:
+  pull_request:
+  merge_group:
+
+concurrency:
+  group: merge-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
+
+permissions:
+  contents: read
+
+jobs:
+  merge-gate:
+    name: merge gate
+    runs-on: ubuntu-latest
+    steps:
+      - if: github.event_name != 'merge_group'
+        run: echo "Validation runs in the merge queue."
+
+      - if: github.event_name == 'merge_group'
+        uses: actions/checkout@v4
+      - if: github.event_name == 'merge_group'
+        uses: ./.github/actions/setup-stim
+        with:
+          node: 22
+          build: 'false'
+
+      - if: github.event_name == 'merge_group'
+        run: pnpm run format:check
+      - if: github.event_name == 'merge_group'
+        run: pnpm run lint
+      - if: github.event_name == 'merge_group'
+        run: node scripts/type-assertion-ratchet.mjs apps/demo-server
+      - if: github.event_name == 'merge_group'
+        working-directory: apps/mobile
+        run: node ../../scripts/type-assertion-ratchet.mjs apps/mobile
+      - if: github.event_name == 'merge_group'
+        run: pnpm run build
+      - if: github.event_name == 'merge_group'
+        run: pnpm run typecheck
+      - if: github.event_name == 'merge_group'
+        run: pnpm run knip
+      - if: github.event_name == 'merge_group'
+        run: pnpm run rpc:check
+      - if: github.event_name == 'merge_group'
+        run: pnpm test
