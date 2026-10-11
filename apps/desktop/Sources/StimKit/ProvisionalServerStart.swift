@@ -19,11 +19,11 @@ public struct ProvisionalServerStart: Codable, Equatable, Sendable {
   private static let carriedPrefixes = ["STIM_", "ANDROID_", "NODE_"]
   private static let secretMarkers = ["TOKEN", "SECRET", "PASS", "KEY", "AUTH", "CREDENTIAL", "PRIVATE"]
 
-  /// The variables stim-server and the tools it runs read from the login environment. `STIM_DESKTOP_APP` and
-  /// `STIM_RUN_ID` name this app's bundle and one process's run, and are set for every start.
+  /// The variables stim-server and the tools it runs read from the login environment. `STIM_DESKTOP_APP`,
+  /// `STIM_RUN_ID` and `STIM_BACKGROUND_LAUNCH` describe this launch of the app, not the login environment.
   static func carried(_ environment: [String: String]) -> [String: String] {
     environment.filter { name, _ in
-      !["STIM_DESKTOP_APP", "STIM_RUN_ID"].contains(name)
+      !["STIM_DESKTOP_APP", "STIM_RUN_ID", "STIM_BACKGROUND_LAUNCH"].contains(name)
         && (carriedNames.contains(name) || carriedPrefixes.contains { name.hasPrefix($0) })
     }
   }

@@ -73,7 +73,7 @@ import Testing
     }
 
     #expect(verifies([:]))
-    #expect(verifies(["EDITOR": "nano", "SHLVL": "2", "STIM_RUN_ID": "run-2"]))
+    #expect(verifies(["EDITOR": "nano", "SHLVL": "2", "STIM_RUN_ID": "run-2", "STIM_BACKGROUND_LAUNCH": "1"]))
     #expect(!verifies(["STIM_HOME": "/tmp/profile-home"]))
     #expect(!verifies(["STIM_HOME": nil]))
     #expect(!verifies(["ANDROID_HOME": "/other-sdk"]))
