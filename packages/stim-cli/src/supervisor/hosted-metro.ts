@@ -1,4 +1,5 @@
-import { statSync } from 'node:fs';
+import { statSync, watch, type FSWatcher } from 'node:fs';
+import { basename, dirname } from 'node:path';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { createMetroGateway, type MetroBridge } from '@stim-cli/core';
 import {
@@ -33,8 +34,10 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
   let running: Promise<void> = Promise.resolve();
   let probingAt = 0;
   let probing = false;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
   let stamp = '';
   let cached: ReturnType<typeof readWorkspaceState> = null;
+  let queued = false;
   updateWorkspaceState(root, (state) =>
     state.supervisor?.processToken === processToken
       ? { ...state, supervisor: { ...state.supervisor, hostedMetro: true } }
@@ -122,6 +125,7 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
       }
     }
     if (!probing && Date.now() >= probingAt) {
+      clearTimeout(probeTimer);
       probingAt = Date.now() + 10_000;
       probing = true;
       void Promise.all(
@@ -133,17 +137,42 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         .catch(() => {})
         .finally(() => {
           probing = false;
+          if (!closed) {
+            probeTimer = setTimeout(tick, Math.max(0, probingAt - Date.now()));
+            probeTimer.unref();
+          }
         });
     }
   };
   const tick = () => {
-    running = running.then(reconcile).catch(() => {});
+    if (closed || queued) return;
+    queued = true;
+    running = running
+      .then(() => {
+        queued = false;
+        return reconcile();
+      })
+      .catch(() => {});
   };
-  const timer = setInterval(tick, 500);
+  const stateFile = workspaceStateFile(root);
+  let watcher: FSWatcher | null = null;
+  try {
+    watcher = watch(dirname(stateFile), (_event, name) => {
+      if (name === null || name.toString() === basename(stateFile)) tick();
+    });
+    watcher.on('error', () => {
+      watcher?.close();
+      watcher = null;
+    });
+    watcher.unref();
+  } catch {}
+  const timer = setInterval(tick, 10_000);
   timer.unref();
   tick();
   return async () => {
     closed = true;
+    watcher?.close();
+    clearTimeout(probeTimer);
     clearInterval(timer);
     await running;
     await Promise.all([...bridges.values()].map((bridge) => bridge.close()));
