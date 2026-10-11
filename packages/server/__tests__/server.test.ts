@@ -2976,7 +2976,7 @@ describe('status views', () => {
     assert(snapshot);
     expect(snapshot.workspaces.map((summary) => summary.path)).toEqual(['/work/app', '/work/other']);
     expect(snapshot.workspaces[0]?.logs).toEqual({ errorsSinceMarker: 0 });
-    expect(snapshot.worktrees).toEqual([{ path: '/work/loose', branch: 'loose', repository: '/work' }]);
+    expect(snapshot.worktrees).toEqual([{ path: '/work/loose', branch: 'loose', repository: '/work', git: null }]);
     expect(snapshot.archived).toEqual({
       count: 3,
       bytes: 3,

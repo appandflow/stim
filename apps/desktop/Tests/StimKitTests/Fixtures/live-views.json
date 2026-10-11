@@ -126,7 +126,15 @@
       "worktrees": [
         {
           "path": "/Users/dev/app-wt",
-          "branch": "feat/x"
+          "branch": "feat/x",
+          "git": {
+            "changed": 2,
+            "untracked": 1,
+            "upstream": "origin/feat/x",
+            "ahead": 3,
+            "behind": 1,
+            "mergedInto": null
+          }
         }
       ],
       "archived": {
