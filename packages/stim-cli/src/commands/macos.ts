@@ -3,7 +3,7 @@ import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, ambientEnv } from '@stim-cli/core';
 import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
@@ -277,7 +277,7 @@ async function launchHere(root: string, record: MacosAppRecord, note: (line: str
         cwd: root,
         detached: true,
         stdio: ['ignore', fd, fd],
-        env: { ...process.env, STIM_BACKGROUND_LAUNCH: '1' },
+        env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1' },
       }),
     );
     child.unref();

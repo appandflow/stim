@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { withStimHome } from '@stim-cli/core';
-import { findProjectRoot } from '@stim-cli/core/state';
+import { type StimContext, withAmbientContext } from '@stim-cli/core';
+import { findProjectRoot, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { readProjectStats } from './engine/stats-report.ts';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
@@ -89,19 +90,22 @@ export function createStim(options: StimOptions): StimClient {
       FORCE_COLOR: '0',
     },
   };
-  const note = (line: string) => options.onProgress?.({ stream: 'stderr', message: `${line}\n` });
+  const output = (stream: 'stdout' | 'stderr', message: string) => options.onProgress?.({ stream, message });
+  const note = (line: string) => output('stderr', `${line}\n`);
   return {
     projectRoot,
     settings: ({ signal }: StimReadOptions = {}) =>
-      read(context, home, signal, async () =>
-        readSettingsPayload(await readSettingsContext(projectRoot, context.env, note, signal), signal),
+      read(operationContext(context, home, output, signal), async (operation) =>
+        readSettingsPayload(
+          await readSettingsContext(operation.projectRoot, operation.env, note, operation.signal),
+          operation.signal,
+        ),
       ),
     stats: ({ signal }: StimReadOptions = {}) =>
       read(
-        context,
-        home,
-        signal,
-        async () => (await readProjectStats(findProjectRoot(projectRoot), context.env, signal)).report,
+        operationContext(context, home, output, signal),
+        async (operation) =>
+          (await readProjectStats(findProjectRoot(operation.projectRoot), operation.env, operation.signal)).report,
       ),
     build: (({ signal, ...request }: StimBuildOptions) =>
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
@@ -121,26 +125,41 @@ export function createStim(options: StimOptions): StimClient {
   };
 }
 
-async function read<T>(
-  context: { env: NodeJS.ProcessEnv },
+function operationContext(
+  client: StimOptions & { env: NodeJS.ProcessEnv; projectRoot: string },
   home: string,
+  output: StimContext['output'],
   signal: AbortSignal | undefined,
-  operation: () => Promise<T>,
-): Promise<T> {
-  if (signal?.aborted) throw cancelled();
+): StimContext {
+  const runId = validRunId(client.env[RUN_ID_ENV]) ?? randomBytes(6).toString('hex');
+  return {
+    home,
+    buildCache: client.buildCache ?? null,
+    projectRoot: client.projectRoot,
+    cwd: client.projectRoot,
+    runId,
+    env: { ...client.env, STIM_HOME: home, [RUN_ID_ENV]: runId },
+    signal: signal ?? new AbortController().signal,
+    output,
+  };
+}
+
+async function read<T>(context: StimContext, operation: (context: StimContext) => Promise<T>): Promise<T> {
+  const { signal } = context;
+  if (signal.aborted) throw cancelled();
   let result: T;
   try {
     refuseRelativeStimPaths(context.env);
-    result = await withStimHome(home, operation);
+    result = await withAmbientContext(context, () => operation(context));
   } catch (error) {
-    if (signal?.aborted) throw cancelled();
+    if (signal.aborted) throw cancelled();
     if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
       const remedy = error instanceof SettingsRefusal ? error.remedy : null;
       throw new StimError({ code: error.code, message: error.message, remedy });
     }
     throw error;
   }
-  if (signal?.aborted) throw cancelled();
+  if (signal.aborted) throw cancelled();
   return result;
 }
 

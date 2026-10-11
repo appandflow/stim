@@ -1,4 +1,6 @@
 import { fileURLToPath } from 'node:url';
+import { withAmbientContext } from '@stim-cli/core';
+import { runId } from '@stim-cli/core/state';
 import { getExecutor, isUnsafeBatchSpawn, resetExecutor } from '../exec.ts';
 
 test('default executor runs commands and returns stdout trimmed', () => {
@@ -163,5 +165,43 @@ test('an unbounded call runs to completion, and a budget that is not positive is
     expect(() => executor.runFileQuiet(process.execPath, script, { timeoutMs })).toThrow(RangeError);
     expect(() => executor.runQuiet('true', { timeoutMs })).toThrow(RangeError);
     await expect(executor.runFileAsync(process.execPath, script, { timeoutMs })).rejects.toThrow(RangeError);
+  }
+});
+
+test("children started inside an ambient operation context inherit its environment, not the host's", async () => {
+  resetExecutor();
+  const host = process.env.STIM_HOME;
+  process.env.STIM_HOME = '/host/home';
+  const printEnv = ['-e', 'process.stdout.write(`${process.env.STIM_HOME} ${process.env.STIM_RUN_ID}`)'];
+  const context = {
+    home: '/client/home',
+    buildCache: null,
+    projectRoot: process.cwd(),
+    cwd: process.cwd(),
+    runId: 'client-run',
+    env: { ...process.env, STIM_HOME: '/client/home', STIM_RUN_ID: 'client-run' },
+    signal: new AbortController().signal,
+    output: () => {},
+  };
+  try {
+    const spawned = (args: string[]) =>
+      new Promise<string>((resolve) => {
+        let out = '';
+        const child = getExecutor().spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+        child.stdout?.on('data', (chunk: Buffer) => (out += chunk));
+        child.on('close', () => resolve(out));
+      });
+    await withAmbientContext(context, async () => {
+      expect(getExecutor().runFile(process.execPath, printEnv, { timeoutMs: 60_000 })).toBe('/client/home client-run');
+      expect(await getExecutor().runFileAsync(process.execPath, printEnv, { timeoutMs: 60_000 })).toBe(
+        '/client/home client-run',
+      );
+      expect(await spawned(printEnv)).toBe('/client/home client-run');
+      expect(runId()).toBe('client-run');
+    });
+    expect(getExecutor().runFile(process.execPath, printEnv, { timeoutMs: 60_000 })).toMatch(/^\/host\/home /);
+  } finally {
+    if (host === undefined) delete process.env.STIM_HOME;
+    else process.env.STIM_HOME = host;
   }
 });

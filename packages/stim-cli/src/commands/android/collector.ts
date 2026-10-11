@@ -11,6 +11,7 @@ import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
 import { readCollectors } from '../../collector/state.ts';
 import { phaseLine } from '../../command-output.ts';
+import { ambientEnv } from '@stim-cli/core';
 
 function collectorEntry(): string {
   return spawnEntry('collector-run');
@@ -130,7 +131,7 @@ export async function startCollector({
         cwd: androidToolCwd() ?? root,
         detached: true,
         stdio,
-        env: process.env,
+        env: ambientEnv(),
       },
     );
     child?.unref?.();

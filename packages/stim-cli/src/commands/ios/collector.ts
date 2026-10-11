@@ -11,6 +11,7 @@ import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
 import { cancellableSleep } from '../../cancellation.ts';
 import { getExecutor } from '../../exec.ts';
+import { ambientEnv } from '@stim-cli/core';
 
 function collectorLogFile(root: string, slot: string): string {
   return join(workspaceLogsDir(root), `collector-${deviceSlotFileKey(PLATFORM, slot)}.log`);
@@ -146,7 +147,7 @@ export async function replaceCollector({
       cwd: root,
       detached: true,
       stdio,
-      env: process.env,
+      env: ambientEnv(),
     });
     child?.unref?.();
   } catch (err) {
