@@ -120,7 +120,7 @@ export async function runMacos(
             }
           };
           if (!remote) {
-            const here = await launchHere(root, record);
+            const here = await launchHere(root, record, note);
             launched();
             return here;
           }
@@ -249,7 +249,25 @@ function recordMacosBuild(root: string, build: MacosBuild, compileSteps: number 
   });
 }
 
-async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAppRecord> {
+const LAUNCH_SERVICES_CALL_MS = 2_000;
+
+export async function waitForLaunchServices(
+  record: MacosAppRecord,
+  deadline: number,
+): Promise<'listed' | 'timeout' | 'skipped'> {
+  if (record.host || !record.app) return 'skipped';
+  const args = ['find', `bundleid=${record.bundleId}`, `pid=${record.app.pid}`];
+  while (Date.now() < deadline) {
+    const out = await getExecutor()
+      .runFileAsync('lsappinfo', args, { timeoutMs: LAUNCH_SERVICES_CALL_MS })
+      .catch(() => '');
+    if (out.includes('ASN:')) return 'listed';
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  return 'timeout';
+}
+
+async function launchHere(root: string, record: MacosAppRecord, note: (line: string) => void): Promise<MacosAppRecord> {
   await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   let child;
@@ -275,8 +293,13 @@ async function launchHere(root: string, record: MacosAppRecord): Promise<MacosAp
       current.supervisor &&
       inspectProcessIdentity(current.app) === 'same' &&
       inspectProcessIdentity(current.supervisor) === 'same'
-    )
+    ) {
+      if ((await waitForLaunchServices(current, deadline)) === 'timeout')
+        note(
+          'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+        );
       return current;
+    }
     if (child.exitCode !== null || child.signalCode !== null) break;
     await new Promise((done) => setTimeout(done, 100));
   }

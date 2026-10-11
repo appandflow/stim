@@ -947,8 +947,8 @@ test('the macos guide covers the declared command flags and project settings', (
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
   const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
-  expect(agentActions.indexOf('lsappinfo find bundleid=<bundleId> pid=<app.pid>')).toBeGreaterThan(-1);
-  expect(agentActions.indexOf('lsappinfo find')).toBeLessThan(agentActions.indexOf('agent-device open <bundleId>'));
+  expect(agentActions).toContain('agent-device open <bundleId>');
+  expect(agentActions).not.toContain('lsappinfo find');
 });
 
 test.each([registerIos, registerAndroid, macosCommand])(
