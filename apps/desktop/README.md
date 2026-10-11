@@ -1041,8 +1041,10 @@ launch's `STIM_HOME`, else the one the login shell reported on the last launch, 
 runs, and answers once it has. Until Desktop's own login shell confirms that home, Desktop
 treats the server like a provisionally adopted one: it reads status but holds pairing,
 device and control writes. When the login shell names another home, Desktop stops that
-server and starts it again with the new home. The bundled Node keeps V8's compile cache in
-`~/Library/Caches/<bundle id>/node-compile-cache`. A test copy can move the port from 7787 with
+server and starts it again with the new home. The bundled server keeps V8's compile cache for its own
+scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
+`NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
+runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the Phones tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
