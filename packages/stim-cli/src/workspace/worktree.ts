@@ -11,7 +11,7 @@ import {
 } from 'fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
-import { git, gitQuiet } from './git.ts';
+import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntry } from '../temporary.ts';
 
 const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj']);
@@ -44,8 +44,18 @@ export function gitCommonDir(cwd: string, opts: ReadOptions = {}): string | null
   return out ? nativePath(out.trim()) : null;
 }
 
+export async function gitCommonDirAsync(cwd: string): Promise<string | null> {
+  const out = await gitQuietAsync(cwd, ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+  return out ? nativePath(out.trim()) : null;
+}
+
 export function repoRoot(cwd: string): string | null {
   const out = gitQuiet(cwd, ['rev-parse', '--show-toplevel']);
+  return out ? nativePath(out.trim()) : null;
+}
+
+export async function repoRootAsync(cwd: string): Promise<string | null> {
+  const out = await gitQuietAsync(cwd, ['rev-parse', '--show-toplevel']);
   return out ? nativePath(out.trim()) : null;
 }
 
@@ -55,19 +65,33 @@ export interface UpstreamState {
   behind: number;
 }
 
+function upstreamState(name: string, counts: string): UpstreamState | null {
+  const [ahead = NaN, behind = NaN] = counts.trim().split(/\s+/).map(Number);
+  if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
+  return { name, ahead, behind };
+}
+
 export function locallyKnownUpstream(projectRoot: string): UpstreamState | null {
   try {
     const name = git(projectRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
       timeoutMs: 5000,
     });
-    const counts = git(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { timeoutMs: 5000 })
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-    const ahead = counts[0] ?? NaN;
-    const behind = counts[1] ?? NaN;
-    if (!name || !Number.isInteger(ahead) || !Number.isInteger(behind)) return null;
-    return { name, ahead, behind };
+    const counts = git(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], { timeoutMs: 5000 });
+    return upstreamState(name, counts);
+  } catch {
+    return null;
+  }
+}
+
+export async function locallyKnownUpstreamAsync(projectRoot: string): Promise<UpstreamState | null> {
+  try {
+    const name = await gitAsync(projectRoot, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    const counts = await gitAsync(projectRoot, ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], {
+      timeoutMs: 5000,
+    });
+    return upstreamState(name, counts);
   } catch {
     return null;
   }
@@ -615,6 +639,11 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
   return out ? parseWorktrees(out) : [];
 }
 
+export async function listWorktreesAsync(cwd: string): Promise<WorktreeEntry[]> {
+  const out = await gitQuietAsync(cwd, ['worktree', 'list', '--porcelain']);
+  return out ? parseWorktrees(out) : [];
+}
+
 function branchOf(head: string): string | undefined {
   return head.startsWith('ref: refs/heads/') ? head.slice('ref: refs/heads/'.length) : undefined;
 }
@@ -729,4 +758,12 @@ export function sourceCheckoutOf(entries: WorktreeEntry[]): SourceCheckout {
 export function resolveSourceCheckout(cwd: string): { entries: WorktreeEntry[] } & SourceCheckout {
   const entries = listWorktrees(cwd);
   return { entries, ...sourceCheckoutOf(entries) };
+}
+
+export async function resolveSourceCheckoutAsync(cwd: string): Promise<{ entries: WorktreeEntry[] } & SourceCheckout> {
+  const entries = await listWorktreesAsync(cwd);
+  const first = entries[0];
+  const head = first?.bare ? (await gitQuietAsync(first.path, ['symbolic-ref', '--quiet', 'HEAD']))?.trim() : null;
+  const branch = head?.startsWith('refs/heads/') ? head.slice('refs/heads/'.length) : null;
+  return { entries, ...selectSourceCheckout(entries, branch) };
 }

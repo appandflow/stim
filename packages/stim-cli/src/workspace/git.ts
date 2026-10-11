@@ -43,3 +43,16 @@ export async function gitAsync(cwd: string, args: readonly string[], opts: GitOp
     else running--;
   }
 }
+
+/** `gitAsync`, returning null instead of throwing. */
+export async function gitQuietAsync(
+  cwd: string,
+  args: readonly string[],
+  opts: GitOptions = {},
+): Promise<string | null> {
+  try {
+    return await gitAsync(cwd, args, opts);
+  } catch {
+    return null;
+  }
+}

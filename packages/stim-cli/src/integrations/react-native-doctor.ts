@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { phaseLine } from '../command-output.ts';
 import {
+  checkMainCheckout,
   detectFingerprintParity,
   detectLinkedLibraryGitMetadata,
   mainCheckoutProjectRoot,
@@ -19,18 +20,26 @@ import type { ProjectDoctor } from './project-doctor.ts';
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
     inspect: reactNativeDoctorFindings,
-    async inspectAsync({ options: { platform, host = process.platform, machineSettings }, settings }) {
+    async inspectAsync({ options: { platform, host = process.platform, machineSettings }, settings, repoRoot }) {
       const iosProjectPath = resolveIosProjectDir(settings, root).relative;
+      const source = machineSettings?.corrupt
+        ? []
+        : await checkMainCheckout(root, {
+            platform,
+            localIos: platform !== 'android' && host === 'darwin',
+            iosProjectPath,
+            androidLayout: resolveAndroidLayout(settings, root, repoRoot ?? root),
+          });
       const architectures =
         !machineSettings?.corrupt && platform !== 'android' && host === 'darwin'
-          ? await inspectIosDebugArchitectures(mainCheckoutProjectRoot(root), iosProjectPath)
+          ? await inspectIosDebugArchitectures(await mainCheckoutProjectRoot(root), iosProjectPath)
           : [];
       const parity = await detectFingerprintParity(root, {
         platform,
         iosProjectPath,
       });
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
-      return [...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
+      return [...source, ...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
         (finding) => finding !== null,
       );
     },

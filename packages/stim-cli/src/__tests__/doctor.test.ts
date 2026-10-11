@@ -44,7 +44,7 @@ import { parseXcodeMajor } from '../engine/xcode.ts';
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { EasAuthResult } from '../engine/remote-cache.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import assert from 'node:assert';
@@ -57,6 +57,13 @@ import {
 
 function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
   return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+}
+
+async function runProjectDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  const { findings, context } = inspectDoctor(root, options, [reactNativeDoctorFindings]);
+  const doctor = reactNativeProjectDoctor(root);
+  assert(doctor.inspectAsync);
+  return [...findings, ...(await doctor.inspectAsync(context))];
 }
 
 const testStimVersions = analyzeStimVersions('1.2.3', '/tools/stim-cli', []);
@@ -192,7 +199,7 @@ describe('offload-candidate', () => {
   });
 });
 
-test('checkMainCheckout reports missing dependencies, Pods, and native output', () => {
+test('checkMainCheckout reports missing dependencies, Pods, and native output', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -200,7 +207,7 @@ test('checkMainCheckout reports missing dependencies, Pods, and native output', 
     mkdirSync(join(project, 'ios'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    const findings = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const findings = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(findings.map((finding) => finding.title)).toEqual([
       'The source checkout has no installed dependencies',
       'The source checkout CocoaPods state is missing',
@@ -240,24 +247,24 @@ function seedRepo(prefix: string) {
   return { base, main, git, trackOrigin };
 }
 
-test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', () => {
+test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', async () => {
   const { base, main, git, trackOrigin } = seedRepo('stim-doctor-single-checkout-');
   try {
     git('git checkout -q -B feature HEAD~1');
     trackOrigin('feature');
     writeFileSync(join(main, 'README.md'), 'edited\n');
 
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
 
     git('git worktree add -q --detach ../linked');
-    expect(checkMainCheckout(main, { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+    expect((await checkMainCheckout(main, { platform: 'ios' })).map((entry) => entry.title)).toEqual([
       'The source checkout is 1 commit behind origin/main',
       'The source checkout has 1 uncommitted tracked change',
       'The source checkout is on feature, not the default branch main',
     ]);
 
     rmSync(join(base, 'linked'), { recursive: true, force: true });
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -266,7 +273,7 @@ test('checkMainCheckout says nothing about the seed when the repository has no l
 test(
   'an interrupted rebase is named instead of the dirty and detached remedies git would reject',
   { timeout: 30_000 },
-  () => {
+  async () => {
     const { base, main, git } = seedRepo('stim-doctor-rebase-');
     try {
       writeFileSync(join(main, 'README.md'), 'theirs\n');
@@ -277,7 +284,7 @@ test(
       expect(() => git('git rebase main')).toThrow(/rebase/);
       git('git worktree add -q -b task ../linked');
 
-      const findings = checkMainCheckout(main, { platform: 'ios' });
+      const findings = await checkMainCheckout(main, { platform: 'ios' });
       expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a rebase in progress']);
       expect(findings[0]?.fix).toBe(`Finish it, or run \`git -C '${main}' rebase --abort\`.`);
     } finally {
@@ -286,19 +293,19 @@ test(
   },
 );
 
-test('a tag sharing the branch name does not turn the branch into an ambiguous ref', () => {
+test('a tag sharing the branch name does not turn the branch into an ambiguous ref', async () => {
   const { base, main, git } = seedRepo('stim-doctor-ambiguous-');
   try {
     git('git tag main HEAD');
     git('git worktree add -q -b task ../linked');
 
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('seed findings are reported from inside a linked worktree, about the source checkout', () => {
+test('seed findings are reported from inside a linked worktree, about the source checkout', async () => {
   const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
   try {
     writeFileSync(join(main, 'README.md'), 'edited\n');
@@ -306,13 +313,13 @@ test('seed findings are reported from inside a linked worktree, about the source
 
     writeFileSync(join(main, 'second.txt'), 'tracked\n');
     git('git add second.txt');
-    expect(checkMainCheckout(join(base, 'linked'), { platform: 'ios' }).map((entry) => entry.title)).toEqual([
+    expect((await checkMainCheckout(join(base, 'linked'), { platform: 'ios' })).map((entry) => entry.title)).toEqual([
       'The source checkout has 2 uncommitted tracked changes',
     ]);
     git('git rm -q --cached second.txt');
     rmSync(join(main, 'second.txt'));
 
-    const findings = checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
+    const findings = await checkMainCheckout(join(base, 'linked'), { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has 1 uncommitted tracked change']);
     expect(findings[0]?.level).toBe('note');
     expect(findings[0]?.detail).toContain('stim worktree warm --refresh');
@@ -323,13 +330,13 @@ test('seed findings are reported from inside a linked worktree, about the source
   }
 });
 
-test('a detached source checkout is reported, and nothing compares its missing branch to the default', () => {
+test('a detached source checkout is reported, and nothing compares its missing branch to the default', async () => {
   const { base, main, git } = seedRepo('stim-doctor-detached-');
   try {
     git('git checkout -q --detach HEAD~1');
     git('git worktree add -q -b task ../linked');
 
-    const findings = checkMainCheckout(main, { platform: 'ios' });
+    const findings = await checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has a detached HEAD']);
     expect(findings[0]?.detail).toContain('there is no branch to fast-forward');
     expect(findings[0]?.fix).toBe(`Run \`git -C '${main}' checkout <branch>\`.`);
@@ -338,14 +345,14 @@ test('a detached source checkout is reported, and nothing compares its missing b
   }
 });
 
-test('a source checkout that is ahead of and behind its upstream is reported as diverged', () => {
+test('a source checkout that is ahead of and behind its upstream is reported as diverged', async () => {
   const { base, main, git } = seedRepo('stim-doctor-diverged-');
   try {
     git('git checkout -q -B main HEAD~1');
     git('git commit -q --allow-empty -m local');
     git('git worktree add -q -b task ../linked');
 
-    const findings = checkMainCheckout(main, { platform: 'ios' });
+    const findings = await checkMainCheckout(main, { platform: 'ios' });
     expect(findings.map((entry) => entry.title)).toEqual(['The source checkout has diverged from origin/main']);
     expect(findings[0]?.detail).toContain('main is 1 ahead of and 1 behind origin/main');
     expect(findings[0]?.detail).toContain('refuses rather than merging or resetting');
@@ -355,14 +362,14 @@ test('a source checkout that is ahead of and behind its upstream is reported as 
   }
 });
 
-test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', () => {
+test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays silent', async () => {
   const { base, main, git } = seedRepo('stim-doctor-default-branch-');
   try {
     git('git worktree add -q -b task ../linked');
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
 
     writeFileSync(join(main, '.stim.json'), JSON.stringify({ worktree: { defaultBranch: 'release' } }));
-    const configured = checkMainCheckout(main, { platform: 'ios' });
+    const configured = await checkMainCheckout(main, { platform: 'ios' });
     expect(configured.map((entry) => entry.title)).toEqual([
       'The source checkout is on main, not the default branch release',
     ]);
@@ -372,7 +379,7 @@ test('worktree.defaultBranch outranks origin/HEAD, and neither resolving stays s
     rmSync(join(main, '.stim.json'));
     git('git symbolic-ref -d refs/remotes/origin/HEAD');
     git('git checkout -q -b feature');
-    expect(checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
+    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -451,7 +458,7 @@ test('a fingerprinted library directory that still hashes .git gets both .finger
   }
 });
 
-test('checkMainCheckout filters native warm state and CocoaPods by platform', () => {
+test('checkMainCheckout filters native warm state and CocoaPods by platform', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-platform-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
@@ -460,20 +467,20 @@ test('checkMainCheckout filters native warm state and CocoaPods by platform', ()
     mkdirSync(join(project, 'android'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    const ios = checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
+    const ios = await checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
     expect(ios.map((finding) => finding.title)).toEqual([
       'The source checkout CocoaPods state is missing',
       'The source checkout has no iOS warm build output',
     ]);
 
-    const android = checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
+    const android = await checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
     expect(android.map((finding) => finding.title)).toEqual(['The source checkout has no Android warm build output']);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test('doctor recognizes explicit-scheme build products but not an empty scheme directory', () => {
+test('doctor recognizes explicit-scheme build products but not an empty scheme directory', async () => {
   const project = join(testHome, 'project');
   mkdirSync(join(project, 'ios'), { recursive: true });
   mkdirSync(join(project, 'node_modules'));
@@ -484,9 +491,9 @@ test('doctor recognizes explicit-scheme build products but not an empty scheme d
   );
   mkdirSync(schemeDir, { recursive: true });
   const findings = () => checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
-  expect(findings().some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
+  expect((await findings()).some((finding) => finding.title.includes('iOS warm build output'))).toBe(true);
   mkdirSync(join(schemeDir, 'Build', 'Products'), { recursive: true });
-  expect(findings()).toEqual([]);
+  expect(await findings()).toEqual([]);
 });
 
 test('parseDoctorPlatform accepts the two native platforms and rejects other values', () => {
@@ -564,24 +571,24 @@ test('Stim installation probes share one timeout window', async () => {
   }
 });
 
-test('checkMainCheckout recognizes non-npm dependency installs', () => {
+test('checkMainCheckout recognizes non-npm dependency installs', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-main-pnpm-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
 
-    const cold = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const cold = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(cold.find((finding) => /installed dependencies/.test(finding.title))?.fix).toMatch(/pnpm install/);
 
     mkdirSync(join(project, 'node_modules'));
-    const warm = checkMainCheckout(project, { brokenPods: [], upstream: null });
+    const warm = await checkMainCheckout(project, { brokenPods: [], upstream: null });
     expect(warm.some((finding) => /installed dependencies/.test(finding.title))).toBe(false);
   } finally {
     rmSync(project, { recursive: true, force: true });
   }
 });
 
-test('checkMainCheckout reads warm state from the repository source checkout', () => {
+test('checkMainCheckout reads warm state from the repository source checkout', async () => {
   resetExecutor();
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-')));
   const repo = join(base, 'repo');
@@ -598,21 +605,22 @@ test('checkMainCheckout reads warm state from the repository source checkout', (
     execSync(`git worktree add -q -b linked ${JSON.stringify(linked)}`, { cwd: repo });
     mkdirSync(join(linked, 'apps', 'mobile', 'node_modules'));
 
-    const findings = checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
+    const findings = await checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
     expect(findings.some((finding) => /no installed dependencies/.test(finding.title))).toBe(true);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
 });
 
-test('checkMainCheckout runs its expensive probes only when their preconditions hold', () => {
+test('checkMainCheckout runs its expensive probes only when their preconditions hold', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-probe-gate-'));
   const calls: string[][] = [];
   setExecutor({
     run: () => '',
     runQuiet: () => null,
     runFileQuiet: () => null,
-    runFile: (file: string, args: string[] = []) => {
+    runFileAsync: async (file: string, args: string[] = []) => {
+      if (file === 'git') throw new Error('Not a repository');
       calls.push([file, ...args]);
       return '';
     },
@@ -625,7 +633,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
     mkdirSync(join(project, 'ios'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
 
-    checkMainCheckout(project, { upstream: null });
+    await checkMainCheckout(project, { upstream: null });
     expect(calls.some(([file]) => file === 'npm')).toBe(false);
     expect(calls.some(([file]) => file === 'find')).toBe(false);
 
@@ -635,7 +643,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
     writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
     calls.length = 0;
 
-    checkMainCheckout(project, { upstream: null });
+    await checkMainCheckout(project, { upstream: null });
     expect(calls.filter(([file]) => file === 'npm').map((call) => call.slice(1, 4))).toEqual([
       ['ls', '--all', '--json'],
     ]);
@@ -646,7 +654,7 @@ test('checkMainCheckout runs its expensive probes only when their preconditions 
   }
 });
 
-test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapods (#137)', () => {
+test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapods (#137)', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-gemfile-'));
   try {
     mkdirSync(join(project, 'ios'), { recursive: true });
@@ -654,14 +662,14 @@ test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapod
     writeFileSync(join(project, 'Gemfile'), "gem 'fastlane'\n");
     writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    fastlane (2.219.0)\n');
 
-    const fastlane = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+    const fastlane = (await checkMainCheckout(project, { brokenPods: [], upstream: null })).find((f) =>
       /CocoaPods state/.test(f.title),
     );
     expect(fastlane?.fix).toMatch(/&& pod install/);
     expect(fastlane?.fix).not.toMatch(/bundle exec/);
 
     writeFileSync(join(project, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
-    const pinned = checkMainCheckout(project, { brokenPods: [], upstream: null }).find((f) =>
+    const pinned = (await checkMainCheckout(project, { brokenPods: [], upstream: null })).find((f) =>
       /CocoaPods state/.test(f.title),
     );
     expect(pinned?.fix).toMatch(/bundle exec pod install/);
@@ -670,14 +678,14 @@ test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapod
   }
 });
 
-test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', () => {
+test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
   try {
     mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
     writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
 
-    const findings = checkMainCheckout(project, {
+    const findings = await checkMainCheckout(project, {
       brokenPods: [join(project, 'ios', 'Pods', 'Headers', 'sqlite3.h')],
       upstream: null,
     });
@@ -689,14 +697,14 @@ test('checkMainCheckout reports broken CocoaPods links even when lockfiles match
   }
 });
 
-test('checkMainCheckout reports stale dependencies and the locally known upstream gap', () => {
+test('checkMainCheckout reports stale dependencies and the locally known upstream gap', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-stale-'));
   try {
     writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
     mkdirSync(join(project, 'node_modules'), { recursive: true });
 
-    const findings = checkMainCheckout(project, {
+    const findings = await checkMainCheckout(project, {
       npmTreeValid: false,
       upstream: { name: 'origin/main', ahead: 0, behind: 2 },
       linkedWorktrees: true,
@@ -1022,7 +1030,7 @@ test('an iOS-only checkout is not told about the Android C++ cache', () => {
   }
 });
 
-test.each(['ios', 'android'] as const)('doctor does not require an Expo dev client for %s', (platform) => {
+test.each(['ios', 'android'] as const)('doctor does not require an Expo dev client for %s', async (platform) => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-expo-native-'));
   try {
     writeFileSync(
@@ -1034,7 +1042,7 @@ test.each(['ios', 'android'] as const)('doctor does not require an Expo dev clie
     mkdirSync(join(project, 'ios'));
     writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
     mkdirSync(join(project, 'android'));
-    const findings = runDoctor(project, {
+    const findings = await runProjectDoctor(project, {
       host: 'darwin',
       platform,
       concurrency: { maxBuilds: 0, maxDevices: 0 },
@@ -2350,7 +2358,7 @@ test('doctor --platform includes the selection in JSON and suppresses the other 
 
 test.each(['win32', 'linux'] as const)(
   'on a %s host doctor --platform ios points at --remote eas instead of Xcode, CocoaPods and SimSlim',
-  (host) => {
+  async (host) => {
     const project = mkdtempSync(join(tmpdir(), 'stim-doc-ios-host-'));
     try {
       writeFileSync(
@@ -2370,20 +2378,22 @@ test.each(['win32', 'linux'] as const)(
         lookupSimSlim: () => false,
         memoryPressure: () => 'critical' as const,
       };
-      const titles = runDoctor(project, { ...options, host }).map((finding) => finding.title);
+      const titles = (await runProjectDoctor(project, { ...options, host })).map((finding) => finding.title);
       expect(titles).toContain(`iOS runs through EAS on this ${host} host`);
       expect(titles).toContain('The source checkout has no installed dependencies');
       expect(titles.join('\n')).not.toMatch(/CocoaPods|SimSlim|iOS warm|architecture|memory pressure|Android warm/);
-      const remote = runDoctor(project, { ...options, host }).find((finding) =>
+      const remote = (await runProjectDoctor(project, { ...options, host })).find((finding) =>
         finding.title.startsWith('iOS runs through EAS'),
       );
       expect(remote?.fix).toContain('stim ios --remote eas --eas-profile');
 
-      const mac = runDoctor(project, { ...options, host: 'darwin' }).map((finding) => finding.title);
+      const mac = (await runProjectDoctor(project, { ...options, host: 'darwin' })).map((finding) => finding.title);
       expect(mac).not.toContain(`iOS runs through EAS on this ${host} host`);
       expect(mac).toContain('The source checkout CocoaPods state is missing');
 
-      const both = runDoctor(project, { ...options, platform: undefined, host }).map((finding) => finding.title);
+      const both = (await runProjectDoctor(project, { ...options, platform: undefined, host })).map(
+        (finding) => finding.title,
+      );
       expect(both.join('\n')).not.toMatch(/iOS runs through EAS|CocoaPods|iOS warm/);
       expect(both).toContain('The source checkout has no Android warm build output');
     } finally {
@@ -2579,3 +2589,51 @@ test('doctor leaves the registry alone in a directory that is not an app', async
     rmSync(project, { recursive: true, force: true });
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'source checkout reads stay responsive and preserve stale dependency and broken Pod findings',
+  async () => {
+    const project = join(testHome, 'source');
+    const pods = join(project, 'ios', 'Pods');
+    mkdirSync(pods, { recursive: true });
+    mkdirSync(join(project, 'node_modules'));
+    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
+    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
+    writeFileSync(join(pods, 'Manifest.lock'), 'pods\n');
+    const broken = join(pods, 'missing-header');
+    symlinkSync(join(project, 'missing'), broken);
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync(file, args, options) {
+        if (file === 'npm') {
+          expect(options.timeoutMs).toBe(30_000);
+          return executor.runFileAsync(process.execPath, ['-e', 'setTimeout(() => process.exit(1), 200)'], options);
+        }
+        return executor.runFileAsync(file, args, options);
+      },
+    });
+    try {
+      let finished = false;
+      const pending = checkMainCheckout(project, { upstream: null }).then((result) => {
+        finished = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(finished).toBe(false);
+      const findings = await pending;
+      expect(findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ title: 'The source checkout dependency tree is stale' }),
+          expect.objectContaining({
+            title: 'The source checkout CocoaPods state has broken links',
+            detail: expect.stringContaining(broken),
+          }),
+        ]),
+      );
+    } finally {
+      resetExecutor();
+    }
+  },
+);

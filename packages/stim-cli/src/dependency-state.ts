@@ -12,6 +12,18 @@ export function installedNpmTreeIsValid(projectRoot: string): boolean {
   }
 }
 
+export async function installedNpmTreeIsValidAsync(projectRoot: string): Promise<boolean> {
+  try {
+    await getExecutor().runFileAsync('npm', ['ls', '--all', '--json', '--silent'], {
+      cwd: projectRoot,
+      timeoutMs: 30_000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const DEPENDENCY_STATES = [
   { lock: 'pnpm-lock.yaml', installed: ['node_modules'], command: 'pnpm install' },
   { lock: 'yarn.lock', installed: ['node_modules', '.pnp.cjs', '.pnp.js'], command: 'yarn install' },
@@ -27,8 +39,10 @@ export interface DependencyState {
   root: string;
 }
 
-export function dependencyState(projectRoot: string): DependencyState | null {
-  const root = repoRoot(projectRoot) ?? projectRoot;
+export function dependencyState(
+  projectRoot: string,
+  root: string = repoRoot(projectRoot) ?? projectRoot,
+): DependencyState | null {
   let dir = projectRoot;
   while (true) {
     const state = DEPENDENCY_STATES.find((candidate) => existsSync(join(dir, candidate.lock)));
