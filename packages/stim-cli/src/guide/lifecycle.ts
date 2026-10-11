@@ -260,8 +260,9 @@ WAITING FOR A CHANGE
   the EAS session ledger, git HEAD, index and ref changes in the worktrees'
   repositories, the exit of a recorded supervisor, Metro, build, browser or
   macOS app process (checked every 2 seconds), adb device arrivals and
-  departures, and simulator state (polled every 5 seconds), and recomputes
-  every 30 seconds as a fallback. A log append updates the log-derived facts
+  departures, and simulator boots, shutdowns, creations and deletions (from
+  CoreSimulator's device set, with a simctl check every 30 seconds), and
+  recomputes every 30 seconds as a fallback. A log append updates the log-derived facts
   within about a second; device activity follows at most every 5 seconds. The
   first line does not wait for git: worktree git summaries can be null in it,
   and the next line carries them. Ctrl+C, SIGTERM or closing its stdout ends it

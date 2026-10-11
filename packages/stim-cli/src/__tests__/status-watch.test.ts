@@ -362,51 +362,70 @@ describe('watchChangeKey', () => {
   });
 });
 
-test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
+test('CoreSimulator device set writes report a simulator change at once; the slow poll shares its listing until then', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
+  const developer = join(home, 'Developer');
+  const deviceSet = join(developer, 'CoreSimulator', 'Devices');
+  const udid = '3A2178C2-DB3D-4B23-876E-4BC6BFD5AE32';
+  mkdirSync(developer);
   const listing = (state: string) =>
     JSON.stringify({
       devices: {
         'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
-          { udid: 'U1', name: 'stim-a', state, isAvailable: true, deviceTypeIdentifier: 'iPhone' },
+          { udid, name: 'stim-a', state, isAvailable: true, deviceTypeIdentifier: 'iPhone' },
         ],
       },
     });
   let output = listing('Shutdown');
+  let reads = 0;
   setExecutor({
     findExecutable: () => null,
     spawn(file: string) {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
       if (file !== 'xcrun') return child;
-      setTimeout(() => {
-        child.stdout.end(output);
-        child.emit('close', 0);
-      }, 10);
+      reads++;
+      child.stdout.write(output);
+      setTimeout(() => child.emit('close', 0), 10);
       return child;
     },
   });
-  const sources = watchStatusSources({ home, onChange: () => {}, platform: 'darwin' });
+  const changes: string[] = [];
+  const sources = watchStatusSources({ home, deviceSet, onChange: (kind) => changes.push(kind), platform: 'darwin' });
   try {
-    expect(sources.simulatorListing()).toBe(null);
     await vi.advanceTimersByTimeAsync(20);
-    expect(sources.simulatorListing()).toBe(listing('Shutdown'));
+    expect([reads, sources.simulatorListing()]).toEqual([1, listing('Shutdown')]);
 
+    mkdirSync(join(developer, 'CoreSimulator'));
+    watchListeners.get(developer)?.('rename', 'CoreSimulator');
+    expect(changes).toEqual([]);
+    mkdirSync(join(deviceSet, udid), { recursive: true });
+    watchListeners.get(join(developer, 'CoreSimulator'))?.('rename', 'Devices');
+    expect(changes).toEqual(['full']);
+
+    await vi.advanceTimersByTimeAsync(20);
     output = listing('Booted');
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sources.simulatorListing()).toBe(listing('Booted'));
+    watchListeners.get(join(deviceSet, udid))?.('rename', 'data');
+    expect(changes).toHaveLength(2);
+    for (let i = 0; i < 5; i++) watchListeners.get(join(deviceSet, udid))?.('rename', 'device.plist');
+    expect(sources.simulatorListing()).toBe(null);
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect([reads, changes.length, sources.simulatorListing()]).toEqual([4, 8, listing('Booted')]);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(reads).toBe(4);
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect([reads, changes.length, sources.simulatorListing()]).toEqual([5, 8, listing('Booted')]);
 
     writeFileSync(join(home, 'config.json'), '{}');
-    watchListeners.get(home)!('change', 'config.json');
+    watchListeners.get(home)?.('change', 'config.json');
     expect(sources.simulatorListing()).toBe(null);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sources.simulatorListing()).toBe(listing('Booted'));
 
     output = 'not json';
-    await vi.advanceTimersByTimeAsync(11_000);
+    await vi.advanceTimersByTimeAsync(61_000);
     expect(sources.simulatorListing()).toBe(null);
   } finally {
     sources.stop();

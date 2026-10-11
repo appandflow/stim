@@ -16,7 +16,8 @@ import { watchStdoutReader } from '../stdout-reader.ts';
 import { iosStatusName, liveProbes, readStatus, refreshLightFacts, type StatusSnapshot } from '../status-read.ts';
 import chalk from 'chalk';
 import { statSync } from 'fs';
-import { totalmem } from 'os';
+import { totalmem, userInfo } from 'os';
+import { join } from 'path';
 import type { Command } from 'commander';
 import { getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -436,7 +437,14 @@ export function runStatusWatch({
     machineDue = true;
     scheduler.trigger('light');
   }, WATCH_MACHINE_INTERVAL_MS);
-  sources = watchStatusSources({ home: getConfigDir(), onChange: (kind) => scheduler.trigger(kind) });
+  sources = watchStatusSources({
+    home: getConfigDir(),
+    deviceSet:
+      process.platform === 'darwin'
+        ? join(userInfo().homedir, 'Library', 'Developer', 'CoreSimulator', 'Devices')
+        : null,
+    onChange: (kind) => scheduler.trigger(kind),
+  });
   scheduler.trigger('full', 0);
   return {
     stop() {
