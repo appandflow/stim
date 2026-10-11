@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 
-import { DemoMachine, type DemoConnection, type Device } from './demo.ts';
+import { DemoMachine, upgradeFromWebPage, type DemoConnection, type Device } from './demo.ts';
 import { bundledFixtures } from './fixtures.ts';
 
 interface Env {
@@ -9,12 +9,14 @@ interface Env {
 }
 
 const MACHINE_NAME = 'Demo Mac';
+const MAX_SOCKETS = 32;
 
 export default {
   fetch(request, env): Promise<Response> | Response {
     if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
       return new Response('Stim demo server. Pair the Stim app with this address over wss://.\n', { status: 426 });
     }
+    if (upgradeFromWebPage(request.headers, request.url)) return new Response(null, { status: 403 });
     return env.DEMO.get(env.DEMO.idFromName('demo')).fetch(request);
   },
 } satisfies ExportedHandler<Env>;
@@ -24,8 +26,10 @@ export class DemoServer extends DurableObject<Env> {
   private readonly connections = new Map<WebSocket, DemoConnection>();
 
   override fetch(): Response {
+    if (this.ctx.getWebSockets().length >= MAX_SOCKETS) return new Response('Too many connections.\n', { status: 503 });
     const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server);
+    this.connection(server);
     return new Response(null, { status: 101, webSocket: client });
   }
 

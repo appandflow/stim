@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -117,4 +118,40 @@ it('pairs, streams, takes Control and keeps the pairing across reconnects', asyn
   const stranger = await open();
   const refused = await stranger.request('hello', { protocol: 1, auth: { pairingToken: 'guess' } });
   expect(refused.error?.code).toBe('pairing-expired');
+});
+
+const upgradeStatus = (origin?: string): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const request = httpRequest({
+      host: '127.0.0.1',
+      port,
+      headers: {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Version': '13',
+        'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        ...(origin ? { Origin: origin } : {}),
+      },
+    });
+    request.on('response', (response) => resolve(response.statusCode ?? 0));
+    request.on('upgrade', (response, socket) => {
+      socket.destroy();
+      resolve(response.statusCode ?? 0);
+    });
+    request.on('error', reject);
+    request.end();
+  });
+
+it('refuses upgrades from a web page and accepts the phone app, with or without its own Origin', async () => {
+  expect(await upgradeStatus('https://evil.example')).toBe(403);
+  expect(await upgradeStatus()).toBe(101);
+  expect(await upgradeStatus(`http://127.0.0.1:${port}`)).toBe(101);
+});
+
+it('refuses upgrades beyond the concurrent connection limit with 503', async () => {
+  const held = [];
+  for (let count = 0; count < 32; count++) held.push(await open());
+  expect(await upgradeStatus()).toBe(503);
+  for (const { socket } of held) socket.close();
+  await vi.waitFor(async () => expect(await upgradeStatus()).toBe(101), { timeout: 10_000 });
 });
