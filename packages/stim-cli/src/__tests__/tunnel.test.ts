@@ -435,11 +435,12 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     }
   });
 
-  test('reads a URL from an atomic log replacement without a polling tick', async () => {
+  test('reads a URL from atomic log replacements without a polling tick', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-watch-test-'));
     const logFile = join(dir, 'ngrok.log');
     writeFileSync(logFile, '');
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let writing: NodeJS.Timeout | undefined;
     try {
       const promise = startVerified({
         provider: 'ngrok',
@@ -450,12 +451,17 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
         requireReachable: false,
       });
       const replacement = join(dir, 'replacement.log');
-      writeFileSync(replacement, `${JSON.stringify({ url: 'https://watched.ngrok.app' })}\n`);
-      renameSync(replacement, logFile);
+      const replace = () => {
+        writeFileSync(replacement, `${JSON.stringify({ url: 'https://watched.ngrok.app' })}\n`);
+        renameSync(replacement, logFile);
+        writing = setTimeout(replace, 100);
+      };
+      replace();
       const result = await promise;
       expect(result).toMatchObject({ url: 'https://watched.ngrok.app' });
       if ('cleanup' in result) await result.cleanup();
     } finally {
+      clearTimeout(writing);
       vi.useRealTimers();
       rmSync(dir, { recursive: true, force: true });
     }
