@@ -135,8 +135,10 @@ attempt falls back here. Placement and failure reasons are in build logs.
 AGENT ACTIONS
 
 Launch through stim macos first. Use its isolated bundleId from the JSON launch
-record or status --json. stim macos returns only once macOS LaunchServices lists
-the app, so agent-device open attaches to it instead of starting a second copy:
+record or status --json. stim macos waits, for up to 20 seconds, until macOS
+LaunchServices lists the app, so agent-device open attaches to it instead of
+starting a second copy. If it is still unlisted, stim macos warns and returns;
+wait before opening. A --remote launch skips the wait:
 
   agent-device open <bundleId> --platform macos --surface app --foreground
   agent-device click <ref> --settle

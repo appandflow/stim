@@ -194,8 +194,10 @@ affects only this workspace's recorded app and supervisor.
 
 Launch the app through `stim macos` first. Use its isolated `bundleId` from the
 JSON launch record or `stim status --json` when opening it with agent-device.
-`stim macos` returns only once macOS LaunchServices lists the app, so
-`agent-device open` attaches to it instead of starting a second copy:
+`stim macos` waits, for up to 20 seconds, until macOS LaunchServices lists the
+app, so `agent-device open` attaches to it instead of starting a second copy. If
+it is still unlisted, `stim macos` warns and returns; wait before opening. A
+`--remote` launch skips the wait:
 
 ```sh
 agent-device open <bundleId> --platform macos --surface app --foreground
