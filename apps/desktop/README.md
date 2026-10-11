@@ -1612,8 +1612,8 @@ background, because replacing `stim` while agents run commands would break them,
 and a `stim` that no package manager owns, such as a linked checkout, is never
 offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
-served and an override is set, `stim-server --version` gets the same check, installing
-`@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
+served, `stim-server --version` gets the same check; the bundled server always passes
+it, and an outdated override is offered `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
 to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
 that the installed `stim` does not list. **Not Now** hides the offer for good.
