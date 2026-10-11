@@ -27,7 +27,7 @@ import Testing
       overrides: "# trustd stall\nNODE_USE_SYSTEM_CA=0\n  STIM_MAX_BUILDS = 2\nnot a line\n1BAD=x\nURL=a=b\n",
       home: "/Users/me")
     #expect(environment["NODE_USE_SYSTEM_CA"] == "0")
-    #expect(environment["STIM_MAX_BUILDS"] == " 2")
+    #expect(environment["STIM_MAX_BUILDS"] == "2")
     #expect(environment["URL"] == "a=b")
     #expect(environment["1BAD"] == nil)
   }

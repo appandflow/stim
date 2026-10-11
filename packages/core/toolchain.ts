@@ -57,6 +57,13 @@ export interface Toolchain {
 
 const HOMEBREW_BINS = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin'];
 const SYSTEM_JDKS = '/Library/Java/JavaVirtualMachines';
+const HOMEBREW_PREFIXES = ['/opt/homebrew', '/usr/local'];
+
+/** Homebrew JDKs in the order Android builds prefer them: 17, then 21, then the rest from newest. */
+function jdkRank(name: string): number {
+  const major = Number(/@(\d+)$/.exec(name)?.[1] ?? 1000);
+  return major === 17 ? 0 : major === 21 ? 1 : 10_000 - major;
+}
 const ANDROID_STUDIOS = ['/Applications/Android Studio.app', '/Applications/Android Studio Preview.app'];
 
 type Version = [number, number, number];
@@ -205,7 +212,8 @@ export function discoverToolchain(base: NodeJS.ProcessEnv, probe: ToolchainProbe
 
 /**
  * `JAVA_HOME` for Gradle. A JDK under /Library/Java/JavaVirtualMachines needs none, because `/usr/bin/java` finds
- * it; without one, Android Studio's bundled runtime is set.
+ * it. Without one, a Homebrew `openjdk`, which /usr/bin/java does not find, is set (17, then 21, then the newest),
+ * else Android Studio's bundled runtime.
  */
 function javaEntry(env: Record<string, string>, probe: ToolchainProbe): ToolchainEntry {
   if (env.JAVA_HOME) return { name: 'JAVA_HOME', value: env.JAVA_HOME, source: 'environment' };
@@ -215,6 +223,18 @@ function javaEntry(env: Record<string, string>, probe: ToolchainProbe): Toolchai
     .find((home) => probe.isFile(join(home, 'bin', 'java')));
   if (system)
     return { name: 'JAVA_HOME', value: system, source: 'discovered', from: 'a system JDK, which /usr/bin/java runs' };
+  const brewed = HOMEBREW_PREFIXES.flatMap((prefix) =>
+    probe
+      .list(join(prefix, 'opt'))
+      .filter((name) => /^openjdk(@\d+)?$/.test(name))
+      .map((name) => ({ name, home: join(prefix, 'opt', name, 'libexec', 'openjdk.jdk', 'Contents', 'Home') })),
+  )
+    .filter(({ home }) => probe.isFile(join(home, 'bin', 'java')))
+    .toSorted((a, b) => jdkRank(a.name) - jdkRank(b.name))[0];
+  if (brewed) {
+    env.JAVA_HOME = brewed.home;
+    return { name: 'JAVA_HOME', value: brewed.home, source: 'discovered', from: `Homebrew ${brewed.name}` };
+  }
   for (const studio of ANDROID_STUDIOS) {
     const jbr = join(studio, 'Contents', 'jbr', 'Contents', 'Home');
     if (probe.isFile(join(jbr, 'bin', 'java'))) {

@@ -1543,8 +1543,8 @@ replaces its card. With the main window closed, the link reopens it.
   result: the launch environment with the default Node of nvm, fnm, Volta, mise or asdf,
   Homebrew, `~/.local/bin`, pnpm's and bun's global directories and the Android SDK
   tools appended to `PATH`, `ANDROID_HOME` when `~/Library/Android/sdk` exists, and
-  `JAVA_HOME` set to Android Studio's runtime when no JDK is installed under
-  `/Library/Java/JavaVirtualMachines`. A shell profile's variables do not reach it:
+  `JAVA_HOME` set to a Homebrew `openjdk`, else Android Studio's runtime, when no JDK is
+  installed under `/Library/Java/JavaVirtualMachines`. A shell profile's variables do not reach it:
   **Settings > Advanced > Environment** holds the Stim home, which replaces a profile's
   `STIM_HOME`, and `KEY=VALUE` lines, such as `STIM_*` settings or
   `NODE_USE_SYSTEM_CA=0`, that Desktop adds to the environment of every `stim` command

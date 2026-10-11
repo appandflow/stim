@@ -94,7 +94,8 @@ the environment it was given, the way `stim doctor` reports under **Toolchain**:
 it appends the default Node of nvm, fnm, Volta, mise or asdf, Homebrew,
 `~/.local/bin`, pnpm's and bun's global directories and the Android SDK tools to
 `PATH`, sets `ANDROID_HOME` to `~/Library/Android/sdk` when that exists, and sets
-`JAVA_HOME` to Android Studio's bundled runtime when no JDK is installed under
+`JAVA_HOME` to a Homebrew `openjdk` (17, then 21, then the newest), else Android
+Studio's bundled runtime, when no JDK is installed under
 `/Library/Java/JavaVirtualMachines`. It never replaces a variable it was given,
 and its own Node's directory is always the last `PATH` entry. CocoaPods uses the
 project's `.ruby-version` Ruby, else rvm's or rbenv's default Ruby, and reads the

@@ -112,7 +112,7 @@ available one.
 A **Toolchain** section reports where `node`, `ANDROID_HOME`, `JAVA_HOME`,
 `stim`, `brew` and `adb` come from: this shell's environment, or the location
 stim-server would discover them at without a login shell (a version manager's
-default Node, Homebrew, `~/.local/bin`, the standard Android SDK, a system JDK
+default Node, Homebrew, `~/.local/bin`, the standard Android SDK, a system or Homebrew JDK
 or Android Studio's bundled runtime), with how to override each. When the app
 pins Node in `.nvmrc`, `.node-version`, `.tool-versions` or `package.json`'s
 `volta.node`, it also names the installed Node Metro runs on when the `node` on

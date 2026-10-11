@@ -13,7 +13,7 @@ public enum Toolchain {
       guard !line.isEmpty, !line.hasPrefix("#"), let equals = line.firstIndex(of: "=") else { continue }
       let name = String(line[..<equals]).trimmingCharacters(in: .whitespaces)
       guard name.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil else { continue }
-      overrides[name] = String(line[line.index(after: equals)...])
+      overrides[name] = String(line[line.index(after: equals)...]).trimmingCharacters(in: .whitespaces)
     }
     return overrides
   }

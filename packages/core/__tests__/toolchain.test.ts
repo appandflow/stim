@@ -79,7 +79,7 @@ describe('discoverToolchain', () => {
     });
   });
 
-  it("uses a system JDK through /usr/bin/java, and Android Studio's runtime only without one", () => {
+  it("uses a system JDK through /usr/bin/java, else Homebrew's JDK 17, else Android Studio's runtime", () => {
     const studio = { '/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/java': '' };
     const withJdk = discoverToolchain(
       { PATH: '/usr/bin' },
@@ -88,6 +88,12 @@ describe('discoverToolchain', () => {
     expect(withJdk.env.JAVA_HOME).toBeUndefined();
     const studioOnly = discoverToolchain({ PATH: '/usr/bin' }, probe(studio));
     expect(studioOnly.env.JAVA_HOME).toBe('/Applications/Android Studio.app/Contents/jbr/Contents/Home');
+    const brew = (name: string) => ({ [`/opt/homebrew/opt/${name}/libexec/openjdk.jdk/Contents/Home/bin/java`]: '' });
+    const homebrewOnly = discoverToolchain(
+      { PATH: '/usr/bin' },
+      probe({ ...studio, ...brew('openjdk'), ...brew('openjdk@21'), ...brew('openjdk@17') }),
+    );
+    expect(homebrewOnly.env.JAVA_HOME).toBe('/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home');
   });
 });
 
