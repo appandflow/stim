@@ -11,9 +11,10 @@ import {
   createOwnedIosSim,
   iosSimulatorFailureAdvice,
   listAllIosSims,
+  listAllIosSimsAsync,
   type IosSimSnapshot,
-  listIosDeviceTypes,
-  listIosRuntimes,
+  listIosDeviceTypesAsync,
+  listIosRuntimesAsync,
   ownedSimName,
   parseRuntimeVersion,
   renameIosSim,
@@ -117,13 +118,13 @@ export async function ensureOwnedIosDevice({
       } else {
         const sim = resolved.sim as SimRecord;
         const wantedType = flags.deviceType || settings?.ios?.deviceType;
-        const deviceTypes = listIosDeviceTypes();
+        const deviceTypes = await listIosDeviceTypesAsync();
         const mismatch = deviceTypeMismatch(sim.deviceTypeIdentifier, wantedType, deviceTypes);
         if (mismatch) {
           throw new IosDeviceMismatchError(`${mismatch}. Stim will not silently boot a different model.`);
         }
         const versionMismatch = flags.runtimeFlag
-          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, listIosRuntimes())
+          ? runtimeMismatch(sim.runtime, flags.runtimeFlag, await listIosRuntimesAsync())
           : null;
         if (versionMismatch) {
           throw new IosDeviceMismatchError(`${versionMismatch}. Stim will not silently boot a different iOS version.`);
@@ -179,7 +180,7 @@ export async function ensureOwnedIosDevice({
         return { ...(await configure()), ...facts, booted: sim.udid };
       }
     } else {
-      const sim = listAllIosSims().find((s) => s.udid === record.deviceUdid);
+      const sim = (await listAllIosSimsAsync()).find((s) => s.udid === record.deviceUdid);
       if (sim) {
         if (sim.state !== 'Booted') {
           note(
@@ -206,7 +207,7 @@ export async function ensureOwnedIosDevice({
     });
   }
 
-  const choice = resolveIosCreation({
+  const choice = await resolveIosCreation({
     deviceType: flags.deviceType || settings.ios?.deviceType,
     runtime: flags.runtime || settings.ios?.runtime,
   });
@@ -239,7 +240,13 @@ export async function ensureOwnedIosDevice({
   }
 
   const created = await withIosDeviceNameLock(async () => {
-    const suffix = ownedIosNameSuffix(label, { model: choice.deviceType, runtime: choice.runtime }, projectPath);
+    const suffix = ownedIosNameSuffix(
+      label,
+      { model: choice.deviceType, runtime: choice.runtime },
+      projectPath,
+      undefined,
+      await listAllIosSimsAsync({ includeUnavailable: true }),
+    );
     const result = await createOwnedIosSim(label, { suffix }, choice);
     setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot);
     return result;
@@ -279,8 +286,8 @@ function ownedIosNameSuffix(
   label: string,
   model: SimModel,
   projectPath: string,
-  udid?: string,
-  listed: SimRecord[] = listAllIosSims({ includeUnavailable: true }),
+  udid: string | undefined,
+  listed: SimRecord[],
 ): string {
   const names = new Set(listed.filter((sim) => sim.udid !== udid).map((sim) => sim.name));
   for (const project of Object.values(loadConfig()?.projects ?? {})) {
@@ -299,12 +306,12 @@ function ownedIosNameSuffix(
   return suffix;
 }
 
-function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPath: string, listed?: SimRecord[]) {
+function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPath: string, listed: SimRecord[]) {
   return ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, sim.udid, listed));
 }
 
 async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): Promise<string> {
-  const wanted = ownedIosName(sim, label, model, projectPath);
+  const wanted = ownedIosName(sim, label, model, projectPath, await listAllIosSimsAsync({ includeUnavailable: true }));
   if (sim.name === wanted) return wanted;
   try {
     await renameIosSim(sim.udid, wanted);
@@ -340,7 +347,7 @@ async function takeParkedIosSim({
     runtimeIdentifier: choice.runtimeId,
   });
   if (candidates.length === 0) return null;
-  const listed = new Map(listAllIosSims({ includeUnavailable: true }).map((sim) => [sim.udid, sim]));
+  const listed = new Map((await listAllIosSimsAsync({ includeUnavailable: true })).map((sim) => [sim.udid, sim]));
   for (const parked of candidates) {
     const sim = listed.get(parked.udid);
     if (!sim || !sim.available) {
@@ -376,7 +383,11 @@ async function takeParkedIosSim({
       continue;
     }
     const model = { model: choice.deviceType, runtime: choice.runtime };
-    const name = ownedSimName(label, model, ownedIosNameSuffix(label, model, projectPath, parked.udid));
+    const name = ownedSimName(
+      label,
+      model,
+      ownedIosNameSuffix(label, model, projectPath, parked.udid, [...listed.values()]),
+    );
     const device = {
       deviceUdid: parked.udid,
       owned: true,
@@ -496,7 +507,7 @@ export async function ensureIosBooted({
 
   let resolved;
   try {
-    resolved = resolveOwnedIosSim(udid);
+    resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
   } catch (e) {
     return { failed: true, reason: `Could not list simulators: ${(e as Error)?.message || e}` };
   }
@@ -538,7 +549,7 @@ export async function ensureIosBooted({
     await cancellableSleep(pollMs);
     let state = null;
     try {
-      state = listAllIosSims({ timeoutMs: 30000 }).find((s) => s.udid === udid)?.state ?? null;
+      state = (await listAllIosSimsAsync({ timeoutMs: 30000 })).find((s) => s.udid === udid)?.state ?? null;
     } catch {}
     if (state === 'Booted') return ready();
   }

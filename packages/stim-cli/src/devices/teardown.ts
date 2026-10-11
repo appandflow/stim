@@ -28,7 +28,7 @@ import {
   deleteIosSim,
   listAllIosSimsAsync,
   eraseIosSim,
-  listIosDeviceTypes,
+  listIosDeviceTypesAsync,
   parkedSimName,
   parseRuntimeVersion,
   renameIosSim,
@@ -128,7 +128,7 @@ export async function eraseParkedIosSim(udid: string, { label }: { label?: strin
   try {
     const erased = await eraseParkedAfter('ios', udid, async (_record, eraseStarted) => {
       closeOwnedDeviceSessions({ platform: 'ios', id: udid }, () => Boolean(resolveOwnedIosSim(udid).sim));
-      const resolved = resolveOwnedIosSim(udid);
+      const resolved = resolveOwnedIosSim(udid, await listAllIosSimsAsync());
       if (resolved.missing) throw new Error(`simulator ${udid} is not on this machine`);
       if (resolved.notOwned) throw new Error(`simulator ${udid} is now named ${JSON.stringify(resolved.notOwned)}`);
       const state = (resolved.sim as IosSimRecord).state;
@@ -223,7 +223,7 @@ async function parkOwnedIosSim(
   if (sim.state !== 'Shutdown') {
     throw new Error(iosShutdownFailureReason(udid, sim.state));
   }
-  const model = listIosDeviceTypes().find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
+  const model = (await listIosDeviceTypesAsync()).find((d) => d.identifier === sim.deviceTypeIdentifier)?.name ?? null;
   const runtime = parseRuntimeVersion(sim.runtime);
   const name = parkedSimName(sim.udid, { model, runtime });
   await renameIosSim(sim.udid, name);

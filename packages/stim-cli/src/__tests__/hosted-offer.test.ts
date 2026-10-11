@@ -54,30 +54,30 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('reports selected installed SDK metadata without native or filesystem mutation', () => {
-  expect(inspectHostedDevice({ platform: 'ios' })).toMatchObject({
+test('reports selected installed SDK metadata without native or filesystem mutation', async () => {
+  expect(await inspectHostedDevice({ platform: 'ios' })).toMatchObject({
     choice: { runtime: '27.1', deviceTypeId: 'iphone', architecture: 'arm64' },
     declined: null,
   });
-  expect(inspectHostedDevice({ platform: 'android' })).toMatchObject({
+  expect(await inspectHostedDevice({ platform: 'android' })).toMatchObject({
     choice: { systemImage: 'system-images;android-30;google_apis;arm64-v8a', deviceProfile: 'pixel_6' },
     declined: null,
   });
-  expect(inspectHostedDevice({ platform: 'ios', runtime: 'missing' })).toMatchObject({
+  expect(await inspectHostedDevice({ platform: 'ios', runtime: 'missing' })).toMatchObject({
     choice: null,
     declined: 'Runtime not installed.',
   });
   expect(
-    inspectHostedDevice({ platform: 'android', systemImage: 'system-images;android-36;google_apis;x86_64' }),
+    await inspectHostedDevice({ platform: 'android', systemImage: 'system-images;android-36;google_apis;x86_64' }),
   ).toMatchObject({
     choice: null,
     declined: 'No compatible installed Android image.',
   });
-  expect(inspectHostedDevice({ platform: 'android', deviceProfile: 'missing' })).toMatchObject({
+  expect(await inspectHostedDevice({ platform: 'android', deviceProfile: 'missing' })).toMatchObject({
     choice: null,
     declined: 'The Android device profile is not installed.',
   });
-  expect(inspectHostedDevice({ platform: 'macos' })).toMatchObject({
+  expect(await inspectHostedDevice({ platform: 'macos' })).toMatchObject({
     choice: { architecture: 'arm64', macosVersion: '27.0' },
     declined: null,
   });
@@ -88,10 +88,10 @@ test('reports selected installed SDK metadata without native or filesystem mutat
 
 test.each([null, 'warning', 'critical'])(
   'unknown or elevated pressure %s declines before SDK selection',
-  (pressure) => {
+  async (pressure) => {
     native.pressure.mockReturnValue(pressure);
     for (const platform of ['ios', 'android', 'macos'] as const)
-      expect(inspectHostedDevice({ platform })).toMatchObject({
+      expect(await inspectHostedDevice({ platform })).toMatchObject({
         choice: null,
         declined: 'Host memory pressure is unknown or elevated.',
         resources: { memoryPressure: pressure },
@@ -101,19 +101,21 @@ test.each([null, 'warning', 'critical'])(
   },
 );
 
-test('native offers report local live devices while excluding recorded hosted devices', () => {
+test('native offers report local live devices while excluding recorded hosted devices', async () => {
   native.sims.mockReturnValue([
     makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' }),
     makeIosSim({ udid: 'local', name: 'stim-local', state: 'Booted' }),
   ]);
-  expect(inspectHostedDevice({ platform: 'ios' }, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toMatchObject({
+  expect(
+    await inspectHostedDevice({ platform: 'ios' }, { exclude: [{ platform: 'ios', key: 'hosted' }] }),
+  ).toMatchObject({
     resources: { localDevices: 1 },
     declined: null,
   });
   native.sims.mockImplementation(() => {
     throw new Error('simulator inventory unavailable');
   });
-  expect(inspectHostedDevice({ platform: 'ios' }, { exclude: [] })).toMatchObject({
+  expect(await inspectHostedDevice({ platform: 'ios' }, { exclude: [] })).toMatchObject({
     resources: { localDevices: { unknown: expect.stringContaining('simulator inventory unavailable') } },
   });
 });
