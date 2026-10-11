@@ -1144,7 +1144,19 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
         reportRetainedResources(path, result);
         return;
       }
-      if (!opts.force && resolveFullRef(path, 'HEAD', { removal: true }) !== inspectedHead) {
+      let headMoved = false;
+      if (!opts.force) {
+        try {
+          headMoved = resolveFullRef(path, 'HEAD', { removal: true }) !== inspectedHead;
+        } catch (error) {
+          if (!isTimeoutError(error)) throw error;
+          printRemovalRefusal(path, timedOutInspection(error));
+          console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
+          printRemovalCleanup(result, true);
+          return;
+        }
+      }
+      if (headMoved) {
         console.error(chalk.red(`Refusing to remove ${path}: its HEAD moved while its environment was reclaimed.`));
         console.error(chalk.dim(`The directory and Stim ownership record for ${path} were kept.`));
         printRemovalCleanup(result, true);
@@ -1186,9 +1198,21 @@ async function removeOrRefuse(target: string | undefined, opts: RemoveOptions, o
           return;
         }
         upsertProject(path, { worktreeRemovalComplete: true, worktreePendingBranchSha: approvedBranchSha });
-        const checkedOutAt = listWorktrees(branchDeleteCwd).find(
-          (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
-        )?.path;
+        let checkedOutAt: string | undefined;
+        try {
+          checkedOutAt = listWorktrees(branchDeleteCwd, { removal: true }).find(
+            (candidate) => candidate.branch === branch && resolve(candidate.path) !== resolve(path),
+          )?.path;
+        } catch (error) {
+          if (!isTimeoutError(error)) throw error;
+          console.error(
+            chalk.yellow(phaseLine('branch', `kept ${branch} (git did not list the worktrees in time to check it)`)),
+          );
+          console.error(chalk.dim(`  Retry: stim worktree remove ${path}`));
+          process.exitCode = 1;
+          finish();
+          return;
+        }
         if (checkedOutAt) {
           console.error(chalk.yellow(phaseLine('branch', `kept ${branch} (it is checked out at ${checkedOutAt})`)));
           console.error(
