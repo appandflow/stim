@@ -941,8 +941,11 @@ every 30 seconds:
 
 `stop` does not wait out a build that would be left with nothing to deploy to:
 a plain `stop`, `stop --slot <name>` for the slot the build targets, or for the
-workspace's only device. It sends that run SIGINT after verifying its recorded
-process identity and waits up to 60 seconds. The run stops xcodebuild or
+workspace's only device. It asks that run to stop through the workspace state,
+also sends SIGINT when the run is a Stim process of its own (the CLI, or the
+worker behind `createStim`) whose recorded identity it verified, and waits up
+to 60 seconds. A run inside a process that embeds Stim, such as stim-server, is
+never signalled. The run stops xcodebuild or
 Gradle, caches nothing from the interrupted build, and exits 130 with
 `STIM_CANCELLED`. If the run does not exit in time, `stop` refuses with
 `STIM_STOP_BLOCKED` and names the pid and lock to deal with. `stop --slot

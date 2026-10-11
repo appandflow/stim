@@ -220,9 +220,10 @@ STOP DURING A BUILD
     lock        waiting for \`stim ios\` (pid 41233, running for 12m04s) in this workspace to finish
   \`stop\` does not wait out a build it leaves with nothing to deploy to: a
   plain \`stop\`, \`stop --slot <name>\` for the slot the build targets, or
-  for the workspace's only device. It sends that run SIGINT, only after
-  proving the run's recorded process identity, and waits up to 60 seconds for
-  it to exit. The run stops its build tool, stores nothing from the
+  for the workspace's only device. It asks that run to stop through the
+  workspace state and, when the run is a CLI process, also sends it SIGINT,
+  only after proving the run's recorded process identity. It waits up to 60
+  seconds for the run to exit. The run stops its build tool, stores nothing from the
   interrupted build, and exits 130 with STIM_CANCELLED. A run that does not
   exit in time, or whose build tool outlived it, is refused with
   STIM_STOP_BLOCKED naming its pid and claim. \`stop --slot <name>\` while the

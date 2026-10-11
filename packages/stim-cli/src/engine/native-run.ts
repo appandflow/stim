@@ -12,6 +12,7 @@ export const NATIVE_RUN_LOCK = 'native-run';
 export const NATIVE_RUN_WAIT_MS: number = 30 * 60_000;
 const WAIT_HEARTBEAT_MS = 30_000;
 const CANCEL_REQUEST_KEY = 'nativeRunCancel';
+const REQUEST_POLL_MS = 250;
 
 export type NativeRunCommand = 'ios' | 'android' | 'macos' | 'build' | 'stop';
 
@@ -25,14 +26,17 @@ export interface NativeRunHolder {
   command: string | null;
   platform: string | null;
   slot: string;
+  /** The holder is a process whose SIGINT cancels the run; otherwise it only reads stop requests. */
+  takesSignals: boolean;
 }
 
 export function nativeRunHolder(holder: ClaimHolder): NativeRunHolder {
-  const { command, platform, slot } = holder.details;
+  const { command, platform, slot, interrupt } = holder.details;
   return {
     command: typeof command === 'string' ? command : null,
     platform: typeof platform === 'string' ? platform : null,
     slot: typeof slot === 'string' ? slot : 'default',
+    takesSignals: interrupt === 'signal',
   };
 }
 
@@ -94,7 +98,7 @@ export function decideStopAction({
   deviceSlots,
 }: {
   stopSlot: string | undefined;
-  holder: NativeRunHolder;
+  holder: Omit<NativeRunHolder, 'takesSignals'>;
   ownerIdentity: ProcessIdentityStatus;
   deviceSlots: readonly string[];
 }): StopHolderAction {
@@ -111,11 +115,18 @@ export function decideStopAction({
   return ownerIdentity === 'same' ? { action: 'interrupt' } : { action: 'refuse' };
 }
 
+const requestListeners = new Map<string, () => void>();
+
+/**
+ * Ask the run holding `claimId` to cancel: the request is written to the workspace state, where the run's watch
+ * finds it, and a run in this process is told at once.
+ */
 export function requestNativeRunCancel(root: string, claimId: string, pid: number = process.pid): void {
   updateWorkspaceState(root, (state) => ({
     ...state,
     [CANCEL_REQUEST_KEY]: { claimId, pid, at: new Date().toISOString() },
   }));
+  requestListeners.get(claimId)?.();
 }
 
 function cancelRequestFor(root: string, claimId: string): { pid: number } | null {
@@ -169,8 +180,8 @@ function cancelOnAbort({
   controller: AbortController;
 }): () => void {
   const state = operationState(context);
-  const onAbort = () => {
-    if (isTermination(context.signal.reason) || controller.signal.aborted) return;
+  const cancel = () => {
+    if (controller.signal.aborted) return;
     const request = cancelRequestFor(root, claim.claimId);
     const cancelled = request ? `cancelled by \`stim stop\` (pid ${request.pid})` : 'cancelled by an interrupt';
     state.cancelled = cancelled;
@@ -187,9 +198,22 @@ function cancelOnAbort({
           : cancelled,
     );
   };
+  const onAbort = () => {
+    if (!isTermination(context.signal.reason)) cancel();
+  };
+  const onRequest = () => {
+    if (controller.signal.aborted || !cancelRequestFor(root, claim.claimId)) return;
+    cancel();
+    state.abortOperation?.('stop');
+  };
   context.signal.addEventListener('abort', onAbort);
   if (context.signal.aborted) onAbort();
+  requestListeners.set(claim.claimId, onRequest);
+  const watch = setInterval(onRequest, REQUEST_POLL_MS);
+  watch.unref();
   return () => {
+    clearInterval(watch);
+    requestListeners.delete(claim.claimId);
     context.signal.removeEventListener('abort', onAbort);
     allowDeclaredSpawns(context);
     clearNativeRunCancel(root, claim.claimId);
@@ -231,7 +255,7 @@ export function withNativeBuildRun<T>(
       signal: context.signal,
       waitMs: NATIVE_RUN_WAIT_MS,
       declareSpawnsFor: context,
-      details: { ...details },
+      details: { ...details, interrupt: state.takesSignals ? 'signal' : 'request' },
       onHeld: (holder) => notice(holder),
     },
   );

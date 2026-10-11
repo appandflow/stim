@@ -53,13 +53,17 @@ export function processOperation(projectRoot: string): ProcessOperation {
   };
   const onInterrupt = () => operation.cancel('SIGINT');
   const onTerminate = () => operation.cancel('SIGTERM');
+  const state = operationState(context);
+  state.takesSignals = true;
+  state.abortOperation = (reason) => {
+    if (!controller.signal.aborted) controller.abort(reason);
+  };
   const operation: ProcessOperation = {
     context,
     cancel(interrupt) {
       if (received) return exitNow(EXIT_CODES[received]);
       received = interrupt;
-      controller.abort(interrupt);
-      const state = operationState(context);
+      if (!controller.signal.aborted) controller.abort(interrupt);
       if (state.draining) return;
       if (state.handled) return exitNow(EXIT_CODES[interrupt]);
       operation.dispose();

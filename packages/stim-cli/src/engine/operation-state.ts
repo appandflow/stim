@@ -17,6 +17,10 @@ export interface OperationState {
   exitCleanups: Set<() => void>;
   /** The `--remote-build` value this operation placed its build with. */
   buildMachineFlag: string | undefined;
+  /** Whether the process running this operation turns SIGINT into its cancellation, so `stop` may signal it. */
+  takesSignals: boolean;
+  /** Aborts the operation's own context; set by whoever created the context. */
+  abortOperation: ((reason: unknown) => void) | undefined;
 }
 
 const states = new WeakMap<StimContext, OperationState>();
@@ -33,6 +37,8 @@ function fresh(): OperationState {
     draining: false,
     exitCleanups: new Set(),
     buildMachineFlag: undefined,
+    takesSignals: false,
+    abortOperation: undefined,
   };
 }
 
