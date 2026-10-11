@@ -23,7 +23,6 @@ import {
   checkCcacheConflict,
   checkCcacheInstalled,
   checkCxxCompilerLauncher,
-  parseCmakeCacheLauncher,
   checkEasAuth,
   checkFingerprintParity,
   checkMetroCache,
@@ -37,11 +36,12 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
   detectXcodeMajor,
-  parseXcodeMajor,
   checkConcurrency,
   checkAndroidSdk,
   type Finding,
 } from '../diagnostics/doctor.ts';
+import { parseXcodeMajor } from '../engine/xcode.ts';
+import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -1716,6 +1716,37 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       ? execSync(`ls ${JSON.stringify(join(repo, '.git', 'worktrees'))}`, { encoding: 'utf-8' }).trim()
       : '';
     expect(stale).toBe('');
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity compares an app in a subdirectory with the same subdirectory at HEAD', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-subdir-'));
+  const repo = join(base, 'repo');
+  const app = join(repo, 'app');
+  try {
+    mkdirSync(join(app, 'ios'), { recursive: true });
+    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'root' }));
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    writeFileSync(join(app, 'ios', 'Podfile'), '');
+    git('git add .');
+    git('git commit -q -m init');
+    const createFingerprint = async (dir: string) => {
+      const hash = createHash('sha1')
+        .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
+        .digest('hex');
+      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
+    };
+
+    expect(await detectFingerprintParity(app, { createFingerprint })).toBe(null);
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
+    expect((await detectFingerprintParity(app, { createFingerprint }))?.title).toMatch(/fresh worktree/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

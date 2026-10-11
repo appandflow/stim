@@ -1,4 +1,4 @@
-import type { BuildWaitingFor } from '@stim-cli/core/state';
+import { buildSlotPath, buildSlotsDir, type BuildWaitingFor } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { execFile, type ChildProcess } from 'node:child_process';
@@ -6,15 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { claimRemoveCommand } from '../ownership-claim.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
-import {
-  acquireBuildSlot,
-  buildSlotPath,
-  buildSlotsDir,
-  listBuildSlots,
-  releaseBuildSlot,
-  readBuildSlot,
-  tryAcquireBuildSlot,
-} from '../engine/build-slots.ts';
+import { acquireBuildSlot, listBuildSlots, releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 
 let tmpHome: string;
 
@@ -35,7 +27,7 @@ describe('tryAcquireBuildSlot', () => {
     expect(got.acquired).toBe(true);
     expect(got.index).toBe(0);
     expect(existsSync(buildSlotPath(0))).toBeTruthy();
-    const rec = readBuildSlot(buildSlotPath(0));
+    const rec = listBuildSlots().find((slot) => slot.index === 0);
     assert(rec);
     expect(rec.pid).toBe(process.pid);
     expect(rec.index).toBe(0);

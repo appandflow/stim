@@ -28,7 +28,7 @@ import {
   type TailnetPeer,
   type TailnetMachineIo,
 } from './tailnet.ts';
-export { findPeer, parseMachine, pinnedEndpoint, type Endpoint, type HelloReply } from './tailnet.ts';
+export { pinnedEndpoint, type Endpoint } from './tailnet.ts';
 export type BuildMachineIo = TailnetMachineIo;
 
 /** The `remote.machines` entries that this Mac asked for build access, in that order. */

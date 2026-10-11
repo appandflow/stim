@@ -25,14 +25,6 @@ function nativeDir(root: string, platform: string) {
   return join(root, nativeDirName(platform));
 }
 
-export function shouldPrebuild({ isExpo, nativeDirExists }: { isExpo?: unknown; nativeDirExists?: unknown }): boolean {
-  return Boolean(isExpo) && !nativeDirExists;
-}
-
-export function needsPrebuild(root: string, platform: string, isExpo: unknown): boolean {
-  return shouldPrebuild({ isExpo, nativeDirExists: existsSync(nativeDir(root, platform)) });
-}
-
 export type PrebuildAction = 'none' | 'generate' | 'regenerate' | 'refuse';
 
 export function nativeDirInFingerprint(sources: readonly FingerprintSource[], platform: string): boolean {

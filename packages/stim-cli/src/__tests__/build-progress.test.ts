@@ -23,16 +23,9 @@ import {
   readBuildDetail,
   readBuildHistory,
   readLastBuilds,
-} from '@stim-cli/core/state';
-import {
-  emptyStats,
   HISTORY_LIMIT,
-  readStats,
-  recordRunStats,
-  updateStats,
-  type RunHistory,
-  type StatsRun,
-} from '../engine/stats.ts';
+} from '@stim-cli/core/state';
+import { emptyStats, readStats, recordRunStats, updateStats, type RunHistory, type StatsRun } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const T0 = Date.parse('2026-09-24T10:00:00.000Z');

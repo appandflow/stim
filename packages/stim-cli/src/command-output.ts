@@ -86,6 +86,8 @@ export function shortHash(hash: unknown): string {
  * Every label Stim prints in the phase-line column. `''` is the continuation
  * label for a wrapped fact. `app` and `compilation cache` appear only in the
  * stdout summary block a successful run ends with.
+ *
+ * @internal Test-only, https://github.com/appandflow/stim/issues/3463
  */
 export const OUTPUT_LABELS: readonly string[] = [
   '',

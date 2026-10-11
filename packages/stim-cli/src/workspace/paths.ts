@@ -4,7 +4,7 @@ import { ensurePrivateDir, workspaceName, workspaceStateDir as workspaceDir } fr
 import { readJsonObject, workspaceMetadataFile } from '@stim-cli/core/state';
 import { withDirLock } from '../dir-lock.ts';
 
-export { buildCacheRoot as sharedBuildCache, metroCacheRoot as sharedMetroCache, workspaceId } from '@stim-cli/core';
+export { buildCacheRoot as sharedBuildCache, workspaceId } from '@stim-cli/core';
 export { workspaceName, workspaceDir };
 export {
   emulatorLogFile,
@@ -16,7 +16,6 @@ export {
   workspaceLogErrorIndex,
   workspaceLogsDir,
   workspaceAgentDeviceDir,
-  workspaceMetadataFile,
   workspaceStateFile,
   workspaceStateLock,
 } from '@stim-cli/core/state';

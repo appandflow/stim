@@ -4,14 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import {
-  findPeer,
-  inspectBuildMachines,
-  parseMachine,
-  pinnedEndpoint,
-  type Endpoint,
-  type HelloReply,
-} from '../offload/build-machines.ts';
+import { inspectBuildMachines, pinnedEndpoint, type Endpoint } from '../offload/build-machines.ts';
+import { findPeer, parseMachine, type HelloReply } from '../offload/tailnet.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
 let home: string;

@@ -2,9 +2,9 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
-import { METRO_NAMED_CACHE_LAYOUT, hostSimulatorArch } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, hostSimulatorArch, metroCacheRoot } from '@stim-cli/core';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { sharedBuildCache, sharedMetroCache } from '../workspace/paths.ts';
+import { sharedBuildCache } from '../workspace/paths.ts';
 import { hasStoreAt } from '../supervisor/metro-store.ts';
 import { buildCacheKey, resolveBuild, storeBuild, storedSources } from '../cache/build-cache.ts';
 
@@ -297,8 +297,8 @@ test('both packages resolve the same cache roots the CLI does', async () => {
 
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'build-cache'));
-    expect(metro.cacheRoot()).toBe(sharedMetroCache());
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot()).toBe(metroCacheRoot());
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'metro-cache', 'demo'));
 
     writeFileSync(
@@ -308,7 +308,7 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'cfg-build'));
     expect(metro.cacheRoot()).toBe(join(home, 'cfg-metro'));
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'cfg-metro', 'demo'));
     expect(metro.cacheRoot('@scope/app')).toBe(join(home, 'cfg-metro', '-scope-app'));
 
@@ -317,7 +317,7 @@ test('both packages resolve the same cache roots the CLI does', async () => {
     expect(provider.cacheRoot()).toBe(sharedBuildCache());
     expect(provider.cacheRoot()).toBe(join(home, 'elsewhere-build'));
     expect(metro.cacheRoot()).toBe(join(home, 'elsewhere-metro'));
-    expect(metro.cacheRoot('demo')).toBe(sharedMetroCache('demo'));
+    expect(metro.cacheRoot('demo')).toBe(metroCacheRoot('demo'));
     expect(metro.cacheRoot('demo')).toBe(join(home, 'elsewhere-metro', 'demo'));
 
     delete process.env.STIM_BUILD_CACHE;

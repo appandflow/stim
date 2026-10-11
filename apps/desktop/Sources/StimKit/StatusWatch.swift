@@ -4,12 +4,6 @@ import Foundation
 /// per line: one at start, then one per change.
 public enum StatusWatch {
   public static let arguments = ["status", "--watch", "--json"]
-
-  /// Whether the watcher's stderr shows a `stim` that predates `--watch`.
-  /// commander refuses it with `error: unknown option '--watch'`.
-  public static func isUnsupported(stderr: [String]) -> Bool {
-    stderr.contains { $0.contains("unknown option") && $0.contains("--watch") }
-  }
 }
 
 /// The delay before restarting a process that exited: it doubles from

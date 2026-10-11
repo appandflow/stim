@@ -20,7 +20,6 @@ import {
   iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
   iosSimSlimProfileSetting,
-  iosSimSlimProfileSettingError,
   mergeSettingsLayers,
   metroCommandSettingError,
   metroTunnelSettingError,
@@ -46,7 +45,7 @@ import {
 } from '../workspace/settings.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
-import { saveConfig, setProjectSetting, setRepoSetting, upsertProject, type Config } from '../workspace/config.ts';
+import { saveConfig, upsertProject, writeConfigSetting, type Config } from '../workspace/config.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { SETTINGS } from '@stim-cli/core/state';
 
@@ -132,7 +131,7 @@ test('readCommittedSettings returns empty for missing or malformed files', () =>
 test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuses a port below 1024', () => {
   upsertProject(tmpHome, {});
   expect(metroPortSetting(resolveProjectSettings(tmpHome).settings, {})).toEqual({ port: null, error: null });
-  setProjectSetting(tmpHome, 'metro.port', 25062);
+  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'metro.port', 25062);
   const { settings } = resolveProjectSettings(tmpHome);
   expect(metroPortSetting(settings, {})).toEqual({ port: 25062, error: null });
   expect(metroPortSetting(settings, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
@@ -145,9 +144,9 @@ test('resolveSettings orders project over repo over committed', () => {
     join(tmpHome, '.stim.json'),
     JSON.stringify({ ios: { deviceType: 'iPhone 17' }, worktree: { exclude: ['.env'] } }),
   );
-  setRepoSetting('/repo/.git', 'ios.deviceType', 'iPhone 17 Pro');
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'ios.deviceType', 'iPhone 17 Pro');
   upsertProject(tmpHome, {});
-  setProjectSetting(tmpHome, 'ios.deviceType', 'iPhone 17 Pro Max');
+  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'ios.deviceType', 'iPhone 17 Pro Max');
 
   const merged = resolveSettings({
     projectPath: tmpHome,
@@ -205,7 +204,7 @@ test('monorepo apps use their own committed settings and provider paths without 
   const alias = join(repo, 'alias');
   symlinkSync(first, alias, 'dir');
   upsertProject(first, {});
-  setProjectSetting(first, 'ios.runtime', '26.5');
+  writeConfigSetting({ scope: 'workspace', projectPath: first }, 'ios.runtime', '26.5');
   const aliasedApp = findProjectRoot(alias);
   expect(aliasedApp).toBe(first);
   expect(resolveSettings(context(aliasedApp!))).toEqual(resolveSettings(context(first)));
@@ -252,7 +251,9 @@ describe('iOS SimSlim profile settings', () => {
       writeFileSync(join(outside, 'profile.json'), '{}\n');
       symlinkSync(join(outside, 'profile.json'), join(tmpHome, 'linked.json'));
       for (const path of ['', '../profile.json', join(outside, 'profile.json'), 'missing.json', 'linked.json']) {
-        expect(iosSimSlimProfileSettingError({ ios: { simslimProfile: path } }, tmpHome)).toBeTruthy();
+        expect(() => iosSimSlimProfileSetting({ ios: { simslimProfile: path } }, tmpHome)).toThrow(
+          /ios\.simslimProfile/,
+        );
       }
     } finally {
       rmSync(outside, { recursive: true, force: true });
@@ -598,7 +599,7 @@ test('committed array and device settings resolve with their JSON types intact',
 });
 
 test('a repo-layer array setting survives resolution as an array', () => {
-  setRepoSetting('/repo/.git', 'worktree.exclude', ['.env', 'ios/Pods']);
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'worktree.exclude', ['.env', 'ios/Pods']);
   const resolved = resolveSettings({ gitCommonDir: '/repo/.git' }) as SettingsView;
   expect(resolved.worktree?.exclude).toEqual(['.env', 'ios/Pods']);
 });
@@ -831,9 +832,9 @@ test('a committed provider resolves from the directory holding .stim.json', () =
 
 test('machine project settings override repository and committed providers', () => {
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
-  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs' });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { provider: './repo.cjs' });
   upsertProject('/proj', {});
-  setProjectSetting('/proj', 'cache', { provider: './project.cjs' });
+  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'cache', { provider: './project.cjs' });
 
   expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
     provider: './project.cjs',
@@ -844,7 +845,7 @@ test('machine project settings override repository and committed providers', () 
 
 test('machine repository settings override committed providers and resolve from the repository root', () => {
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
-  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs' });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { provider: './repo.cjs' });
   upsertProject('/proj', {});
 
   expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
@@ -859,9 +860,9 @@ test('provider options merge across layers with earlier layers winning', () => {
     join(tmpHome, '.stim.json'),
     JSON.stringify({ cache: { provider: './committed.cjs', options: { bucket: 'team', region: 'us' } } }),
   );
-  setRepoSetting('/repo/.git', 'cache', { options: { region: 'eu' } });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { options: { region: 'eu' } });
   upsertProject(tmpHome, {});
-  setProjectSetting(tmpHome, 'cache', { options: { token: 'from-machine' } });
+  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', { options: { token: 'from-machine' } });
 
   expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './committed.cjs',
@@ -875,9 +876,12 @@ test('options written for a different provider do not reach the selected provide
     join(tmpHome, '.stim.json'),
     JSON.stringify({ cache: { provider: './committed.cjs', options: { endpoint: 'https://team', token: 'team' } } }),
   );
-  setRepoSetting('/repo/.git', 'cache', { provider: './repo.cjs', options: { token: 'machine' } });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', {
+    provider: './repo.cjs',
+    options: { token: 'machine' },
+  });
   upsertProject(tmpHome, {});
-  setProjectSetting(tmpHome, 'cache', { options: { region: 'eu' } });
+  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', { options: { region: 'eu' } });
 
   expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './repo.cjs',
@@ -891,9 +895,12 @@ test('a lower-precedence layer adds options only to a provider it names', () => 
     join(tmpHome, '.stim.json'),
     JSON.stringify({ cache: { provider: './cache.cjs', options: { bucket: 'team', token: 'team' } } }),
   );
-  setRepoSetting('/repo/.git', 'cache', { options: { endpoint: 'https://repo' } });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { options: { endpoint: 'https://repo' } });
   upsertProject(tmpHome, {});
-  setProjectSetting(tmpHome, 'cache', { provider: './cache.cjs', options: { token: 'machine' } });
+  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', {
+    provider: './cache.cjs',
+    options: { token: 'machine' },
+  });
 
   expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './cache.cjs',
@@ -907,7 +914,10 @@ test('the same provider reference resolved from another directory does not inher
     join(tmpHome, '.stim.json'),
     JSON.stringify({ cache: { provider: './cache.cjs', options: { bucket: 'team' } } }),
   );
-  setRepoSetting('/repo/.git', 'cache', { provider: './cache.cjs', options: { token: 'machine' } });
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', {
+    provider: './cache.cjs',
+    options: { token: 'machine' },
+  });
 
   expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
     provider: './cache.cjs',
@@ -1023,10 +1033,10 @@ test('machine optimization defaults merge with committed, repository and project
     },
   });
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { android: { pch: 'off' } } }));
-  setRepoSetting('/repo/.git', 'optimizations.android.pch', 'on');
+  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'optimizations.android.pch', 'on');
   upsertProject('/proj', {});
-  setProjectSetting('/proj', 'optimizations.android.pch', 'auto');
-  setProjectSetting('/proj', 'optimizations.ios.compilationCache', false);
+  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'optimizations.android.pch', 'auto');
+  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'optimizations.ios.compilationCache', false);
   const options = resolveOptimizations(
     resolveSettings({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
     {},

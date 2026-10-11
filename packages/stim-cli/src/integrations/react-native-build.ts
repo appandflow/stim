@@ -45,10 +45,6 @@ export function apkOutputsDir(layout: AndroidLayout): string {
   return join(layout.moduleDir, 'build', 'outputs', 'apk');
 }
 
-export function debugApkDir(layout: AndroidLayout): string {
-  return join(apkOutputsDir(layout), 'debug');
-}
-
 export function discoverAndroidProject(root: string, layout: AndroidLayout): AndroidProjectResult {
   const dir = layout.gradleRoot;
   if (!existsSync(dir)) {

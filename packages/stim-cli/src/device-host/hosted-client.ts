@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   DEVICE_HOST_LIMITS,
   HOSTED_APP_CHUNK_BYTES,
+  HOSTED_PARKED_CANDIDATES,
   hostedWorkerSettleMs,
   hostedMacosAppSlot,
   isJsonObject,
@@ -24,11 +25,15 @@ const workerBoundMs = (deadlineMs: number): number => deadlineMs + hostedWorkerS
 export const SESSION_TIMEOUT_MS: number =
   hostedWorkerSettleMs() +
   workerBoundMs(DEVICE_HOST_LIMITS.logsMs) +
-  workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
+  2 * workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
   HOSTED_POLL_MARGIN_MS;
 export const PREPARE_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
 export const INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
 export const OFFER_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + HOSTED_REQUEST_MARGIN_MS;
+export const RESERVE_TIMEOUT_MS: number =
+  HOSTED_PARKED_CANDIDATES * (workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + workerBoundMs(DEVICE_HOST_LIMITS.stopMs)) +
+  workerBoundMs(DEVICE_HOST_LIMITS.offerMs) +
+  HOSTED_REQUEST_MARGIN_MS;
 
 interface ManifestFile {
   path: string;
@@ -285,9 +290,17 @@ export async function settle(
   return session;
 }
 
+const reason = (session: HostedSession): string => (session.notice ? `: ${session.notice.replace(/\.+$/, '')}` : '');
+
 export function unknownSession(host: HostConnection, session: HostedSession): Error {
   return new Error(
-    `The hosted session ${session.id} on ${host.machine} is in an unknown state${session.notice ? `: ${session.notice}` : ''}. Run stim stop to reconcile it.`,
+    `The hosted session ${session.id} on ${host.machine} is in an unknown state${reason(session)}. Run stim stop to reconcile it.`,
+  );
+}
+
+export function stoppedSession(host: HostConnection, session: HostedSession): Error {
+  return new Error(
+    `The hosted session ${session.id} on ${host.machine} stopped before it was ready${reason(session)}. Retry when the host can take it; it needs no stim stop.`,
   );
 }
 

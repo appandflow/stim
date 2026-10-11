@@ -20,12 +20,14 @@ import {
   attach,
   settle,
   heldNoLonger,
+  stoppedSession,
   unknownSession,
   bundleManifest,
   upload,
   sha256,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
@@ -100,12 +102,17 @@ export async function placeHostedMacos(
     note(`Reserving a macOS session on ${host.machine}`);
     session = hostedSession(
       host,
-      await call(host, 'device-host.reserve', {
-        workspace: root,
-        slot: 'default',
-        attempt: randomUUID(),
-        platform: 'macos',
-      }),
+      await call(
+        host,
+        'device-host.reserve',
+        {
+          workspace: root,
+          slot: 'default',
+          attempt: randomUUID(),
+          platform: 'macos',
+        },
+        RESERVE_TIMEOUT_MS,
+      ),
     );
   }
   const appSlot = session.appSlot;
@@ -122,6 +129,7 @@ export async function placeHostedMacos(
   reserved(placement);
   session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, 'macos', runCancellationSignal());
   if (session.state === 'unknown') throw unknownSession(host, session);
+  if (session.state === 'stopped') throw stoppedSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);
   const device = parseHostedMacosDevice(session.device);

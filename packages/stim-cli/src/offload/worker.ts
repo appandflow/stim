@@ -42,6 +42,7 @@ import { verifyNativeTransfer } from './native-source.ts';
 import { selectNativeXcodeProject } from '../integrations/native-xcode-project.ts';
 import { nativeXcodeMetadataDirectories } from '../integrations/native-xcode-inputs.ts';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
+import { isJsonObject } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -646,13 +647,9 @@ type Compiled =
     }
   | { ok: false; code: string; message: string };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function differingParameters(here: unknown, there: unknown, path: string): string[] {
   if (JSON.stringify(here) === JSON.stringify(there)) return [];
-  if (!isRecord(here) || !isRecord(there)) return [path];
+  if (!isJsonObject(here) || !isJsonObject(there)) return [path];
   return [...new Set([...Object.keys(here), ...Object.keys(there)])]
     .toSorted()
     .flatMap((key) => differingParameters(here[key], there[key], `${path}.${key}`));

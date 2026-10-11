@@ -387,6 +387,7 @@ export function resolveEasCliBin(
 
 const easAuthCache = new Map<string, EasAuthResult>();
 
+/** @internal Test seam that clears the per-process EAS auth cache. */
 export function resetEasAuthCache(): void {
   easAuthCache.clear();
 }

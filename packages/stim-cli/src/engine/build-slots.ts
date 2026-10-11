@@ -6,8 +6,6 @@ import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 
-export { buildSlotPath, buildSlotsDir } from '@stim-cli/core/state';
-
 const SLOT_PREFIX = 'slot-';
 
 export interface BuildSlotRecord {
@@ -74,12 +72,6 @@ function toRecord(holder: ClaimHolder): BuildSlotRecord {
     startedAt: holder.startedAt || null,
     logFile: typeof details.logFile === 'string' ? details.logFile : null,
   };
-}
-
-export function readBuildSlot(path: string): BuildSlotRecord | null {
-  const survey = readClaimSet(path);
-  const holder = survey.live[0] ?? survey.dead[0];
-  return holder ? toRecord(holder) : null;
 }
 
 export function tryAcquireBuildSlot({

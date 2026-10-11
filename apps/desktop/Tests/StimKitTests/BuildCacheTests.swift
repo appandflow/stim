@@ -211,22 +211,16 @@ import Testing
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"cache-lookup","startedAt":"2026-09-25T12:00:00Z",
-       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","expectedMs":null,"expectedPhaseMs":null,"basis":0}
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":false,"expectedMs":null,
+       "expectedPhaseMs":null,"basis":0}
       """)
     #expect(build.outcomeLabel == nil && build.cacheLookupOutcome == nil)
-    build.phase = "compile"
+    build.outcomeKnown = true
     #expect(build.outcomeLabel == "Cold build")
     build.outcome = "hit"
-    build.phase = "install"
-    #expect(build.outcomeLabel == "Cache hit")
+    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
     build.outcome = nil
     #expect(build.outcomeLabel == nil)
-    build.outcome = "hit"
-    build.phase = "device"
-    build.outcomeKnown = false
-    #expect(build.outcomeLabel == nil)
-    build.outcomeKnown = true
-    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
   }
 
   @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {

@@ -9,7 +9,6 @@ import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
-  DEFAULT_PARKED_MAX,
   adoptParked,
   evictOverflow,
   parkSim,
@@ -51,7 +50,7 @@ afterEach(() => {
 });
 
 test('the machine pool defaults to three but redirected homes default to off', () => {
-  expect(parkedMaxSetting('ios', { config: null, env: {} })).toEqual({ max: DEFAULT_PARKED_MAX, error: null });
+  expect(parkedMaxSetting('ios', { config: null, env: {} })).toEqual({ max: 3, error: null });
   expect(parkedMaxSetting('ios', { config: null, env: { STIM_HOME: '/tmp/scoped' } })).toEqual({
     max: 0,
     error: null,

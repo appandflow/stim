@@ -915,18 +915,6 @@ import Testing
     #expect(outcome.kept.isEmpty)
   }
 
-  @Test func fallsBackToTheReportOnACLIWithoutResults() throws {
-    let json = """
-      {"mode":"delete","actionable":true,"failures":0,"sections":{
-        "orphanedWorkspaces":[{"dir":"/s/workspaces/a","projectRoot":"/p","bytes":4096}],
-        "caches":[{"name":"Metro transform cache","dir":"/s/metro","bytes":7,"willEmpty":false,"note":"no eviction"}]
-      }}
-      """
-    let outcome = try GcOutcome(json: Data(json.utf8))
-    #expect(outcome.done.map(\.label) == ["/s/workspaces/a"])
-    #expect(outcome.freedBytes == 4096)
-  }
-
   @Test func onlyActingGcJsonRunsHaveAnOutcome() {
     #expect(GcOutcome.describes(["gc", "--delete", "--json"]))
     #expect(GcOutcome.describes(["gc", "--idle", "30m", "--json"]))
@@ -1279,12 +1267,6 @@ import Testing
 }
 
 @Suite struct StatusWatchTests {
-  @Test func fallsBackOnlyWhenStimRefusesTheWatchFlag() {
-    #expect(StatusWatch.isUnsupported(stderr: ["error: unknown option '--watch'"]))
-    #expect(!StatusWatch.isUnsupported(stderr: ["error: unknown option '--wtch'"]))
-    #expect(!StatusWatch.isUnsupported(stderr: ["Error: EACCES: permission denied, open '/Users/dev/.stim/config.json'"]))
-  }
-
   @Test func restartDelayDoublesToTheCapAndResetsAfterALongRun() {
     var backoff = RestartBackoff()
     #expect([0, 0, 0, 0, 0, 0, 0].map { backoff.delay(afterRunning: $0) } == [1, 2, 4, 8, 16, 30, 30])

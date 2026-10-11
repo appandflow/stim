@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   DEVICE_HOST_LIMITS,
+  HOSTED_PARKED_CANDIDATES,
   type HostedMacosPlacement,
   type HostedNativePlacement,
   type HostedIosDevice,
@@ -15,6 +16,7 @@ import {
   HOSTED_REQUEST_MARGIN_MS,
   INSTALL_TIMEOUT_MS,
   OFFER_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   POLL_MS,
   PREPARE_TIMEOUT_MS,
   SESSION_TIMEOUT_MS,
@@ -66,6 +68,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   let readyAt: number;
   let readyDevice: unknown;
   let installing: boolean;
+  let notice: string | undefined;
   let recorded: Placement | undefined;
 
   beforeEach(() => {
@@ -81,6 +84,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     readyDevice = devices[platform];
     installing = false;
     run.signal = undefined;
+    notice = undefined;
     recorded = undefined;
     const connection = Object.create(BuildConnection.prototype) as BuildConnection;
     connection.close = vi.fn<() => void>();
@@ -106,7 +110,14 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       if (method === 'device-host.reserve' || method === 'device-host.attach') {
         const state = Date.now() >= readyAt ? 'ready' : pendingState;
         return {
-          result: { id: session, platform, appSlot: 1, state, device: state === 'ready' ? readyDevice : null },
+          result: {
+            id: session,
+            platform,
+            appSlot: 1,
+            state,
+            device: state === 'ready' ? readyDevice : null,
+            ...(notice ? { notice } : {}),
+          },
         };
       }
       if (method === 'device-host.metro.close') return { result: {} };
@@ -232,7 +243,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'stopping';
     readyAt = Infinity;
     const result = place().catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(181_000);
+    await vi.advanceTimersByTimeAsync(SESSION_TIMEOUT_MS + 1000);
     expect(String(await result)).toContain('stayed stopping');
     expect(recorded?.session).toBe(session);
     expect(
@@ -251,7 +262,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       settled = true;
       return error;
     });
-    await vi.advanceTimersByTimeAsync(420_000);
+    await vi.advanceTimersByTimeAsync(240_000 + SESSION_TIMEOUT_MS);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1000);
     expect(String(await result)).toContain('stayed stopping');
@@ -277,6 +288,16 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     controller.abort();
     await vi.advanceTimersByTimeAsync(0);
     expect(outcome).toContain('hosted app installation was cancelled');
+  });
+
+  test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
+    pendingState = 'stopped';
+    readyAt = Infinity;
+    notice = 'Host memory pressure is unknown or elevated.';
+    const result = String(await place().catch((error: unknown) => error));
+    expect(result).toContain('stopped before it was ready: Host memory pressure is unknown or elevated. Retry');
+    expect(result).not.toMatch(/unknown state|Run stim stop/);
+    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
   });
 
   test('still refuses a ready reply without the reserved device identity', async () => {
@@ -343,8 +364,15 @@ describe('hosted client limits', () => {
     [
       'stop',
       SESSION_TIMEOUT_MS,
-      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + worker(DEVICE_HOST_LIMITS.stopMs),
+      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + 2 * worker(DEVICE_HOST_LIMITS.stopMs),
       HOSTED_POLL_MARGIN_MS,
+    ],
+    [
+      'reserve',
+      RESERVE_TIMEOUT_MS,
+      HOSTED_PARKED_CANDIDATES * (worker(DEVICE_HOST_LIMITS.offerMs) + worker(DEVICE_HOST_LIMITS.stopMs)) +
+        worker(DEVICE_HOST_LIMITS.offerMs),
+      HOSTED_REQUEST_MARGIN_MS,
     ],
     ['offer', OFFER_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.offerMs), HOSTED_REQUEST_MARGIN_MS],
   ])('the %s wait outlasts the server worker bound plus its margin', (_phase, client, server, margin) => {

@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { ensureWorkspaceStorage, workspaceDir, workspaceMetadataFile, workspaceName } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
+import { workspaceMetadataFile } from '@stim-cli/core/state';
 
 describe('workspace storage', () => {
   let tmpHome: string;

@@ -29,6 +29,9 @@ export const DEVICE_HOST_LIMITS: Readonly<DeviceHostLimits> = {
   killGraceMs: 5000,
 };
 
+/** How many parked sessions one reserve inspects, and possibly retires, before it creates a device. */
+export const HOSTED_PARKED_CANDIDATES: number = 3;
+
 /** How long a cancelled hosted worker run can take to settle: SIGTERM, SIGKILL after the grace, then it is abandoned. */
 export function hostedWorkerSettleMs(limits: Pick<DeviceHostLimits, 'killGraceMs'> = DEVICE_HOST_LIMITS): number {
   return limits.killGraceMs * 2;

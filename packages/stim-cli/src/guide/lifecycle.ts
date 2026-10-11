@@ -252,7 +252,11 @@ WAITING FOR A CHANGE
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
   owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
-  changes as a whole, so its residentMb and processes update with it. It reacts to Stim state files,
+  changes as a whole, so its residentMb and processes update with it. A change
+  in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
+  maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
+  maintenance.running.startedAt. A line that prints carries their current
+  values. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds
@@ -746,7 +750,8 @@ tail before parking or deletion, including on revocation or server close; stop c
 back afterwards. If the final collection drops a backlog interval and eventually
 succeeds, a device warning record names that interval. A damaged collection checkpoint is ignored and
 rebuilt; it never blocks reading collected records. The client waits up to
-180 seconds for stop. The final collection and worker termination paths fit within
+280 seconds for stop. The final collection, parking, the stop that follows a failed
+park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
 Collected records remain in the session home after parking or deletion;

@@ -210,23 +210,6 @@ struct WorkspaceHeader: View {
   }
 }
 
-struct WorktreeHeader: View {
-  var env: Workspace
-  var project: Project
-
-  var body: some View {
-    HStack(spacing: Space.lg) {
-      Text(env.names.title).font(.stim(.headline)).lineLimit(1).truncationMode(.middle)
-      if project.name != env.names.title {
-        Text(project.name).font(.stim(.callout)).foregroundStyle(Palette.primary).lineLimit(1).fixedSize()
-      }
-      Spacer(minLength: 0)
-    }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .contentShape(Rectangle())
-  }
-}
-
 struct WorkspaceChips: View {
   var env: Workspace
   var usage: UsageHistory?

@@ -23,6 +23,7 @@ import { dirname, isAbsolute, join, resolve } from 'path';
 import { type Executor, getExecutor } from '../exec.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
+import { sleepSync } from '../ownership-claim.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
 
@@ -823,10 +824,6 @@ export function wipeAvdUserData(directory: string): void {
   for (const name of AVD_USER_DATA) rmSync(join(directory, name), { recursive: true, force: true });
 }
 
-export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
-  return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
-}
-
 export function withAvdConfigOverrides(contents: string, overrides: Readonly<Record<string, string>>): string {
   const newline = contents.includes('\r\n') ? '\r\n' : '\n';
   const trailingNewline = /\r?\n$/.test(contents);
@@ -1257,10 +1254,6 @@ export function shutdownAndroidEmulator(
   exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
     timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
   });
-}
-
-export function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 function avdProcessLockPaths(avdDirectory: string, platform: NodeJS.Platform): string[] {

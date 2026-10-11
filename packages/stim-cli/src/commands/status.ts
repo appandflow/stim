@@ -11,6 +11,7 @@ import {
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
   WATCH_LIGHT_INTERVAL_MS,
+  watchChangeKey,
   watchPayload,
   watchStatusSources,
 } from '../status-watch.ts';
@@ -907,8 +908,9 @@ async function watchStatus(json: boolean): Promise<void> {
       } finally {
         sources?.reconcile();
       }
-      if (text === last) return;
-      last = text;
+      const key = json && payload ? watchChangeKey(payload) : text;
+      if (key === last) return;
+      last = key;
       lastPayload = payload;
       process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
     },

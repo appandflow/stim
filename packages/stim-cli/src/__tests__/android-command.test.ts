@@ -51,7 +51,6 @@ import {
   loadConfig,
   saveConfig,
   setDevice,
-  setProjectSetting,
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
@@ -1915,7 +1914,7 @@ describe('product flavors (--variant / android.variant)', () => {
   }
 
   test('the android.variant setting drives the build variant, the flavored APK and a variant-scoped cache key', async () => {
-    setProjectSetting(root, 'android.variant', 'productionDebug');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.variant', 'productionDebug');
     const h = harness({
       build: async (args: BuildArgs = {}) => {
         h.calls.build.push(args);
@@ -1937,7 +1936,7 @@ describe('product flavors (--variant / android.variant)', () => {
   });
 
   test('the --variant flag beats the android.variant setting', async () => {
-    setProjectSetting(root, 'android.variant', 'previewDebug');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.variant', 'previewDebug');
     const h = harness({ variant: 'productionDebug' });
     const result = await h.run();
     expect(h.calls.build[0]?.variant).toBe('productionDebug');
@@ -2005,7 +2004,7 @@ describe('product flavors (--variant / android.variant)', () => {
   });
 
   test("a variant reaches the provider's runOptions, so a flavored resolve is never answered with plain debug", async () => {
-    setProjectSetting(root, 'android.variant', 'productionDebug');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.variant', 'productionDebug');
     const h = harness({
       loadProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
       resolveRemoteBuild: async (args: RemoteBuildArgs = {}) => {
@@ -4374,6 +4373,20 @@ test('a process runtime preserves Debug compilation, cache identity and signer p
   expect(result.facts).toMatchObject({ variant: 'productionDebug', metroPort: null, launched: true });
 });
 
+test('a native process launch without --variant labels the verify line debug', async () => {
+  const h = harness({
+    variant: null,
+    runtimePlan: androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    resolveMetro: never('the Metro probe'),
+    startServer: never('the dev server start'),
+    warmMetro: never('Metro warmup'),
+    verifyLaunched: never('bundle readiness'),
+    launch: never('Metro launch routing'),
+  });
+  await h.run();
+  expect(labelled(h.stderr, 'verify')[0]).toMatch(/\(debug: no bundle fetch to observe\)/);
+});
+
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain am start', async () => {
     const h = harness({
@@ -4468,7 +4481,7 @@ describe('release skips Metro entirely', () => {
   });
 
   test('the android.variant setting is the repo default, and the flag overrides it back to debug', async () => {
-    setProjectSetting(root, 'android.variant', 'productionRelease');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.variant', 'productionRelease');
     const fromSetting = harness({ resolveMetro: never('the metro probe') });
     expect((await fromSetting.run()).ok).toBe(true);
     expect(fromSetting.calls.launchRelease.length).toBe(1);
@@ -4569,8 +4582,8 @@ describe('the release APK swap', () => {
   });
 
   test('android.keystore / android.keystorePassword reach the swap', async () => {
-    setProjectSetting(root, 'android.keystore', 'android/app/release.jks');
-    setProjectSetting(root, 'android.keystorePassword', 'env:MY_KS');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.keystore', 'android/app/release.jks');
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.keystorePassword', 'env:MY_KS');
     const h = harness({ variant: 'productionRelease', resolveCached: () => cached, build: never('the build') });
     await h.run();
     expect(h.calls.swapApk[0]?.keystore).toEqual({
@@ -5702,7 +5715,7 @@ describe('--device refusals found in review', () => {
   });
 
   test('an explicit --device wins over the android.remote setting instead of refusing', async () => {
-    setProjectSetting(root, 'android', { remote: 'proxy' });
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android', { remote: 'proxy' });
     const h = harness({
       device: true,
       listDevices: () => CONNECTED2,
@@ -7492,7 +7505,7 @@ describe('named Android hosting placement', () => {
 
   test('android.remote auto keeps a live local slot and records the local decision', async () => {
     let budgetChecks = 0;
-    setProjectSetting(root, 'android', { remote: 'auto' });
+    writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android', { remote: 'auto' });
     const h = harness({
       json: true,
       automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>

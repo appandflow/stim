@@ -96,6 +96,7 @@ function matchingNoiseRule(event: LogStreamEvent): NoiseRule | undefined {
   return NOISE_RULES.find((rule) => ruleMatches(rule, { subsystem, category, message }));
 }
 
+/** @internal Test-only, https://github.com/appandflow/stim/issues/3463 */
 export function noiseRuleId(event: LogStreamEvent): string | null {
   return matchingNoiseRule(event)?.id ?? null;
 }

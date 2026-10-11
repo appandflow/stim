@@ -1,4 +1,4 @@
-import type { ProjectRecord, StimConfig } from '@stim-cli/core/state';
+import { isJsonObject, type ProjectRecord, type StimConfig } from '@stim-cli/core/state';
 import type { AuditRecord } from './actions.ts';
 import type { BuildClientSummary, BuildMachineReport, MachineDetails } from './protocol.ts';
 import type { CommandOutcome } from './stim-command.ts';
@@ -16,7 +16,7 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
   if (!outcome.ok) return { payload: null, error: outcome.message };
   try {
     const value: unknown = JSON.parse(outcome.stdout);
-    if (isObject(value)) return { payload: value };
+    if (isJsonObject(value)) return { payload: value };
   } catch {}
   return { payload: null, error: `${label} printed output that is not a JSON object.` };
 }
@@ -61,13 +61,10 @@ async function runDoctor(
   return {
     buildMachines: machines.filter(
       (entry): entry is BuildMachineReport =>
-        isObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
+        isJsonObject(entry) && typeof entry.machine === 'string' && typeof entry.state === 'string',
     ),
   };
 }
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
  * The build-machines part of `machine.details`, refreshed with `stim doctor --json --platform ios` in the

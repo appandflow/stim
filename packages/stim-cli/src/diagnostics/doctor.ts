@@ -40,7 +40,7 @@ import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor } from '../engine/xcode.ts';
 import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
@@ -72,11 +72,10 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
-export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
 
-export { detectXcodeMajor, parseXcodeMajor };
+export { detectXcodeMajor };
 
 export interface Finding {
   code?: string;
@@ -1476,6 +1475,13 @@ export async function detectLinkedLibraryGitMetadata(
   };
 }
 
+function appPathInRepository(projectRoot: string): string {
+  const top = repoRoot(projectRoot);
+  if (!top) return '';
+  const path = relative(realpathSync(top), realpathSync(projectRoot));
+  return path.startsWith('..') ? '' : path;
+}
+
 export async function detectFingerprintParity(
   projectRoot: string,
   {
@@ -1533,14 +1539,15 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const headSkipped = fingerprintConfigSkipped(worktree) ?? coldFingerprintRunsProjectCode(worktree, platform);
+    const headApp = join(worktree, appPathInRepository(projectRoot));
+    const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
     const project = await fingerprintProject(projectRoot, {
       platform,
       iosProjectPath,
       createFingerprint: coldFingerprint,
     });
-    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const clean = await fingerprintProject(headApp, { platform, iosProjectPath, createFingerprint: coldFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({

@@ -50,7 +50,6 @@ import {
   deleteAvd,
   ownedAvdMatchesConfiguration,
   ownedAvdSystemImage,
-  sleepSync,
   wipeAvdUserData,
 } from './android.ts';
 import { eraseParkedAfter, parkSim, readParked, removeParkedAfter, type ParkedSim } from './sim-pool.ts';
@@ -61,6 +60,7 @@ import {
   clearFreeClaimSet,
   markClaimChildPending,
   releaseClaim,
+  sleepSync,
   type ClaimHandle,
 } from '../ownership-claim.ts';
 
