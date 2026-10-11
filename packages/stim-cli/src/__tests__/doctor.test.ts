@@ -1723,12 +1723,60 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
     };
 
-    const finding = await detectFingerprintParity(repo, { createFingerprint });
+    const executor = getExecutor();
+    let temporaryWorktree: string | undefined;
+    const delayed = (file: string, args: string[]) =>
+      file === 'git' && args.includes('add')
+        ? {
+            file: process.execPath,
+            args: [
+              '-e',
+              "setTimeout(() => { const { spawnSync } = require('node:child_process'); const result = spawnSync('git', process.argv.slice(1), { stdio: 'inherit' }); process.exit(result.status ?? 1); }, 200)",
+              '--',
+              ...args,
+            ],
+          }
+        : { file, args };
+    const runFile: typeof executor.runFile = (file, args, options) => {
+      const call = delayed(file, args);
+      return executor.runFile(call.file, call.args, options);
+    };
+    setExecutor({
+      ...executor,
+      runFile,
+      runFileQuiet(file, args, options) {
+        try {
+          return runFile(file, args, options);
+        } catch {
+          return null;
+        }
+      },
+      runFileAsync(file, args, options) {
+        if (file === 'git' && args.includes('worktree') && args.includes('remove')) {
+          throw new Error('Git removal failed');
+        }
+        if (file === 'git' && args.includes('add')) temporaryWorktree = args.at(-2);
+        const call = delayed(file, args);
+        return executor.runFileAsync(call.file, call.args, options);
+      },
+    });
+    const started = Date.now();
+    let finished = false;
+    const pending = detectFingerprintParity(repo, { createFingerprint }).then((finding) => {
+      finished = true;
+      return finding;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(Date.now() - started).toBeLessThan(150);
+    expect(finished).toBe(false);
+    const finding = await pending;
     assert(finding, 'expected the parity note to fire');
     expect(finding.level).toBe('note');
     expect(finding.title).toMatch(/fresh worktree/);
     expect(finding.detail).toMatch(/app\.json/);
     expect(finding.detail).toMatch(/git reports app\.json/);
+    assert(temporaryWorktree);
+    expect(existsSync(temporaryWorktree)).toBe(false);
 
     const worktrees = git('git worktree list').trim().split('\n');
     expect(worktrees.length).toBe(1);
@@ -1737,6 +1785,7 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
       : '';
     expect(stale).toBe('');
   } finally {
+    resetExecutor();
     rmSync(base, { recursive: true, force: true });
   }
 });
@@ -1903,9 +1952,10 @@ test('detectFingerprintParity never fingerprints or adds a worktree when an app 
   const commands: string[][] = [];
   setExecutor({
     runQuiet: () => null,
-    runFileQuiet: (file: string, args: string[]) => {
+    runFileAsync: async (file: string, args: string[]) => {
       commands.push([file, ...args]);
-      return file === 'git' && args.includes('rev-parse') ? '.git' : null;
+      if (file === 'git' && args.includes('rev-parse')) return '.git';
+      throw new Error('Git unavailable');
     },
   });
   try {
