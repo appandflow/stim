@@ -1,6 +1,6 @@
-import { type FSWatcher, readdirSync, watch } from 'node:fs';
+import { type FSWatcher, readdirSync, statSync, watch } from 'node:fs';
 import type { ChildProcess } from 'node:child_process';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
 import { getExecutor } from './exec.ts';
 import { androidToolPath } from './devices/android.ts';
@@ -16,7 +16,7 @@ export const WATCH_MACHINE_INTERVAL_MS = 15_000;
 const WATCH_PROCESS_INTERVAL_MS = 2_000;
 export const WATCH_MEMORY_STEP_MB = 16;
 export const WATCH_CPU_STEP_PERCENT = 5;
-const WATCH_SIMCTL_INTERVAL_MS = 5_000;
+const WATCH_SIMCTL_INTERVAL_MS = 30_000;
 const ADB_RESTART_MIN_MS = 1_000;
 const ADB_RESTART_MAX_MS = 60_000;
 const SIMCTL_TIMEOUT_MS = 10_000;
@@ -163,27 +163,36 @@ export interface StatusSources {
   /** Reports a change when one of these processes exits; replaces the previous set. */
   watchProcesses(pids: readonly number[]): void;
   /**
-   * The output of the simulator poller's last readable listing, or null when that poll started more than two poll
-   * intervals ago or before the last Stim state write: Stim creates, boots and shuts down simulators as it writes state.
+   * The output of the last readable simulator listing, or null when that read started more than two safety poll
+   * intervals ago, before the last Stim state write or before the last device set change: Stim creates, boots and
+   * shuts down simulators as it writes state.
    */
   simulatorListing(): string | null;
   stop(): void;
 }
 
+const SIMULATOR_DIR = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i;
+
 /**
  * Calls `onChange` when anything `stim status` reports may have changed:
  * `$STIM_HOME` files, git HEADs, indexes and refs of the watched repositories,
  * exits of the watched processes, adb device arrivals and departures, and
- * simulator state. simctl has no push API reachable from Node, so it is
- * polled, and so is process liveness, with a signal 0 that spawns nothing.
+ * simulator state. Process liveness is polled with a signal 0 that spawns
+ * nothing. simctl has no push API reachable from Node, so a simulator change is
+ * a write CoreSimulator makes in `deviceSet`: to `device_set.plist`, a device
+ * directory, or a device's `device.plist`, which carries its state. A slow
+ * simctl poll covers events FSEvents drops and a device set that cannot be watched.
  */
 export function watchStatusSources({
   home,
+  deviceSet,
   onChange,
   platform = process.platform,
   simctlIntervalMs = WATCH_SIMCTL_INTERVAL_MS,
 }: {
   home: string;
+  /** CoreSimulator's default device set, `~/Library/Developer/CoreSimulator/Devices` of the account. */
+  deviceSet: string | null;
   onChange: (kind: RefreshKind) => void;
   platform?: NodeJS.Platform;
   simctlIntervalMs?: number;
@@ -228,7 +237,7 @@ export function watchStatusSources({
           const change = statusChange(kind, name === null ? null : String(name));
           if (!change) return;
           if (kind === 'home' || kind === 'workspaces' || kind === 'workspace') {
-            listingStaleBefore = Date.now();
+            listingVersion++;
             reconcile();
           }
           onChange(change);
@@ -278,14 +287,72 @@ export function watchStatusSources({
   const adb = trackAdbDevices(() => onChange('full'));
 
   let simctl: ChildProcess | null = null;
-  let listing: { at: number; json: string } | null = null;
-  let listingStaleBefore = 0;
+  let listing: { at: number; version: number; json: string } | null = null;
+  let listingVersion = 0;
   let simTimer: ReturnType<typeof setInterval> | null = null;
-  if (platform === 'darwin') {
+  const deviceWatchers = new Map<string, FSWatcher>();
+  if (platform === 'darwin' && deviceSet) {
+    const changed = () => {
+      listingVersion++;
+      check();
+      onChange('full');
+    };
+    const watchDir = (dir: string, listener: (name: string | null) => void) => {
+      if (deviceWatchers.has(dir)) return;
+      try {
+        const watcher = watch(dir, (_event, name) => listener(name === null ? null : String(name)));
+        watcher.on('error', () => {
+          watcher.close();
+          deviceWatchers.delete(dir);
+        });
+        deviceWatchers.set(dir, watcher);
+      } catch {}
+    };
+    const watchDeviceSet = () => {
+      if (stopped) return;
+      let names: string[] | null = null;
+      try {
+        names = readdirSync(deviceSet);
+      } catch {}
+      const wanted = new Set<string>();
+      if (names) {
+        wanted.add(deviceSet);
+        for (const name of names) if (SIMULATOR_DIR.test(name)) wanted.add(join(deviceSet, name));
+      } else {
+        let dir = dirname(deviceSet);
+        while (dirname(dir) !== dir && !isDirectory(dir)) dir = dirname(dir);
+        wanted.add(dir);
+      }
+      for (const [dir, watcher] of deviceWatchers) {
+        if (wanted.has(dir)) continue;
+        watcher.close();
+        deviceWatchers.delete(dir);
+      }
+      for (const dir of wanted) {
+        if (dir === deviceSet) {
+          watchDir(dir, () => {
+            watchDeviceSet();
+            changed();
+          });
+        } else if (dirname(dir) === deviceSet) {
+          watchDir(dir, (name) => {
+            if (name === null || name === 'device.plist') changed();
+          });
+        } else {
+          watchDir(dir, () => {
+            watchDeviceSet();
+            if (deviceWatchers.has(deviceSet)) changed();
+          });
+        }
+      }
+    };
+
     let last: string | null = null;
     const check = () => {
+      watchDeviceSet();
       if (simctl || stopped) return;
       const startedAt = Date.now();
+      const version = listingVersion;
       let out = '';
       const child = getExecutor().spawn('xcrun', ['simctl', 'list', 'devices', '--json'], {
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -294,15 +361,19 @@ export function watchStatusSources({
       });
       simctl = child;
       child.stdout?.on('data', (chunk: Buffer) => (out += chunk.toString()));
-      child.on('error', () => {
-        simctl = null;
-      });
+      child.on('error', () => {});
       child.on('close', () => {
         simctl = null;
+        if (stopped) return;
+        if (version !== listingVersion) {
+          check();
+          return;
+        }
         const signature = simulatorSignature(out);
-        if (signature === null || stopped) return;
-        listing = { at: startedAt, json: out };
-        if (last !== null && signature !== last) onChange('full');
+        if (signature === null) return;
+        const wasStale = listing?.version !== version;
+        listing = { at: startedAt, version, json: out };
+        if (last !== null && (signature !== last || wasStale)) onChange('full');
         last = signature;
       });
     };
@@ -319,7 +390,7 @@ export function watchStatusSources({
       processes = [...new Set(pids)];
     },
     simulatorListing: () =>
-      listing && listing.at > listingStaleBefore && Date.now() - listing.at <= 2 * simctlIntervalMs
+      listing && listing.version === listingVersion && Date.now() - listing.at <= 2 * simctlIntervalMs
         ? listing.json
         : null,
     stop() {
@@ -330,6 +401,8 @@ export function watchStatusSources({
       repositories.clear();
       clearInterval(processTimer);
       if (simTimer) clearInterval(simTimer);
+      for (const watcher of deviceWatchers.values()) watcher.close();
+      deviceWatchers.clear();
       simctl?.kill('SIGKILL');
       adb.stop();
     },
@@ -377,6 +450,14 @@ function trackAdbDevices(onChange: () => void): { stop(): void } {
       child?.kill('SIGTERM');
     },
   };
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function ownerKey(owner: MachineOwner): string {
