@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { collectInventory } from '../commands/gc/inventory.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
 let root: string;
@@ -108,10 +107,11 @@ test('concurrent GC inventories keep device ownership and Android paths in each 
     mkdirSync(avd, { recursive: true });
     writeFileSync(join(avds, `stim-${operation.runId}.ini`), `path=${avd}\n`);
     writeFileSync(join(avd, 'config.ini'), `image.sysdir.1=system-images/android-${api}/google_apis/arm64-v8a/\n`);
-    withAmbientContext(operation, () => {
-      recordCreatedDevice('ios', operation.runId);
-      recordCreatedDevice('android', `stim-${operation.runId}`);
-    });
+    mkdirSync(operation.home, { recursive: true });
+    writeFileSync(
+      join(operation.home, 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [operation.runId], android: [`stim-${operation.runId}`], web: [] }),
+    );
   }
   const results = await Promise.all(
     fixtures.map(({ operation }) => withAmbientContext(operation, () => collectInventory(null, [], operation.env))),
