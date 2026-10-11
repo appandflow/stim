@@ -32,9 +32,9 @@ export function stimDesktopInstalled(
 
 /** `stimDesktopInstalled` without blocking the event loop. */
 export async function stimDesktopInstalledAsync(
-  platform: NodeJS.Platform,
-  env: NodeJS.ProcessEnv,
-  onSpawn: (child: ChildProcess) => void,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+  onSpawn?: (child: ChildProcess) => void,
 ): Promise<boolean> {
   if (platform !== 'darwin') return false;
   if (env.STIM_DESKTOP_APP) return true;

@@ -344,7 +344,7 @@ export async function bootIosSim(
   } finally {
     clearInterval(monitor);
   }
-  if (openViewer) viewer.open(udid);
+  if (openViewer) await viewer.open(udid);
 }
 
 export async function shutdownIosSim(udid: string): Promise<void> {

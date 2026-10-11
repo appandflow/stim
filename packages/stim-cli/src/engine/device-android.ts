@@ -433,7 +433,7 @@ async function bootOwnedAvdOnFreshPort({
       const serial = `emulator-${claim.consolePort}`;
       try {
         reportAndroidMemoryPressure(out);
-        const pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+        const pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
         out(chalk.dim(phaseLine('device', `waiting for ${serial} to finish booting`)));
         const result = await waitForAndroidBoot({ serial, timeoutMs: ANDROID_FRESH_BOOT_TIMEOUT_MS, pid, alive, out });
         if (result.failed) throw new AvdBootError(result.reason!, result.remedy!);
@@ -603,7 +603,7 @@ export async function ensureAndroidBooted({
     out(chalk.dim(phaseLine('device', `booting ${avdName} as ${serial}`)));
     let pid: number | null = null;
     try {
-      pid = bootAndroidEmulator(avdName, claim.consolePort, { logFile });
+      pid = await bootAndroidEmulator(avdName, claim.consolePort, { logFile });
     } catch (e) {
       releaseAndroidConsolePort(projectPath, claim.consolePort, slot);
       return {

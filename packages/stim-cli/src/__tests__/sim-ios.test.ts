@@ -940,11 +940,11 @@ test.each([
   if (configured) writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: configured }));
   const quiet: string[] = [];
   setExecutor({
-    runFile: () => '',
+    runFile: (file) => (file === 'osascript' ? '/Applications/Stim.app' : ''),
     spawn: () => makeExitingChild(),
     runFileQuiet(file, args) {
       quiet.push([file, ...args].join(' '));
-      return file === 'osascript' ? '/Applications/Stim.app' : null;
+      return null;
     },
   });
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');

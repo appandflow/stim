@@ -1083,7 +1083,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   } else {
     if (!remoteDevice) {
       try {
-        configuredAndroidEmulatorApp();
+        await configuredAndroidEmulatorApp();
       } catch (err) {
         return fail(
           'STIM_BAD_ARG',

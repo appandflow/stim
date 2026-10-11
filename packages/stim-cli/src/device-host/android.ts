@@ -118,7 +118,10 @@ export async function runHostedAndroidDevice(
       });
       assertHostedDeviceLedger(home, avdName, 'android');
       if (portIsOccupied(selected.consolePort)) throw new Error('The selected Android console port became occupied.');
-      bootAndroidEmulator(avdName, selected.consolePort, { openViewer: false, logFile: join(home, 'emulator.log') });
+      await bootAndroidEmulator(avdName, selected.consolePort, {
+        openViewer: false,
+        logFile: join(home, 'emulator.log'),
+      });
       const boot = await waitForBoot(selected.serial, 240000, { commandTimeoutMs: 5000 });
       if (!boot.ok) {
         const { sysBoot, devBoot, bootAnim, packageManager } = boot.diagnostic ?? {};
@@ -172,7 +175,7 @@ export async function runHostedAndroidDevice(
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
       });
-      bootAndroidEmulator(device.avdName, device.consolePort, {
+      await bootAndroidEmulator(device.avdName, device.consolePort, {
         openViewer: false,
         logFile: join(home, 'emulator.log'),
       });
