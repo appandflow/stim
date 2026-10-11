@@ -24,6 +24,11 @@ import { placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { placeHostedNative, prepareHostedNative } from '../device-host/hosted-native.ts';
 import { BuildConnection } from '../offload/client.ts';
 
+const run = vi.hoisted((): { signal?: AbortSignal } => ({}));
+vi.mock('../engine/native-run.ts', async (original) => ({
+  ...(await original<typeof import('../engine/native-run.ts')>()),
+  runCancellationSignal: () => run.signal,
+}));
 vi.mock('../device-host/hosted-client.ts', async (original) => ({
   ...(await original<typeof import('../device-host/hosted-client.ts')>()),
   connectHost: vi.fn<typeof connectHost>(),
@@ -60,6 +65,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   let pendingState: string;
   let readyAt: number;
   let readyDevice: unknown;
+  let installing: boolean;
   let recorded: Placement | undefined;
 
   beforeEach(() => {
@@ -73,6 +79,8 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'preparing';
     readyAt = 240_000;
     readyDevice = devices[platform];
+    installing = false;
+    run.signal = undefined;
     recorded = undefined;
     const connection = Object.create(BuildConnection.prototype) as BuildConnection;
     connection.close = vi.fn<() => void>();
@@ -103,7 +111,8 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       }
       if (method === 'device-host.metro.close') return { result: {} };
       if (method === 'device-host.app.offer') return { result: { missing: [] } };
-      if (method === 'device-host.app.launch') return { result: { state: 'installed', launched: true } };
+      if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
+        return { result: installing ? { state: 'installing' } : { state: 'installed', launched: true } };
       throw new Error(`Unexpected fixture request ${method}`);
     };
     host = {
@@ -250,6 +259,24 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(
       methods.some(({ method }) => method === 'device-host.reserve' || method.startsWith('device-host.app.')),
     ).toBe(false);
+  });
+
+  test('stops waiting for the app installation when the run is cancelled', async () => {
+    readyAt = 0;
+    installing = true;
+    const controller = new AbortController();
+    run.signal = controller.signal;
+    let outcome: string | undefined;
+    void place().then(
+      () => (outcome = 'placed'),
+      (error: unknown) => (outcome = String(error)),
+    );
+    await vi.advanceTimersByTimeAsync(10 * POLL_MS);
+    expect(outcome).toBeUndefined();
+    expect(methods.some(({ method }) => method === 'device-host.app.attach')).toBe(true);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(outcome).toContain('hosted app installation was cancelled');
   });
 
   test('still refuses a ready reply without the reserved device identity', async () => {

@@ -167,7 +167,7 @@ export async function placeHostedMacos(
       );
     }
     if (Date.now() > deadline) throw new Error(`${host.machine} did not finish installing the app.`);
-    await cancellableSleep(POLL_MS);
+    await cancellableSleep(POLL_MS, { signal: runCancellationSignal(), what: 'hosted app installation' });
     delivery = await call(host, 'device-host.app.attach', ids);
   }
   const appliedArguments = validHostedAppArguments(delivery.arguments) ? delivery.arguments : [];
