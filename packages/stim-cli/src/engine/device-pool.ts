@@ -145,8 +145,8 @@ export async function selectFromPool({
   platform: LeasePlatform;
   slot?: string;
   idLabel: string;
-  list: () => PoolCandidate[];
-  noCandidates: () => PoolRefusalText;
+  list: () => PoolCandidate[] | Promise<PoolCandidate[]>;
+  noCandidates: () => PoolRefusalText | Promise<PoolRefusalText>;
   waitSeconds: number;
   deadline?: number;
   noWait?: boolean;
@@ -160,7 +160,7 @@ export async function selectFromPool({
   let lastLine: number | null = null;
 
   for (;;) {
-    const candidates = list();
+    const candidates = await list();
     const { usable, leases, unreadable } = readPool(platform, candidates, io);
     const selection = selectPoolDevice({ candidates: usable, leases, held, now: now() });
 
@@ -172,7 +172,7 @@ export async function selectFromPool({
       if (unreadable.length) {
         return { status: 'refused', refusal: poolBusyRefusal([], leases, unreadable, now(), waitSeconds) };
       }
-      const { message, remedy } = noCandidates();
+      const { message, remedy } = await noCandidates();
       return { status: 'refused', refusal: { code: 'STIM_NO_DEVICE', message, remedy, lease: null } };
     }
 

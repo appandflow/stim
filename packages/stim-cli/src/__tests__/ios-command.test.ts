@@ -6509,7 +6509,7 @@ describe('ios --device: the lease on the phone', () => {
     reserve();
     const { lease, raises } = fakeLease();
     let installBoundMs: unknown = null;
-    const [phone] = connected().listIosDevices();
+    const [phone] = await connected().listIosDevices();
     const wireless = [{ ...phone!, transportType: 'localNetwork' }];
     const { errs, exitCode, calls } = await run(
       { device },
@@ -6533,7 +6533,7 @@ describe('ios --device: the lease on the phone', () => {
   test('a phone that moves from the cable to Wi-Fi during the build gets the Wi-Fi bounds at install', async () => {
     reserve();
     const { lease, raises } = fakeLease();
-    const [phone] = connected().listIosDevices();
+    const [phone] = await connected().listIosDevices();
     let listings = 0;
     const { errs, calls } = await run(
       { device: PHONE },
