@@ -11,6 +11,7 @@ import {
   withNativeBuildRun,
   type NativeRunHolder,
 } from '../engine/native-run.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { testContext } from './_context.ts';
 import { getExecutor } from '../exec.ts';
@@ -19,7 +20,7 @@ import { upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 
-const ios = (slot = 'default'): NativeRunHolder => ({ command: 'ios', platform: 'ios', slot });
+const ios = (slot = 'default'): Omit<NativeRunHolder, 'takesSignals'> => ({ command: 'ios', platform: 'ios', slot });
 
 describe('decideStopAction', () => {
   test.each([
@@ -178,6 +179,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     const exec = new URL('../exec.ts', import.meta.url).href;
     const admission = new URL('../engine/device-capacity.ts', import.meta.url).href;
     const cliOperation = new URL('../cli-operation.ts', import.meta.url).href;
+    const operationStateUrl = new URL('../engine/operation-state.ts', import.meta.url).href;
     writeFileSync(
       script,
       [
@@ -185,11 +187,19 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
         `const { spawnDeclared } = await import(${JSON.stringify(spawnClaims)});`,
         `const { getExecutor } = await import(${JSON.stringify(exec)});`,
         `const { withDeviceBootAdmission } = await import(${JSON.stringify(admission)});`,
-        `const { runProcessOperation } = await import(${JSON.stringify(cliOperation)});`,
+        `const { processContext, runProcessOperation } = await import(${JSON.stringify(cliOperation)});`,
+        `const { operationState } = await import(${JSON.stringify(operationStateUrl)});`,
         'const { once } = await import("node:events");',
         'const [root, command, slot, tool] = process.argv.slice(2);',
+        'const embedded = async (root, fn) => {',
+        '  const controller = new AbortController();',
+        '  const context = processContext(root, controller.signal);',
+        '  operationState(context).abortOperation = (reason) => controller.abort(reason);',
+        '  return { value: await fn(context) };',
+        '};',
+        'const operate = tool.startsWith("embedded") ? embedded : runProcessOperation;',
         'if (tool === "stubborn") process.on("SIGINT", () => {});',
-        'const { value: result } = await runProcessOperation(root, (context) => withNativeBuildRun(context, root, { command, platform: command, slot }, async () => {',
+        'const { value: result } = await operate(root, (context) => withNativeBuildRun(context, root, { command, platform: command, slot }, async () => {',
         '  console.log("holding");',
         '  if (tool === "queue") {',
         '    try {',
@@ -202,8 +212,8 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
         '      return cancelledFailure(context, command, { code: error.name });',
         '    }',
         '  }',
-        '  if (tool === "tool" || tool === "stubborn-tool") {',
-        '    const body = tool === "tool" ? "setInterval(() => {}, 1000)" : "process.on(\'SIGINT\', () => {}); setInterval(() => {}, 1000)";',
+        '  if (tool === "tool" || tool === "stubborn-tool" || tool === "embedded") {',
+        '    const body = tool !== "stubborn-tool" ? "setInterval(() => {}, 1000)" : "process.on(\'SIGINT\', () => {}); setInterval(() => {}, 1000)";',
         '    const child = spawnDeclared(context, () => getExecutor().spawn(process.execPath, ["-e", body], { stdio: "ignore" }));',
         '    console.log(`tool:${child.pid}`);',
         '    await once(child, "exit");',
@@ -226,7 +236,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
   async function startHolder(
     command: string,
     slot: string,
-    tool: 'tool' | 'stubborn-tool' | 'sleep' | 'stubborn' | 'queue',
+    tool: 'tool' | 'stubborn-tool' | 'embedded' | 'embedded-sleep' | 'sleep' | 'stubborn' | 'queue',
   ) {
     const child = getExecutor().spawn(process.execPath, [script, root, command, slot, tool], {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -238,7 +248,7 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
     let err = '';
     child.stdout?.on('data', (chunk) => (out += chunk));
     child.stderr?.on('data', (chunk) => (err += chunk));
-    const ready = tool === 'queue' ? 'queued' : tool.endsWith('tool') ? 'tool:' : 'holding';
+    const ready = tool === 'queue' ? 'queued' : tool.endsWith('tool') || tool === 'embedded' ? 'tool:' : 'holding';
     while (!out.includes(ready)) {
       if (child.exitCode !== null) throw new Error(`holder exited early: ${err}`);
       await new Promise((resolve) => setTimeout(resolve, 20));
@@ -296,6 +306,80 @@ describe('stop against a real native-run holder', { timeout: 30_000 }, () => {
         result: `cancelled by \`stim stop\` (pid ${process.pid})`,
       });
       expect(err).toContain('stopping the running build tool');
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'stop cancels a run held by an embedding process through its workspace state, without signalling the process',
+    async () => {
+      const holder = await startHolder('ios', 'default', 'embedded');
+      const lines: string[] = [];
+      const result = await stopWorkspaceNow({
+        root,
+        report: (line) => lines.push(line),
+        interrupt: () => {
+          throw new Error('an embedding process must not be signalled');
+        },
+        endRemote: () => null,
+        stop: stopped,
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(lines.join('\n')).toContain('asked it to stop');
+      const [code, signal] = await holder.exited;
+      expect([code, signal]).toEqual([0, null]);
+      expect(holder.output().out.trim().split('\n').at(-1)).toBe(
+        JSON.stringify({ result: `cancelled by \`stim stop\` (pid ${process.pid})` }),
+      );
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a run in an embedding process that does not stop is refused with a remedy that does not kill the process',
+    async () => {
+      const holder = await startHolder('ios', 'default', 'embedded-sleep');
+      const result = await stopWorkspaceNow({ root, interruptWaitMs: 600, endRemote: () => null, stop: stopped });
+      expect(result).toMatchObject({ refusal: { code: 'STIM_STOP_BLOCKED' } });
+      if (!('refusal' in result)) throw new Error('expected a refusal');
+      const { message, remedy } = result.refusal;
+      expect(message).toContain('of the stop request');
+      expect(remedy).toContain(`process ${holder.child.pid}`);
+      expect(remedy).not.toContain('kill');
+      expect(holder.child.exitCode).toBe(null);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'stop cancels a run held by its own process without signalling itself',
+    async () => {
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
+      operationState(context).abortOperation = (reason) => controller.abort(reason);
+      let tool: ChildProcess | undefined;
+      const run = withNativeBuildRun(
+        context,
+        root,
+        { command: 'android', platform: 'android' },
+        async () => {
+          tool = spawnDeclared(context, () =>
+            getExecutor().spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }),
+          );
+          await once(tool, 'exit');
+          return runCancellation(context);
+        },
+        { write: () => {} },
+      );
+      await vi.waitFor(() => expect(tool?.pid).toBeDefined());
+      const result = await stopWorkspaceNow({
+        root,
+        interrupt: () => {
+          throw new Error('stop must not signal its own process');
+        },
+        endRemote: () => null,
+        stop: stopped,
+      });
+      expect(result).toMatchObject({ ok: true });
+      expect(await run).toBe(`cancelled by \`stim stop\` (pid ${process.pid})`);
+      expect(context.signal.reason).toBe('stop');
     },
   );
 

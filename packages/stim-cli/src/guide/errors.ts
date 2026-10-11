@@ -1194,8 +1194,8 @@ captured"  (in metro.ndjson, bare RN)
       summary: 'an ios or android run was interrupted by `stim stop` or Ctrl-C before it finished',
       body: () => `STIM_CANCELLED  (ios, android; exit 130)
   "The ios run was cancelled by \`stim stop\` (pid <n>) before it finished."
-  The run received SIGINT: from \`stim stop\`, which interrupts a build it
-  leaves with nothing to deploy to, or from Ctrl-C. It forwarded the interrupt
+  The run was interrupted: by \`stim stop\`, which cancels a build it leaves
+  with nothing to deploy to, or by Ctrl-C. It forwarded the interrupt
   to the build tool it was running (xcodebuild, Gradle, pod install, expo
   prebuild) and failed through its own cleanup; the next line names the step it
   stopped at. An interrupted build stores no artifact, so the next run looks
@@ -1213,6 +1213,10 @@ captured"  (in metro.ndjson, bare RN)
   - "... did not exit within 60s of SIGINT": the run was interrupted but is
     still running. Wait for it, or end it with the \`kill <pid>\` the remedy
     prints, then run \`stim stop\` again.
+  - "... did not exit within 60s of the stop request": the run is inside a
+    process that embeds Stim, such as stim-server, and runs other work too.
+    Stop does not signal that process. Wait for the run, or cancel it from
+    the client that started it, then run \`stim stop\` again.
   - "... pid <n> is no longer that run; the build tool it started (pid <m>)
     still holds the claim": the run itself died and its build tool keeps the
     claim. Stim signals only a claim owner whose recorded identity it can

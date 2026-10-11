@@ -1150,10 +1150,15 @@ function readRemoteSessionEntry(root: string, report: (line: string) => void): D
   return endRemoteSession(root, sessionId, { teardownRemoteSession: defaultTeardownRemoteSession, report });
 }
 
+function signalledHolder(holder: ClaimHolder): boolean {
+  return nativeRunHolder(holder).takesSignals && holder.owner.pid !== process.pid;
+}
+
 /**
  * `stop` under the workspace's native-run lock. A billable remote session is ended as soon as the lock is
- * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is interrupted with
- * SIGINT and given INTERRUPT_WAIT_MS to exit; a build for another slot that stays is left running while
+ * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is asked to cancel through
+ * its workspace state, sent SIGINT when its holder is a CLI process, and given INTERRUPT_WAIT_MS to exit; a build
+ * for another slot that stays is left running while
  * the slot stops without the lock; any other holder is waited on with a visible notice.
  */
 export async function stopWorkspaceNow({
@@ -1212,10 +1217,13 @@ export async function stopWorkspaceNow({
     if (seen?.claimId === holder.claimId) {
       if (seen.action === 'interrupt' && at >= seen.deadline) {
         if (inspectIdentity(holder.owner) !== 'same') throw ownerGoneRefusal(holder, at);
+        const signalled = signalledHolder(holder);
         throw new StopBlocked({
           code: 'STIM_STOP_BLOCKED',
-          message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of SIGINT; it still holds this workspace's native-run claim at ${holder.path}.`,
-          remedy: `Wait for it to finish, or end it with \`kill ${holder.owner.pid}\`, then run \`stim stop\` again.`,
+          message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of ${signalled ? 'SIGINT' : 'the stop request'}; it still holds this workspace's native-run claim at ${holder.path}.`,
+          remedy: signalled
+            ? `Wait for it to finish, or end it with \`kill ${holder.owner.pid}\`, then run \`stim stop\` again.`
+            : `It runs inside process ${holder.owner.pid}, which embeds Stim (such as stim-server) and runs other work too. Wait for the run to finish, or cancel it from the client that started it, then run \`stim stop\` again.`,
         });
       }
       notice(holder);
@@ -1246,15 +1254,17 @@ export async function stopWorkspaceNow({
       interrupted.push(holder.claimId);
       seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
       if (inspectIdentity(holder.owner) !== 'same') return;
+      const wait = `waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`;
+      if (!signalledHolder(holder)) {
+        notice(holder, `interrupting ${who}: asked it to stop, ${wait}`);
+        return;
+      }
       try {
         interrupt(holder.owner.pid);
       } catch (error) {
         if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
       }
-      notice(
-        holder,
-        `interrupting ${who}: sent SIGINT, waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`,
-      );
+      notice(holder, `interrupting ${who}: sent SIGINT, ${wait}`);
       return;
     }
     notice(holder);
