@@ -5,6 +5,8 @@ import {
   WATCH_DEBOUNCE_MS,
   WATCH_FALLBACK_MS,
   WATCH_LIGHT_INTERVAL_MS,
+  WATCH_MACHINE_INTERVAL_MS,
+  WATCH_TABLES_INTERVAL_MS,
   watchChangeKey,
   watchPayload,
   watchStatusSources,
@@ -331,6 +333,18 @@ function renderStatus(
   return out;
 }
 
+function watchedPids({ roots, states }: StatusSnapshot): number[] {
+  return [
+    ...roots.flatMap((root) => [
+      ...(root.supervisorPid ? [root.supervisorPid] : []),
+      ...(root.build ? [root.build.pid] : []),
+      ...root.browserPids,
+      ...(root.macosPids ?? []),
+    ]),
+    ...states.flatMap((state) => (state.metro?.running && state.metro.pid ? [state.metro.pid] : [])),
+  ];
+}
+
 async function watchStatus(json: boolean): Promise<void> {
   let last: string | null = null;
   let lastPayload: StatusPayload | null = null;
@@ -338,6 +352,8 @@ async function watchStatus(json: boolean): Promise<void> {
   let archives: ArchivedWorkspace[] | undefined;
   let snapshot: StatusSnapshot | null = null;
   let sources: StatusSources | null = null;
+  let tablesAt = 0;
+  let machineDue = false;
   const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
@@ -347,8 +363,14 @@ async function watchStatus(json: boolean): Promise<void> {
       let text: string;
       let payload = null as StatusPayload | null;
       try {
-        if (kind === 'light' && snapshot) await refreshLightFacts(snapshot, json);
-        else {
+        const now = Date.now();
+        if (kind === 'light' && snapshot) {
+          const machine = json && machineDue;
+          const tables = machine || now - tablesAt >= WATCH_TABLES_INTERVAL_MS;
+          machineDue = false;
+          await refreshLightFacts(snapshot, { tables, machine });
+          if (tables) tablesAt = now;
+        } else {
           let stamp: number | null = null;
           try {
             stamp = statSync(archiveRoot()).mtimeMs;
@@ -357,14 +379,20 @@ async function watchStatus(json: boolean): Promise<void> {
             archives = readArchives();
             archiveStamp = stamp;
           }
+          const first = snapshot === null;
           snapshot = await readStatus({
-            git: 'all',
+            git: first ? 'none' : 'all',
             probes: liveProbes({
               simctlListing: sources?.simulatorListing(),
               gitMaxAgeMs: WATCH_GIT_MAX_AGE_MS,
               archives,
             }),
           });
+          tablesAt = now;
+          machineDue = false;
+          sources?.watchRepositories(snapshot.gitCommonDirs);
+          sources?.watchProcesses(watchedPids(snapshot));
+          if (first) scheduler.trigger('full', 0);
         }
         measurer.schedule(snapshot.states, snapshot.worktrees);
         text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full))).join('\n');
@@ -382,7 +410,11 @@ async function watchStatus(json: boolean): Promise<void> {
     },
   });
   const fallback = setInterval(() => scheduler.trigger('full'), WATCH_FALLBACK_MS);
-  const machine = setInterval(() => json && snapshot?.machine && scheduler.trigger('light'), WATCH_LIGHT_INTERVAL_MS);
+  const machine = setInterval(() => {
+    if (!json || !snapshot?.machine) return;
+    machineDue = true;
+    scheduler.trigger('light');
+  }, WATCH_MACHINE_INTERVAL_MS);
   const finish = () => {
     clearInterval(fallback);
     clearInterval(machine);

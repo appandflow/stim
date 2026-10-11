@@ -257,10 +257,14 @@ WAITING FOR A CHANGE
   maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
   maintenance.running.startedAt. A line that prints carries their current
   values. It reacts to Stim state files,
-  the EAS session ledger, adb device arrivals and departures, and simulator
-  state, and recomputes every 30 seconds as a fallback. A log append updates
-  only the log error count and device activity, no sooner than 15 seconds
-  after the previous refresh. Ctrl+C, SIGTERM or closing its stdout ends it
+  the EAS session ledger, git HEAD, index and ref changes in the worktrees'
+  repositories, the exit of a recorded supervisor, Metro, build, browser or
+  macOS app process (checked every 2 seconds), adb device arrivals and
+  departures, and simulator state (polled every 5 seconds), and recomputes
+  every 30 seconds as a fallback. A log append updates the log-derived facts
+  within about a second; device activity follows at most every 5 seconds. The
+  first line does not wait for git: worktree git summaries can be null in it,
+  and the next line carries them. Ctrl+C, SIGTERM or closing its stdout ends it
   with exit 0. On Linux, so does the exit of the process that started it
   when its stdout is a pipe. It notices within a few seconds even when
   nothing changes, except a closed stdout pipe on Linux whose starter is

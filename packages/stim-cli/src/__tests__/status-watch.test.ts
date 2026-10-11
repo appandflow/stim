@@ -1,16 +1,29 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import assert from 'node:assert';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig, makeEnvironmentState } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { captureProcessToken } from '../process-identity.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   createRefreshScheduler,
+  gitChange,
   statusChange,
   watchChangeKey,
   watchPayload,
@@ -174,6 +187,16 @@ test('a log append or build detail needs only a log refresh; other state changes
   expect(statusChange('leases', null)).toBe('full');
   expect(statusChange('eas', 'sessions.json')).toBe('full');
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
+});
+
+test('a HEAD, index or ref change in a repository or a linked worktree refreshes status; objects, logs and locks do not', () => {
+  for (const name of ['HEAD', 'index', 'packed-refs', 'FETCH_HEAD', 'refs/heads/feature/x', 'worktrees/wt-1/HEAD'])
+    expect(gitChange(name)).toBe(true);
+  expect(gitChange('worktrees/wt-1/index')).toBe(true);
+  expect(gitChange('worktrees/wt-1')).toBe(true);
+  expect(gitChange(null)).toBe(true);
+  for (const name of ['objects/ab/cdef', 'logs/HEAD', 'index.lock', 'refs/heads/main.lock', 'worktrees/wt-1/logs/HEAD'])
+    expect(gitChange(name)).toBe(false);
 });
 
 describe('watchPayload', () => {
@@ -540,7 +563,7 @@ describe('stim status --watch --json', () => {
       });
       appendFileSync(log, record(2, 'error'));
       if (notify) proc.send({ path: workspaceLogsDir(app), name: 'metro.ndjson' });
-      await (notify ? until(() => lines.length === 2, 20_000) : changed);
+      await (notify ? until(() => lines.length === 2, 3000) : changed);
       expect(lines).toHaveLength(2);
       expect(errors(lines[1]!)).toBe(1);
     },
@@ -612,6 +635,128 @@ describe('stim status --watch --json', () => {
       expect(cpu(lines.at(-1)!)).toBe(before);
     }, 40_000);
   });
+
+  function last(lines: string[]): string {
+    const line = lines.at(-1);
+    assert(line !== undefined);
+    return line;
+  }
+
+  async function quiet(lines: string[], ms = 1500) {
+    let seen = -1;
+    while (seen !== lines.length) {
+      seen = lines.length;
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+  }
+
+  function linkGit() {
+    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    writeFileSync(join(root, 'bin', 'git'), `#!/bin/sh\nexec '${real}' "$@"\n`);
+    chmodSync(join(root, 'bin', 'git'), 0o755);
+    const run = (cwd: string, args: string[]) =>
+      execFileSync(real, ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        cwd,
+        stdio: 'ignore',
+        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+      });
+    const base = realpathSync(root);
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    run(repo, ['init', '-q', '-b', 'main']);
+    writeFileSync(join(repo, 'package.json'), '{}');
+    run(repo, ['add', '.']);
+    run(repo, ['commit', '-q', '-m', 'init']);
+    const app = join(base, 'app');
+    run(repo, ['worktree', 'add', '-q', '-b', 'feature', app]);
+    saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+    return { app, run };
+  }
+
+  const git = (line: string) => JSON.parse(line).environments[0].worktree?.git ?? null;
+
+  test.skipIf(process.platform === 'win32')(
+    'a state write prints a line within 2 s through the real filesystem watcher; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const app = join(root, 'app');
+      saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+      writeWorkspaceState(app, {});
+      const { lines } = startWatch();
+      await until(() => lines.length > 0);
+      await quiet(lines);
+      const before = lines.length;
+      writeWorkspaceState(app, { warm: { phase: 'ready', at: new Date().toISOString() } });
+      await until(() => lines.length > before, 2000);
+      expect(JSON.parse(last(lines)).environments[0].phase).toBe('ready');
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a commit in a worktree prints its git summary within 3 s; skipped on win32, which cannot run the sh git and adb shims',
+    async () => {
+      const { app, run } = linkGit();
+      writeFileSync(join(app, 'new.txt'), 'x');
+      const { lines } = startWatch();
+      await until(() => lines.length > 0 && git(last(lines)) !== null);
+      await quiet(lines);
+      expect(git(last(lines))).toMatchObject({ untracked: 1 });
+      const before = lines.length;
+      run(app, ['add', 'new.txt']);
+      run(app, ['commit', '-q', '-m', 'add']);
+      await until(() => lines.length > before && git(last(lines))?.untracked === 0, 3000);
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'the first line does not wait for git, and the git summary follows; skipped on win32, which cannot run the sh git and adb shims',
+    async () => {
+      linkGit();
+      const { lines } = startWatch();
+      await until(() => lines.length > 0);
+      expect(git(last(lines.slice(0, 1)))).toBeNull();
+      await until(() => git(last(lines)) !== null, 20_000);
+      expect(git(last(lines))).toMatchObject({ changed: 0, untracked: 0 });
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a supervisor that exits without writing state prints a line within 4 s; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const sleeper = spawn('/bin/sleep', ['600'], { stdio: 'ignore' });
+      try {
+        const pid = sleeper.pid;
+        const processToken = pid && captureProcessToken(pid);
+        assert(pid && processToken);
+        const app = join(root, 'app');
+        saveConfig(
+          makeConfig({
+            projects: {
+              [app]: {
+                label: 'watched',
+                platforms: {},
+                supervisor: { pid, processToken, port: 400, startedAt: '1700000000000' },
+              },
+            },
+          }),
+        );
+        const { lines } = startWatch();
+        await until(() => lines.length > 0);
+        await quiet(lines);
+        expect(JSON.parse(last(lines)).environments[0].supervisor).toMatchObject({ pid });
+        const before = lines.length;
+        sleeper.kill('SIGKILL');
+        await until(() => lines.length > before, 4000);
+        expect(JSON.parse(last(lines)).environments[0].supervisor).toBeNull();
+      } finally {
+        sleeper.kill('SIGKILL');
+      }
+    },
+    40_000,
+  );
 
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
