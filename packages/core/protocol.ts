@@ -62,6 +62,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
+ * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
+ * `archived.list`, `worktrees.list` and `maintenance.get`.
  */
 export const FEATURES = [
   'physical-ios',
@@ -89,6 +91,7 @@ export const FEATURES = [
   'hosted-android-data',
   'hosted-android-process',
   'server-update',
+  'status-views',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];

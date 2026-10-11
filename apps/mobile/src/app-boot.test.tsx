@@ -116,14 +116,17 @@ jest.mock('expo-notifications', () => ({
 const MAC_ID = 'mac1';
 const ENDPOINT = 'ws://mock-mac:7787';
 
-/** Answers `hello` and the status views like stim-server, with the mock server's captured status. */
+/** Answers `hello` and the status feeds like stim-server, with the mock server's captured status. */
 class FakeSocket {
   static sent: string[] = [];
+  static features = ['status-views'];
+  static fullStatus: object = statusFixture.payload;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
   readyState = 0;
+  feed: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
     setTimeout(() => {
@@ -150,8 +153,15 @@ class FakeSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
+          features: FakeSocket.features,
         },
       });
+    } else if (method === 'status.subscribe') {
+      reply({ id, result: { subscription: 's0' } });
+      this.feed = setInterval(
+        () => reply({ event: 'status', subscription: 's0', payload: FakeSocket.fullStatus }),
+        1000,
+      );
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
       const views = statusViews(statusFixture.payload as Parameters<typeof statusViews>[0]);
       const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
@@ -171,6 +181,7 @@ class FakeSocket {
   }
 
   close() {
+    clearInterval(this.feed);
     this.readyState = 3;
   }
 }
@@ -287,4 +298,31 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 
   expect(errors).toEqual([]);
   expect(screen.getByText('Work')).toBeTruthy();
+}, 60_000);
+
+it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  FakeSocket.sent = [];
+  FakeSocket.features = [];
+  const [first, ...rest] = statusFixture.payload.environments;
+  if (!first) throw new Error('the captured status lists a workspace');
+  FakeSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
+  Object.assign(globalThis, { WebSocket: FakeSocket });
+  seedPreviousInstall();
+  const activate = launchInactive();
+
+  await renderRouter('./src/app', {
+    initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(first.path)}`,
+  });
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+
+  expect(FakeSocket.sent).toContain('status.subscribe');
+  expect(FakeSocket.sent).not.toContain('workspaces.subscribe');
+  await act(() => jest.advanceTimersByTimeAsync(1000));
+  expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
 }, 60_000);

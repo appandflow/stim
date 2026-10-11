@@ -1406,6 +1406,8 @@ Events are `{ "event", "subscription", ... }`.
   `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
   device from an agent driving it: an `activity.driver` of `stim device lock`
   whose `since` is in `ownLeases` is a phone.
+- A server that offers the following status views lists `status-views` in its
+  `hello` features.
 - `workspaces.subscribe` returns a subscription id and sends `workspaces`
   events, each with a `seq` that starts at 0 and grows by one. The first
   carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each

@@ -942,6 +942,7 @@ describe('pairing', () => {
           'hosted-android-data',
           'hosted-android-process',
           'server-update',
+          'status-views',
         ],
         actions: [],
       },

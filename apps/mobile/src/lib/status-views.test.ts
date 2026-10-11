@@ -64,3 +64,13 @@ it("shows a followed workspace's full environment and the archives read separate
   expect(status?.environments[0]).toEqual(full);
   expect(status?.archived).toEqual(payload.archived);
 });
+
+it('keeps the archives shown before until the archives are read', () => {
+  const listed = { ...applied(EMPTY_VIEWS, snapshot), machine: views.machine };
+  const [kept] = payload.archived ?? [];
+  if (!kept || !payload.archivedUsage) throw new Error('the captured status has archives');
+  const shown = { ...payload, archived: [kept] };
+  expect(viewsPayload(listed, shown)?.archived).toEqual([kept]);
+  const read = { archived: [], usage: { ...payload.archivedUsage, count: 0 } };
+  expect(viewsPayload({ ...listed, archives: read }, shown)?.archived).toEqual([]);
+});

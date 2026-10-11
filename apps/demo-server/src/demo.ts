@@ -332,7 +332,7 @@ export class DemoConnection {
         home: fixtures.home,
       },
       capabilities: ['read', 'control'],
-      features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
+      features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window', 'status-views'],
       actions: ACTIONS,
       device: this.device,
     };

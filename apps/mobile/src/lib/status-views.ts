@@ -59,10 +59,16 @@ export function applyWorkspaces(views: StatusViews, event: WorkspacesEvent): Sta
   };
 }
 
-/** The status payload these views describe, shaped like `stim status --json`; null before the first snapshot. */
-export function viewsPayload(views: StatusViews): StatusPayload | null {
+/**
+ * The status payload these views describe, shaped like `stim status --json`; null before the first snapshot. Until
+ * the archives are read, it keeps those of `shown`, the status shown before.
+ */
+export function viewsPayload(views: StatusViews, shown: StatusPayload | null = null): StatusPayload | null {
   if (views.nextSeq === null || !views.machine) return null;
   const { capacity, machine, deviceLeases, simctlAvailable, maintenance } = views.machine;
+  const archives =
+    views.archives ??
+    (shown?.archived && shown.archivedUsage ? { archived: shown.archived, usage: shown.archivedUsage } : null);
   return {
     environments: views.workspaces.map((workspace) => views.details[workspace.path] ?? workspace),
     unprovisionedWorktrees: views.worktrees,
@@ -71,7 +77,7 @@ export function viewsPayload(views: StatusViews): StatusPayload | null {
     deviceLeases,
     simctlAvailable,
     ...(maintenance ? { maintenance } : {}),
-    ...(views.archives ? { archived: views.archives.archived, archivedUsage: views.archives.usage } : {}),
+    ...(archives ? { archived: archives.archived, archivedUsage: archives.usage } : {}),
     ...(views.ownLeases ? { ownLeases: views.ownLeases } : {}),
   };
 }
