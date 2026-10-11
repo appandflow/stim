@@ -309,5 +309,5 @@ test('settings reads sharing one signal leave no abort listeners behind, even wh
     await missing.settings({ signal: controller.signal });
   }
   expect(added.mock.calls.length).toBeGreaterThan(0);
-  expect(removed.mock.calls.length).toBe(added.mock.calls.length);
+  await vi.waitFor(() => expect(removed.mock.calls.length).toBe(added.mock.calls.length));
 });
