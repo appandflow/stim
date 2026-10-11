@@ -265,7 +265,7 @@ export default function logsCommand(program: Command): void {
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      const captured = captureWorkspaceCrashes(root, dir);
+      const captured = await captureWorkspaceCrashes(root, dir);
       const offsets = opts.follow ? fileSizes(dir) : null;
       const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
       const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);

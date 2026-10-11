@@ -4334,7 +4334,7 @@ describe('release skips Metro entirely', () => {
   test('an attributable native crash overrides a live release process probe', async () => {
     const read = vi
       .spyOn(crashDiagnostics, 'captureNativeCrashes')
-      .mockReturnValue([
+      .mockResolvedValue([
         { src: 'device', level: 'fatal', event: 'native_crash', msg: 'App.swift:17: Fatal error: release failed' },
       ]);
     try {

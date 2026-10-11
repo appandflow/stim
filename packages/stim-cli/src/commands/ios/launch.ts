@@ -182,7 +182,7 @@ async function verifyIosProcessRun({
   const processCheck = physical
     ? await d.verifyIosDeviceReleaseLaunch({ udid, appName: appName ?? bundleId })
     : await d.verifyReleaseLaunch({ pid: launched?.pid ?? null });
-  const crashes = readNativeCrashes();
+  const crashes = await readNativeCrashes();
   if (processCheck?.verified && !crashes.length) {
     phase(
       'verify',
@@ -290,7 +290,7 @@ async function verifyIosMetroRun({
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
-    : readNativeCrashes();
+    : await readNativeCrashes();
   if (nativeCrashes.length) {
     verification.fatal = true;
   }
@@ -995,7 +995,7 @@ export async function finishIosRun({
           metroPort: port,
           devClientScheme,
           devMenuParams: menuParams,
-          consolePaths: simulatorConsolePaths(
+          consolePaths: await simulatorConsolePaths(
             { deviceId: udid, appId: bundleId!, since: launchedAt },
             true,
             Boolean(remoteDevice),
@@ -1004,7 +1004,7 @@ export async function finishIosRun({
     });
     if ('error' in launched) return fail(launched.error);
     if (launched.failed) {
-      printNativeCrashReport(
+      await printNativeCrashReport(
         { root, slot, platform: 'ios', deviceId: udid, appId: bundleId!, since: launchedAt, appPath },
         logsDir,
         (line) => note(chalk.red(phaseLine('launch', line))),

@@ -12,13 +12,15 @@ import { verifyLaunch } from '../engine/launch-verify.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import type { ChildProcess } from 'node:child_process';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { buildCriteria, recordMatches } from '@stim-cli/core/state';
 import { recordFromLine } from '../supervisor/server-expo.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { deviceLeasePath, fileLeaseIo } from '../engine/device-lease.ts';
+import { writeDiagnosticOnceAsync } from '../diagnostics/diagnostic-store.ts';
 
 let server: Server | undefined;
 afterEach(async () => {
@@ -462,7 +464,7 @@ test('a stalled symbolication server cannot hide or indefinitely delay the origi
   expect(record?.symbolicationNote).toContain('timed out');
 });
 
-test('APK frames require a matching ELF build ID and repeated collection does not duplicate a crash', () => {
+test('APK frames require a matching ELF build ID and repeated collection does not duplicate a crash', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-native-diagnostics-'));
   const priorSdk = process.env.ANDROID_HOME;
   process.env.STIM_HOME = join(root, 'stim-home');
@@ -486,8 +488,8 @@ test('APK frames require a matching ELF build ID and repeated collection does no
     let symbolRequests = 0;
     const requestedAddresses: string[] = [];
     setExecutor({
-      runFile: () => String(Date.now()),
       runFileQuiet: (file, args) => {
+        if (args.includes('date')) return String(Date.now());
         if (file === 'adb') return raw;
         if (file.endsWith('llvm-readelf')) return `Build ID: ${matches ? 'abc123' : 'def456'}`;
         if (file.endsWith('llvm-symbolizer')) {
@@ -505,16 +507,16 @@ test('APK frames require a matching ELF build ID and repeated collection does no
       deviceId: 'owned',
       since: epoch * 1000 - 1000,
     };
-    const [first] = captureNativeCrashes(target, logs);
+    const [first] = await captureNativeCrashes(target, logs);
     expect(first?.stack).toEqual([{ fn: 'crashHere', file: `${root}/app.cpp`, line: 17, column: 4 }]);
     expect(requestedAddresses).toEqual(['0x000046bc']);
-    captureNativeCrashes(target, logs);
+    await captureNativeCrashes(target, logs);
     expect(readdirSync(logs).filter((name) => name.endsWith('.ndjson'))).toHaveLength(1);
     expect(readdirSync(logs).some((name) => name.endsWith('.tmp'))).toBe(false);
     expect(JSON.parse(readFileSync(join(logs, readdirSync(logs)[0]!), 'utf8')).rawReport).toContain('base.apk');
     const priorRequests = symbolRequests;
     matches = false;
-    const [mismatch] = captureNativeCrashes(target, logs);
+    const [mismatch] = await captureNativeCrashes(target, logs);
     expect(symbolRequests).toBe(priorRequests);
     expect(mismatch?.stack).toMatchObject([{ file: 'base.apk' }]);
     expect(mismatch?.symbolicationNote).toContain('partial');
@@ -632,7 +634,7 @@ test('historical Expo errors keep their original coordinates after bundle activi
   }
 });
 
-test('live native collection requires the current launch and device claim, not a historical launch marker', () => {
+test('live native collection requires the current launch and device claim, not a historical launch marker', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-crash-claim-'));
   process.env.STIM_HOME = join(root, 'home');
   const logs = join(root, 'logs');
@@ -664,22 +666,22 @@ test('live native collection requires the current launch and device claim, not a
     writeWorkspaceState(root, { launches: { android: launch } });
     upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
     setExecutor({
-      runFile: () => String(Date.now()),
       runFileQuiet: (_file, args) => {
+        if (args.includes('date')) return String(Date.now());
         if (args.includes('emu')) return avd + '\nOK';
         reads++;
         return raw;
       },
     });
-    captureWorkspaceCrashes(root, logs);
+    expect(await captureWorkspaceCrashes(root, logs, [marker])).toEqual([]);
     expect(reads).toBe(1);
     expect(readdirSync(logs).filter((name) => name.startsWith('native-crash-'))).toHaveLength(1);
     clearWorkspaceStateKeys(root, ['launches']);
-    captureWorkspaceCrashes(root, logs);
+    await captureWorkspaceCrashes(root, logs);
     expect(reads).toBe(1);
     writeWorkspaceState(root, { launches: { android: launch } });
     avd = 'stim-other-workspace';
-    captureWorkspaceCrashes(root, logs);
+    await captureWorkspaceCrashes(root, logs);
     expect(reads).toBe(1);
     writeFileSync(join(logs, 'launch.ndjson'), JSON.stringify({ ...marker, physical: true }) + '\n');
     clearWorkspaceStateKeys(root, ['launches']);
@@ -694,13 +696,13 @@ test('live native collection requires the current launch and device claim, not a
       expiresAt: new Date(Date.now() + 10000).toISOString(),
     };
     fileLeaseIo.writeLease(deviceLeasePath('android', launch.deviceId), JSON.stringify(lease));
-    captureWorkspaceCrashes(root, logs);
+    await captureWorkspaceCrashes(root, logs);
     expect(reads).toBe(2);
     fileLeaseIo.writeLease(
       deviceLeasePath('android', launch.deviceId),
       JSON.stringify({ ...lease, token: 'new-token', holder: root + '-other' }),
     );
-    captureWorkspaceCrashes(root, logs);
+    await captureWorkspaceCrashes(root, logs);
     expect(reads).toBe(2);
     expect(
       parseAndroidCrashes(
@@ -713,5 +715,81 @@ test('live native collection requires the current launch and device claim, not a
     resetExecutor();
     delete process.env.STIM_HOME;
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('cancelling crash capture stops its pending tool and rejects without writing diagnostics', async () => {
+  const logs = mkdtempSync(join(tmpdir(), 'stim-crash-cancel-'));
+  const controller = new AbortController();
+  const reason = new Error('cancel crash capture');
+  const executor = getExecutor();
+  let child: ChildProcess | undefined;
+  setExecutor({
+    runFileQuietAsync: (_file, _args, options) =>
+      executor.runFileQuietAsync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {
+        ...options,
+        cwd: logs,
+        onSpawn(spawned) {
+          child = spawned;
+          options.onSpawn?.(spawned);
+          setTimeout(() => controller.abort(reason), 10);
+        },
+      }),
+  });
+  try {
+    await expect(
+      captureNativeCrashes(
+        { platform: 'android', deviceId: 'owned', appId: 'app.test', since: 0 },
+        logs,
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+    expect(child?.signalCode).toBe('SIGKILL');
+    expect(readdirSync(logs)).toEqual([]);
+  } finally {
+    resetExecutor();
+    rmSync(logs, { recursive: true, force: true });
+  }
+});
+
+test('concurrent async diagnostic publications keep one complete snapshot and clean their temporary files', async () => {
+  const logs = mkdtempSync(join(tmpdir(), 'stim-diagnostic-publish-'));
+  const path = join(logs, 'native-crash.ndjson');
+  const snapshots = ['first\n'.repeat(10000), 'second\n'.repeat(10000)];
+  try {
+    await Promise.all(snapshots.map((content) => writeDiagnosticOnceAsync(path, content)));
+    expect(snapshots).toContain(readFileSync(path, 'utf8'));
+    expect(readdirSync(logs)).toEqual(['native-crash.ndjson']);
+  } finally {
+    rmSync(logs, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform !== 'darwin')('iOS crash reports come from the operation environment home', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-crash-client-home-'));
+  const reports = join(home, 'Library/Logs/DiagnosticReports');
+  const logs = join(home, 'logs');
+  const since = Date.now() - 1000;
+  const report = {
+    captureTime: new Date().toISOString(),
+    coalitionName: 'com.apple.CoreSimulator.SimDevice.owned',
+    bundleInfo: { CFBundleIdentifier: 'app.test' },
+    incident: 'client-report',
+    exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+  };
+  mkdirSync(reports, { recursive: true });
+  writeFileSync(join(reports, 'client.ips'), '{}\n' + JSON.stringify(report));
+  setExecutor({ runFileQuiet: () => null });
+  try {
+    const records = await captureNativeCrashes(
+      { platform: 'ios', deviceId: 'owned', appId: 'app.test', since },
+      logs,
+      undefined,
+      { HOME: home },
+    );
+    expect(records.map((record) => record.incident)).toEqual(['client-report']);
+  } finally {
+    resetExecutor();
+    rmSync(home, { recursive: true, force: true });
   }
 });

@@ -3649,7 +3649,7 @@ describe('launch verification', () => {
   ])(
     'created=$created, adopting=$adopting, bundle=$event verifies as $state after $waitedMs ms',
     async ({ created, adopting, event, state, waitedMs }) => {
-      const crashes = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([]);
+      const crashes = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockResolvedValue([]);
       const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
       let elapsed = 0;
       try {
@@ -4463,7 +4463,7 @@ describe('release skips Metro entirely', () => {
   });
 
   test('a release native crash overrides a still-live PID behind Android crash UI', async () => {
-    const read = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockReturnValue([
+    const read = vi.spyOn(crashDiagnostics, 'captureNativeCrashes').mockResolvedValue([
       {
         src: 'device',
         level: 'fatal',
