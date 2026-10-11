@@ -1,3 +1,4 @@
+import { needsAttention, oversee, type OversightEnvironment } from '../oversight.ts';
 import { applyKeyedDelta, KeyedEntities, statusViews, type StatusPayload } from '../state/index.ts';
 
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
@@ -21,10 +22,10 @@ function device(i: number) {
   };
 }
 
-function build(platform: string, n: number) {
+function build(platform: string, n: number, failed = true) {
   return {
     platform,
-    status: n % 2 ? 'failed' : 'ok',
+    status: failed ? 'failed' : 'ok',
     cacheHit: false,
     cacheSkipped: false,
     durationMs: 120_000,
@@ -45,7 +46,7 @@ function build(platform: string, n: number) {
       baseline: { fingerprint: long('baseline', 40), from: at(0) },
       rekeyedBy: [],
     },
-    result: n % 2 ? 'failed' : 'succeeded',
+    result: failed ? 'failed' : 'succeeded',
     slot: 'default',
     configuration: 'Debug',
     cacheKey: long('cache-key', 64),
@@ -204,7 +205,7 @@ function archive(i: number) {
 
 /** An environment as most of a busy home's are: idle, with a worktree, a pull request and a build history. */
 function idle(i: number) {
-  const { path, worktree: facts, lastBuilds, builds, disk, stage, platforms, logs } = environment(i);
+  const { path, worktree: facts, disk, stage, platforms, logs } = environment(i);
   return {
     path,
     live: false,
@@ -222,8 +223,8 @@ function idle(i: number) {
     logs,
     worktree: facts,
     build: null,
-    lastBuilds: { ios: { ...lastBuilds.ios, status: 'ok', errorCode: undefined, diagnostics: undefined } },
-    builds: { ios: builds.ios.map((entry) => Object.assign(entry, { status: 'ok', result: 'succeeded' })) },
+    lastBuilds: { ios: build('ios', 0, false) },
+    builds: { ios: Array.from({ length: 10 }, (_, n) => build('ios', n, false)) },
     disk,
   };
 }
@@ -267,14 +268,14 @@ describe('status live views stay within their size budget', () => {
   const worktrees = 100;
   const views = statusViews(payload(busy, quiet, worktrees, 200));
 
-  test('a summary is at most 8 KB with every section at its largest, and 2 KB for an idle workspace', () => {
-    expect(bytes(views.workspaces[0])).toBeLessThanOrEqual(8 * 1024);
-    expect(bytes(views.workspaces[busy])).toBeLessThanOrEqual(2048);
+  test('a summary is at most 32 KB with every section at its largest and every build failing, and 3 KB for an idle workspace', () => {
+    expect(bytes(views.workspaces[0])).toBeLessThanOrEqual(32 * 1024);
+    expect(bytes(views.workspaces[busy])).toBeLessThanOrEqual(3 * 1024);
   });
 
   test('the workspace list snapshot', () => {
     const list = { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived };
-    expect(bytes(list)).toBeLessThanOrEqual(8 * 1024 + busy * 8 * 1024 + quiet * 2048 + worktrees * 384);
+    expect(bytes(list)).toBeLessThanOrEqual(8 * 1024 + busy * 32 * 1024 + quiet * 3 * 1024 + worktrees * 384);
   });
 
   test('a list update carries only the workspace that changed', () => {
@@ -284,13 +285,44 @@ describe('status live views stay within their size budget', () => {
     const delta = entities.next(changed);
     expect(delta?.upsert).toHaveLength(1);
     expect(delta?.remove).toEqual([]);
-    expect(bytes(delta)).toBeLessThanOrEqual(2048 + 64);
+    expect(bytes(delta)).toBeLessThanOrEqual(3 * 1024 + 64);
   });
 
   test('a workspace detail and the machine view', () => {
     expect(Math.max(...[...views.details.values()].map(bytes))).toBeLessThanOrEqual(64 * 1024);
     expect(bytes(views.machine)).toBeLessThanOrEqual(4 * 1024);
   });
+});
+
+test('needs-attention and oversight find the same items in a summary as in the full environment', () => {
+  const views = statusViews(payload(10, 5, 0, 0));
+  const full: OversightEnvironment[] = [...views.details.values()];
+  const summaries: OversightEnvironment[] = views.workspaces;
+  const now = Date.parse(at(30));
+  const attention = (environments: OversightEnvironment[]) =>
+    needsAttention({ environments, volumes: null, now, stuckMinutes: 15, easSessionMinutes: 30 });
+  expect(attention(full).some((item) => item.category === 'looping')).toBe(true);
+  expect(attention(summaries)).toEqual(attention(full));
+  const notifications = (environments: OversightEnvironment[]) =>
+    oversee(
+      null,
+      {
+        machine: 'mac',
+        status: { environments },
+        volumes: null,
+        memoryPressure: null,
+        link: null,
+        pullRequests: {},
+        ownLeases: [],
+      },
+      {
+        categories: ['started', 'stuck', 'looping', 'finished', 'machine', 'attention'],
+        stuckMinutes: 15,
+        quiet: false,
+      },
+      now,
+    );
+  expect(notifications(summaries)).toEqual(notifications(full));
 });
 
 test('applying each delta to the first snapshot rebuilds the latest list, including after a resync', () => {

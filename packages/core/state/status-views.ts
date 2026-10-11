@@ -1,38 +1,14 @@
 import type { ArchivedWorkspace } from './archive.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
-import type {
-  AgentSession,
-  BuildDiagnostic,
-  BuildHistoryEntry,
-  EndedAgentSession,
-  EnvironmentState,
-  LastBuildReport,
-  StatusPayload,
-  WorktreeFacts,
-} from './status.ts';
+import type { BuildHistoryEntry, EnvironmentState, LastBuildReport, StatusPayload, WorktreeFacts } from './status.ts';
 
-/** The most builds per platform a workspace summary keeps: enough to show a failure streak. */
-export const SUMMARY_BUILDS = 3;
 /** How many of the newest archives the workspace list names. */
 export const SUMMARY_ARCHIVES = 10;
 
-/** A build as a workspace summary carries it: outcome, timing, placement and where its first located error is. */
-export type SummaryBuild = Pick<
-  LastBuildReport,
-  | 'platform'
-  | 'status'
-  | 'cacheHit'
-  | 'cacheSkipped'
-  | 'durationMs'
-  | 'startedAt'
-  | 'finishedAt'
-  | 'errorCode'
-  | 'cause'
-  | 'buildMachine'
-  | 'builtOn'
-> & { diagnostics?: Pick<BuildDiagnostic, 'file' | 'line'>[] };
+/** A build as a workspace summary carries it: everything but its fingerprint, miss reason and later diagnostics. */
+export type SummaryBuild = Omit<LastBuildReport, 'fingerprint' | 'missReason'>;
 
-export type SummaryHistoryEntry = SummaryBuild & Pick<BuildHistoryEntry, 'result' | 'slot'>;
+export type SummaryHistoryEntry = SummaryBuild & Pick<BuildHistoryEntry, 'result' | 'slot' | 'phases'>;
 
 type SummaryPlatforms<K extends 'lastBuilds' | 'builds', V> = Partial<
   Record<keyof NonNullable<EnvironmentState[K]>, V>
@@ -40,28 +16,25 @@ type SummaryPlatforms<K extends 'lastBuilds' | 'builds', V> = Partial<
 
 /**
  * A workspace as the list of every workspace shows it: the environment `stim status --json` prints, without what only a
- * shown workspace reads. Builds keep their outcome, timing and the file and line of their first located diagnostic.
- * Each platform's history keeps its newest build, and while that one failed, the failures right before it, up to
- * {@link SUMMARY_BUILDS} builds. Agent sessions keep what names and dates them, `logs` only its
- * error count, a pull request its title, review decision and lookup time, and a macOS app its launch arguments and
- * paths. `agentDevice` stays only on a tutorial workspace.
+ * shown workspace reads. A build drops its fingerprint, miss reason and every diagnostic but the first one with a file
+ * and a line. Each platform's history keeps its newest build and, while that one failed, every failure right before
+ * it, which is what a failure streak counts. `logs` keeps only its error count, a pull request drops its review
+ * decision and lookup time, a macOS app its launch arguments, and `agentDevice` stays only on a tutorial workspace.
  */
 export type WorkspaceSummary = Omit<
   EnvironmentState,
-  'logs' | 'agents' | 'endedAgents' | 'builds' | 'lastBuilds' | 'macos' | 'agentDevice' | 'worktree'
+  'logs' | 'builds' | 'lastBuilds' | 'macos' | 'agentDevice' | 'worktree'
 > & {
-  worktree?:
-    | (Omit<WorktreeFacts, 'pullRequest'> & {
-        pullRequest?: Omit<NonNullable<WorktreeFacts['pullRequest']>, 'title' | 'reviewDecision' | 'checkedAt'> | null;
-      })
-    | null;
   logs?: { errorsSinceMarker: number } | null;
-  agents?: Pick<AgentSession, 'tool' | 'sessionId' | 'title' | 'startedAt' | 'lastActiveAt'>[];
-  endedAgents?: Pick<EndedAgentSession, 'tool' | 'sessionId' | 'title' | 'endedAt'>[];
   lastBuilds?: SummaryPlatforms<'lastBuilds', SummaryBuild>;
   builds?: SummaryPlatforms<'builds', SummaryHistoryEntry[]>;
-  macos?: Omit<NonNullable<EnvironmentState['macos']>, 'arguments' | 'bundle' | 'executable'> | null;
+  macos?: Omit<NonNullable<EnvironmentState['macos']>, 'arguments'> | null;
   agentDevice?: EnvironmentState['agentDevice'];
+  worktree?:
+    | (Omit<WorktreeFacts, 'pullRequest'> & {
+        pullRequest?: Omit<NonNullable<WorktreeFacts['pullRequest']>, 'reviewDecision' | 'checkedAt'> | null;
+      })
+    | null;
   labelOnly?: true;
 };
 
@@ -95,96 +68,65 @@ export interface StatusViews {
   details: Map<string, StatusPayload['environments'][number]>;
 }
 
-function summaryBuild(build: LastBuildReport): SummaryBuild {
-  const located = build.diagnostics?.find((diagnostic) => diagnostic.file && diagnostic.line !== null);
-  const diagnostic = located && { file: located.file, line: located.line };
-  return {
-    platform: build.platform,
-    status: build.status,
-    cacheHit: build.cacheHit,
-    cacheSkipped: build.cacheSkipped,
-    durationMs: build.durationMs,
-    startedAt: build.startedAt,
-    finishedAt: build.finishedAt,
-    ...(build.errorCode === undefined ? {} : { errorCode: build.errorCode }),
-    ...(build.cause === undefined ? {} : { cause: build.cause }),
-    ...(diagnostic ? { diagnostics: [diagnostic] } : {}),
-    ...(build.buildMachine === undefined ? {} : { buildMachine: build.buildMachine }),
-    ...(build.builtOn === undefined ? {} : { builtOn: build.builtOn }),
-  };
+function summaryBuild({
+  fingerprint: _fingerprint,
+  missReason: _missReason,
+  diagnostics,
+  ...build
+}: LastBuildReport): SummaryBuild {
+  const located = diagnostics?.find((diagnostic) => diagnostic.file && diagnostic.line !== null);
+  const kept: SummaryBuild = build;
+  if (located) kept.diagnostics = [located];
+  return kept;
 }
 
 function summaryHistory(entries: readonly BuildHistoryEntry[]): SummaryHistoryEntry[] {
   const streak = entries.findIndex((entry) => entry.result !== 'failed');
-  const kept = entries.slice(0, Math.min(SUMMARY_BUILDS, Math.max(1, streak === -1 ? entries.length : streak)));
-  return kept.map((entry) => Object.assign(summaryBuild(entry), { result: entry.result, slot: entry.slot }));
+  return entries
+    .slice(0, Math.max(1, streak === -1 ? entries.length : streak))
+    .map(
+      ({ result, slot, phases, configuration: _configuration, cacheKey: _cacheKey, compileSteps: _steps, ...build }) =>
+        Object.assign(summaryBuild(build), { result, slot, phases }),
+    );
 }
 
 function summaryWorktree({ pullRequest, ...worktree }: WorktreeFacts): NonNullable<WorkspaceSummary['worktree']> {
   if (!pullRequest) return pullRequest === undefined ? worktree : { ...worktree, pullRequest };
-  const { title: _title, reviewDecision: _reviewDecision, checkedAt: _checkedAt, ...kept } = pullRequest;
+  const { reviewDecision: _reviewDecision, checkedAt: _checkedAt, ...kept } = pullRequest;
   return { ...worktree, pullRequest: kept };
-}
-
-function agentSummary({ tool, sessionId, title, startedAt, lastActiveAt }: AgentSession) {
-  const kept: NonNullable<WorkspaceSummary['agents']>[number] = { tool, sessionId };
-  if (title !== undefined) kept.title = title;
-  if (startedAt !== undefined) kept.startedAt = startedAt;
-  if (lastActiveAt !== undefined) kept.lastActiveAt = lastActiveAt;
-  return kept;
-}
-
-function endedAgentSummary({ tool, sessionId, title, endedAt }: EndedAgentSession) {
-  const kept: NonNullable<WorkspaceSummary['endedAgents']>[number] = { tool, sessionId, endedAt };
-  if (title !== undefined) kept.title = title;
-  return kept;
 }
 
 /** The summary of one environment of a status payload. */
 export function workspaceSummary(environment: StatusPayload['environments'][number]): WorkspaceSummary {
-  const { logs, agents, endedAgents, builds, lastBuilds, macos, agentDevice, worktree, ...rest } = environment;
-  return {
-    ...rest,
-    ...(worktree === undefined ? {} : { worktree: worktree && summaryWorktree(worktree) }),
-    ...(logs === undefined ? {} : { logs: logs && { errorsSinceMarker: logs.errorsSinceMarker } }),
-    ...(agents ? { agents: agents.map(agentSummary) } : {}),
-    ...(endedAgents ? { endedAgents: endedAgents.map(endedAgentSummary) } : {}),
-    ...(lastBuilds
-      ? {
-          lastBuilds: {
-            ...(lastBuilds.ios ? { ios: summaryBuild(lastBuilds.ios) } : {}),
-            ...(lastBuilds.android ? { android: summaryBuild(lastBuilds.android) } : {}),
-          },
-        }
-      : {}),
-    ...(builds
-      ? {
-          builds: {
-            ...(builds.ios ? { ios: summaryHistory(builds.ios) } : {}),
-            ...(builds.android ? { android: summaryHistory(builds.android) } : {}),
-            ...(builds.macos ? { macos: summaryHistory(builds.macos) } : {}),
-          },
-        }
-      : {}),
-    ...(macos === undefined
-      ? {}
-      : {
-          macos: macos && (({ arguments: _arguments, bundle: _bundle, executable: _executable, ...app }) => app)(macos),
-        }),
-    ...(environment.tutorial && agentDevice ? { agentDevice } : {}),
-  };
+  const { logs, builds, lastBuilds, macos, agentDevice, worktree, ...rest } = environment;
+  const summary: WorkspaceSummary = rest;
+  if (worktree !== undefined) summary.worktree = worktree && summaryWorktree(worktree);
+  if (logs !== undefined) summary.logs = logs && { errorsSinceMarker: logs.errorsSinceMarker };
+  if (lastBuilds) {
+    summary.lastBuilds = {};
+    if (lastBuilds.ios) summary.lastBuilds.ios = summaryBuild(lastBuilds.ios);
+    if (lastBuilds.android) summary.lastBuilds.android = summaryBuild(lastBuilds.android);
+  }
+  if (builds) {
+    summary.builds = {};
+    for (const platform of ['ios', 'android', 'macos'] as const) {
+      const entries = builds[platform];
+      if (entries) summary.builds[platform] = summaryHistory(entries);
+    }
+  }
+  if (macos !== undefined) summary.macos = macos && (({ arguments: _arguments, ...app }) => app)(macos);
+  if (environment.tutorial && agentDevice) summary.agentDevice = agentDevice;
+  return summary;
 }
 
 function worktreeRow({ path, branch, repository, gitChip, pullRequest }: WorktreeFacts): WorktreeRow {
-  return {
-    path,
-    ...(branch === undefined ? {} : { branch }),
-    ...(repository === undefined ? {} : { repository }),
-    ...(gitChip === undefined ? {} : { gitChip }),
-    ...(pullRequest === undefined
-      ? {}
-      : { pullRequest: pullRequest && { number: pullRequest.number, state: pullRequest.state } }),
-  };
+  const row: WorktreeRow = { path };
+  if (branch !== undefined) row.branch = branch;
+  if (repository !== undefined) row.repository = repository;
+  if (gitChip !== undefined) row.gitChip = gitChip;
+  if (pullRequest !== undefined)
+    row.pullRequest = pullRequest && { number: pullRequest.number, state: pullRequest.state };
+  return row;
 }
 
 /** The live views of a status payload as `stim status --json` prints it. */
