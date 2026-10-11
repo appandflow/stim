@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 
 import { withDirLock } from './dir-lock.ts';
+import { isJsonObject } from './state/json-file.ts';
 export { withDirLock, type DirLockOptions } from './dir-lock.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
@@ -26,6 +27,15 @@ function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CA
 
 export function configDir(): string {
   return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
+}
+
+/** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */
+export function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') return;
+  try {
+    if ((fs.statSync(dir).mode & 0o077) !== 0) fs.chmodSync(dir, 0o700);
+  } catch {}
 }
 
 export function workspaceSlug(projectRoot: string): string {
@@ -83,10 +93,9 @@ function logSize(file: string): number {
 
 export function cachePathSetting(key: 'buildCache' | 'metroCache'): string | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8')) as {
-      caches?: Record<string, unknown>;
-    };
-    const value = parsed?.caches?.[key];
+    const parsed: unknown = JSON.parse(fs.readFileSync(path.join(configDir(), 'config.json'), 'utf-8'));
+    const caches = isJsonObject(parsed) ? parsed.caches : undefined;
+    const value = isJsonObject(caches) ? caches[key] : undefined;
     return typeof value === 'string' && path.isAbsolute(value) ? value : null;
   } catch {
     return null;
@@ -228,8 +237,9 @@ export function cacheManifestLockPath(file: string): string {
 
 export function readCacheManifest(file: string): CacheManifest {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as { caches?: Array<Record<string, unknown>> };
-    return { version: 1, caches: Array.isArray(parsed?.caches) ? parsed.caches : [] };
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    const caches = isJsonObject(parsed) && Array.isArray(parsed.caches) ? parsed.caches : [];
+    return { version: 1, caches: caches.filter(isJsonObject) };
   } catch {
     return { version: 1, caches: [] };
   }

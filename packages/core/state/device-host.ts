@@ -12,6 +12,28 @@ import {
 } from './hosted-macos.ts';
 export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
 
+/** Deadlines stim-server gives each hosted worker run. Clients derive their waits from these. */
+export interface DeviceHostLimits {
+  prepareMs: number;
+  offerMs: number;
+  stopMs: number;
+  logsMs: number;
+  killGraceMs: number;
+}
+
+export const DEVICE_HOST_LIMITS: Readonly<DeviceHostLimits> = {
+  prepareMs: 5 * 60_000,
+  offerMs: 30_000,
+  stopMs: 90_000,
+  logsMs: 15_000,
+  killGraceMs: 5000,
+};
+
+/** How long a cancelled hosted worker run can take to settle: SIGTERM, SIGKILL after the grace, then it is abandoned. */
+export function hostedWorkerSettleMs(limits: Pick<DeviceHostLimits, 'killGraceMs'> = DEVICE_HOST_LIMITS): number {
+  return limits.killGraceMs * 2;
+}
+
 export interface HostedIosChoice {
   deviceTypeId: string;
   runtimeId: string;
@@ -107,38 +129,48 @@ export function deviceHostArea(id: string): string {
 
 export function parseHostedChoice(value: unknown): HostedIosChoice | null {
   if (!isJsonObject(value)) return null;
+  const { deviceTypeId, runtimeId, deviceType, runtime, architecture } = value;
   if (
-    !['deviceTypeId', 'runtimeId', 'deviceType', 'runtime'].every((key) => typeof value[key] === 'string' && value[key])
+    typeof deviceTypeId !== 'string' ||
+    !deviceTypeId ||
+    typeof runtimeId !== 'string' ||
+    !runtimeId ||
+    typeof deviceType !== 'string' ||
+    !deviceType ||
+    typeof runtime !== 'string' ||
+    !runtime ||
+    (architecture !== 'arm64' && architecture !== 'x86_64')
   )
     return null;
-  if (value.architecture !== 'arm64' && value.architecture !== 'x86_64') return null;
-  return value as unknown as HostedIosChoice;
+  return { deviceTypeId, runtimeId, deviceType, runtime, architecture };
 }
 
 export function parseHostedDevice(value: unknown): HostedIosDevice | null {
-  if (!isJsonObject(value) || value.avdName !== undefined || !parseHostedChoice(value)) return null;
-  if (typeof value.udid !== 'string' || !/^[a-fA-F0-9-]{36}$/.test(value.udid) || typeof value.name !== 'string')
-    return null;
-  return value as unknown as HostedIosDevice;
+  if (!isJsonObject(value) || value.avdName !== undefined) return null;
+  const choice = parseHostedChoice(value);
+  const { udid, name } = value;
+  if (!choice || typeof udid !== 'string' || !/^[a-fA-F0-9-]{36}$/.test(udid) || typeof name !== 'string') return null;
+  return { ...choice, udid, name };
 }
 
 export function parseHostedAndroidDevice(value: unknown): HostedAndroidDevice | null {
   if (!isJsonObject(value)) return null;
+  const { avdName, consolePort, systemImage, deviceProfile, architecture } = value;
   if (
     value.udid !== undefined ||
-    typeof value.avdName !== 'string' ||
-    !/^stim-[A-Za-z0-9._-]+$/.test(value.avdName) ||
-    !hostedConsolePort(value.consolePort) ||
-    value.serial !== `emulator-${value.consolePort}` ||
-    typeof value.systemImage !== 'string' ||
-    !/^system-images;android-\d+;[^;\s]+;(arm64-v8a|x86_64)$/.test(value.systemImage) ||
-    typeof value.deviceProfile !== 'string' ||
-    !value.deviceProfile ||
-    (value.architecture !== 'arm64-v8a' && value.architecture !== 'x86_64') ||
-    !value.systemImage.endsWith(`;${value.architecture}`)
+    typeof avdName !== 'string' ||
+    !/^stim-[A-Za-z0-9._-]+$/.test(avdName) ||
+    !hostedConsolePort(consolePort) ||
+    value.serial !== `emulator-${consolePort}` ||
+    typeof systemImage !== 'string' ||
+    !/^system-images;android-\d+;[^;\s]+;(arm64-v8a|x86_64)$/.test(systemImage) ||
+    typeof deviceProfile !== 'string' ||
+    !deviceProfile ||
+    (architecture !== 'arm64-v8a' && architecture !== 'x86_64') ||
+    !systemImage.endsWith(`;${architecture}`)
   )
     return null;
-  return value as unknown as HostedAndroidDevice;
+  return { avdName, serial: `emulator-${consolePort}`, consolePort, systemImage, deviceProfile, architecture };
 }
 
 /** Android Emulator -help-port defines the supported even console ports as 5554 through 5584. */

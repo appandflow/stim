@@ -82,7 +82,7 @@ the same as for any web project: start the dev server, then run stim web.
   stim logs --errors
   stim reload web
   stim stop               # closes Chrome; stim ports stop web stops Vite
-  stim worktree remove    # in a linked worktree: Chrome, Vite and profile
+  stim worktree remove    # in a linked worktree: Chrome and profile, not Vite
 
 The repo layer is shared by every worktree of the repository, so a new
 worktree skips the two settings lines; the certificate and scheme remedies

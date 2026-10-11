@@ -38,6 +38,7 @@ import {
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
 import type { BootResult, DeviceFlags, DeviceSettings, Notify, OwnedDeviceRecord } from './device.ts';
+import { cancellableSleep } from '../cancellation.ts';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 
@@ -534,7 +535,7 @@ export async function ensureIosBooted({
 
   const deadline = Math.max(bootDeadline, Date.now() + 2 * pollMs);
   while (Date.now() < deadline) {
-    await sleep(pollMs);
+    await cancellableSleep(pollMs);
     let state = null;
     try {
       state = listAllIosSims({ timeoutMs: 30000 }).find((s) => s.udid === udid)?.state ?? null;
@@ -551,8 +552,4 @@ function bootFailure(udid: string, error: unknown): BootResult {
   const refusal = error instanceof DeviceAdmissionRefusal ? error : claimFailure(error, 'stim ios');
   if (refusal) return { failed: true, code: refusal.code, reason: refusal.message, remedy: refusal.remedy };
   return { failed: true, reason: `Could not boot simulator ${udid}: ${(error as Error)?.message || error}` };
-}
-
-function sleep(ms: number) {
-  return new Promise((r) => setTimeout(r, ms));
 }

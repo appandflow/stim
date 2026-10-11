@@ -10,11 +10,11 @@ describe('native e2e plan', () => {
     });
   });
 
-  it('runs the nightly loop on iOS and Linux Android', () => {
+  it('runs the nightly loop on every platform', () => {
     expect(planSuites({ eventName: 'schedule', labels: [] })).toEqual({
       ios: ['loop'],
       android: ['loop'],
-      windows: [],
+      windows: ['loop'],
     });
   });
 
@@ -27,7 +27,7 @@ describe('native e2e plan', () => {
     expect(planSuites({ eventName: 'workflow_dispatch', labels: [], suite: 'all' })).toEqual({
       ios: ['loop', 'caches', 'pool'],
       android: ['loop', 'caches'],
-      windows: [],
+      windows: ['loop'],
     });
   });
 
@@ -59,7 +59,7 @@ describe('native e2e plan', () => {
     expect(planSuites({ eventName: 'pull_request', labels: ['e2e-all', 'e2e-loop'] })).toEqual({
       ios: ['loop', 'caches', 'pool'],
       android: ['loop', 'caches'],
-      windows: [],
+      windows: ['loop'],
     });
   });
 

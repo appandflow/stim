@@ -32,6 +32,13 @@ final class TutorialModel: ObservableObject {
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
 
+  enum RestartDialog: Equatable {
+    case confirm(base: String, worktrees: [String])
+    case blocked(String)
+  }
+  @Published var restartDialog: RestartDialog?
+  private var restarting = false
+
   private let cloneBase: String
 
   init(defaults: UserDefaults = .standard, cloneBase: String = NSHomeDirectory() + "/stim-tutorial") {
@@ -178,30 +185,50 @@ final class TutorialModel: ObservableObject {
     checkCLI()
   }
 
+  func restart() {
+    guard let cli else { return open(beginning: true) }
+    guard !restarting, restartDialog == nil else { return }
+    restarting = true
+    let base = records.record?.clonePath ?? cloneBase
+    Task {
+      defer { restarting = false }
+      let cleanup = TutorialCleanup(cli: await cli.value)
+      do {
+        guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
+        switch plan {
+        case .remove(let worktrees): restartDialog = .confirm(base: base, worktrees: worktrees)
+        case .refuse(let reason): restartDialog = .blocked(reason)
+        }
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
+  func confirmRestart(base: String, worktrees: [String]) {
+    guard let cli, !restarting else { return }
+    restartDialog = nil
+    restarting = true
+    Task {
+      defer { restarting = false }
+      do {
+        try await TutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
+        open(beginning: true)
+      } catch { restartDialog = .blocked(error.localizedDescription) }
+    }
+  }
+
   func close() {
     isOpen = false
     openPending = false
     syncFollowers()
   }
 
-  func skip() {
-    progress.skip(now: Date())
-    refresh()
-  }
-  func markDone() {
-    progress.markDone(now: Date())
+  func next() {
+    progress.next(now: Date())
     refresh()
   }
   func copiedPrompt(now: Date = Date()) {
     progress.copiedRunPrompt(now: now)
     refresh(now: now)
-  }
-
-  func commands(for step: TutorialStep) -> String {
-    tutorialCommands(
-      step.commands, tourPath: tourPath, repository: workspace?.worktree?.repository ?? snapshot?.record.clonePath,
-      stateDir: workspace?.agentDevice?.stateDir,
-      udid: workspace?.ios?.udid, second: snapshot?.record.secondPath)
   }
 
   private func refresh(now: Date = Date()) {

@@ -86,7 +86,7 @@ beforeEach(() => {
     if (cmd === 'adb devices') return 'List of devices attached\n';
     if (cmd.includes('delete avd')) {
       if (deleteRegistration) {
-        const name = /-n "([^"]+)"/.exec(cmd)![1]!;
+        const name = /-n (\S+)/.exec(cmd)![1]!;
         rmSync(join(avdRoot, `${name}.ini`));
         listed = listed.filter((entry) => entry !== name);
       }
@@ -98,7 +98,7 @@ beforeEach(() => {
     run,
     runQuiet: () => null,
     runFile(file, args = [], options) {
-      if (file === 'adb' || file === 'emulator') return run([file, ...args].join(' '));
+      if (file === 'adb' || file === 'emulator' || file === 'avdmanager') return run([file, ...args].join(' '));
       if (file === 'du') return real.runFile(file, args, options);
       if (file === 'xcrun') return JSON.stringify({ devices: {}, devicetypes: [] });
       throw new Error(`Unexpected command: ${file}`);

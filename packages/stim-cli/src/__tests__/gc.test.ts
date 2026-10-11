@@ -744,7 +744,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
     repos: {},
   });
   const sized: string[] = [];
-  const sizeTimeouts: Array<number | undefined> = [];
+  const sizeTimeouts: Array<number | 'unbounded'> = [];
   setExecutor({
     run(cmd) {
       if (cmd.includes('simctl list devices --json')) return JSON.stringify({ devices: {} });
@@ -772,7 +772,7 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
       avdDirectory: (name) => `/avds/${name}.avd`,
       directorySize: (dir, options) => {
         sized.push(dir);
-        sizeTimeouts.push(options?.timeoutMs);
+        sizeTimeouts.push(options.timeoutMs);
         if (dir.includes('unreadable')) throw new Error('timed out');
         return dir.includes('orphan') ? 5 * 1024 ** 3 : 2 * 1024 ** 3;
       },
@@ -1384,6 +1384,46 @@ describe('EAS orphan session sweep', () => {
 
     expect(output).not.toMatch(/Stopped EAS session drs_home_b/);
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
+  });
+
+  test('gc lists a fixture-looking ledger entry whose workspace is gone and --delete forgets it', async () => {
+    const project = join(fakeHome, 'expo-app');
+    const ledgerRoot = join(fakeHome, 'machine-eas');
+    const gone = join(fakeHome, 'deleted-fixture');
+    mkdirSync(project, { recursive: true });
+    ensureWorkspaceStorage(project);
+    writeEasLedger(ledgerRoot, [
+      {
+        sessionId: 'drs_2',
+        name: 'stim-fixture',
+        platform: 'ios',
+        workspaceRoot: gone,
+        stateFile: workspaceStateFile(gone),
+      },
+      {
+        sessionId: 'drs_live',
+        name: 'stim-live',
+        platform: 'ios',
+        workspaceRoot: project,
+        stateFile: workspaceStateFile(project),
+      },
+    ]);
+    installExecutor();
+    const harness = easGcHarness({ project, list: easList([]) });
+    const deps = { ...harness.deps, detectIsExpo: () => false, easLedgerRoot: ledgerRoot };
+    const ids = () => {
+      const ledger: { claims: object } = JSON.parse(readFileSync(join(ledgerRoot, 'sessions.json'), 'utf-8'));
+      return Object.keys(ledger.claims);
+    };
+
+    const preview = await captureLog(() => runGc({}, deps));
+    expect(preview).toMatch(/Stale EAS ledger entries \(1\)/);
+    expect(preview).toMatch(/drs_2/);
+    expect(ids()).toEqual(['drs_2', 'drs_live']);
+
+    await captureLog(() => runGc({ delete: true }, deps));
+    expect(ids()).toEqual(['drs_live']);
+    expect(harness.calls).toEqual([]);
   });
 
   test('a missing config never authorizes an unclaimed session stop', async () => {
@@ -2571,16 +2611,11 @@ function installDeviceExecutor({
     run(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      if (cmd.startsWith('xcrun simctl delete ')) return '';
       throw new Error(`unexpected run: ${cmd}`);
     },
     runQuiet(cmd) {
       execCalls.push(cmd);
       if (cmd.includes('simctl list devices --json')) return iosListJson(devices);
-      const shutdownMatch = cmd.match(/^xcrun simctl shutdown (.+)$/);
-      if (shutdownMatch && throwOnShutdownFor.has(shutdownMatch[1])) {
-        throw new Error(`simulated shutdown failure for ${shutdownMatch[1]}`);
-      }
       return '';
     },
     runFile(file, args: string[] = []) {
@@ -2592,6 +2627,9 @@ function installDeviceExecutor({
     },
     runFileQuiet(file: string, args: string[] = []) {
       execCalls.push([file, ...args].join(' '));
+      if (args[1] === 'shutdown' && throwOnShutdownFor.has(args[2] ?? '')) {
+        throw new Error(`simulated shutdown failure for ${args[2]}`);
+      }
       return '';
     },
     spawn(cmd, args: readonly string[] = []) {
@@ -3645,6 +3683,7 @@ describe('gc --json', () => {
       'staleDevices',
       'staleDeviceRecords',
       'staleLedgerEntries',
+      'staleEasLedgerEntries',
       'staleStatusCaches',
       'idleDevices',
       'orphanedEasSessions',
@@ -4165,7 +4204,7 @@ test('gc reports and reclaims named ports only for confirmed missing workspaces'
   await cli(['--delete']);
   expect(getProject(missing)).toBeNull();
   expect(getProject(unmounted)?.ports).toEqual({ web: 8901 });
-  expect(inspected).toEqual(process.platform === 'win32' ? ['-ano', '-ano'] : ['-iTCP:8900', '-iTCP:8900']);
+  expect(inspected).toEqual([]);
 });
 
 test('unscoped gc JSON reports agent-device separately without adding actionable cleanup', async () => {

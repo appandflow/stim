@@ -807,6 +807,7 @@ async function runIos(
     }
 
     let bootDuration = '';
+    let bootPending = false;
     let bootPromise!: Promise<{ ok?: boolean; reason?: string; udid?: string } | null | undefined>;
     let udid = '';
     function composeRuntime() {
@@ -958,6 +959,7 @@ async function runIos(
             }));
       const startBoot = (): Promise<string> => {
         const bootTimer = stepTimer(d.now);
+        bootPending = remoteDevice?.ctx.backend !== 'eas';
         bootPromise = (
           remoteDevice?.ctx.backend === 'eas'
             ? d.ensureRemoteBootOwned({
@@ -977,6 +979,7 @@ async function runIos(
             : boot()
         ).then((result) => {
           bootDuration = bootTimer();
+          bootPending = false;
           return result;
         });
         deviceWaitRun.booting({ done: bootPromise });
@@ -1155,6 +1158,7 @@ async function runIos(
           remoteDevice,
           bootPromise,
           bootDuration: () => bootDuration,
+          bootPending: () => bootPending,
           artifact,
           fail,
           phase,
@@ -1170,6 +1174,7 @@ async function runIos(
           reclaimed,
           devServer,
           enterPhase: progress.step,
+          enterActivity: progress.activity,
         });
       } finally {
         releaseLease();

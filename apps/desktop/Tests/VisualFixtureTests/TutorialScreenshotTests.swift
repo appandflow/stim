@@ -16,7 +16,7 @@
       BrandAssets.registerFonts()
       try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
       let variants = [
-        "done", "failure", "agent-commands", "finish-commands", "build-no-agent-device", "begin-timeout", "begin-installing",
+        "done", "failure", "build-no-agent-device", "begin-timeout", "begin-installing",
         "phone-not-paired", "phone-server-off",
         "phone-already-paired", "phone-paired-during-step",
       ]
@@ -44,48 +44,29 @@
       return ["phone-already-paired", "phone-paired-during-step"].contains(name) ? 1 : 0
     }
 
-    private var storage: UserDefaults {
-      let defaults = UserDefaults(suiteName: "TutorialFixture")!
-      defaults.set(name.hasSuffix("-commands"), forKey: "tutorial.commandsExpanded")
-      return defaults
-    }
-
     var body: some View {
       let snapshot = fixture()
       TutorialPanel(
         snapshot: snapshot, fixtureRendering: true,
         phoneState: TutorialPhoneState(pairedPhoneCount: phoneCount),
-        canRunIOS: true, agentDeviceMissing: name == "build-no-agent-device",
+        agentDeviceMissing: name == "build-no-agent-device",
         asks: { step in
           step.ask.map {
             tutorialAsk(
               $0, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
               second: snapshot.record.secondPath)
           }
-        },
-        commands: { step in
-          tutorialCommands(
-            step.commands, tourPath: "/Users/example/stim-tutorial-tour", repository: "/Users/example/stim-tutorial",
-            stateDir: "/Users/example/.stim/workspaces/tutorial/agent-device",
-            udid: "tutorial-simulator", second: "/Users/example/stim-tutorial-second")
         }
       )
-      .defaultAppStorage(storage)
-      .frame(
-        width: 320,
-        height: name.hasSuffix("-commands") || name == "build-no-agent-device" ? 1500 : 960)
+      .frame(width: 320, height: name == "build-no-agent-device" ? 1500 : 960)
     }
 
     private func fixture() -> TutorialSnapshot {
       let id =
         name.hasPrefix("phone-")
         ? "phone"
-        : name == "failure"
-          ? "build"
-          : name == "agent-commands"
-            ? "agent"
-            : name == "finish-commands"
-              ? "finish" : name == "build-no-agent-device" ? "build" : name.hasPrefix("begin-") ? "begin" : name
+        : name == "failure" || name == "build-no-agent-device"
+          ? "build" : name.hasPrefix("begin-") ? "begin" : name
       let now = Date(timeIntervalSince1970: 1_791_374_400)
       var engine = TutorialProgress()
       let done = name == "done" ? TutorialSteps.all.map(\.id) : TutorialSteps.all.prefix { $0.id != id }.map(\.id)
@@ -134,6 +115,20 @@
       }
       if name == "done", let index = snapshot.steps.firstIndex(where: { $0.id == "phone" }) {
         snapshot.steps[index].state = .skipped
+      }
+      if name == "done" {
+        snapshot.record.skipped = ["logs", "phone"]
+        snapshot.record.done.removeAll { snapshot.record.skipped.contains($0) }
+        snapshot.record.secondPath = "/Users/example/stim-tutorial-second"
+        snapshot.record.stepTimes = ["done": now.addingTimeInterval(1120)]
+        snapshot.record.stats = try! JSONDecoder().decode(
+          TutorialStats.self,
+          from: Data(
+            """
+            {"firstBuild":{"durationMs":221000,"cache":"none","startedAt":0,"finishedAt":221},
+             "secondBuild":{"durationMs":22000,"cache":"local","startedAt":120,"finishedAt":142},
+             "agentActions":4,"worktreeBytes":{"/a":600000000,"/b":550000000,"/c":350000000}}
+            """.utf8))
       }
       return snapshot
     }

@@ -382,7 +382,7 @@ async function main(): Promise<void> {
     fail(`--env and --path-prepend apply only to serving and \`service install\`.\n${USAGE}`);
   }
   if (values.env || values['path-prepend']) {
-    const problem = validateServeEnvironment(extraEnv, pathPrepend);
+    const problem = validateServeEnvironment(extraEnv, pathPrepend, command === undefined);
     if (problem) fail(problem);
   }
   if ((values.label !== undefined || values.serve) && !service) {

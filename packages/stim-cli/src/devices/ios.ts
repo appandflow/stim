@@ -1,4 +1,5 @@
 import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { isJsonObject } from '@stim-cli/core/state';
 import { forgetCreatedDevice, recordCreatedDevice } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
 import { tmpdir } from 'node:os';
@@ -182,7 +183,7 @@ export function occupyingApps(udid: string): string[] | null {
     sim = undefined;
   }
   if (sim && sim.state !== 'Booted') return [];
-  const out = getExecutor().runQuiet(`xcrun simctl spawn ${udid} launchctl list`, SIMCTL_OPTIONS);
+  const out = getExecutor().runFileQuiet('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], SIMCTL_OPTIONS);
   if (out === null || out === undefined) return null;
   return parseOccupyingApps(out);
 }
@@ -374,7 +375,7 @@ export async function bootIosSim(
 }
 
 export function shutdownIosSim(udid: string): void {
-  getExecutor().runQuiet(`xcrun simctl shutdown ${udid}`, SIMCTL_OPTIONS);
+  getExecutor().runFileQuiet('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
 }
 
 export function listIosDeviceTypes(): IosDeviceType[] {
@@ -383,11 +384,17 @@ export function listIosDeviceTypes(): IosDeviceType[] {
     timeoutMs: 30000,
     killSignal: 'SIGKILL',
   });
-  const data = JSON.parse(out) as { devicetypes?: Array<{ identifier: string; name: string }> };
-  return (data.devicetypes || []).map((dt) => ({
-    identifier: dt.identifier,
-    name: dt.name,
-  }));
+  const data: unknown = JSON.parse(out);
+  return isJsonObject(data) ? deviceTypesOf(data.devicetypes) : [];
+}
+
+function deviceTypesOf(value: unknown): IosDeviceType[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry: unknown) =>
+    isJsonObject(entry) && typeof entry.identifier === 'string' && typeof entry.name === 'string'
+      ? [{ identifier: entry.identifier, name: entry.name }]
+      : [],
+  );
 }
 
 function rankIphone(name: string): { gen: number; variant: number } {
@@ -517,7 +524,7 @@ export function createOwnedIosSim(
 ): { udid: string; name: string; deviceType: string | null; runtime: string | null } {
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
   const udid = getExecutor()
-    .run(`xcrun simctl create "${name}" "${choice.deviceTypeId}" "${choice.runtimeId}"`, {
+    .runFile('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
       timeoutMs: SIMCTL_CREATE_TIMEOUT_MS,
       killSignal: 'SIGKILL',
     })
@@ -615,7 +622,7 @@ export function listUserApps(udid: string): string[] {
   const plist = join(dir, 'apps.plist');
   try {
     writeFileSync(plist, exec.runFile('xcrun', ['simctl', 'listapps', udid], { timeoutMs: LISTAPPS_TIMEOUT_MS }));
-    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist]));
+    return parseUserApps(exec.runFile('plutil', ['-convert', 'json', '-o', '-', plist], { timeoutMs: 10_000 }));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -636,7 +643,7 @@ export function deleteIosSim(udid: string): void {
       `Refusing to delete simulator "${result.notOwned}" (${udid}): not a Stim-owned sim; Stim has no record of creating it.`,
     );
   }
-  getExecutor().run(`xcrun simctl delete ${udid}`, SIMCTL_OPTIONS);
+  getExecutor().runFile('xcrun', ['simctl', 'delete', udid], SIMCTL_OPTIONS);
   forgetCreatedDevice('ios', udid);
 }
 
@@ -666,25 +673,23 @@ export async function listIosRuntimesAsync(): Promise<IosRuntime[]> {
 }
 
 function parseIosRuntimes(out: string): IosRuntime[] {
-  const data = JSON.parse(out) as {
-    runtimes?: Array<{
-      identifier: string;
-      name: string;
-      version: string;
-      isAvailable?: boolean;
-      platform?: string;
-      supportedDeviceTypes?: Array<{ identifier: string; name: string }>;
-    }>;
-  };
-  return (data.runtimes || [])
-    .filter((r) => r.isAvailable && r.platform === 'iOS')
-    .map((r) => ({
-      identifier: r.identifier,
-      name: r.name,
-      version: r.version,
-      supportedDeviceTypes: (r.supportedDeviceTypes || []).map((d) => ({
-        identifier: d.identifier,
-        name: d.name,
-      })),
-    }));
+  const data: unknown = JSON.parse(out);
+  if (!isJsonObject(data) || !Array.isArray(data.runtimes)) return [];
+  return data.runtimes.flatMap((r: unknown) =>
+    isJsonObject(r) &&
+    r.isAvailable === true &&
+    r.platform === 'iOS' &&
+    typeof r.identifier === 'string' &&
+    typeof r.name === 'string' &&
+    typeof r.version === 'string'
+      ? [
+          {
+            identifier: r.identifier,
+            name: r.name,
+            version: r.version,
+            supportedDeviceTypes: deviceTypesOf(r.supportedDeviceTypes),
+          },
+        ]
+      : [],
+  );
 }

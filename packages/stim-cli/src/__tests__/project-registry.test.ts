@@ -180,7 +180,7 @@ test('symlinks resolve native ownership and workspace identity by canonical path
 
 test('unreadable relevant manifests refuse instead of falling back to another integration or registered app', () => {
   packageAt(dir);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   upsertProject(dir, {});
   const nested = join(dir, 'nested');
   write(join(nested, 'package.json'), '{');
@@ -195,7 +195,7 @@ test('unreadable relevant manifests refuse instead of falling back to another in
 
 test('registered redirects use integration admission while a nearer independent app retains its root', () => {
   packageAt(dir, false);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   const app = join(dir, 'native');
   write(join(app, 'App.xcodeproj'));
   upsertProject(app, {});

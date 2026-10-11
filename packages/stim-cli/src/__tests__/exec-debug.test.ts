@@ -22,10 +22,10 @@ test('with STIM_DEBUG a child process is recorded by program and duration, never
   const executor = getExecutor();
   const file = join(debugLogDir(), 'cli.ndjson');
   const inspectStart = `const rows = require('node:fs').readFileSync(process.argv[1], 'utf8').trim().split('\\n').map(JSON.parse); if (rows.at(-1).event !== 'exec.start') process.exit(11);`;
-  executor.runFile(process.execPath, ['-e', inspectStart, file, 'secret-argument-value']);
-  expect(() => executor.runFile(process.execPath, ['-e', 'process.exit(3)', 'another-secret'])).toThrow(
-    'Command failed',
-  );
+  executor.runFile(process.execPath, ['-e', inspectStart, file, 'secret-argument-value'], { timeoutMs: 60_000 });
+  expect(() =>
+    executor.runFile(process.execPath, ['-e', 'process.exit(3)', 'another-secret'], { timeoutMs: 60_000 }),
+  ).toThrow('Command failed');
   const text = readFileSync(join(debugLogDir(), 'cli.ndjson'), 'utf8');
   expect(text).not.toMatch(/secret-argument-value|another-secret/);
   const lines = text
@@ -45,8 +45,8 @@ test('concurrent async commands retain distinct start and completion identities 
   const file = join(debugLogDir(), 'cli.ndjson');
   const inspectStart = `const rows = require('node:fs').readFileSync(process.argv[1], 'utf8').trim().split('\\n').map(JSON.parse); if (!rows.some(row => row.event === 'exec.start')) process.exit(11);`;
   await Promise.all([
-    executor.runFileAsync(process.execPath, ['-e', inspectStart, file, 'async-secret']),
-    executor.runFileAsync(process.execPath, ['-e', '0', 'second-async-secret']),
+    executor.runFileAsync(process.execPath, ['-e', inspectStart, file, 'async-secret'], { timeoutMs: 60_000 }),
+    executor.runFileAsync(process.execPath, ['-e', '0', 'second-async-secret'], { timeoutMs: 60_000 }),
   ]);
   const text = readFileSync(file, 'utf8');
   expect(text).not.toContain('async-secret');

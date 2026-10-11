@@ -18,6 +18,8 @@ struct Notice: Identifiable {
     var perform: @MainActor () -> Void
   }
   var secondaryAction: Action?
+
+  var newWorkspace: String? { key == workspacePath.map(WorkspaceArrivals.cardKey) ? workspacePath : nil }
 }
 
 @MainActor
@@ -26,6 +28,7 @@ final class NoticeCenter: ObservableObject {
 
   @Published private(set) var notices: [Notice] = []
   @Published private(set) var index = 0
+  var arrivals = WorkspaceArrivals()
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 
@@ -61,6 +64,11 @@ final class NoticeCenter: ObservableObject {
     let onDismiss = notices.first { $0.id == id }?.onDismiss
     remove(id)
     onDismiss?()
+  }
+
+  func update(key: String, detail: String) {
+    guard let position = notices.firstIndex(where: { $0.key == key }), notices[position].detail != detail else { return }
+    notices[position].detail = detail
   }
 
   func remove(key: String) {
@@ -151,13 +159,18 @@ private struct NoticeCard: View {
     .padding(.top, Space.xxs)
   }
 
-  private var primary: some View {
-    Button(notice.actionTitle) {
+  @ViewBuilder private var primary: some View {
+    let button = Button(notice.actionTitle) {
       center.remove(notice.id)
       notice.perform()
     }
     .buttonStyle(.stim(.primary))
     .fixedSize()
+    if let path = notice.newWorkspace {
+      button.tutorialAnchor(.workspaceNoticeShow, workspace: path)
+    } else {
+      button
+    }
   }
 
   private func secondary(_ action: Notice.Action) -> some View {

@@ -570,7 +570,7 @@ export function protocolJsonSchema(): JsonSchema {
           protocol: { type: 'integer' },
           server: {
             type: 'object',
-            required: ['name', 'version', 'stim', 'home'],
+            required: ['name', 'version', 'stim'],
             additionalProperties: false,
             properties: {
               name: { type: 'string' },

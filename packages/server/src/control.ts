@@ -257,7 +257,10 @@ export function parseInput(
     if (!TOUCH_PHASES.includes(phase as TouchPhase) || !fraction(x) || !fraction(y)) {
       return { code: 'bad-request', message: 'input.touch needs phase (down, move or up), and x and y from 0 to 1.' };
     }
-    if (display !== undefined && (!Number.isInteger(display) || (display as number) < 0 || (display as number) > 3)) {
+    if (
+      display !== undefined &&
+      (typeof display !== 'number' || !Number.isInteger(display) || display < 0 || display > 3)
+    ) {
       return { code: 'bad-request', message: 'display must be a display index from 0 to 3.' };
     }
     if (platform !== 'ios' && display !== undefined && display !== 0) {
@@ -285,7 +288,7 @@ export function parseInput(
           phase: phase as TouchPhase,
           x: x as number,
           y: y as number,
-          ...(display === undefined ? {} : { display: display as number }),
+          ...(display === undefined ? {} : { display }),
           ...(duoRevision === undefined ? {} : { duoRevision: duoRevision as string }),
         },
       },

@@ -57,7 +57,8 @@ export function readHostedNativeLogsCheckpoint(
       !isJsonObject(value) ||
       !Number.isSafeInteger(value.until) ||
       (value.until as number) < 0 ||
-      (value.windowMs !== undefined && (!Number.isSafeInteger(value.windowMs) || (value.windowMs as number) < 1000)) ||
+      (value.windowMs !== undefined &&
+        (typeof value.windowMs !== 'number' || !Number.isSafeInteger(value.windowMs) || value.windowMs < 1000)) ||
       !Array.isArray(value.boundary) ||
       !value.boundary.every((each) => typeof each === 'string' && /^[a-f0-9]{64}$/.test(each))
     )
@@ -65,8 +66,11 @@ export function readHostedNativeLogsCheckpoint(
     return {
       until: value.until as number,
       boundary: value.boundary as string[],
-      ...(typeof value.appAttempt === 'string' && Number.isSafeInteger(value.pid) && (value.pid as number) > 0
-        ? { appAttempt: value.appAttempt, pid: value.pid as number }
+      ...(typeof value.appAttempt === 'string' &&
+      typeof value.pid === 'number' &&
+      Number.isSafeInteger(value.pid) &&
+      value.pid > 0
+        ? { appAttempt: value.appAttempt, pid: value.pid }
         : {}),
       ...(typeof value.windowMs === 'number' ? { windowMs: value.windowMs } : {}),
     };

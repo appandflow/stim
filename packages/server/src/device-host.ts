@@ -58,6 +58,9 @@ import {
   type HostedAndroidDevice,
   type HostedMacosDevice,
   type MacosAppState,
+  DEVICE_HOST_LIMITS,
+  hostedWorkerSettleMs,
+  type DeviceHostLimits,
 } from '@stim-cli/core/state';
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
@@ -66,14 +69,6 @@ import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
-
-export interface DeviceHostLimits {
-  prepareMs: number;
-  offerMs: number;
-  stopMs: number;
-  logsMs: number;
-  killGraceMs: number;
-}
 
 interface WorkerRun {
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
@@ -156,14 +151,7 @@ export class DeviceHost {
   constructor(options: DeviceHostOptions) {
     this.options = options;
     this.debug = createDebugLog('server', { env: options.env });
-    this.limits = {
-      prepareMs: 5 * 60_000,
-      offerMs: 30_000,
-      stopMs: 90_000,
-      logsMs: 15_000,
-      killGraceMs: 5000,
-      ...options.limits,
-    };
+    this.limits = { ...DEVICE_HOST_LIMITS, ...options.limits };
   }
 
   private transaction<T>(fn: (records: HostedDeviceSession[]) => T): T {
@@ -1140,7 +1128,11 @@ export class DeviceHost {
         hostedDeviceId(parseHostedPlatformDevice(value.device, record.platform)!) === hostedDeviceId(record.device) &&
         (value.launched === true || value.launched === 'unverified');
       if (installed) owned.installedAttempt = attempt;
-      if (installed && (record.platform !== 'macos' || (Number.isSafeInteger(value.pid) && (value.pid as number) > 0)))
+      if (
+        installed &&
+        (record.platform !== 'macos' ||
+          (typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0))
+      )
         await this.startAgent(record, attempt, value.pid as number);
       const app = changeHostedApp(record.id, attempt, (current) => {
         current.state = installed ? 'installed' : 'unknown';
@@ -1717,7 +1709,7 @@ export class DeviceHost {
       notice ??= 'Hosted worker was cancelled or exceeded its deadline.';
       signal('SIGTERM');
       killTimer = setTimeout(() => signal('SIGKILL'), this.limits.killGraceMs);
-      finishTimer = setTimeout(finish, this.limits.killGraceMs * 2);
+      finishTimer = setTimeout(finish, hostedWorkerSettleMs(this.limits));
     };
     const finishGroup = () => {
       if (finished) return;

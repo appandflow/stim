@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { validMacosResourceDestination } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
@@ -8,8 +8,15 @@ export function validateInfoPlist(
   product: string,
   infoPlist: string,
 ): { bundleId: string; minimumSystemVersion?: string } {
+  const source = resolve(root, infoPlist);
+  const inside = relative(realpathSync(root), realpathSync(source));
+  if (!lstatSync(source).isFile() || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
+    throw new Error(
+      'macos.infoPlist must be a regular file inside the project, not a symbolic link. See stim guide macos.',
+    );
+  }
   const plist = JSON.parse(
-    getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', realpathSync(resolve(root, infoPlist))]),
+    getExecutor().runFile('plutil', ['-convert', 'json', '-o', '-', source], { timeoutMs: 10_000 }),
   );
   if (typeof plist.CFBundleIdentifier !== 'string' || plist.CFBundleExecutable !== product) {
     throw new Error('macos.infoPlist must name a CFBundleIdentifier and the selected product as CFBundleExecutable.');
@@ -26,7 +33,7 @@ export function validateInfoPlist(
 export function setBundleName(plistPath: string, name: string): void {
   const exec = getExecutor();
   for (const key of ['CFBundleDisplayName', 'CFBundleName'])
-    exec.runFile('plutil', ['-replace', key, '-string', name, plistPath]);
+    exec.runFile('plutil', ['-replace', key, '-string', name, plistPath], { timeoutMs: 10_000 });
 }
 
 export interface BundleExtras {
@@ -128,19 +135,21 @@ export function stageBundle(
   const executable = join(contents, 'MacOS', product);
   cpSync(join(bin, product), executable);
   cpSync(resolve(root, infoPlist), join(contents, 'Info.plist'));
-  exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')]);
+  exec.runFile('/usr/libexec/PlistBuddy', ['-c', `Set :CFBundleIdentifier ${bundleId}`, join(contents, 'Info.plist')], {
+    timeoutMs: 10_000,
+  });
   if (displayName !== undefined) setBundleName(join(contents, 'Info.plist'), displayName);
   for (const entry of readdirSync(bin)) {
     if (entry.endsWith('.framework')) {
       const target = join(contents, 'Frameworks', entry);
       cpSync(join(bin, entry), target, { recursive: true, dereference: false, verbatimSymlinks: true });
-      exec.runFile('codesign', ['--force', '--sign', '-', target]);
+      exec.runFile('codesign', ['--force', '--sign', '-', target], { timeoutMs: 'unbounded' });
     } else if (entry.endsWith('.bundle'))
       cpSync(join(bin, entry), join(contents, 'Resources', entry), { recursive: true });
   }
   const frameworkPath = '@executable_path/../Frameworks';
-  if (!exec.runFile('otool', ['-l', executable]).includes(frameworkPath)) {
-    exec.runFile('install_name_tool', ['-add_rpath', frameworkPath, executable]);
+  if (!exec.runFile('otool', ['-l', executable], { timeoutMs: 30_000 }).includes(frameworkPath)) {
+    exec.runFile('install_name_tool', ['-add_rpath', frameworkPath, executable], { timeoutMs: 30_000 });
   }
   for (const [destination, source] of Object.entries(extras.resources)) {
     const target = join(contents, 'Resources', destination);
@@ -148,19 +157,23 @@ export function stageBundle(
     cpSync(source, target, { recursive: true });
   }
   if (extras.assetCatalog) {
-    exec.runFile('xcrun', [
-      'actool',
-      extras.assetCatalog,
-      '--compile',
-      join(contents, 'Resources'),
-      '--platform',
-      'macosx',
-      ...(minimumSystemVersion === undefined ? [] : ['--minimum-deployment-target', minimumSystemVersion]),
-      '--output-partial-info-plist',
-      '/dev/null',
-    ]);
+    exec.runFile(
+      'xcrun',
+      [
+        'actool',
+        extras.assetCatalog,
+        '--compile',
+        join(contents, 'Resources'),
+        '--platform',
+        'macosx',
+        ...(minimumSystemVersion === undefined ? [] : ['--minimum-deployment-target', minimumSystemVersion]),
+        '--output-partial-info-plist',
+        '/dev/null',
+      ],
+      { timeoutMs: 'unbounded' },
+    );
     if (!existsSync(join(contents, 'Resources', 'Assets.car')))
       resourceError('macos.assetCatalog', extras.assetCatalog, 'actool did not produce Assets.car');
   }
-  exec.runFile('codesign', ['--force', '--sign', '-', bundle]);
+  exec.runFile('codesign', ['--force', '--sign', '-', bundle], { timeoutMs: 'unbounded' });
 }

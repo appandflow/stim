@@ -11,6 +11,7 @@ import {
   type ClaimRefusedError,
 } from '../ownership-claim.ts';
 import { getConcurrencyLimits, loadConfig } from './config.ts';
+import { isJsonObject } from './json-file.ts';
 import { settingDefinition } from './settings-registry.ts';
 
 const NATIVE_PHASES = new Set(['prebuild', 'pods', 'compile']);
@@ -110,21 +111,19 @@ function liveNativeBuilds(): number {
   for (const name of names) {
     let active: unknown;
     try {
-      active = (JSON.parse(readFileSync(join(dir, name, 'state.json'), 'utf8')) as { activeBuild?: unknown })
-        .activeBuild;
+      const state: unknown = JSON.parse(readFileSync(join(dir, name, 'state.json'), 'utf8'));
+      active = isJsonObject(state) ? state.activeBuild : undefined;
     } catch {
       continue;
     }
-    if (!active || typeof active !== 'object') continue;
-    const { phase, claim, placement } = active as {
-      phase?: unknown;
-      claim?: { root?: unknown; claimId?: unknown };
-      placement?: unknown;
-    };
+    if (!isJsonObject(active)) continue;
+    const { phase, claim, placement } = active;
     if (typeof phase !== 'string' || !NATIVE_PHASES.has(phase) || placement) continue;
-    if (typeof claim?.root !== 'string' || typeof claim.claimId !== 'string') continue;
+    if (!isJsonObject(claim)) continue;
+    const { root, claimId } = claim;
+    if (typeof root !== 'string' || typeof claimId !== 'string') continue;
     try {
-      if (readClaimSet(claim.root).live.some((holder) => holder.claimId === claim.claimId)) count += 1;
+      if (readClaimSet(root).live.some((holder) => holder.claimId === claimId)) count += 1;
     } catch {}
   }
   return count;

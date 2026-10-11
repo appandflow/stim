@@ -292,9 +292,9 @@ another process was started from inside the worktree; `adb kill-server`
 releases the server.
 
 Named ports allocated by `stim ports get <label>` belong to the workspace.
-`worktree remove` stops their TCP listeners and releases the allocations;
-`gc --delete` does the same for missing workspaces. `stim stop` leaves them
-alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
+`worktree remove` releases the allocations without signalling their listeners;
+`gc --delete` does the same for missing workspaces. Run `stim ports stop` first
+to stop a server. `stim stop` leaves them alone. See [named server ports](./dev-server-and-logs.md#named-server-ports).
 
 ## Remove finished worktrees in bulk
 

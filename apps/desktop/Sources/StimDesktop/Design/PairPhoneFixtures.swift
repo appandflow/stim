@@ -4,7 +4,7 @@
   import SwiftUI
 
   enum PairPhoneFixture: String, CaseIterable, Identifiable {
-    case app, tailscaleChecking, tailscaleMissing, tailscaleOff, tailscaleCLI, tailscaleOn
+    case app, tailscaleChecking, tailscaleUnresponsive, tailscaleMissing, tailscaleOff, tailscaleCLI, tailscaleOn
     case serveStarting, serveRoute, serveReady, serveFunnel, serveRouteFailed, serveFailed, serveOtherHome
     case pairWaiting, pairManual, pairExpired, pairError, pairedControl, pairedViewOnly
     var id: Self { self }
@@ -37,6 +37,7 @@
       let tailscale: MacTailscale
       switch self {
       case .app, .tailscaleChecking: tailscale = .checking
+      case .tailscaleUnresponsive: tailscale = .unresponsive
       case .tailscaleMissing: tailscale = .missing
       case .tailscaleOff: tailscale = .stopped(hasApp: true)
       case .tailscaleCLI: tailscale = .stopped(hasApp: false)

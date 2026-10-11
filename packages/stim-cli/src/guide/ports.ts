@@ -67,11 +67,12 @@ ports release [label] releases without signalling a process.
 Omitting the label selects every named port, never Metro. stim stop leaves
 named ports alone.
 
-worktree remove stops named listeners and releases their allocations.
-gc reports allocations whose workspace no longer exists; gc --delete stops
-and releases them. Unmounted or unresolved workspace paths are retained.
-Failed stops keep the registry entry. Use the same current Stim version for
-cleanup: versions without ports do not know about named allocations.
+worktree remove, gc --delete and automatic maintenance release named
+allocations without signalling their listeners; run ports stop first to stop
+a server this workspace started. gc reports allocations whose workspace no
+longer exists; gc --delete releases them. Unmounted or unresolved workspace
+paths are retained. Use the same current Stim version for cleanup: versions
+without ports do not know about named allocations.
 
 A shared API does not get a shared reservation. Pass its port by environment
 instead of allocating a separate label in every worktree.`,

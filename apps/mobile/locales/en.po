@@ -849,10 +849,6 @@ msgstr "All Categories"
 msgid "All Machines"
 msgstr "All Machines"
 
-#: src/screens/filters.tsx
-msgid "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
-msgstr "All shows active, idle and archived workspaces. Archived shows only removed worktrees."
-
 #: src/screens/logs.tsx
 msgid "All Slots"
 msgstr "All Slots"
@@ -1023,6 +1019,14 @@ msgstr "billable"
 msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
+#: src/lib/workspace-view.ts
+msgid "Booting emulator"
+msgstr "Booting emulator"
+
+#: src/lib/workspace-view.ts
+msgid "Booting simulator"
+msgstr "Booting simulator"
+
 #: src/screens/welcome.tsx
 msgid "Both Signed in to the Same Tailnet"
 msgstr "Both Signed in to the Same Tailnet"
@@ -1182,6 +1186,10 @@ msgstr "Bundling"
 msgid "Bundling · {percent}%"
 msgstr "Bundling · {percent}%"
 
+#: src/lib/workspace-view.ts
+msgid "Bundling JS"
+msgstr "Bundling JS"
+
 #: src/lib/build-machines.ts
 msgid "Busy"
 msgstr "Busy"
@@ -1258,6 +1266,7 @@ msgstr "Can control"
 
 #: src/hooks/app-update.ts
 #: src/screens/mac-list.tsx
+#: src/screens/pair.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
 #: src/screens/workspace-detail.tsx
@@ -1485,6 +1494,10 @@ msgstr "Compiling"
 #: src/lib/workspace-view.ts
 msgid "Configuring"
 msgstr "Configuring"
+
+#: src/screens/pair.tsx
+msgid "Connect"
+msgstr "Connect"
 
 #: src/screens/workspace-diff.tsx
 msgid "Connect to the Mac to view changes."
@@ -2804,6 +2817,10 @@ msgstr "Not running"
 msgid "Not running · {deviceState}"
 msgstr "Not running · {deviceState}"
 
+#: src/screens/filters.tsx
+msgid "Not set up"
+msgstr "Not set up"
+
 #: src/screens/mac-status.tsx
 msgid "Not Stim's"
 msgstr "Not Stim's"
@@ -3060,6 +3077,10 @@ msgstr "Pair a Machine"
 #: src/components/mac-chip.tsx
 msgid "Pair again"
 msgstr "Pair again"
+
+#: src/screens/pair.tsx
+msgid "Pair with this machine?"
+msgstr "Pair with this machine?"
 
 #: src/screens/welcome.tsx
 msgid "Pair with Your Mac"
@@ -3546,6 +3567,10 @@ msgstr "Search projects"
 msgid "Select All"
 msgstr "Select All"
 
+#: src/screens/filters.tsx
+msgid "Select any combination. Not set up shows worktrees Stim has not warmed; Archived shows removed ones."
+msgstr "Select any combination. Not set up shows worktrees Stim has not warmed; Archived shows removed ones."
+
 #: src/lib/build-machines.ts
 #: src/lib/build-machines.ts
 msgid "select the same Xcode on both"
@@ -4029,6 +4054,10 @@ msgstr "This archive is no longer available."
 msgid "This device is not running."
 msgstr "This device is not running."
 
+#: src/screens/pair.tsx
+msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
+msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
+
 #: src/screens/mac-status.tsx
 msgid "This machine is not paired."
 msgstr "This machine is not paired."
@@ -4160,6 +4189,7 @@ msgstr "unknown"
 #: src/lib/replay.ts
 #: src/lib/settings-options.ts
 #: src/lib/settings-options.ts
+#: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
 #: src/lib/workspace-view.ts
@@ -4330,6 +4360,10 @@ msgstr "Waiting for a frame"
 #: src/screens/build-details.tsx
 msgid "Waiting for another build of the same app"
 msgstr "Waiting for another build of the same app"
+
+#: src/lib/workspace-view.ts
+msgid "Waiting for app ready"
+msgstr "Waiting for app ready"
 
 #: src/lib/build-machines.ts
 msgid "Waiting for approval"

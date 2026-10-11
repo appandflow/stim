@@ -29,7 +29,7 @@ import {
 } from '../device-host/hosted-macos.ts';
 import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { getConfigPath } from '../workspace/config.ts';
@@ -249,7 +249,7 @@ beforeEach(() => {
       const script = args.includes('--show-bin-path') ? `console.log(${JSON.stringify(bin)})` : '';
       return real.spawn(process.execPath, ['-e', script], opts);
     },
-    runFile: (file: string, args: string[], opts?: object) => {
+    runFile: (file: string, args: string[], opts: ExecOptions) => {
       if (file === 'plutil')
         return JSON.stringify({ CFBundleIdentifier: 'dev.fixture.app', CFBundleExecutable: 'Fixture' });
       if (file === 'otool') return '@executable_path/../Frameworks';

@@ -105,6 +105,7 @@ test.skipIf(process.platform === 'win32')(
     const args = ['-c', "source file's.c", '-DVALUE=a b'];
     for (const name of ['clang', 'clang++']) {
       getExecutor().runFile(join(state, name), args, {
+        timeoutMs: 60_000,
         cwd: root,
         env: { STIM_ANDROID_CAS_CONTEXT: setup.env.STIM_ANDROID_CAS_CONTEXT!, PATH: bin },
       });
@@ -152,6 +153,7 @@ test.skipIf(process.platform === 'win32')(
     );
     expect(
       getExecutor().runFileQuiet(process.execPath, [CAS_COMPILER, '-c', 'source.c'], {
+        timeoutMs: 60_000,
         env: { STIM_ANDROID_CAS_CONTEXT: context },
       }),
     ).toBeNull();
@@ -175,7 +177,7 @@ test.skipIf(process.platform === 'win32')(
   () => {
     const { manifest, compiler } = writeToolchain();
     chmodSync(compiler, 0o644);
-    expect(() => getExecutor().runFile(compiler, [])).toThrow(/EACCES/);
+    expect(() => getExecutor().runFile(compiler, [], { timeoutMs: 60_000 })).toThrow(/EACCES/);
     expect(() => resolveAndroidCas(root, { STIM_ANDROID_CAS_TOOLCHAIN: manifest })).toThrow(
       `${manifest} names no executable clang, clangxx, lld, ar, ranlib.`,
     );
@@ -207,6 +209,7 @@ process.exit(0);
       }),
     );
     getExecutor().runFile(process.execPath, [CAS_COMPILER, '-c', 'source.c'], {
+      timeoutMs: 60_000,
       env: { STIM_ANDROID_CAS_CONTEXT: context },
     });
     const record = JSON.parse(readFileSync(join(root, 'compiler.jsonl'), 'utf8'));

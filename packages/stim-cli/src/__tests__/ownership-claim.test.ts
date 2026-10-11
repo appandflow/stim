@@ -224,7 +224,7 @@ describe('refusing instead of guessing', () => {
             const err = refusal(() => tryAcquireClaim({ root: blocked, mode }));
             expect(err.claimPath).toBe(blocker);
             expect(err.removeCommand).toMatch(/^mv -i /);
-            getExecutor().run(err.removeCommand);
+            getExecutor().run(err.removeCommand, { timeoutMs: 60_000 });
             expect(readFileSync(`${blocker}.stim-backup`, 'utf8')).toBe('unrelated contents');
             expect(readFileSync(bystander, 'utf8')).toBe('keep');
             const acquired = tryAcquireClaim({ root: blocked, mode }).acquired;
@@ -249,12 +249,12 @@ describe('refusing instead of guessing', () => {
             const planted = plantClaim(set, 'exclusive', { pid: 4242, processToken: 'not-a-token' });
             const err = refusal(() => tryAcquireClaim({ root: set, mode: 'exclusive' }));
             expect(err.removeCommand).toBe(claimRemoveCommand(planted));
-            getExecutor().run(err.removeCommand);
+            getExecutor().run(err.removeCommand, { timeoutMs: 60_000 });
             expect(existsSync(planted)).toBe(false);
             expect(existsSync(join(bystander, 'artifact'))).toBe(true);
             expect(tryAcquireClaim({ root: set, mode: 'exclusive' }).acquired).toBeTruthy();
 
-            getExecutor().run(claimRemoveCommand(set));
+            getExecutor().run(claimRemoveCommand(set), { timeoutMs: 60_000 });
             expect(existsSync(set)).toBe(false);
             expect(existsSync(join(bystander, 'artifact'))).toBe(true);
           }

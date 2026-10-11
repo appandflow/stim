@@ -2,6 +2,7 @@ import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../device
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isJsonObject } from '@stim-cli/core/state';
 import { getConfigDir } from '../workspace/config.ts';
 import { withDirLock } from '../dir-lock.ts';
 import {
@@ -131,8 +132,8 @@ export function parseLease(raw: string | null): DeviceLease | null {
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const entry = parsed as Record<string, unknown>;
+  if (!isJsonObject(parsed)) return null;
+  const entry = parsed;
   if (entry.version !== LEASE_VERSION || !isPlatform(entry.platform)) return null;
   const id = text(entry.id);
   const holder = text(entry.holder);

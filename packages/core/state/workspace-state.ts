@@ -198,8 +198,8 @@ function missChange(value: unknown): BuildMissChange | null {
 
 /** A recorded miss reason in the shape status reports, without `baseline.cacheKey`; null when malformed. */
 export function parseMissReason(value: unknown): BuildMissReason | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (typeof record.kind !== 'string' || !MISS_KINDS.has(record.kind) || typeof record.summary !== 'string')
     return null;
   const changes = (Array.isArray(record.changes) ? record.changes : [])
@@ -212,8 +212,10 @@ export function parseMissReason(value: unknown): BuildMissReason | null {
     summary: record.summary,
     changes,
     changeCount:
-      Number.isInteger(record.changeCount) && (record.changeCount as number) >= changes.length
-        ? (record.changeCount as number)
+      typeof record.changeCount === 'number' &&
+      Number.isInteger(record.changeCount) &&
+      record.changeCount >= changes.length
+        ? record.changeCount
         : changes.length,
     baseline:
       baseline &&
@@ -256,8 +258,8 @@ export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
 }
 
 function devicePlacement(value: unknown): DevicePlacement | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (
     (record.decision !== 'local' &&
       record.decision !== 'hosted' &&
@@ -285,8 +287,8 @@ export function readDevicePlacement(
 }
 
 function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildReport | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;

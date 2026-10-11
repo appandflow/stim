@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { mergeState } from '../workspace/merge-state.ts';
 
 let projects: string;
@@ -98,4 +98,31 @@ test('passes the changed-file pathspec through stdin, not argv, so a long list c
   expect(logCalls.length).toBeGreaterThan(0);
   for (const call of logCalls) expect(call.args.join(' ')).not.toContain('file-0.txt');
   expect(logCalls.some((call) => call.input?.includes('file-0.txt'))).toBe(true);
+});
+
+test('a reflog read that times out leaves a merge-commit merge unknown instead of reading as no commits of its own', () => {
+  const repo = initRepo('merge-commit-timeout');
+  git(repo, 'checkout -q -b feature');
+  commit(repo, 'a.txt', 'a');
+  git(repo, 'checkout -q main');
+  git(repo, 'merge -q --no-ff -m "merge feature" feature');
+  git(repo, 'checkout -q feature');
+  const target = { ref: 'refs/heads/main', name: 'main' };
+  expect(mergeState(repo, target)).toMatchObject({ merged: true, into: 'main' });
+
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    runFile: (file: string, args: string[], opts: ExecOptions) => {
+      if (args.includes('reflog'))
+        throw Object.assign(new Error('Command timed out after 60000ms: git reflog'), { code: 'ETIMEDOUT' });
+      return real.runFile(file, args, opts);
+    },
+  });
+  expect(mergeState(repo, target)).toEqual({
+    merged: false,
+    unknown: true,
+    timedOut: true,
+    detail: 'merge state unknown: Command timed out after 60000ms: git reflog',
+  });
 });
