@@ -114,15 +114,7 @@ test('a registration refuses a directory that pruning would turn into deleting t
     tmpHome,
     sep,
   ];
-  const outcomes = refused.map((dir) => {
-    try {
-      register({ dir });
-      return 'registered';
-    } catch (error) {
-      return (error as Error).message.split(':')[0];
-    }
-  });
-  expect(outcomes).toEqual(refused.map(() => 'cannot register this cache'));
+  for (const dir of refused) expect(() => register({ dir })).toThrow(/^cannot register this cache/);
   expect(readManifest().caches).toEqual([]);
 });
 
