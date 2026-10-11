@@ -17,7 +17,7 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'metro', 'expo-build-cache', 'ci', 'server'];
+const packageDirs = ['stim-cli', 'core', 'cache', 'cache-s3', 'metro', 'expo-build-cache', 'ci', 'server'];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
@@ -41,15 +41,20 @@ const entrypoints = [
   ['@stim-cli/core/state', 'loadConfig'],
   ['@stim-cli/core/oversight', 'oversee'],
   ['@stim-cli/cache', 'loadCacheProvider'],
-  ['@stim-cli/cache/s3', 'createS3FileCache'],
+  ['@stim-cli/cache-s3', 'createS3FileCache', 'cache-s3'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
   ['stim/cache-manifest', 'readManifest'],
 ];
 
-for (const [specifier, exportName] of entrypoints) {
-  assert.equal(typeof require(specifier)[exportName], 'function', `require(${specifier}) must load ESM synchronously`);
-  const resolved = pathToFileURL(require.resolve(specifier)).href;
+for (const [specifier, exportName, context] of entrypoints) {
+  const entryRequire = context ? createRequire(join(repositoryRoot, 'packages', context, 'package.json')) : require;
+  assert.equal(
+    typeof entryRequire(specifier)[exportName],
+    'function',
+    `require(${specifier}) must load ESM synchronously`,
+  );
+  const resolved = pathToFileURL(entryRequire.resolve(specifier)).href;
   assert.equal(typeof (await import(resolved))[exportName], 'function', `import(${specifier}) must load ESM`);
 }
 

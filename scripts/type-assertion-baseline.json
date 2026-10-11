@@ -39,6 +39,16 @@
       "nonNull": 0
     }
   },
+  "packages/cache-s3": {
+    "src": {
+      "as": 0,
+      "nonNull": 0
+    },
+    "test": {
+      "as": 0,
+      "nonNull": 0
+    }
+  },
   "packages/ci": {
     "src": {
       "as": 8,

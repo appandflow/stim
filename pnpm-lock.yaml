@@ -372,11 +372,16 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
 
-  packages/cache:
+  packages/cache: {}
+
+  packages/cache-s3:
     dependencies:
       '@aws-sdk/client-s3':
         specifier: ^3.1149.0
         version: 3.1149.0
+      '@stim-cli/cache':
+        specifier: workspace:^
+        version: link:../cache
       tar:
         specifier: ^7.5.22
         version: 7.5.22

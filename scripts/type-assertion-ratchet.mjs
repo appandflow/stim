@@ -8,6 +8,7 @@ const baselineFile = join(root, 'scripts/type-assertion-baseline.json');
 const defaultPackages = [
   '.github/actions/stim-ci',
   'packages/cache',
+  'packages/cache-s3',
   'packages/ci',
   'packages/core',
   'packages/expo-build-cache',

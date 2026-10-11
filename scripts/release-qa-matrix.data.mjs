@@ -69,6 +69,7 @@ export const pathRules = [
   { path: 'packages/core/state/logs-query.ts', rows: ['logs'] },
   { path: 'packages/core/state/ndjson.ts', rows: ['logs'] },
   { path: 'packages/cache', rows: ['caches', 'remote-provider'] },
+  { path: 'packages/cache-s3', rows: ['caches', 'remote-provider'] },
   { path: 'packages/metro', rows: ['caches', 'logs'] },
   { path: 'packages/expo-build-cache', rows: ['caches'] },
   { path: 'packages/server', rows: ['loop'] },
