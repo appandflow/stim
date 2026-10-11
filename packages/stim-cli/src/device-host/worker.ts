@@ -38,11 +38,11 @@ function inventory(): ReturnType<typeof listAllIosSims> {
   return listAllIosSims({ includeUnavailable: true });
 }
 
-export function selectHostedIosDevice(selectors: HostedDeviceSelectors): HostedIosChoice {
+export async function selectHostedIosDevice(selectors: HostedDeviceSelectors): Promise<HostedIosChoice> {
   inventory();
   if (readHostMemoryPressure(getExecutor()) !== 'normal')
     throw new Error('Host memory pressure is unknown or elevated.');
-  const selected = resolveIosCreation(selectors);
+  const selected = await resolveIosCreation(selectors);
   if (!selected.deviceType || !selected.runtime)
     throw new Error('The installed simulator type or runtime could not be established.');
   if (process.arch !== 'arm64' && process.arch !== 'x64') throw new Error('Unsupported simulator host architecture.');
@@ -69,7 +69,7 @@ export async function runHostedDevice(
       creationStarted = existsSync(join(home, 'hosted-device.json')) || existsSync(join(home, 'created-devices.json'));
       if (creationStarted)
         throw new Error('This hosted worker home already has a device record. Attach or stop its existing session.');
-      const selected = selectHostedIosDevice(selectors);
+      const selected = await selectHostedIosDevice(selectors);
       creationStarted = true;
       const created = await createOwnedIosSim('hosted', {}, selected);
       device = { ...selected, udid: created.udid, name: created.name };
@@ -98,7 +98,7 @@ export async function runHostedDevice(
         throw new Error('The parked hosted simulator is missing, renamed or not Shutdown.');
       let choice: HostedIosChoice;
       try {
-        choice = selectHostedIosDevice(selectors);
+        choice = await selectHostedIosDevice(selectors);
       } catch (error) {
         if (mode === 'inspect') return { state: 'incompatible', device, notice: (error as Error).message };
         throw error;

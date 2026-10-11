@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
     if (!request) throw new Error('Invalid hosted offer selectors.');
-    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
+    process.stdout.write(`${JSON.stringify(await inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
     return;
   }
   if (process.platform !== 'darwin') {

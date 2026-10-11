@@ -8,10 +8,10 @@ import { selectHostedIosDevice } from './worker.ts';
 import { selectHostedAndroidDevice } from './android.ts';
 import { selectHostedMacos } from './macos.ts';
 
-export function inspectHostedDevice(
+export async function inspectHostedDevice(
   request: HostedDeviceOfferRequest,
   options?: { exclude?: DeviceCountExclusion[] },
-): HostedNativeOffer {
+): Promise<HostedNativeOffer> {
   const cpus = availableParallelism();
   let workerDiskFreeBytes: number | null = null;
   try {
@@ -32,7 +32,7 @@ export function inspectHostedDevice(
     return request.platform === 'macos'
       ? { platform: 'macos', choice: selectHostedMacos(), resources, declined: null }
       : request.platform === 'ios'
-        ? { platform: 'ios', choice: selectHostedIosDevice(request), resources, declined: null }
+        ? { platform: 'ios', choice: await selectHostedIosDevice(request), resources, declined: null }
         : { platform: 'android', choice: selectHostedAndroidDevice(request), resources, declined: null };
   } catch (error) {
     return { platform: request.platform, choice: null, resources, declined: (error as Error).message.slice(0, 4000) };

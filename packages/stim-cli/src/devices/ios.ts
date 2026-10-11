@@ -321,7 +321,9 @@ export async function bootIosSim(
       }
       let state: string | null | undefined;
       try {
-        state = listAllIosSims({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS }).find((s) => s.udid === udid)?.state ?? null;
+        state =
+          (await listAllIosSimsAsync({ timeoutMs: BOOT_STATE_LIST_TIMEOUT_MS })).find((s) => s.udid === udid)?.state ??
+          null;
       } catch {
         state = undefined;
       }
@@ -349,12 +351,20 @@ export async function shutdownIosSim(udid: string): Promise<void> {
   await getExecutor().runFileQuietAsync('xcrun', ['simctl', 'shutdown', udid], SIMCTL_OPTIONS);
 }
 
+const LIST_DEVICE_TYPES_ARGS = ['simctl', 'list', 'devicetypes', '--json'];
+const LIST_DEVICE_TYPES_OPTIONS = { timeoutMs: 30000, killSignal: 'SIGKILL' } as const;
+
 export function listIosDeviceTypes(): IosDeviceType[] {
-  const exec = getExecutor();
-  const out = exec.runFile('xcrun', ['simctl', 'list', 'devicetypes', '--json'], {
-    timeoutMs: 30000,
-    killSignal: 'SIGKILL',
-  });
+  return parseIosDeviceTypes(getExecutor().runFile('xcrun', LIST_DEVICE_TYPES_ARGS, LIST_DEVICE_TYPES_OPTIONS));
+}
+
+export async function listIosDeviceTypesAsync(): Promise<IosDeviceType[]> {
+  return parseIosDeviceTypes(
+    await getExecutor().runFileAsync('xcrun', LIST_DEVICE_TYPES_ARGS, LIST_DEVICE_TYPES_OPTIONS),
+  );
+}
+
+function parseIosDeviceTypes(out: string): IosDeviceType[] {
   const data: unknown = JSON.parse(out);
   return isJsonObject(data) ? deviceTypesOf(data.devicetypes) : [];
 }
@@ -468,12 +478,12 @@ export interface IosCreationChoice {
   runtime: string | null;
 }
 
-export function resolveIosCreation({
+export async function resolveIosCreation({
   deviceType,
   runtime,
-}: { deviceType?: string; runtime?: string } = {}): IosCreationChoice {
-  const deviceTypes = listIosDeviceTypes();
-  const runtimes = listIosRuntimes();
+}: { deviceType?: string; runtime?: string } = {}): Promise<IosCreationChoice> {
+  const deviceTypes = await listIosDeviceTypesAsync();
+  const runtimes = await listIosRuntimesAsync();
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime });
   if (!pick) {
     throw new Error(
@@ -491,8 +501,9 @@ export function resolveIosCreation({
 export async function createOwnedIosSim(
   label: string,
   { deviceType, runtime, suffix = '' }: { deviceType?: string; runtime?: string; suffix?: string } = {},
-  choice: IosCreationChoice = resolveIosCreation({ deviceType, runtime }),
+  choice?: IosCreationChoice,
 ): Promise<{ udid: string; name: string; deviceType: string | null; runtime: string | null }> {
+  choice ??= await resolveIosCreation({ deviceType, runtime });
   const name = ownedSimName(label, { model: choice.deviceType, runtime: choice.runtime }, suffix);
   const udid = (
     await getExecutor().runFileAsync('xcrun', ['simctl', 'create', name, choice.deviceTypeId, choice.runtimeId], {
