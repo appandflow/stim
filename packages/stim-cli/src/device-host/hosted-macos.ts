@@ -20,6 +20,7 @@ import {
   attach,
   settle,
   heldNoLonger,
+  stoppedSession,
   unknownSession,
   bundleManifest,
   upload,
@@ -128,6 +129,7 @@ export async function placeHostedMacos(
   reserved(placement);
   session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, 'macos', runCancellationSignal());
   if (session.state === 'unknown') throw unknownSession(host, session);
+  if (session.state === 'stopped') throw stoppedSession(host, session);
   if (session.state !== 'ready')
     throw new Error(`The hosted session ${session.id} on ${host.machine} is ${session.state}.`);
   const device = parseHostedMacosDevice(session.device);

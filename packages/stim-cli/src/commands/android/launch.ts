@@ -204,7 +204,7 @@ async function verifyAndroidProcessRun({
   if (processCheck?.verified && !crashes.length) {
     phase(
       'verify',
-      `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant}: no bundle fetch to observe)`,
+      `process alive ${formatDuration(processCheck.waitedMs ?? 0)} after launch (${variant ?? 'debug'}: no bundle fetch to observe)`,
     );
     return { state: true };
   }

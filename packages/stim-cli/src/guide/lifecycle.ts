@@ -252,7 +252,11 @@ WAITING FOR A CHANGE
   changes, never two identical ones in a row. In a watch line, a usage
   figure repeats its value in the previous line until it moves by a step: an owner's cpuPercent ${WATCH_CPU_STEP_PERCENT} points, an
   owner's or environment's memoryMb and capacity.committedMb ${WATCH_MEMORY_STEP_MB} MB. An owner's row
-  changes as a whole, so its residentMb and processes update with it. It reacts to Stim state files,
+  changes as a whole, so its residentMb and processes update with it. A change
+  in only a bookkeeping timestamp prints no line: each pullRequest.checkedAt,
+  maintenance.lastChecks, maintenance.lastPass.startedAt and durationMs, and
+  maintenance.running.startedAt. A line that prints carries their current
+  values. It reacts to Stim state files,
   the EAS session ledger, adb device arrivals and departures, and simulator
   state, and recomputes every 30 seconds as a fallback. A log append updates
   only the log error count and device activity, no sooner than 15 seconds

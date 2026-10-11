@@ -12,11 +12,18 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   createRefreshScheduler,
   statusChange,
+  watchChangeKey,
   watchPayload,
   watchStatusSources,
   type RefreshKind,
 } from '../status-watch.ts';
-import type { MachineOwner, StatusPayload } from '@stim-cli/core/state';
+import type {
+  MachineOwner,
+  MaintenancePass,
+  MaintenanceStatus,
+  StatusPayload,
+  WorktreeFacts,
+} from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
 
@@ -248,6 +255,86 @@ describe('watchPayload', () => {
     const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
     expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
     expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
+  });
+});
+
+describe('watchChangeKey', () => {
+  const pr = (checkedAt: string, state: 'open' | 'merged' = 'open'): WorktreeFacts['pullRequest'] => ({
+    number: 7,
+    url: 'https://github.com/o/r/pull/7',
+    title: 'T',
+    state,
+    checks: null,
+    reviewDecision: null,
+    checkedAt,
+  });
+  const passAt = (at: number): MaintenancePass => ({
+    startedAt: at,
+    durationMs: at % 100,
+    trigger: 'status-watch',
+    mode: 'on',
+    freedBytes: 0,
+    actions: 0,
+    stopped: 0,
+    blocked: [],
+  });
+  const maintenance = (at: number, overrides: Partial<MaintenanceStatus> = {}): MaintenanceStatus => ({
+    mode: 'on',
+    lastChecks: { pressure: at, size: at, worktree: at, sweep: at },
+    pressure: null,
+    sizes: [],
+    lastPass: passAt(at),
+    running: null,
+    recent: [],
+    plan: [],
+    ...overrides,
+  });
+  const payload = (
+    at: number,
+    state: 'open' | 'merged' = 'open',
+    extra: Partial<StatusPayload> = {},
+  ): StatusPayload => ({
+    environments: [
+      makeEnvironmentState({
+        path: '/w/a',
+        worktree: { path: '/w/a', pullRequest: pr(`2026-10-10T00:00:${at}Z`, state) },
+      }),
+    ],
+    capacity: { liveCount: 0, committedMb: 0, totalMemoryMb: 16384, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [{ path: '/w/b', pullRequest: pr(`2026-10-10T00:00:${at}Z`) }],
+    simctlAvailable: true,
+    machine: null,
+    maintenance: maintenance(at),
+    ...extra,
+  });
+
+  test('a payload that differs only in bookkeeping timestamps has the same key', () => {
+    const running = { startedAt: '2026-10-10T00:00:11Z', trigger: 'status-watch' };
+    expect(watchChangeKey(payload(10, 'open', { maintenance: maintenance(10, { running }) }))).toBe(
+      watchChangeKey(
+        payload(20, 'open', { maintenance: maintenance(20, { running: { ...running, startedAt: 'x' } }) }),
+      ),
+    );
+  });
+
+  test.each([
+    ['pull request state', payload(20, 'merged')],
+    [
+      'maintenance trigger',
+      payload(20, 'open', {
+        maintenance: { ...maintenance(20), lastPass: { ...passAt(20), trigger: 'timer' } },
+      }),
+    ],
+    ['archived', payload(20, 'open', { archived: [] })],
+  ])('a %s change gives a new key', (_name, next) => {
+    expect(watchChangeKey(next)).not.toBe(watchChangeKey(payload(10)));
+  });
+
+  test('the key is not the printed payload: masking leaves the payload untouched', () => {
+    const value = payload(10);
+    watchChangeKey(value);
+    expect(value.unprovisionedWorktrees[0]?.pullRequest?.checkedAt).toBe('2026-10-10T00:00:10Z');
   });
 });
 

@@ -973,6 +973,72 @@ test('action: a branch deletion failure keeps ownership state and exits unsucces
   expect(getProject(wtDir)).toBe(null);
 });
 
+test('action: a timed-out worktree list after removal keeps the branch and the retry state', async () => {
+  upsertProject(wtDir, {
+    worktreeRoot: true,
+    worktreeBranch: 'worktree-feat-x',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: mainDir,
+  });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'worktree-feat-x' },
+    ]),
+  });
+  const runFileQuiet = exec.runFileQuiet.bind(exec);
+  exec.runFileQuiet = (file, args = []) =>
+    /worktree list --porcelain/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /worktree remove/.test(c))
+      ? TIMED_OUT
+      : runFileQuiet(file, args);
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(exec.calls.run.some((c) => /update-ref -d/.test(c))).toBe(false);
+  expect(errs.join('\n')).toMatch(/kept worktree-feat-x/);
+  expect(getProject(wtDir)).toMatchObject({ worktreeRemovalComplete: true, worktreePendingBranchSha: 'abc123' });
+});
+
+test('action: a HEAD read that times out after reclaim still reports what was released', async () => {
+  upsertProject(wtDir, { platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } } });
+  const exec = makeExecutor({
+    worktrees: porcelain([
+      { path: mainDir, branch: 'main' },
+      { path: wtDir, branch: 'feat-x' },
+    ]),
+    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
+  });
+  const runFile = exec.runFile.bind(exec);
+  exec.runFile = (file, args = []) => {
+    if (/rev-parse --verify/.test([file, ...args].join(' ')) && exec.calls.run.some((c) => /simctl delete/.test(c))) {
+      throw Object.assign(new Error('Command timed out after 60000ms'), { code: 'ETIMEDOUT' });
+    }
+    return runFile(file, args);
+  };
+  setExecutor(exec);
+  const errs: string[] = [];
+  const original = console.error;
+  console.error = (m) => errs.push(String(m));
+  try {
+    await captureAction(registerRemove)(wtDir, {});
+  } finally {
+    console.error = original;
+  }
+
+  expect(process.exitCode).toBe(1);
+  expect(errs.join('\n')).toMatch(/git safety check timed out/);
+  expect(errs.join('\n')).toMatch(/device/);
+  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(false);
+});
+
 test('action: pending cleanup keeps a branch that another worktree checks out', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,

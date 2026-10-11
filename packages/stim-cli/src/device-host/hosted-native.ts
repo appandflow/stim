@@ -32,6 +32,7 @@ import {
   hostedSession,
   settle,
   heldNoLonger,
+  stoppedSession,
   unknownSession,
   bundleManifest,
   sha256,
@@ -264,6 +265,7 @@ export async function placeHostedNative(
     };
     reserved(placement);
     session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform, runCancellationSignal());
+    if (session.state === 'stopped') throw stoppedSession(host, session);
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
     if (

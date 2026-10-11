@@ -1476,6 +1476,13 @@ export async function detectLinkedLibraryGitMetadata(
   };
 }
 
+function appPathInRepository(projectRoot: string): string {
+  const top = repoRoot(projectRoot);
+  if (!top) return '';
+  const path = relative(realpathSync(top), realpathSync(projectRoot));
+  return path.startsWith('..') ? '' : path;
+}
+
 export async function detectFingerprintParity(
   projectRoot: string,
   {
@@ -1533,14 +1540,15 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const headSkipped = fingerprintConfigSkipped(worktree) ?? coldFingerprintRunsProjectCode(worktree, platform);
+    const headApp = join(worktree, appPathInRepository(projectRoot));
+    const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
     if (headSkipped) return headSkipped;
     const project = await fingerprintProject(projectRoot, {
       platform,
       iosProjectPath,
       createFingerprint: coldFingerprint,
     });
-    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const clean = await fingerprintProject(headApp, { platform, iosProjectPath, createFingerprint: coldFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({

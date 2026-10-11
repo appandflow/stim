@@ -363,3 +363,29 @@ export function watchPayload(previous: StatusPayload | null, next: StatusPayload
   }
   return payload;
 }
+
+const holdPullRequest = <T extends { pullRequest?: { checkedAt: string } | null }>(worktree: T): T =>
+  worktree.pullRequest ? { ...worktree, pullRequest: { ...worktree.pullRequest, checkedAt: '' } } : worktree;
+
+/**
+ * The string `status --watch --json` compares to decide whether a line is new. It is the payload with the bookkeeping
+ * timestamps masked: each `pullRequest.checkedAt`, `maintenance.lastChecks`, `maintenance.lastPass.startedAt` and
+ * `durationMs`, and `maintenance.running.startedAt`. A change in only those fields prints no line; any printed line
+ * carries the current values.
+ */
+export function watchChangeKey(payload: StatusPayload): string {
+  const { maintenance } = payload;
+  return JSON.stringify({
+    ...payload,
+    environments: payload.environments.map((env) =>
+      env.worktree ? { ...env, worktree: holdPullRequest(env.worktree) } : env,
+    ),
+    unprovisionedWorktrees: payload.unprovisionedWorktrees.map(holdPullRequest),
+    maintenance: maintenance && {
+      ...maintenance,
+      lastChecks: { pressure: null, size: null, worktree: null, sweep: null },
+      lastPass: maintenance.lastPass && { ...maintenance.lastPass, startedAt: 0, durationMs: 0 },
+      running: maintenance.running && { ...maintenance.running, startedAt: '' },
+    },
+  });
+}
