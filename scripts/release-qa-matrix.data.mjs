@@ -350,6 +350,7 @@ export const pathRules = [
   { path: 'README.md', exempt: 'documentation' },
   { path: 'RELEASE.md', exempt: 'documentation' },
   { path: 'LICENSE', exempt: 'license' },
+  { path: 'knip.json', exempt: 'repository tooling, not published behavior' },
   { path: 'knip.ts', exempt: 'repository tooling, not published behavior' },
   { path: 'package.json', exempt: 'workspace root manifest, not published' },
   { path: 'packaging/store', exempt: 'repository tooling, not published behavior' },
