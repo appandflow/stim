@@ -60,6 +60,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   let pendingState: string;
   let readyAt: number;
   let readyDevice: unknown;
+  let notice: string | undefined;
   let recorded: Placement | undefined;
 
   beforeEach(() => {
@@ -73,6 +74,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     pendingState = 'preparing';
     readyAt = 240_000;
     readyDevice = devices[platform];
+    notice = undefined;
     recorded = undefined;
     const connection = Object.create(BuildConnection.prototype) as BuildConnection;
     connection.close = vi.fn<() => void>();
@@ -98,7 +100,14 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       if (method === 'device-host.reserve' || method === 'device-host.attach') {
         const state = Date.now() >= readyAt ? 'ready' : pendingState;
         return {
-          result: { id: session, platform, appSlot: 1, state, device: state === 'ready' ? readyDevice : null },
+          result: {
+            id: session,
+            platform,
+            appSlot: 1,
+            state,
+            device: state === 'ready' ? readyDevice : null,
+            ...(notice ? { notice } : {}),
+          },
         };
       }
       if (method === 'device-host.metro.close') return { result: {} };
@@ -250,6 +259,16 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(
       methods.some(({ method }) => method === 'device-host.reserve' || method.startsWith('device-host.app.')),
     ).toBe(false);
+  });
+
+  test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
+    pendingState = 'stopped';
+    readyAt = Infinity;
+    notice = 'Host memory pressure is unknown or elevated.';
+    const result = String(await place().catch((error: unknown) => error));
+    expect(result).toContain('stopped before it was ready: Host memory pressure is unknown or elevated. Retry');
+    expect(result).not.toMatch(/unknown state|Run stim stop/);
+    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
   });
 
   test('still refuses a ready reply without the reserved device identity', async () => {
