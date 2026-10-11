@@ -18,7 +18,6 @@ import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   apkOutputsDir,
   buildAndroid as buildAndroidImpl,
-  debugApkDir,
   discoverAndroidProject,
   gradlewPath,
   readProductFlavors,
@@ -86,7 +85,7 @@ function makeAndroidProject({ gradlew = true } = {}) {
 }
 
 function writeApk(name = 'app-debug.apk', contents = 'apk') {
-  const dir = debugApkDir(defaultAndroidLayout(root));
+  const dir = join(apkOutputsDir(defaultAndroidLayout(root)), 'debug');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), contents);
   return join(dir, name);
@@ -250,7 +249,7 @@ describe('locateApk', () => {
     writeApk('app-debug.apk');
     const flavoured = writeApk('app-staging-debug.apk');
     writeFileSync(
-      join(debugApkDir(defaultAndroidLayout(root)), 'output-metadata.json'),
+      join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'output-metadata.json'),
       JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }),
     );
     expect(locateApk(root, 'BUILD SUCCESSFUL in 3s').apkPath).toBe(flavoured);
@@ -455,7 +454,7 @@ describe('buildAndroid', () => {
     expect(stdio[0]).toBe('ignore');
 
     assert(result.ok);
-    expect(result.apkPath).toBe(join(debugApkDir(defaultAndroidLayout(root)), 'app-debug.apk'));
+    expect(result.apkPath).toBe(join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'app-debug.apk'));
     expect(result.durationMs).toBe(41000);
     const [start, ...transcript] = writer.records;
     assert(start);

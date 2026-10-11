@@ -156,38 +156,6 @@ export async function listAllIosSimsAsync({ timeoutMs = 30000 }: { timeoutMs?: n
   return parseSimctlList(out);
 }
 
-export function listBootedIosSims(): IosSimRecord[] {
-  return listAllIosSims().filter((s) => s.state === 'Booted');
-}
-
-export function parseOccupyingApps(launchctlOutput: string): string[] {
-  if (typeof launchctlOutput !== 'string' || launchctlOutput.length === 0) return [];
-  const ids: string[] = [];
-  for (const line of launchctlOutput.split('\n')) {
-    const m = line.match(/UIKitApplication:([^[\s]+)/);
-    if (!m) continue;
-    const bundleId = m[1];
-    if (bundleId === undefined) continue;
-    if (bundleId.startsWith('com.apple.')) continue;
-    if (!bundleId.endsWith('.xctrunner')) continue;
-    ids.push(bundleId);
-  }
-  return ids;
-}
-
-export function occupyingApps(udid: string): string[] | null {
-  let sim: IosSimRecord | undefined;
-  try {
-    sim = listAllIosSims().find((s) => s.udid === udid);
-  } catch {
-    sim = undefined;
-  }
-  if (sim && sim.state !== 'Booted') return [];
-  const out = getExecutor().runFileQuiet('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], SIMCTL_OPTIONS);
-  if (out === null || out === undefined) return null;
-  return parseOccupyingApps(out);
-}
-
 export function parseRuntimeVersion(runtimeId: string): string {
   const m = runtimeId.match(/iOS-(\d+)(?:-(\d+))?$/);
   if (!m) return runtimeId;

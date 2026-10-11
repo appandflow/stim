@@ -40,7 +40,7 @@ import { simslimIsOnPath } from '../engine/simslim.ts';
 import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor } from '../engine/xcode.ts';
 import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
@@ -72,11 +72,10 @@ import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
 import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
-export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
 
 type AnyJson = Record<string, unknown>;
 
-export { detectXcodeMajor, parseXcodeMajor };
+export { detectXcodeMajor };
 
 export interface Finding {
   code?: string;

@@ -823,10 +823,6 @@ export function wipeAvdUserData(directory: string): void {
   for (const name of AVD_USER_DATA) rmSync(join(directory, name), { recursive: true, force: true });
 }
 
-export function withAvdDataPartitionSize(contents: string, sizeBytes: number): string {
-  return withAvdConfigOverrides(contents, { 'disk.dataPartition.size': String(sizeBytes) });
-}
-
 export function withAvdConfigOverrides(contents: string, overrides: Readonly<Record<string, string>>): string {
   const newline = contents.includes('\r\n') ? '\r\n' : '\n';
   const trailingNewline = /\r?\n$/.test(contents);

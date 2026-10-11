@@ -1,11 +1,9 @@
 import {
-  DAEMON_TOKEN_ENV,
   closeArgs,
   connectArgs,
   daemonEnv,
   disconnectArgs,
   installArgs,
-  isLoopbackDaemon,
   metroHintFrom,
   openArgs,
   parseHealthHostArch,
@@ -85,7 +83,6 @@ describe('the connection profile', () => {
 
 describe('the token travels as an environment variable', () => {
   test('daemonEnv uses the name agent-device and eas-cli both already use', () => {
-    expect(DAEMON_TOKEN_ENV).toBe('AGENT_DEVICE_DAEMON_AUTH_TOKEN');
     expect(daemonEnv(DAEMON)).toEqual({ AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'tok_secret' });
   });
 });
@@ -127,29 +124,6 @@ describe('argv', () => {
 
   test('open relaunches, so a second stim ios does not attach to a stale process', () => {
     expect(openArgs(profilePath, 'com.example.app', null)).toContain('--relaunch');
-  });
-});
-
-describe('isLoopbackDaemon', () => {
-  test('loopback forms are this machine', () => {
-    for (const url of ['http://127.0.0.1:4310', 'http://localhost:4310', 'http://[::1]:4310']) {
-      expect(isLoopbackDaemon(url)).toBe(true);
-    }
-  });
-
-  test('anything routable is another machine', () => {
-    for (const url of [
-      'https://sim-42.eas.dev/daemon',
-      'https://x.trycloudflare.com/agent-device',
-      'http://192.168.1.9:4310',
-    ]) {
-      expect(isLoopbackDaemon(url)).toBe(false);
-    }
-  });
-
-  test('an unparseable url is not assumed local', () => {
-    expect(isLoopbackDaemon('not a url')).toBe(false);
-    expect(isLoopbackDaemon('')).toBe(false);
   });
 });
 

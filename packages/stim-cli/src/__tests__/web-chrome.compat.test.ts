@@ -12,7 +12,7 @@ import { findChrome } from '../web/chrome.ts';
 import { runReload } from '../commands/reload.ts';
 import { liveWebRecord } from '../web/page.ts';
 import { readWebPage, readWebRecord, webLogFile } from '../web/state.ts';
-import { setProjectSetting, upsertProject } from '../workspace/config.ts';
+import { upsertProject, writeConfigSetting } from '../workspace/config.ts';
 
 const PAGE = `<!doctype html><title>stim web compat</title><body>ok
 <button id="go" onclick="history.pushState({}, '', '/next')">Go</button><input id="field" aria-label="Field">
@@ -58,7 +58,7 @@ test('real Chrome accepts the owned-profile argv, reports page logs and launched
   const chrome = findChrome();
   assert(chrome, 'No Chrome or Chromium is installed; the web compatibility stage needs one.');
   upsertProject(root, {});
-  setProjectSetting(root, 'web.url', `http://127.0.0.1:${port}/`);
+  writeConfigSetting({ scope: 'workspace', projectPath: root }, 'web.url', `http://127.0.0.1:${port}/`);
   const notes: string[] = [];
   const result = await runWeb({ root, headed: false, note: (line) => notes.push(line) });
   assert(result.ok, `stim web failed: ${JSON.stringify(result)} ${notes.join('\n')}`);

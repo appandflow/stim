@@ -54,7 +54,6 @@ import {
   waitForAndroidEmulatorShutdown,
   waitForBoot,
   withAvdConfigOverrides,
-  withAvdDataPartitionSize,
 } from '../devices/android.ts';
 
 let tmpHome: string;
@@ -286,17 +285,17 @@ test('ownedAvdDirectory returns null when every emulator root is missing and ign
   ).toBe(null);
 });
 
-test('withAvdDataPartitionSize replaces duplicates and preserves unrelated config', () => {
+test('withAvdConfigOverrides keeps CRLF line endings and unrelated config', () => {
   expect(
-    withAvdDataPartitionSize(
+    withAvdConfigOverrides(
       'hw.cpu.ncore=4\r\ndisk.dataPartition.size=10G\r\ntag.id=google_apis\r\ndisk.dataPartition.size=8G\r\n',
-      6 * 1024 ** 3,
+      { 'disk.dataPartition.size': '6442450944' },
     ),
   ).toBe('hw.cpu.ncore=4\r\ndisk.dataPartition.size=6442450944\r\ntag.id=google_apis\r\n');
 });
 
-test('withAvdDataPartitionSize appends a missing value without changing newline termination', () => {
-  expect(withAvdDataPartitionSize('hw.cpu.ncore=4', 8 * 1024 ** 3)).toBe(
+test('withAvdConfigOverrides appends a missing value without changing newline termination', () => {
+  expect(withAvdConfigOverrides('hw.cpu.ncore=4', { 'disk.dataPartition.size': '8589934592' })).toBe(
     'hw.cpu.ncore=4\ndisk.dataPartition.size=8589934592',
   );
 });

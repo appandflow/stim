@@ -1,13 +1,23 @@
 import {
   MAX_DIAGNOSTICS,
   capDiagnostics,
+  createXcodeDiagnosticCollector,
   describeDiagnostic,
-  extractXcodeDiagnostics,
 } from '../engine/errors-xcode.ts';
 import type { Diagnostic } from '../engine/errors-xcode.ts';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+function extractXcodeDiagnostics(
+  transcript: string,
+  root: string | null = null,
+  sdk = 'iphonesimulator',
+): Diagnostic[] {
+  const collector = createXcodeDiagnosticCollector(root, sdk);
+  for (const line of transcript.split('\n')) collector.push(line);
+  return collector.diagnostics;
+}
 
 const REAL_COMPILE_FAILURE = [
   "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
@@ -317,9 +327,6 @@ describe('what is and is not a diagnostic', () => {
   test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
     expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
     expect(extractXcodeDiagnostics('')).toEqual([]);
-    expect(extractXcodeDiagnostics(null as unknown as string)).toEqual([]);
-    expect(extractXcodeDiagnostics(undefined as unknown as string)).toEqual([]);
-    expect(extractXcodeDiagnostics(42 as unknown as string)).toEqual([]);
   });
 
   test('CRLF transcripts parse the same as LF ones', () => {

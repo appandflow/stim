@@ -20,12 +20,8 @@ import {
   withManagedTunnelLock,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import {
-  workspaceAgentDeviceDir,
-  supervisorLogFile,
-  workspaceLogsDir,
-  workspaceMetadataFile,
-} from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, supervisorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceMetadataFile } from '@stim-cli/core/state';
 import { clearWorkspaceStateKeys, readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readMetroTunnel } from '../supervisor/state.ts';
 import * as supervisorState from '../supervisor/state.ts';

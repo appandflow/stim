@@ -109,17 +109,6 @@ function dedupeKey(d: Diagnostic): string {
   return `${d.file || ''}|${d.line || ''}|${d.column || ''}|${d.message}`;
 }
 
-export function extractXcodeDiagnostics(
-  transcript: string,
-  root: string | null = null,
-  sdk: string = 'iphonesimulator',
-): Diagnostic[] {
-  if (typeof transcript !== 'string' || transcript === '') return [];
-  const collector = createXcodeDiagnosticCollector(root, sdk);
-  for (const line of transcript.split('\n')) collector.push(line);
-  return collector.diagnostics;
-}
-
 export function createXcodeDiagnosticCollector(
   root: string | null = null,
   sdk: string = 'iphonesimulator',

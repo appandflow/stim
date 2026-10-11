@@ -23,7 +23,6 @@ import {
   checkCcacheConflict,
   checkCcacheInstalled,
   checkCxxCompilerLauncher,
-  parseCmakeCacheLauncher,
   checkEasAuth,
   checkFingerprintParity,
   checkMetroCache,
@@ -37,11 +36,12 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
   detectXcodeMajor,
-  parseXcodeMajor,
   checkConcurrency,
   checkAndroidSdk,
   type Finding,
 } from '../diagnostics/doctor.ts';
+import { parseXcodeMajor } from '../engine/xcode.ts';
+import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';

@@ -5,7 +5,6 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 export {
   appProjectProblem,
-  declaresAppDependency,
   detectIsExpo,
   detectTutorial,
   isPackageResolvable,
@@ -17,11 +16,6 @@ export const findProjectRoot: ProjectRegistry['findProjectRoot'] = projectRegist
 export const projectProblem: ProjectRegistry['projectProblem'] = projectRegistry.projectProblem;
 export const isMobileProject: ProjectRegistry['isMobileProject'] = projectRegistry.isMobileProject;
 import { repoRoot } from './worktree.ts';
-
-export interface ResolveResult {
-  found: string | null;
-  error?: string;
-}
 
 export function projectShortcut(path: string, proj: ProjectRecord | null | undefined): string {
   if (proj?.label) return proj.label;
@@ -48,48 +42,6 @@ export const NO_PROJECT_REFUSAL = {
   message: 'No supported app project was found from this directory.',
   remedy: 'Run this from the directory of a supported app.',
 };
-
-export function resolveRegisteredProject(arg?: string | null): ResolveResult {
-  const cfg = loadConfig();
-  const projects = cfg?.projects || {};
-
-  if (!arg) {
-    const root = findProjectRoot(process.cwd());
-    if (!root) return { found: null, error: NO_PROJECT_REFUSAL.message };
-    if (!projects[root])
-      return {
-        found: null,
-        error: `No Stim entry for ${root}. Run \`stim start\` or \`stim ios\` there first.`,
-      };
-    return { found: root };
-  }
-
-  let abs: string;
-  try {
-    abs = realpathSync(resolve(arg));
-  } catch {
-    abs = resolve(arg);
-  }
-  if (projects[abs]) return { found: abs };
-  if (projects[arg]) return { found: arg };
-
-  const matches = Object.keys(projects).filter((p) => projectShortcut(p, projects[p]) === arg);
-  if (matches.length === 1) {
-    const only = matches[0];
-    if (only !== undefined) return { found: only };
-  }
-  if (matches.length > 1) {
-    return {
-      found: null,
-      error: `Multiple projects share the shortcut "${arg}": ${matches.join(', ')}. Pass the absolute path or set a unique --label.`,
-    };
-  }
-
-  return {
-    found: null,
-    error: `No registered project matches "${arg}". See \`stim status\` for the list.`,
-  };
-}
 
 export function findServerWorkspace(
   startDir: string,

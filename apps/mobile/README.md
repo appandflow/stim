@@ -1383,7 +1383,7 @@ pnpm run licenses:check
 ```
 
 Run `pnpm run knip` from the repository root instead of from `apps/mobile`: it
-covers the app as one workspace of the root `knip.json`, so it reports unused
+covers the app as one workspace of the root `knip.ts`, so it reports unused
 files, exports and dependencies across the app and the rest of the repository.
 knip's Expo, Jest, Metro and Babel plugins find the `src/app` routes and the
 config files; the workspace entry adds the config plugins, the mock server,
@@ -1406,7 +1406,7 @@ a few 1.0.0 bailouts pass lint. One is a conditional, `??`, `||` or optional
 chain inside a `try` block.
 
 `.github/workflows/mobile.yml` runs them for changes under `apps/mobile` and to
-the root `knip.json`, `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
+the root `knip.ts`, `package.json`, `pnpm-lock.yaml` and `pnpm-workspace.yaml`.
 
 `src/app-boot.test.tsx` is the boot test. It renders the whole app, from
 `src/app/_layout.tsx` down to home, in Jest. The phone starts from what the
