@@ -827,7 +827,10 @@ struct RootView: View {
     pendingLink = nil
     let path = target.workspace.path
     let deviceID = target.device?.id
-    guard !notices.contains(key: WorkspaceArrivals.cardKey(path)) else { return }
+    guard !notices.contains(key: WorkspaceArrivals.cardKey(path)) else {
+      toasts.dismiss(key: "workspace-link:\(path)")
+      return
+    }
     toasts.show(
       Toast(
         icon: "macwindow", tone: .accent, title: "\(target.workspace.names.title) \u{00B7} workspace started",
