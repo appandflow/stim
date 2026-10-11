@@ -82,24 +82,28 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 const FAKE_STATUS_WORKER = `
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { parentPort, threadId, workerData } from 'node:worker_threads';
 const env = process.env;
 mkdirSync(env.FAKE_STIM_PIDS, { recursive: true });
-const beat = join(env.FAKE_STIM_PIDS, 'status-worker.' + threadId);
+const lifecycle = (event) => appendFileSync(join(env.FAKE_STIM_PIDS, 'status-workers'), event + ' ' + threadId + '\\n');
+lifecycle('start');
 appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker', cwd: workerData.cwd }) + '\\n');
 const payloads = JSON.parse(env.FAKE_STIM_PAYLOADS);
 let index = 0;
 parentPort.on('message', (message) => {
   if (message !== 'stop') return;
   appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker stop', cwd: workerData.cwd }) + '\\n');
+  lifecycle('stop');
   process.exit(0);
 });
 setInterval(() => {
-  writeFileSync(beat, String(Date.now()));
   if (index < payloads.length) return void parentPort.postMessage({ line: JSON.stringify(payloads[index++]) });
-  if (env.FAKE_STIM_EXIT) process.exit(3);
+  if (env.FAKE_STIM_EXIT) {
+    lifecycle('stop');
+    process.exit(3);
+  }
 }, 20);
 `;
 
@@ -469,13 +473,17 @@ async function until(check: () => boolean, tries = 200): Promise<void> {
   expect(check()).toBe(true);
 }
 
-/** The fake status watch workers that ran in the last 200 ms. */
+/** The fake status watch workers that started and have not stopped. */
 function statusWorkers(): string[] {
-  if (!existsSync(pids)) return [];
-  return readdirSync(pids).filter(
-    (name) =>
-      name.startsWith('status-worker.') && Date.now() - Number(readFileSync(join(pids, name), 'utf8') || 0) < 200,
-  );
+  const file = join(pids, 'status-workers');
+  if (!existsSync(file)) return [];
+  const running = new Set<string>();
+  for (const line of readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+    const [event, id] = line.split(' ');
+    if (event === 'start') running.add(id!);
+    else running.delete(id!);
+  }
+  return [...running];
 }
 
 function childPids(): number[] {
