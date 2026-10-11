@@ -6,8 +6,8 @@ front of it.
 
 The local filesystem is always the first tier. A project can add one optional
 second tier by pointing `cache.provider` at a module that implements this
-contract. Stim ships no network provider; writing one is an addition, not a
-change to Stim.
+contract. `@stim-cli/cache/s3` provides an S3-compatible second tier, including
+Cloudflare R2.
 
 If Stim is not installed globally, replace `stim` with `npx stim`.
 
@@ -29,6 +29,59 @@ from the layer that selects the provider, higher-precedence layers that name no
 provider, and lower-precedence layers that name the same provider resolved from
 the same directory; options written for another provider are ignored. Keep secrets out of
 committed settings; read them from the environment or from machine settings.
+
+## S3-compatible storage
+
+Install `@stim-cli/cache` in the project, then select its S3 provider in
+`.stim.json`:
+
+```json
+{
+  "cache": {
+    "provider": "@stim-cli/cache/s3",
+    "options": {
+      "bucket": "stim-cache",
+      "endpoint": "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com",
+      "region": "auto",
+      "prefix": "team/cache-v1"
+    }
+  }
+}
+```
+
+For AWS S3, omit `endpoint` and use the bucket's region. Other S3-compatible
+services can set `forcePathStyle: true` when required. Credentials use the AWS
+SDK's standard credential chain. For a named profile in `~/.aws/credentials`,
+set `cache.options.profile` to `stim-r2`, or run commands with
+`AWS_PROFILE=stim-r2`, for example `AWS_PROFILE=stim-r2 stim ios`. An explicit
+cache profile overrides the ambient AWS profile. Credentials never belong in `.stim.json`.
+
+Create a private R2 bucket and an R2 API token with Object Read & Write access
+scoped to that bucket. Copy the S3 endpoint shown by Cloudflare; jurisdiction
+specific buckets use their own endpoint. See the
+[R2 S3 setup guide](https://developers.cloudflare.com/r2/get-started/s3/).
+
+The provider shares completed native `.app`/`.apk` artifacts and Metro values
+through one file transport. Stim checks its local tier first and promotes build
+hits locally. Build archives preserve file modes and contained framework links;
+downloads verify SHA-256 before becoming reusable. Conditional writes preserve
+existing build entries unless overwrite was requested. Use matching native
+toolchains for the initial test; the provider does not add toolchain information
+to Stim's existing build key.
+
+The file transport is also exported as `createS3FileCache()` from
+`@stim-cli/cache/s3`, with the `FileCacheCapability` interface exported from
+`@stim-cli/cache`. A cache adapter supplies a compatible key and a completed
+file, then owns the downloaded file inside its destination directory. This
+allows dependency snapshots and other cache adapters to reuse the transport
+later. Other Stim home directories are not automatically synchronized.
+
+Objects use `<prefix>/builds/<platform>/<key>` and
+`<prefix>/metro/<cacheName>/<hex-key>`. A prefix defaults to `stim/v1`. Keep
+incompatible snapshot formats in separate key namespaces. Retention belongs to
+the bucket lifecycle configuration; local GC never removes shared objects.
+Uploads use a single S3 PUT, so entries larger than S3's 5 GiB limit are not
+supported by this initial provider.
 
 ## Writing a provider
 
@@ -53,9 +106,16 @@ export async function createCacheProvider({ projectRoot, options }) {
 }
 ```
 
-A provider implements one or both capabilities. It owns transport,
+A provider implements one or more capabilities. It owns transport,
 serialization, archive format, authentication, and remote retention. Stim owns
 fingerprints, cache keys, and local artifact paths.
+
+The optional `files` capability stores opaque complete files with
+`store({ key, sourcePath, overwrite, signal })` and downloads them with
+`resolve({ key, destinationDir, signal })`. A hit returns a path inside
+`destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
+the `metro` and `builds` adapters; a files-only provider is available to cache
+adapters that use this interface directly.
 
 `metro.get` returns the stored value or `null`.
 
@@ -112,8 +172,8 @@ const results = await runCacheProviderContract({
 ```
 
 `cacheProviderContractChecks()` returns the same checks as individual cases for
-a test runner that reports each one separately. Both helpers only check the
-capabilities a provider advertises, bound every check with a deadline, and
+a test runner that reports each one separately. Both helpers check advertised
+Metro and build capabilities, bound every check with a deadline, and
 verify that a call settles once its `AbortSignal` aborts.
 
 ## Budgets

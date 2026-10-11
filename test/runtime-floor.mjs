@@ -41,6 +41,7 @@ const entrypoints = [
   ['@stim-cli/core/state', 'loadConfig'],
   ['@stim-cli/core/oversight', 'oversee'],
   ['@stim-cli/cache', 'loadCacheProvider'],
+  ['@stim-cli/cache/s3', 'createS3FileCache'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
   ['stim/cache-manifest', 'readManifest'],
