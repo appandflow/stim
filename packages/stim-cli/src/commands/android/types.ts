@@ -82,6 +82,7 @@ export interface RunAndroidResult {
   ok: boolean;
   error?: { code?: string; message?: string | null; remedy?: string | null };
   facts?: AndroidFacts;
+  uploadsAbandoned?: boolean;
 }
 
 export interface AndroidBootLike {

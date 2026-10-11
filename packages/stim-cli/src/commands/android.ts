@@ -109,7 +109,7 @@ import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 
 import { CCACHE_NOT_RUN } from '../engine/ccache.ts';
-import { checkEasAuth, resolveEasCliBin, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
+import { checkEasAuth, exitAfterFlush, resolveEasCliBin, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import {
   androidBuildOptions,
   androidDevClientScheme,
@@ -253,6 +253,7 @@ export function registerAndroid(program: Command): void {
       }
       const result = await runAndroidOperation(root, { ...opts, waitConflict: waitFlagConflict(process.argv) });
       if (!result.ok) process.exit(runCancellation() ? 130 : 1);
+      else if (result.uploadsAbandoned) exitAfterFlush(0);
     });
 }
 
