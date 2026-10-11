@@ -6,6 +6,7 @@ import { AppState } from 'react-native';
 
 import '@/design/unistyles';
 
+import { statusViews } from '@stim-cli/core/phone-protocol';
 import statusFixture from '../mock-server/fixtures/status.json';
 
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
@@ -115,7 +116,7 @@ jest.mock('expo-notifications', () => ({
 const MAC_ID = 'mac1';
 const ENDPOINT = 'ws://mock-mac:7787';
 
-/** Answers `hello` and `status.subscribe` like stim-server, with the mock server's captured status. */
+/** Answers `hello` and the status views like stim-server, with the mock server's captured status. */
 class FakeSocket {
   static sent: string[] = [];
   onopen: (() => void) | null = null;
@@ -151,9 +152,19 @@ class FakeSocket {
           device: { id: 'phone', name: 'Phone' },
         },
       });
-    } else if (method === 'status.subscribe') {
-      reply({ id, result: { subscription: 's1' } });
-      reply({ event: 'status', subscription: 's1', payload: statusFixture.payload });
+    } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
+      const views = statusViews(statusFixture.payload as Parameters<typeof statusViews>[0]);
+      const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
+      reply({ id, result: { subscription } });
+      const { workspaces, worktrees, archived, machine } = views;
+      reply(
+        method === 'workspaces.subscribe'
+          ? { event: 'workspaces', subscription, seq: 0, snapshot: { workspaces, worktrees, archived } }
+          : { event: 'machine', subscription, seq: 0, machine },
+      );
+    } else if (method === 'archived.list') {
+      const archivedList = statusFixture.payload.archived ?? [];
+      reply({ id, result: { archived: archivedList, usage: statusFixture.payload.archivedUsage, next: null } });
     } else {
       reply({ id, error: { code: 'not-implemented', message: `The boot test does not serve ${method}.` } });
     }
@@ -237,7 +248,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   await renderRouter('./src/app', { initialUrl: '/' });
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
   await act(() => jest.advanceTimersByTimeAsync(1000));
-  expect(FakeSocket.sent).toContain('status.subscribe');
+  expect(FakeSocket.sent).toContain('workspaces.subscribe');
   await act(async () => {
     activate();
     await jest.advanceTimersByTimeAsync(1000);

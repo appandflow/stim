@@ -12,6 +12,7 @@ import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import { StatusCache } from '@/lib/status-cache';
+import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/lib/status-views';
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
 import { statusStorage } from '@/storage';
 
@@ -23,6 +24,71 @@ const machines = createMachineStore({ cache: new StatusCache(statusStorage) });
 AppState.addEventListener('change', (state) => {
   if (state !== 'active') machines.flushAll();
 });
+
+const views = new Map<string, StatusViews>();
+const connections = new Map<string, StimConnection>();
+const followed = new Map<string, { count: number; stop: () => void }>();
+
+function publish(macId: string): void {
+  const payload = viewsPayload(views.get(macId) ?? EMPTY_VIEWS);
+  if (payload) machines.receiveStatus(macId, payload);
+}
+
+function update(macId: string, change: (current: StatusViews) => StatusViews): void {
+  views.set(macId, change(views.get(macId) ?? EMPTY_VIEWS));
+  publish(macId);
+}
+
+/** Holds `workspace.subscribe` for `path` on `macId` while any screen follows it, so it shows the full environment. */
+function follow(macId: string, path: string): () => void {
+  const key = `${macId}\n${path}`;
+  const held = followed.get(key);
+  if (held) held.count++;
+  else {
+    const connection = connections.get(macId);
+    const stop = connection
+      ? connection.subscribe('workspace.subscribe', { workspace: path }, (event) => {
+          if (event.event !== 'workspace') return;
+          update(macId, (current) => {
+            const details = { ...current.details };
+            if (event.environment) details[path] = event.environment;
+            else delete details[path];
+            return { ...current, details };
+          });
+        })
+      : () => {};
+    followed.set(key, { count: 1, stop });
+  }
+  return () => {
+    const entry = followed.get(key);
+    if (!entry || --entry.count > 0) return;
+    entry.stop();
+    followed.delete(key);
+    update(macId, (current) => {
+      if (!(path in current.details)) return current;
+      const details = { ...current.details };
+      delete details[path];
+      return { ...current, details };
+    });
+  };
+}
+
+async function readArchives(macId: string, connection: StimConnection, summary: string): Promise<void> {
+  const archived: NonNullable<StatusViews['archives']>['archived'] = [];
+  let usage: NonNullable<StatusViews['archives']>['usage'] | null = null;
+  let before: string | null = null;
+  do {
+    const page: Awaited<ReturnType<typeof connection.request<'archived.list'>>> = await connection.request(
+      'archived.list',
+      before ? { before } : {},
+    );
+    archived.push(...page.archived);
+    usage = page.usage;
+    before = page.next;
+  } while (before);
+  if (JSON.stringify(views.get(macId)?.archivedSummary ?? null) !== summary) return;
+  update(macId, (current) => ({ ...current, archives: usage ? { archived, usage } : null }));
+}
 
 function useMachines<T>(selector: (state: MachinesState) => T): T {
   return useStore(machines.store, selector);
@@ -103,14 +169,41 @@ function MacLink({ mac }: { mac: PairedMac }) {
 
   useEffect(() => {
     if (!connection) return;
-    return connection.subscribe('status.subscribe', {}, (event) => {
-      if (event.event !== 'status') return;
-      machines.receiveStatus(
-        mac.id,
-        event.ownLeases ? { ...event.payload, ownLeases: event.ownLeases } : event.payload,
-      );
+    connections.set(mac.id, connection);
+    let archivesRead: string | null = null;
+    let stopWorkspaces = () => {};
+    const subscribeWorkspaces = () => {
+      stopWorkspaces = connection.subscribe('workspaces.subscribe', {}, (event) => {
+        if (event.event !== 'workspaces') return;
+        const next = applyWorkspaces(views.get(mac.id) ?? EMPTY_VIEWS, event);
+        if (next === 'gap') {
+          stopWorkspaces();
+          subscribeWorkspaces();
+          return;
+        }
+        views.set(mac.id, next);
+        const summary = JSON.stringify(next.archivedSummary);
+        if (summary !== archivesRead) {
+          archivesRead = summary;
+          readArchives(mac.id, connection, summary).catch(() => {
+            if (archivesRead === summary) archivesRead = null;
+          });
+        }
+        publish(mac.id);
+      });
+    };
+    subscribeWorkspaces();
+    const stopMachine = connection.subscribe('machine.subscribe', {}, (event) => {
+      if (event.event !== 'machine') return;
+      update(mac.id, (current) => ({ ...current, machine: event.machine, ownLeases: event.ownLeases }));
       machines.setHistory(mac.id, event.usage);
     });
+    return () => {
+      stopWorkspaces();
+      stopMachine();
+      connections.delete(mac.id);
+      views.delete(mac.id);
+    };
   }, [connection, mac.id]);
 
   usePolledRequest(
@@ -201,8 +294,14 @@ export function useMachineStatus(macId: string | undefined): StatusPayload | nul
   return useMachines((state) => (macId ? (state.snapshots[macId]?.status ?? null) : null));
 }
 
+/** The status of the Mac the current `/mac/[id]/...` route names, with the full environment of the workspace it shows. */
 export function useStatus(): StatusPayload | null {
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, path, archive } = useLocalSearchParams<{ id?: string; path?: string; archive?: string }>();
+  const online = useMachines((state) => (id ? state.links[id]?.connection : undefined));
+  useEffect(() => {
+    if (!id || !path || archive || !online) return;
+    return follow(id, path);
+  }, [id, path, archive, online]);
   return useMachineStatus(id);
 }
 

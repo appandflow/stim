@@ -1,4 +1,4 @@
-import { withDerivedFacts } from '@stim-cli/core/phone-protocol';
+import { statusViews, withDerivedFacts } from '@stim-cli/core/phone-protocol';
 
 import { filterRecords, shiftTimestamps, usageHistory } from '../../mobile/mock-server/payloads.mjs';
 
@@ -10,12 +10,7 @@ export interface Frame {
 }
 
 type Environment = Parameters<typeof withDerivedFacts>[0];
-
-interface StatusPayload {
-  environments: Environment[];
-  capacity: { totalMemoryMb: number };
-  machine?: { owners?: unknown[] };
-}
+type StatusPayload = Parameters<typeof statusViews>[0];
 
 interface LogRecord {
   ts: number;
@@ -109,6 +104,9 @@ const DEVICE_TOKEN_CONTEXT = 'stim-demo-device:';
 const ROOT = '/Users/demo/Developer';
 const SUBSCRIPTION_LIMITS = new Map([
   ['status.subscribe', 2],
+  ['workspaces.subscribe', 2],
+  ['machine.subscribe', 2],
+  ['workspace.subscribe', 8],
   ['logs.subscribe', 8],
   ['frames.subscribe', 16],
 ]);
@@ -340,6 +338,20 @@ export class DemoConnection {
     };
   }
 
+  private stream(
+    method: string,
+    event: (views: ReturnType<typeof statusViews>, seq: number, payload: StatusPayload) => Record<string, unknown>,
+  ): Outcome {
+    let seq = 0;
+    const send = (subscription: string) => {
+      const payload = this.machine.status();
+      this.send({ subscription, ...event(statusViews(payload), seq++, payload) });
+    };
+    const subscription = this.every(method, STATUS_MS, send);
+    setTimeout(() => this.timers.has(subscription) && send(subscription), 0);
+    return { result: { subscription } };
+  }
+
   private every(method: string, ms: number, tick: (subscription: string) => void): string {
     const subscription = `s${this.nextSubscription++}`;
     this.kinds.set(subscription, method);
@@ -380,6 +392,43 @@ export class DemoConnection {
         const subscription = this.every(method, STATUS_MS, (sub) => this.send(event(sub)));
         setTimeout(() => this.timers.has(subscription) && this.send(event(subscription)), 0);
         return { result: { subscription } };
+      }
+      case 'workspaces.subscribe':
+        return this.stream(method, (views, seq) => ({
+          event: 'workspaces',
+          seq,
+          snapshot: { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived },
+        }));
+      case 'workspace.subscribe': {
+        const workspace = params.workspace;
+        if (!machine.fixtures.status.environments.some((env) => env.path === workspace)) {
+          return { error: ['unknown-workspace', `${String(workspace)} is not a Stim workspace on this Mac.`] };
+        }
+        return this.stream(method, (views, seq) => ({
+          event: 'workspace',
+          seq,
+          environment: views.details.get(String(workspace)) ?? null,
+        }));
+      }
+      case 'machine.subscribe':
+        return this.stream(method, (views, seq, payload) => ({
+          event: 'machine',
+          seq,
+          machine: views.machine,
+          usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
+        }));
+      case 'archived.list': {
+        const archived = machine.status().archived ?? [];
+        const total = (kind: 'logs' | 'recordings' | 'agentActions' | 'record') =>
+          archived.reduce((sum, archive) => sum + archive.bytes[kind], 0);
+        const byKind = {
+          logs: total('logs'),
+          recordings: total('recordings'),
+          agentActions: total('agentActions'),
+          record: total('record'),
+        };
+        const bytes = archived.reduce((sum, archive) => sum + archive.bytes.total, 0);
+        return { result: { archived, usage: { count: archived.length, bytes, byKind }, next: null } };
       }
       case 'logs.query':
         return {

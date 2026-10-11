@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
+import { statusViews } from '@stim-cli/core/phone-protocol';
 import { withDerivedFacts } from '@stim-cli/core/state';
 import { WebSocketServer } from 'ws';
 
@@ -322,6 +323,17 @@ server.on('connection', (socket) => {
     return subscription;
   };
 
+  const stream = (event) => {
+    let seq = 0;
+    const tick = (subscription) => {
+      const payload = status();
+      send({ subscription, ...event(statusViews(payload), seq++, payload) });
+    };
+    const subscription = every(5000, tick);
+    setImmediate(() => timers.has(subscription) && tick(subscription));
+    return { result: { subscription } };
+  };
+
   const handlers = {
     hello(params) {
       if (params.protocol !== 1) return { error: ['protocol-unsupported', 'This server speaks protocol 1.'] };
@@ -358,6 +370,34 @@ server.on('connection', (socket) => {
       const subscription = every(5000, (id) => send(event(id)));
       setImmediate(() => send(event(subscription)));
       return { result: { subscription } };
+    },
+    'workspaces.subscribe'() {
+      return stream((views, seq) => ({
+        event: 'workspaces',
+        seq,
+        snapshot: { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived },
+      }));
+    },
+    'workspace.subscribe'(params) {
+      if (!fixtures.status.environments.some((env) => env.path === params.workspace))
+        return { error: ['unknown-workspace', `${params.workspace} is not a Stim workspace on this Mac.`] };
+      return stream((views, seq) => ({
+        event: 'workspace',
+        seq,
+        environment: views.details.get(params.workspace) ?? null,
+      }));
+    },
+    'machine.subscribe'() {
+      return stream((views, seq, payload) => ({
+        event: 'machine',
+        seq,
+        machine: views.machine,
+        usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
+      }));
+    },
+    'archived.list'() {
+      const payload = status();
+      return { result: { archived: payload.archived ?? [], usage: payload.archivedUsage, next: null } };
     },
     'logs.query'(params) {
       return { result: { records: filterRecords(logs, params) } };

@@ -3,6 +3,8 @@ import type * as State from './state/index.ts';
 
 export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
 export { withDerivedFacts } from './state/status-derived.ts';
+export { applyKeyedDelta } from './state/keyed-delta.ts';
+export { statusViews } from './state/status-views.ts';
 
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;
@@ -265,9 +267,10 @@ export type PhoneStatusPayload = Omit<
   ownLeases?: string[];
 };
 export type PhoneWorkspaceSummary = PhoneEnvironmentState;
-export type PhoneWorktreeRow = Pick<PhoneWorktreeFacts, 'path' | 'branch' | 'repository' | 'git' | 'gitChip'> & {
-  pullRequest?: { number: number; state: string } | null;
-};
+export type PhoneWorktreeRow = Pick<
+  PhoneWorktreeFacts,
+  'path' | 'branch' | 'repository' | 'git' | 'gitChip' | 'pullRequest'
+>;
 export type PhoneArchivedWorkspace = NonNullable<PhoneStatusPayload['archived']>[number];
 export type PhoneArchivedSummary = State.ArchivedSummary;
 export type PhoneMachineView = Omit<State.MachineView, 'machine' | 'maintenance'> & {
