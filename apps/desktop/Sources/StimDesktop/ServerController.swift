@@ -97,7 +97,8 @@ final class ServerController: ObservableObject {
       syncAdoption()
     }
   }
-  /// True while `state` comes from a server adopted before the login environment arrived; see `ServerAdoption`.
+  /// True while `state` comes from a server adopted or started before the login environment arrived; see
+  /// `ServerAdoption` and `ProvisionalServerStart`.
   @Published private(set) var provisional = false {
     didSet { syncAdoption() }
   }
@@ -113,6 +114,10 @@ final class ServerController: ObservableObject {
   private var environment: Task<[String: String], Never>?
   private var loginEnvironment: [String: String]?
   private var provisionalHome = StimHome.path(environment: [:])
+  private var provisionalServer: (executable: String, environment: [String: String])?
+  /// True while `process` was started from `provisionalServer`.
+  private var startedProvisionally = false
+  private var startsAtLogin = false
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -187,15 +192,23 @@ final class ServerController: ObservableObject {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
   }
 
-  func configure(environment: Task<[String: String], Never>, provisionalHome: String) {
+  func configure(
+    environment: Task<[String: String], Never>, provisionalHome: String,
+    provisionalServer: (executable: String, environment: [String: String])?
+  ) {
     self.environment = environment
     self.provisionalHome = provisionalHome
+    self.provisionalServer = provisionalServer
     Task {
       let login = await environment.value
       loginEnvironment = login
       if ProcessInfo.processInfo.environment["STIM_HOME"]?.hasPrefix("/") != true {
         UserDefaults.standard.set(StimHome.path(environment: login), forKey: AppPreferences.Key.lastLoginStimHome)
       }
+      let serverStart = ProvisionalServerStart.remembering(
+        environment: login, override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+      UserDefaults.standard.set(
+        serverStart.flatMap { try? JSONEncoder().encode($0) }, forKey: AppPreferences.Key.lastServerStart)
       LaunchMilestones.reach("login-environment")
       await verifyAdoption()
     }
@@ -239,6 +252,8 @@ final class ServerController: ObservableObject {
     generation += 1
     let current = generation
     provisional = false
+    startedProvisionally = false
+    startsAtLogin = false
     state = .starting
     retriesFailure = true
     missedProbes = 0
@@ -257,12 +272,21 @@ final class ServerController: ObservableObject {
         state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
         return
       }
-      let cli = await cli()
+      let server: StimServerCLI
+      if loginEnvironment == nil, let provisionalServer {
+        server = StimServerCLI(
+          environment: provisionalServer.environment,
+          override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+        startedProvisionally = true
+        provisional = true
+      } else {
+        server = await cli()
+      }
       guard current == generation else { return }
       output = []
       startedLoopbackOnly = wantsLoopbackOnly
       do {
-        process = try cli.serve(
+        process = try server.serve(
           port: port,
           loopbackOnly: startedLoopbackOnly,
           onLine: { line in
@@ -272,6 +296,7 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
+        guard !startedProvisionally else { return dropProvisionalStart("could not start: \(error.localizedDescription)") }
         failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
@@ -286,11 +311,12 @@ final class ServerController: ObservableObject {
         guard current == generation, process != nil else { return }
         if let probe {
           lastAnswer = probe
-          state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: cli.environment), port: port)
+          state = State(probe: probe, owned: true, resolvedHome: StimHome.path(environment: server.environment), port: port)
         }
         action = StartupAction(lastAnswer: lastAnswer, deadlinePassed: Date() >= deadline)
       }
       guard current == generation, process != nil, action == .fail else { return }
+      guard !(startedProvisionally && provisional) else { return dropProvisionalStart("no answer on port \(port)") }
       generation += 1
       terminate()
       failureKind = .noAnswer
@@ -302,6 +328,7 @@ final class ServerController: ObservableObject {
     DebugLog.info(.server, "stop requested")
     generation += 1
     terminate()
+    startedProvisionally = false
     state = .off
     provisional = false
   }
@@ -309,6 +336,31 @@ final class ServerController: ObservableObject {
   /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
   /// for again from the start, now with the login environment's Stim home.
   private func verifyAdoption() async {
+    if startsAtLogin {
+      startsAtLogin = false
+      start()
+      return
+    }
+    if provisional, startedProvisionally, let provisionalServer, let login = loginEnvironment {
+      if ProvisionalServerStart.verifies(
+        executable: provisionalServer.executable, started: provisionalServer.environment, login: login,
+        override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
+      {
+        provisional = false
+        LaunchMilestones.reach("server-start-verified")
+      } else {
+        DebugLog.warning(
+          .server, "stopping the provisionally started stim-server: the login environment resolves another start")
+        generation += 1
+        terminate()
+        startedProvisionally = false
+        self.provisionalServer = nil
+        state = .off
+        provisional = false
+        start()
+      }
+      return
+    }
     guard provisional, case .running(let adopted, owned: false) = state, let login = loginEnvironment else { return }
     let current = generation
     let probe = await StimServerCLI.health(port: port)
@@ -333,8 +385,25 @@ final class ServerController: ObservableObject {
     case .running(let health, _):
       adoption.set(provisional ? .provisional(home: health.stimHome) : .verified(home: health.stimHome))
     case .off, .starting, .notReady, .failed:
-      adoption.set(.none)
+      if provisional, let provisionalServer {
+        adoption.set(.provisional(home: StimHome.path(environment: provisionalServer.environment)))
+      } else {
+        adoption.set(.none)
+      }
     }
+  }
+
+  /// A provisional start that fails before the login environment arrives is not reported: the login environment
+  /// starts the server the normal way.
+  private func dropProvisionalStart(_ reason: String) {
+    DebugLog.warning(.server, "dropped the provisionally started stim-server: \(reason)")
+    generation += 1
+    terminate()
+    startedProvisionally = false
+    provisionalServer = nil
+    state = .off
+    provisional = false
+    if loginEnvironment == nil { startsAtLogin = true } else { start() }
   }
 
   /// Restarts the server Desktop started when the phone setting changes which addresses it should listen on. A
@@ -556,6 +625,7 @@ final class ServerController: ObservableObject {
   private func exited(_ status: Int32, generation: Int) {
     guard generation == self.generation else { return }
     process = nil
+    if startedProvisionally, provisional { return dropProvisionalStart("exited with status \(status)") }
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
     retriesFailure = !detail.contains("Unknown option '--loopback-only'")
     if !retriesFailure {

@@ -179,18 +179,26 @@ struct StimDesktopApp: App {
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
     let environment = Task.detached {
-      var environment = StimHome.environment(
+      let environment = StimHome.environment(
         await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment),
         launch: ProcessInfo.processInfo.environment)
-      if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
-      return environment
+      return Self.desktopEnvironment(environment)
     }
     let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
     let provisionalHome = ServerAdoption.provisionalHome(
       launch: ProcessInfo.processInfo.environment,
       lastLoginHome: UserDefaults.standard.string(forKey: AppPreferences.Key.lastLoginStimHome))
-    ServerController.shared.configure(environment: environment, provisionalHome: provisionalHome)
+    let serverStart = UserDefaults.standard.data(forKey: AppPreferences.Key.lastServerStart)
+      .flatMap { try? JSONDecoder().decode(ProvisionalServerStart.self, from: $0) }
+    ServerController.shared.configure(
+      environment: environment, provisionalHome: provisionalHome,
+      provisionalServer: serverStart.flatMap { start in
+        start.environment(
+          launch: ProcessInfo.processInfo.environment,
+          override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)
+        ).map { (start.executable, Self.desktopEnvironment($0)) }
+      })
     BuildRequestNotifier.shared.start()
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
@@ -249,6 +257,12 @@ struct StimDesktopApp: App {
       buildMachines.keepMachinesCurrent(status: store)
       onboarding.check()
     }
+  }
+
+  private nonisolated static func desktopEnvironment(_ environment: [String: String]) -> [String: String] {
+    var environment = environment
+    if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
+    return environment
   }
 
   private static let windowTitle =

@@ -45,6 +45,8 @@ public enum AppPreferences {
     public static let stimServerPort = "stimServerPort"
     /// The Stim home the login shell's environment resolved on the last launch, for `ServerAdoption.provisionalHome`.
     public static let lastLoginStimHome = "lastLoginStimHome"
+    /// The stim-server start the login environment resolved on the last launch, for `ProvisionalServerStart`.
+    public static let lastServerStart = "lastServerStart"
     public static let showsInspector = "showsInspector"
     public static let tutorialFloats = "tutorial.floats"
     public static let tutorialFloatPinned = "tutorial.floatPinned"
