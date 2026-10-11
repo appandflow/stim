@@ -1489,10 +1489,16 @@ News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
 card stays until it is acted on or dismissed, with or without VoiceOver. Several
 cards stack, newest first, with a counter and previous and next buttons.
-Two things use them. When `stim ios` or `stim android` launches on a device
-Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop keeps the current page and opens the launched device only when **Show**
-is clicked. A newer `stim` shows a card with
+Two things use them. When `stim status` first lists a workspace, the card reads
+"New workspace <workspace>" with **Show**, which opens the workspace and focuses
+the device of its running build. Each path gets one card per Desktop session:
+workspaces listed in the first status after launch get none, and a path that
+leaves and comes back gets none again. While the workspace's build runs, the
+card's detail reads "Building <platform>" instead of the path. A
+`stim-desktop://open` device URL from `stim ios` or `stim android` only opens
+the main window when it is closed.
+Desktop keeps the current page and opens the workspace only when **Show** is
+clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
 
@@ -1846,8 +1852,10 @@ The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
 appearing (Get the Test App; the clone only, which is never the tour), the first
 linked worktree of the clone and its first iOS build (Make a Change, `tourPath`),
 the next linked worktree created after that step began and its first iOS build,
-which must start after the step began and be a cache hit (Change It Again in
-Parallel, `secondPath`), optional live view, agent actions and logs steps,
+which must start after the step began (Change It Again in Parallel,
+`secondPath`). Both steps complete when their build starts running; the stats
+record each build when it succeeds, and a later failed iOS build of that
+worktree shows as a warning under the completed step. The steps continue with optional live view, agent actions and logs steps,
 optional phone and remote Mac steps, an optional Share Your Finish prompt, then
 removal and Archived of both tracked worktrees (Finish; the clone stays). The
 tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored

@@ -26,23 +26,6 @@ extension StatusPayload {
     environments.contains { $0.path == path || $0.worktree?.path == path }
       || unprovisionedWorktrees?.contains { $0.path == path } == true
   }
-
-  /// The workspace that records the requested device, in its default devices or a slot.
-  public func owner(of request: DeviceOpenRequest) -> (workspace: Workspace, device: DeviceRef)? {
-    for env in environments {
-      for device in env.devices {
-        switch (request, device) {
-        case (.simulator(let udid), .ios(_, let ios)) where !udid.isEmpty && ios.host == nil && ios.udid == udid:
-          return (env, device)
-        case (.emulator(let serial), .android(_, let android)) where android.host == nil && android.serial == serial:
-          return (env, device)
-        default:
-          continue
-        }
-      }
-    }
-    return nil
-  }
 }
 
 /// A `stim-desktop://workspace?path=<path>` link, which `stim worktree warm`, `start`, `ios`, `android` and `web`

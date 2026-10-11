@@ -300,7 +300,6 @@ struct RootView: View {
       settingsTab = "phones"
       openSettings()
     }
-    .onReceive(openRequests.$device) { request in showDevice(request, in: store.payload) }
     .onReceive(openRequests.$workspaceLink) { link in
       guard link != nil else { return }
       Task { takeWorkspaceLink() }
@@ -310,8 +309,8 @@ struct RootView: View {
       if let payload {
         notices.dismissCards(notIn: payload)
         toasts.dismissCards(notIn: payload)
+        showNewWorkspaces(in: payload)
       }
-      showDevice(openRequests.device, in: payload)
       showWorkspaceLink(in: payload)
       show(openRequests.target, in: payload)
       if case .worktree(let path) = selection,
@@ -761,20 +760,29 @@ struct RootView: View {
     }
   }
 
-  /// `@Published` emits before the property changes, so both values arrive as arguments.
-  private func showDevice(_ request: DeviceOpenRequest?, in payload: StatusPayload?) {
-    guard let request, let owner = payload?.owner(of: request) else { return }
-    openRequests.device = nil
-    let path = owner.workspace.path
-    let deviceID = owner.device.id
-    notices.show(
-      Notice(
-        icon: "iphone", title: "\(owner.device.label) launched for \(owner.workspace.names.title)",
-        detail: abbreviatingHome(path), actionTitle: "Show",
-        perform: {
-          navigate(.environment(path), .click("device launch notice"))
-          focusedDeviceID = deviceID
-        }, key: "device-launch:\(deviceID)", workspacePath: path))
+  private func showNewWorkspaces(in payload: StatusPayload) {
+    for workspace in notices.arrivals.update(payload.environments) {
+      let path = workspace.path
+      notices.show(
+        Notice(
+          icon: "plus.rectangle.on.folder", title: "New workspace \(workspace.names.title)",
+          detail: newWorkspaceDetail(workspace), actionTitle: "Show",
+          perform: {
+            navigate(.environment(path), .click("new workspace notice"))
+            let current = store.payload?.environments.first { $0.path == path }
+            focusedDeviceID =
+              current?.orderedDevices.first { device in
+                current?.build.map { $0.platform == device.platform && $0.slot == device.slot } ?? true
+              }?.id
+          }, key: WorkspaceArrivals.cardKey(path), workspacePath: path))
+    }
+    for workspace in payload.environments {
+      notices.update(key: WorkspaceArrivals.cardKey(workspace.path), detail: newWorkspaceDetail(workspace))
+    }
+  }
+
+  private func newWorkspaceDetail(_ workspace: Workspace) -> String {
+    WorkspaceArrivals.buildLine(workspace) ?? abbreviatingHome(workspace.path)
   }
 
   private func showStimUpdate(_ latest: SemanticVersion?) {

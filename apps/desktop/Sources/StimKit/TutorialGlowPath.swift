@@ -1,5 +1,5 @@
 public enum TutorialAnchorID: Hashable, Sendable {
-  case sidebarRow, launchNoticeShow, deviceControl, viewerScreen, logsToggle, agentActions, replay, archivedFilter
+  case sidebarRow, workspaceNoticeShow, deviceControl, viewerScreen, logsToggle, agentActions, replay, archivedFilter
 }
 
 public struct TutorialGlowTarget: Equatable, Sendable {
@@ -19,7 +19,8 @@ public enum TutorialGlowPath {
     let row = TutorialGlowTarget(.sidebarRow, "Select a tutorial worktree")
     func toward(_ targets: [TutorialGlowTarget]) -> [TutorialGlowTarget] { onPage ? targets : targets + [row] }
     switch step {
-    case "build": return [TutorialGlowTarget(.launchNoticeShow, "Click Show to watch the build")]
+    case "build": return [TutorialGlowTarget(.workspaceNoticeShow, "Click Show to watch the build")]
+    case "parallel": return [TutorialGlowTarget(.workspaceNoticeShow, "Click Show to watch the first build")]
     case "device":
       return [TutorialGlowTarget(.viewerScreen, "Tap the Tap me button and watch the counter")]
         + toward([TutorialGlowTarget(.deviceControl, "Open the live view")])

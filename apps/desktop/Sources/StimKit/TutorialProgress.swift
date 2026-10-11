@@ -278,6 +278,8 @@ public struct TutorialStepProgress: Equatable, Sendable {
   public var action: TutorialAction?
   public var ticks: [TutorialTick]
   public var link: PullRequestFacts?
+  /// Why a build of a step that advanced at build start failed afterwards.
+  public var warning: String?
 }
 
 public struct TutorialSnapshot: Sendable {
@@ -420,12 +422,15 @@ public struct TutorialProgress: Sendable {
       let checkpoint = checkpoint(
         step.id, since: record!.stepTimes?[step.id] ?? record!.startedAt, environment: tracked, second: second, logs: logs,
         input: input)
+      let advancedAtStart =
+        state == .done && (step.id == "build" && tracked != nil || step.id == "parallel" && second != nil)
       let notice =
-        current == step.id ? failure ?? details[step.id] : details[step.id]
+        advancedAtStart ? nil : current == step.id ? failure ?? details[step.id] : details[step.id]
       let shown = notice ?? TutorialNotice(checkpoint.detail, action: checkpoint.action)
+      if advancedAtStart, !checkpoint.detail.isEmpty { details[step.id] = shown }
       return TutorialStepProgress(
         id: step.id, state: state, detail: shown.text, action: shown.action,
-        ticks: checkpoint.ticks, link: checkpoint.link)
+        ticks: checkpoint.ticks, link: checkpoint.link, warning: advancedAtStart ? checkpoint.failure : nil)
     }
     return TutorialSnapshot(
       steps: steps, currentStep: current, record: record!,
@@ -535,6 +540,12 @@ public struct TutorialProgress: Sendable {
     let history = environment?.builds ?? []
     let udid = environment?.ios?.udid
     func signal(_ substring: String) -> LogRecord? { logs.first { $0.msg.contains(substring) } }
+    func started(_ env: TutorialEnvironment?, since: Date) -> Date? {
+      guard let build = env?.build, build.isRunning, build.platform == "ios", let date = build.startedDate,
+        date >= since
+      else { return nil }
+      return date
+    }
     func tick(_ id: String, _ done: Bool, optional: Bool = false) -> TutorialTick {
       TutorialTick(id: id, done: done, optional: optional)
     }
@@ -562,6 +573,9 @@ public struct TutorialProgress: Sendable {
           tick("registered", exists),
         ])
     case "build":
+      if let date = started(environment, since: since) {
+        return Checkpoint(completed: date, detail: "Building")
+      }
       if let last, last.status == "failed", parseTimestamp(last.startedAt).map({ $0 >= since }) == true {
         return Checkpoint(
           failure: [last.cause?.key ?? last.errorCode ?? "Build failed", last.diagnostics?.first?.message]
@@ -587,6 +601,9 @@ public struct TutorialProgress: Sendable {
           ? "Ask your agent to make the change in a new worktree, not in the clone" : "Waiting for the iOS build")
     case "parallel":
       guard let second else { return Checkpoint(detail: "Waiting for the second workspace") }
+      if let date = started(second, since: record?.stepTimes?["build"] ?? record?.startedAt ?? .distantPast) {
+        return Checkpoint(completed: date, detail: "Building")
+      }
       let failedSince = record?.stepTimes?["build"] ?? record?.startedAt ?? .distantPast
       if let last = second.lastBuild, last.status == "failed", parseTimestamp(last.startedAt).map({ $0 >= failedSince }) == true {
         return Checkpoint(
@@ -597,11 +614,12 @@ public struct TutorialProgress: Sendable {
       guard let last = second.lastBuild, last.status == "ok", parseTimestamp(last.startedAt).map({ $0 >= buildSince }) == true
       else { return Checkpoint(detail: "Waiting for the second build") }
       return Checkpoint(
-        completed: last.cacheHit == .none ? nil : last.endedAt,
-        detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
+        completed: last.endedAt, detail: last.summary + (last.missReason.map { ": " + $0.summary } ?? ""))
     case "device":
       guard [environment, second].contains(where: { $0?.ios?.app?.state == "running" }) else {
-        return Checkpoint(detail: "Run the app first, then open its live view")
+        let building = [environment, second].contains { $0?.build?.isRunning == true }
+        return Checkpoint(
+          detail: building ? "Waiting for the build to launch the app" : "Run the app first, then open its live view")
       }
       return Checkpoint(
         completed: viewerOpened && viewerInput ? now : nil,

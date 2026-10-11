@@ -89,8 +89,9 @@ private struct TutorialHighlights: ViewModifier {
         if let hint {
           let bounds = CGRect(origin: .zero, size: geometry.size)
           let found = hint.targets.lazy.compactMap { target -> (TutorialAnchorID, String, CGRect)? in
+            let workspaces = target.anchor == .workspaceNoticeShow ? [hint.path].compactMap { $0 } : hint.paths
             let keys =
-              hint.paths.map { TutorialAnchorKey(id: target.anchor, workspace: $0) }
+              workspaces.map { TutorialAnchorKey(id: target.anchor, workspace: $0) }
               + [TutorialAnchorKey(id: target.anchor, workspace: nil)]
             guard let anchor = keys.lazy.compactMap({ anchors[$0] }).first else { return nil }
             let rect = geometry[anchor]
