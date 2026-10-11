@@ -439,9 +439,9 @@ export class BuildHost {
         const mirror = join(repos, repo, 'mirror.json');
         if (!existsSync(mirror)) continue;
         const record: unknown = JSON.parse(readFileSync(mirror, 'utf8'));
-        if (!isJsonObject(record)) return;
+        if (typeof record !== 'object' || record === null) throw new Error('unreadable mirror record');
         for (const entry of Object.values(record)) {
-          if (!isJsonObject(entry) || typeof entry.sha256 !== 'string') return;
+          if (typeof entry?.sha256 !== 'string') throw new Error('unreadable mirror record');
           keep.add(entry.sha256);
         }
       }
