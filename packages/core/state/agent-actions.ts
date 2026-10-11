@@ -2,6 +2,7 @@ import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, st
 import { join } from 'node:path';
 import { open, readdir, readFile, stat as asyncStat } from 'node:fs/promises';
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import { BoundedSelection } from './log-selection.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 interface DeviceTarget {
@@ -242,6 +243,35 @@ export interface AgentActionReaderOptions {
   claimedDevice?: (session: string, sessionsDir: string) => string | null;
 }
 
+export interface AgentRecordSelection {
+  tail?: number;
+  matches: (record: NdjsonRecord) => boolean;
+}
+
+function agentRecordCollector(selection?: AgentRecordSelection) {
+  const out: NdjsonRecord[] = [];
+  const bounded =
+    selection?.tail === undefined
+      ? null
+      : new BoundedSelection<{ record: NdjsonRecord; position: number }>(
+          (a, b) => Number(a.record.ts) - Number(b.record.ts) || a.position - b.position,
+          selection.tail,
+        );
+  let position = 0;
+  const keep = (record: NdjsonRecord) => {
+    if (selection && !selection.matches(record)) return;
+    if (bounded) bounded.keep({ record, position: position++ });
+    else out.push(record);
+  };
+  return {
+    keep,
+    records: () =>
+      bounded
+        ? bounded.sorted().map(({ record }) => record)
+        : out.toSorted((a, b) => (a.ts as number) - (b.ts as number)),
+  };
+}
+
 /**
  * Reads agent-device session actions incrementally from the supplied sessions directories. With targets,
  * records are restricted to those devices; without targets, retained session metadata supplies attribution.
@@ -253,10 +283,10 @@ function agentActionReads({
   sinceTs = -Infinity,
   now = Date.now,
   claimedDevice = () => null,
-}: AgentActionReaderOptions): () => Generator<AgentRead, NdjsonRecord[], unknown> {
+}: AgentActionReaderOptions): (selection?: AgentRecordSelection) => Generator<AgentRead, NdjsonRecord[], unknown> {
   const cursors = new Map<string, SessionCursor>();
 
-  return function* () {
+  return function* (selection) {
     const targets = typeof resolveTargets === 'function' ? resolveTargets() : resolveTargets;
     if (targets && !targets.length) return [];
     const byId = new Map(targets?.map((target) => [target.id, target]));
@@ -271,7 +301,7 @@ function agentActionReads({
       } catch {}
     }
 
-    const out: NdjsonRecord[] = [];
+    const { keep, records } = agentRecordCollector(selection);
     for (const { name, sessionsDir, dir } of sessionDirs) {
       const eventsPath = join(dir, 'events.ndjson');
       const lines: string[] = [];
@@ -376,11 +406,12 @@ function agentActionReads({
               : undefined;
         if (target) {
           cursor.unknownReported = true;
-          out.push(formatUnknownRecord(session ?? name, parsed.unknownVersion, target, now()));
+          keep(formatUnknownRecord(session ?? name, parsed.unknownVersion, target, now()));
         }
       }
       if (parsed.unknownVersion) cursor.bundleId = null;
-      for (const event of parsed.events) {
+      for (const [index, event] of parsed.events.entries()) {
+        if (index % 500 === 0) yield { kind: 'turn' };
         if (event.kind === 'request.started') {
           cursor.closing = event.command === 'close' ? cursor.bundleId : null;
           cursor.bundleId = null;
@@ -399,7 +430,7 @@ function agentActionReads({
             event.ts >= Math.max(sinceTs, target.launchedAt) &&
             (startedAt ?? event.ts) >= target.launchedAt
           )
-            out.push(agentRecord(event, target.id, target, startedAt));
+            keep(agentRecord(event, target.id, target, startedAt));
           if (event.command === 'close') cursor.bundleId = null;
           continue;
         }
@@ -408,10 +439,10 @@ function agentActionReads({
         const deviceId = !targets && cursor.platform === 'android' ? null : deviceAt(event.ts);
         const target = targets ? (deviceId ? byId.get(deviceId) : undefined) : retainedTarget();
         const startedAt = event.requestId ? matched.get(event.requestId) : undefined;
-        if (target) out.push(agentRecord(event, deviceId || null, target, startedAt));
+        if (target) keep(agentRecord(event, deviceId || null, target, startedAt));
       }
     }
-    return out.toSorted((a, b) => (a.ts as number) - (b.ts as number));
+    return records();
   };
 }
 
@@ -495,15 +526,15 @@ async function asyncRead(request: AgentRead): Promise<unknown> {
   }
 }
 
-/** Reads new agent-device actions without synchronous filesystem I/O, yielding between parsing batches. */
+/** Reads new agent-device actions asynchronously; selection applies only to matching output from this call. */
 export function createAsyncAgentActionReader(
   options: AgentActionReaderOptions,
   signal?: AbortSignal,
-): () => Promise<NdjsonRecord[]> {
+): (selection?: AgentRecordSelection) => Promise<NdjsonRecord[]> {
   const reads = agentActionReads(options);
-  return async () => {
+  return async (selection) => {
     signal?.throwIfAborted();
-    const iterator = reads();
+    const iterator = reads(selection);
     let step = iterator.next();
     while (!step.done) {
       let value: unknown;

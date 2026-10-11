@@ -11,6 +11,7 @@ import {
 } from './logs-query.ts';
 import type { LogQueryOptions, LogQueryPlan } from './logs-query.ts';
 import { levelRank, parseNdjsonLine, type NdjsonRecord } from './ndjson.ts';
+import { BoundedSelection } from './log-selection.ts';
 
 const BLOCK_BYTES = 64 * 1024;
 const MAX_CACHED_GENERATIONS = 512;
@@ -69,10 +70,6 @@ function compare(a: Entry, b: Entry): number {
   return a.ts - b.ts || a.rank - b.rank || a.generation - b.generation || a.position - b.position;
 }
 
-function before(a: Entry, b: Entry): boolean {
-  return compare(a, b) < 0;
-}
-
 function markerTs(record: NdjsonRecord): number {
   const ts = tsKey(record);
   return ts === Infinity ? -Infinity : ts;
@@ -81,57 +78,6 @@ function markerTs(record: NdjsonRecord): number {
 function keepNewer(markers: Map<string, NdjsonRecord>, key: string, marker: NdjsonRecord): void {
   const known = markers.get(key);
   if (!known || markerTs(marker) > markerTs(known)) markers.set(key, marker);
-}
-
-class MinHeap {
-  private readonly first: boolean;
-  constructor(first = false) {
-    this.first = first;
-  }
-
-  private before(a: Entry, b: Entry): boolean {
-    return this.first ? before(b, a) : before(a, b);
-  }
-
-  readonly items: Entry[] = [];
-
-  get size(): number {
-    return this.items.length;
-  }
-
-  peek(): Entry | undefined {
-    return this.items[0];
-  }
-
-  push(entry: Entry): void {
-    const items = this.items;
-    items.push(entry);
-    let i = items.length - 1;
-    while (i > 0) {
-      const parent = (i - 1) >> 1;
-      if (!this.before(items[i]!, items[parent]!)) break;
-      [items[i], items[parent]] = [items[parent]!, items[i]!];
-      i = parent;
-    }
-  }
-
-  pop(): void {
-    const items = this.items;
-    const last = items.pop()!;
-    if (!items.length) return;
-    items[0] = last;
-    let i = 0;
-    for (;;) {
-      const left = 2 * i + 1;
-      const right = left + 1;
-      let least = i;
-      if (left < items.length && this.before(items[left]!, items[least]!)) least = left;
-      if (right < items.length && this.before(items[right]!, items[least]!)) least = right;
-      if (least === i) return;
-      [items[i], items[least]] = [items[least]!, items[i]!];
-      i = least;
-    }
-  }
 }
 
 function markerKey(record: NdjsonRecord): { key: string; marker: NdjsonRecord } {
@@ -316,6 +262,8 @@ export interface LogDir {
   launchAttempts(): NdjsonRecord[];
   /** The records `queryJsonLogs` returns for this directory's timeline followed by `extra`. */
   query(query?: LogDirQuery): Promise<NdjsonRecord[]>;
+  /** Prepares the directory marker predicate for records without markers, such as attributed agent actions. */
+  filter(query?: LogQueryOptions): (record: NdjsonRecord) => boolean;
   close(): Promise<void>;
 }
 
@@ -395,6 +343,7 @@ export async function openLogDir(
         .toSorted(compare)
         .map((entry) => entry.record),
     query: (query = {}) => queryGenerations(generations, query, signal),
+    filter: (query = {}) => planLogQuery(generationMarkers(generations), query).matches,
     close,
   };
 }
@@ -428,15 +377,11 @@ async function select(
   signal: AbortSignal | undefined,
 ): Promise<Entry[]> {
   if (tail !== undefined && tail <= 0) return [];
-  const heap = new MinHeap(first);
-  const keep = (entry: Entry) => {
-    heap.push(entry);
-    if (tail !== undefined && heap.size > tail) heap.pop();
-  };
+  const heap = new BoundedSelection(compare, tail, first);
   const extraRank = generations.length ? Math.max(...generations.map((generation) => generation.rank)) + 1 : 0;
   for (const [position, record] of extra.entries()) {
     const entry = { ts: tsKey(record), rank: extraRank, generation: 0, position, record };
-    if (matches(record, entry)) keep(entry);
+    if (matches(record, entry)) heap.keep(entry);
   }
   const blocks = generations
     .flatMap((generation) => generation.index.blocks.map((block) => ({ generation, block })))
@@ -465,11 +410,17 @@ async function select(
         position,
         record,
       };
-      if (matches(record, entry)) keep(entry);
+      if (matches(record, entry)) heap.keep(entry);
     }
     await nextTurn();
   }
-  return heap.items.toSorted(compare);
+  return heap.sorted();
+}
+
+function generationMarkers(generations: Generation[]): NdjsonRecord[] {
+  const markers = new Map<string, NdjsonRecord>();
+  for (const { index } of generations) for (const [key, marker] of index.markers) keepNewer(markers, key, marker);
+  return [...markers.values()];
 }
 
 async function queryGenerations(
@@ -478,15 +429,13 @@ async function queryGenerations(
   signal: AbortSignal | undefined,
 ): Promise<NdjsonRecord[]> {
   signal?.throwIfAborted();
-  const markers = new Map<string, NdjsonRecord>();
   const slots = new Set<unknown>(['default']);
   for (const { index } of generations) {
-    for (const [key, marker] of index.markers) keepNewer(markers, key, marker);
     for (const slot of index.slots) slots.add(slot);
   }
   for (const record of extra) slots.add(record.slot ?? 'default');
   const plan: LogQueryPlan = planLogQuery(
-    [...markers.values(), ...extra.filter((record) => record.marker === true)],
+    [...generationMarkers(generations), ...extra.filter((record) => record.marker === true)],
     options,
   );
   const selected = await select(

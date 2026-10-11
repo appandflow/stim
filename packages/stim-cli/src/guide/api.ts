@@ -39,6 +39,8 @@ stim logs --json records, including native crash capture, agent actions and Expo
 error context. It runs in process, with asynchronous chunked reads and bounded
 record selection when tail is supplied. A new file generation gets a compact
 metadata index; later queries reuse it and index only appended bytes.
+Matching agent actions are also selected within tail; attribution still scans
+each retained session generation to establish device ownership.
 followLogs(options, onRecord) emits the requested backfill followed by new records
 and returns a stop function. AbortSignal also stops the subscription.
 

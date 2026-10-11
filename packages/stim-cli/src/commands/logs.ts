@@ -275,7 +275,8 @@ export default function logsCommand(program: Command): void {
       let timeline: NdjsonRecord[] = [];
       let rawRecords: NdjsonRecord[];
       try {
-        const extra = (await readAgent?.()) ?? [];
+        const extra =
+          (await readAgent?.(opts.json ? { tail: query.tail, matches: view.filter(query) } : undefined)) ?? [];
         if (opts.json) rawRecords = await view.query({ ...query, extra });
         else {
           timeline = sortByTs([...(await view.query()), ...extra]);

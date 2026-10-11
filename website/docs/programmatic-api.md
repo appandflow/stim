@@ -176,7 +176,10 @@ before setup finishes rejects with `STIM_CANCELLED`.
 These operations run in the importing process, read files asynchronously and
 yield between parsing chunks. A cold file generation is scanned for timestamp
 bounds, markers and launches; later reads reuse that index and scan appended
-complete lines. Caller context and process settings remain unchanged.
+complete lines. Tail selection bounds matching timeline and agent records.
+Agent attribution still scans each retained session generation to establish
+device ownership, so transient parsing buffers depend on those file sizes.
+Caller context and process settings remain unchanged.
 
 ## Diagnostics and CI state
 

@@ -22,7 +22,7 @@ import type { StimLogsOptions } from '../api/types.ts';
 
 export interface WorkspaceLogs {
   view: LogDir;
-  readAgent: (() => Promise<NdjsonRecord[]>) | null;
+  readAgent: ReturnType<typeof createAsyncAgentActionReader> | null;
   hostedReachable: boolean;
 }
 
@@ -71,7 +71,10 @@ export async function readWorkspaceLogs(context: StimContext, options: StimLogsO
   validateLogOptions(options);
   const { view, readAgent } = await openWorkspaceLogs(context, options);
   try {
-    return await view.query({ ...options, extra: await readAgent?.() });
+    return await view.query({
+      ...options,
+      extra: await readAgent?.({ tail: options.tail, matches: view.filter(options) }),
+    });
   } finally {
     await view.close();
   }
@@ -101,7 +104,10 @@ export async function followWorkspaceLogs(
   validateLogOptions(options);
   const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, options, true);
   try {
-    const records = await view.query({ ...options, extra: await readAgent?.() });
+    const records = await view.query({
+      ...options,
+      extra: await readAgent?.({ tail: options.tail, matches: view.filter(options) }),
+    });
     context.signal.throwIfAborted();
     for (const record of records) onRecord(record);
   } catch (error) {

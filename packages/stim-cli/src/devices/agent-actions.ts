@@ -6,6 +6,7 @@ import {
   agentDeviceStateDirsAsync,
   createAsyncAgentActionReader as createAsyncSessionActionReader,
   type AgentTarget,
+  type AgentRecordSelection,
   type MacosAppRecord,
   type NdjsonRecord,
   type ProjectRecord,
@@ -56,7 +57,7 @@ export interface AgentActionReaderOptions {
 export function createAsyncAgentActionReader(
   { targets, sinceTs, home = homedir(), env, now, startOf = inspectProcessStart }: AgentActionReaderOptions,
   signal?: AbortSignal,
-): () => Promise<NdjsonRecord[]> {
+): (selection?: AgentRecordSelection) => Promise<NdjsonRecord[]> {
   let sessionsDirs: string[] = [];
   let claimed = new Map<string, string>();
   let canonical = new Map<string, string>();
@@ -71,7 +72,7 @@ export function createAsyncAgentActionReader(
     },
     signal,
   );
-  return async () => {
+  return async (selection) => {
     signal?.throwIfAborted();
     const roots = await agentDeviceStateDirsAsync(home, env);
     canonical = new Map();
@@ -101,6 +102,6 @@ export function createAsyncAgentActionReader(
       }
     }
     signal?.throwIfAborted();
-    return read();
+    return read(selection);
   };
 }
