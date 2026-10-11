@@ -49,7 +49,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const livePr = archiveId ? null : worktree?.pullRequest;
   const checks = livePr ? checksTone(livePr.checks) : null;
-  const checkedAt = livePr ? Date.parse(livePr.checkedAt) : NaN;
+  const checkedAt = livePr?.checkedAt ? Date.parse(livePr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
     <SheetScreen

@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import {
   cpSync,
   chmodSync,
@@ -47,6 +48,8 @@ import {
   type MachineUsage,
   type ServerMessage,
   type StatusEvent,
+  type WorkspacesEvent,
+  type ArchivedListResult,
 } from '../src/protocol.ts';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { runNodeCommand } from '../src/stim-command.ts';
@@ -2914,6 +2917,137 @@ describe('status.subscribe', () => {
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
+  });
+});
+
+describe('status views', () => {
+  const machine = { capacity: { live: 0 }, deviceLeases: [], simctlAvailable: true, machine: null };
+  const app = (overrides: Record<string, unknown> = {}) => ({
+    path: '/work/app',
+    live: true,
+    warnings: [],
+    issues: [],
+    memoryMb: 0,
+    logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 0 },
+    ...overrides,
+  });
+  const other = { path: '/work/other', live: false, warnings: [], issues: [], memoryMb: 0 };
+  const archive = (id: string, removedAt: string) => ({
+    id,
+    projectRoot: `/work/${id}`,
+    project: id,
+    workspace: `${id}--0`,
+    worktree: {},
+    removedAt,
+    removedBy: 'gc',
+    builds: { count: 0, last: null, lastErrorCount: 0 },
+    agents: [],
+    bytes: { logs: 0, recordings: 0, agentActions: 0, record: 1, total: 1 },
+    expires: {},
+    version: 1,
+  });
+  const archived = [
+    archive('a', '2026-10-01T00:00:00.000Z'),
+    archive('b', '2026-10-03T00:00:00.000Z'),
+    archive('c', '2026-10-02T00:00:00.000Z'),
+  ];
+  const payload = (environments: unknown[], extra: Record<string, unknown> = {}) => ({
+    ...machine,
+    environments,
+    unprovisionedWorktrees: [{ path: '/work/loose', branch: 'loose', repository: '/work', git: null }],
+    archived,
+    archivedUsage: { count: 3, bytes: 3, byKind: { logs: 0, recordings: 0, agentActions: 0, record: 3 } },
+    ...extra,
+  });
+  const sequence = [
+    payload([app(), other]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } }), other]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } })]),
+    payload([app({ logs: { dir: '/home/.stim/workspaces/app/logs', errorsSinceMarker: 2 } })]),
+  ];
+  const startViews = () => start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify(sequence) } });
+
+  it('sends the workspace list once, then only the workspaces that changed or went away', async () => {
+    const client = await authed(await startViews());
+    expect(await client.request('workspaces.subscribe')).toMatchObject({ result: { subscription: 's1' } });
+    const first = (await client.next()) as WorkspacesEvent;
+    expect(first).toMatchObject({ event: 'workspaces', subscription: 's1', seq: 0 });
+    const snapshot = first.snapshot;
+    assert(snapshot);
+    expect(snapshot.workspaces.map((summary) => summary.path)).toEqual(['/work/app', '/work/other']);
+    expect(snapshot.workspaces[0]?.logs).toEqual({ errorsSinceMarker: 0 });
+    expect(snapshot.worktrees).toEqual([{ path: '/work/loose', branch: 'loose', repository: '/work' }]);
+    expect(snapshot.archived).toEqual({
+      count: 3,
+      bytes: 3,
+      newest: ['b', 'c', 'a'].map((id) => ({
+        id,
+        projectRoot: `/work/${id}`,
+        project: id,
+        workspace: `${id}--0`,
+        removedAt: archived.find((each) => each.id === id)?.removedAt,
+      })),
+    });
+    expect(await client.next()).toEqual({
+      event: 'workspaces',
+      subscription: 's1',
+      seq: 1,
+      workspaces: {
+        upsert: [expect.objectContaining({ path: '/work/app', logs: { errorsSinceMarker: 2 } })],
+        remove: [],
+      },
+    });
+    expect(await client.next()).toEqual({
+      event: 'workspaces',
+      subscription: 's1',
+      seq: 2,
+      workspaces: { upsert: [], remove: ['/work/other'] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({ result: {} });
+  });
+
+  it('sends one workspace whole, again only when it changes, and null once it is gone', async () => {
+    const client = await authed(await startViews());
+    await client.request('workspace.subscribe', { workspace: '/work/other' });
+    expect(await client.next()).toEqual({ event: 'workspace', subscription: 's1', seq: 0, environment: other });
+    expect(await client.next()).toEqual({ event: 'workspace', subscription: 's1', seq: 1, environment: null });
+    expect(await client.request('workspace.subscribe', {})).toMatchObject({ error: { code: 'bad-request' } });
+  });
+
+  it('sends the machine view without the workspaces', async () => {
+    const client = await authed(await startViews());
+    await client.request('machine.subscribe');
+    expect(await client.next()).toEqual({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { ...machine, maintenance: null },
+    });
+  });
+
+  it('reads build history, archives a page at a time, worktrees and maintenance on request', async () => {
+    const builds = { ios: [{ platform: 'ios', status: 'ok', startedAt: '2026-10-01T00:00:00.000Z' }] };
+    const port = await start({
+      env: { FAKE_STIM_PAYLOADS: JSON.stringify([payload([app({ builds })], { maintenance: { mode: 'off' } })]) },
+    });
+    const client = await authed(port);
+    expect(await client.request('builds.history', { workspace: '/work/app' })).toMatchObject({ result: { builds } });
+    expect(await client.request('builds.history', { workspace: '/work/nope' })).toMatchObject({
+      error: { code: 'unknown-workspace' },
+    });
+    const first = (await client.request('archived.list', { limit: 2 })) as { result: ArchivedListResult };
+    expect(first.result.archived.map((each) => each.id)).toEqual(['b', 'c']);
+    expect(first.result.usage).toMatchObject({ count: 3 });
+    const second = (await client.request('archived.list', { limit: 2, before: first.result.next })) as {
+      result: ArchivedListResult;
+    };
+    expect(second.result.archived.map((each) => each.id)).toEqual(['a']);
+    expect(second.result.next).toBeNull();
+    expect(await client.request('worktrees.list')).toMatchObject({
+      result: { worktrees: [{ path: '/work/loose', git: null }] },
+    });
+    expect(await client.request('maintenance.get')).toMatchObject({ result: { maintenance: { mode: 'off' } } });
   });
 });
 

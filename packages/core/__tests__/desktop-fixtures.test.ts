@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { event, responses } from '../receive-validators.mjs';
+import { statusViews } from '../state/index.ts';
 
 type Validator = ((value: unknown) => boolean) & {
   errors?: { instancePath: string; keyword: string; message?: string }[] | null;
@@ -48,4 +49,17 @@ test('captured archive fixtures match the archived status entry and archive.deta
   };
   expect(issues(event as Validator, statusEvent(archived), '/payload')).toEqual([]);
   expect(issues(responses['archive.detail'] as Validator, read(new URL('detail.json', realArchive)))).toEqual([]);
+});
+
+test.each(statusFixtures)('the live views of desktop fixture %s are events the phone accepts', (name) => {
+  const views = statusViews({ unprovisionedWorktrees: [], ...read(new URL(name, stimKitFixtures)) });
+  const [detail] = views.details.values();
+  const { workspaces, worktrees, archived, machine } = views;
+  const events = [
+    { event: 'workspaces', subscription: 's1', seq: 0, snapshot: { workspaces, worktrees, archived } },
+    { event: 'workspaces', subscription: 's1', seq: 1, workspaces: { upsert: workspaces, remove: ['/gone'] } },
+    { event: 'workspace', subscription: 's2', seq: 0, environment: detail ?? null },
+    { event: 'machine', subscription: 's3', seq: 0, machine },
+  ];
+  for (const message of events) expect(issues(event as Validator, message)).toEqual([]);
 });

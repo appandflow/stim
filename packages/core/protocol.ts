@@ -14,6 +14,16 @@ import type {
   HostedLogsPage,
   NdjsonRecord,
   StatusPayload,
+  ArchivedSummary,
+  ArchivedUsage,
+  ArchivedWorkspace,
+  EnvironmentState,
+  KeyedDelta,
+  MachineView,
+  MaintenanceStatus,
+  WorkspaceSummary,
+  WorktreeFacts,
+  WorktreeRow,
 } from './state/index.ts';
 
 export const PROTOCOL_VERSION = 1;
@@ -87,6 +97,13 @@ export const METHODS = [
   'hello',
   'route.setup',
   'status.subscribe',
+  'workspaces.subscribe',
+  'workspace.subscribe',
+  'machine.subscribe',
+  'builds.history',
+  'archived.list',
+  'worktrees.list',
+  'maintenance.get',
   'logs.query',
   'logs.subscribe',
   'stats.get',
@@ -486,6 +503,76 @@ export interface ReplayRange {
   recording: boolean;
   spans: ReplaySpan[];
   markers: ReplayMarker[];
+}
+
+/** A workspace path from the workspace list. */
+export interface WorkspaceRef {
+  workspace: string;
+}
+
+/** The workspace list, all at once: every workspace's summary, the unprovisioned worktrees and the archives' summary. */
+export interface WorkspacesSnapshot {
+  workspaces: WorkspaceSummary[];
+  worktrees: WorktreeRow[];
+  archived: ArchivedSummary;
+}
+
+/**
+ * The workspace list of a `workspaces.subscribe` subscription. Its first event, `seq` 0, carries `snapshot`; each
+ * later one carries what changed since the previous event, `seq` one higher: whole workspaces and worktrees to insert or
+ * replace by `path`, the paths that are gone, and the archives' summary when it changed. A client that misses a `seq`
+ * subscribes again for a new snapshot.
+ */
+export interface WorkspacesEvent {
+  event: 'workspaces';
+  subscription: string;
+  seq: number;
+  snapshot?: WorkspacesSnapshot;
+  workspaces?: KeyedDelta<WorkspaceSummary>;
+  worktrees?: KeyedDelta<WorktreeRow>;
+  archived?: ArchivedSummary;
+}
+
+/**
+ * One workspace, as `stim status --json` prints its environment, on subscribing and on every change to it. `environment`
+ * is null while no workspace has that path.
+ */
+export interface WorkspaceEvent {
+  event: 'workspace';
+  subscription: string;
+  seq: number;
+  environment: EnvironmentState | null;
+}
+
+/** The machine on subscribing and on every change, with the usage history and own leases a `status` event carries. */
+export interface MachineEvent {
+  event: 'machine';
+  subscription: string;
+  seq: number;
+  machine: MachineView;
+  usage?: UsageHistory;
+  /** `grantedAt` of the device leases this server holds for phones; absent when it holds none. */
+  ownLeases?: string[];
+}
+
+/** A workspace's full build history, newest first per platform. */
+export interface BuildsHistoryResult {
+  builds: EnvironmentState['builds'];
+}
+
+/** `before` is the `next` of the previous page; `limit` is at most {@link ARCHIVED_PAGE_LIMIT}. */
+export interface ArchivedListParams {
+  before?: string;
+  limit?: number;
+}
+
+export const ARCHIVED_PAGE_LIMIT = 50;
+
+/** A page of archives, newest removal first, the usage of all of them, and the cursor of the next page or null. */
+export interface ArchivedListResult {
+  archived: ArchivedWorkspace[];
+  usage: ArchivedUsage;
+  next: string | null;
 }
 
 /** An archived[].id from status; the original workspace is not required. */
@@ -1311,6 +1398,13 @@ export interface Methods {
   'device-host.input.window': Methods['input.window'];
   hello: { params: HelloParams; result: HelloResult };
   'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
+  'machine.subscribe': { params?: Record<string, never>; result: SubscribeResult };
+  'builds.history': { params: WorkspaceRef; result: BuildsHistoryResult };
+  'archived.list': { params?: ArchivedListParams; result: ArchivedListResult };
+  'worktrees.list': { params?: Record<string, never>; result: { worktrees: WorktreeFacts[] } };
+  'maintenance.get': { params?: Record<string, never>; result: { maintenance: MaintenanceStatus | null } };
   'logs.query': { params: LogFilter; result: LogsQueryResult };
   'logs.subscribe': { params: LogFilter; result: SubscribeResult };
   'stats.get': { params?: WorkspaceParams; result: StatsResult };
@@ -1545,6 +1639,9 @@ export type ServerEvent =
   | BuildProgressEvent
   | NotificationEvent
   | StatusEvent
+  | WorkspacesEvent
+  | WorkspaceEvent
+  | MachineEvent
   | LogsEvent
   | LogsEndedEvent
   | FrameEvent

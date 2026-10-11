@@ -32,6 +32,7 @@ import {
   NOTIFICATION_LEVELS,
   NOTIFICATION_SUPPRESSIONS,
   CONTROL_END_REASONS,
+  ARCHIVED_PAGE_LIMIT,
 } from '@stim-cli/core/protocol';
 
 type JsonSchema = Record<string, unknown>;
@@ -46,6 +47,23 @@ const protocolError: JsonSchema = {
 };
 
 const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
+
+const workspaceRef: JsonSchema = {
+  type: 'object',
+  required: ['workspace'],
+  additionalProperties: false,
+  properties: { workspace: { type: 'string', minLength: 1 } },
+};
+
+const keyedDelta = (description: string): JsonSchema => ({
+  type: 'object',
+  required: ['upsert', 'remove'],
+  additionalProperties: false,
+  properties: {
+    upsert: { type: 'array', items: { type: 'object' }, description },
+    remove: { type: 'array', items: { type: 'string' }, description: 'The paths that are gone.' },
+  },
+});
 
 const sha256: JsonSchema = { type: 'string', pattern: '^[0-9a-f]{64}$' };
 
@@ -1243,6 +1261,20 @@ export function protocolJsonSchema(): JsonSchema {
           request('hello', { $ref: '#/$defs/HelloParams' }),
           optionalParams('route.setup', { type: 'object', maxProperties: 0 }),
           request('status.subscribe'),
+          request('workspaces.subscribe'),
+          request('workspace.subscribe', workspaceRef),
+          request('machine.subscribe'),
+          request('builds.history', workspaceRef),
+          optionalParams('archived.list', {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              before: { type: 'string', minLength: 1 },
+              limit: { type: 'integer', minimum: 1, maximum: ARCHIVED_PAGE_LIMIT },
+            },
+          }),
+          request('worktrees.list'),
+          request('maintenance.get'),
           request('logs.query', { $ref: '#/$defs/LogFilter' }),
           request('logs.subscribe', { $ref: '#/$defs/LogFilter' }),
           request('frames.subscribe', { $ref: '#/$defs/FrameTarget' }),
@@ -1823,6 +1855,56 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'status' },
               subscription: { type: 'string' },
               payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
+              usage: { $ref: '#/$defs/UsageHistory' },
+              ownLeases: { type: 'array', items: { type: 'string' } },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'workspaces' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              snapshot: {
+                type: 'object',
+                required: ['workspaces', 'worktrees', 'archived'],
+                additionalProperties: false,
+                properties: {
+                  workspaces: { type: 'array', items: { type: 'object' } },
+                  worktrees: { type: 'array', items: { type: 'object' } },
+                  archived: { type: 'object' },
+                },
+              },
+              workspaces: keyedDelta('Workspace summaries to insert or replace by path.'),
+              worktrees: keyedDelta('Unprovisioned worktree rows to insert or replace by path.'),
+              archived: { type: 'object', description: 'The archives summary, when it changed.' },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq', 'environment'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'workspace' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              environment: {
+                oneOf: [{ type: 'null' }, { type: 'object' }],
+                description: 'The environment, as `stim status --json` prints it.',
+              },
+            },
+          },
+          {
+            type: 'object',
+            required: ['event', 'subscription', 'seq', 'machine'],
+            additionalProperties: false,
+            properties: {
+              event: { const: 'machine' },
+              subscription: { type: 'string' },
+              seq: { type: 'integer', minimum: 0 },
+              machine: { type: 'object' },
               usage: { $ref: '#/$defs/UsageHistory' },
               ownLeases: { type: 'array', items: { type: 'string' } },
             },
