@@ -1,8 +1,15 @@
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { inject } from 'vitest';
 import { getExecutor, resetExecutor } from '../exec.ts';
 import { listIosDevices, iosDeviceProcess } from '../engine/ios-device.ts';
+
+declare module 'vitest' {
+  export interface ProvidedContext {
+    iosDeviceUdid: string;
+  }
+}
 
 describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => {
   beforeAll(() => {
@@ -20,10 +27,10 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
     const devices = await listIosDevices({
       exec: {
         ...executor,
-        runFile(file, args, options) {
+        async runFileAsync(file, args, options) {
           outPath = args?.[args.indexOf('-j') + 1] ?? '';
           try {
-            return executor.runFile(file, args, options);
+            return await executor.runFileAsync(file, args, options);
           } catch (error) {
             discoveryError = error;
             throw error;
@@ -44,10 +51,12 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
 
   test('the process-probe argv is accepted by the real devicectl when a phone is connected', async () => {
     resetExecutor();
-    const [connected] = await listIosDevices();
+    const udid = inject('iosDeviceUdid').trim();
+    if (!udid) throw new Error('Compatibility requires STIM_COMPAT_IOS_UDID naming the test iPhone.');
+    const connected = (await listIosDevices()).find((device) => device.udid === udid);
     if (!connected)
       throw new Error(
-        'Compatibility requires a connected, paired, unlocked iPhone with Developer Mode enabled; process argv was not verified.',
+        'Compatibility requires the selected test iPhone to be connected, paired and unlocked with Developer Mode enabled; process argv was not verified.',
       );
     const executor = getExecutor();
     let failure = '';
@@ -58,10 +67,10 @@ describe('listIosDevices against a real devicectl', { timeout: 120_000 }, () => 
       {
         exec: {
           ...executor,
-          runFile(file, args, options) {
+          async runFileAsync(file, args, options) {
             probedUdid = args?.[args.indexOf('--device') + 1];
             try {
-              return executor.runFile(file, args, options);
+              return await executor.runFileAsync(file, args, options);
             } catch (error) {
               const failed = error as Error & { stderr?: unknown; stdout?: unknown; code?: unknown };
               failure = [failed.message, failed.stderr, failed.stdout].filter(Boolean).join('\n');
