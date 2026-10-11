@@ -69,6 +69,7 @@ xcrun -sdk iphonesimulator clang -fobjc-arc -arch arm64 -arch x86_64 -mios-simul
   -framework Foundation Support/SimFold/main.m -o "$app/Contents/Resources/sim-fold" \
   -Wl,-sectcreate,__TEXT,__entitlements,Support/SimFold/entitlements.plist
 codesign --force --sign - "$app/Contents/Resources/sim-fold"
+node scripts/server-runtime.mjs "$app/Contents/Resources/stim-server" ${universal:+--universal} >/dev/null
 codesign --force --sign - "$app"
 if [ -z "$release" ]; then
   :

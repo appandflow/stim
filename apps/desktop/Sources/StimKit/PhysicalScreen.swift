@@ -15,6 +15,12 @@ public enum PhysicalScreen: Equatable, Sendable {
   case stream(control: String?)
   case message(String, remedy: String? = nil)
 
+  /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
+  static func olderServer(showing what: String) -> PhysicalScreen {
+    .message(
+      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Quit it so Stim Desktop starts its own.")
+  }
+
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
     if case .macos = device, let machine = device.hostedMachine {
@@ -39,8 +45,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
         guard features?.contains("\(device.platform)-hosted") == true else {
-          self = .message(
-            "Update stim-server to see this simulator's screen.", remedy: "npm install --global @stim-cli/server@latest")
+          self = Self.olderServer(showing: "this simulator's screen")
           return
         }
         self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
@@ -70,7 +75,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("physical-\(device.platform)") == true else {
-        self = .message("Update stim-server to see this device's screen.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this device's screen")
         return
       }
       if device.platform == "ios" {
@@ -92,7 +97,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("macos-hosted") == true else {
-        self = .message("Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this app's window")
         return
       }
       self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")

@@ -23,10 +23,12 @@ mkdir -p "$out"
 if [ -n "$identity" ]; then
   sign() { codesign --force --options runtime --timestamp --sign "$identity" "$@"; }
   app_entitlements="--entitlements Support/app.entitlements"
+  node_entitlements=Support/Node/node.entitlements
 else
   echo "release.sh: DESKTOP_SIGNING_IDENTITY is not set, so this build is signed ad hoc and is not notarized. Use it for testing only." >&2
   sign() { codesign --force --options runtime --sign - "$@"; }
   app_entitlements="--entitlements Support/adhoc.entitlements"
+  node_entitlements=Support/Node/adhoc.entitlements
 fi
 sparkle=$app/Contents/Frameworks/Sparkle.framework
 sign "$app/Contents/Frameworks/Lottie.framework"
@@ -36,6 +38,10 @@ sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
 sign --entitlements Support/SimFold/runtime.entitlements "$app/Contents/Resources/sim-fold"
+for addon in "$app"/Contents/Resources/stim-server/node_modules/unique-pid/prebuilds/darwin-*/node.napi.node; do
+  sign "$addon"
+done
+sign --entitlements "$node_entitlements" "$app/Contents/Resources/stim-server/bin/node"
 sign $app_entitlements "$app"
 codesign --verify --strict --deep "$app"
 

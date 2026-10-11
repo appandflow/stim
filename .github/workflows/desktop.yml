@@ -48,6 +48,12 @@ jobs:
         with:
           node-version: 22
           package-manager-cache: false
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+      - name: Install the bundled server's workspace packages
+        run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
       - name: Check the generated design tokens, agent prompts and tutorial steps
         run: node scripts/generate-tokens.mjs --check
       - name: Check Sources stay ASCII
@@ -88,6 +94,25 @@ jobs:
               ../../packages/server/helper/PhoneSource.swift ../../packages/server/helper/MacosSource.swift \
               ../../packages/server/helper/FrameArtwork.swift ../../packages/server/helper/DuoFrameRenderer.swift \
               ../../packages/server/helper/DuoHingeMonitor.swift ../../packages/server/helper/DuoCaptureSource.swift
+      - name: Start the bundled stim-server under the hardened runtime
+        run: |
+          runtime="$RUNNER_TEMP/stim-server"
+          node scripts/server-runtime.mjs "$runtime"
+          codesign --force --options runtime --sign - --entitlements Support/Node/adhoc.entitlements "$runtime/bin/node"
+          home=$(mktemp -d)
+          env -i HOME="$home" "$runtime/bin/node" --input-type=module \
+            -e "const { capture } = await import('$runtime/node_modules/unique-pid/index.mjs'); if (!capture(process.pid).ok) process.exit(1);"
+          env -i HOME="$home" STIM_HOME="$home/.stim" SHELL=/bin/sh "$runtime/bin/node" \
+            "$runtime/node_modules/@stim-cli/server/dist/stim-server.mjs" --port 7999 --loopback-only &
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:7999/health; then
+              kill %1
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "The bundled stim-server did not answer /health within 30 s." >&2
+          exit 1
       - name: Package an ad-hoc release build
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: scripts/release.sh 0.0.0

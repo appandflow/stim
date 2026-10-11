@@ -73,6 +73,19 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+
+      - name: Install the bundled server's workspace packages (lifecycle scripts stay blocked)
+        run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+
       - name: Build before any secret is loaded
         working-directory: apps/desktop
         run: scripts/bundle.sh --universal --release
