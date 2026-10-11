@@ -6,13 +6,10 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import {
   parseSimctlList,
   listAllIosSims,
-  listBootedIosSims,
-  parseOccupyingApps,
   pickDefaultIosCreation,
   sanitizeDeviceLabel,
   ownedSimName,
   deleteIosSim,
-  occupyingApps,
   bootIosSim,
   clearIosAppData,
   deleteParkedIosSim,
@@ -185,16 +182,6 @@ test('listAllIosSims uses simctl via executor', () => {
   expect(sims.length).toBe(3);
 });
 
-test('listBootedIosSims filters by state', () => {
-  setExecutor({
-    runFile: () => SIMCTL_OUTPUT,
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  const booted = listBootedIosSims();
-  expect(booted.map((s) => s.udid).toSorted()).toEqual(['UDID-A', 'UDID-C']);
-});
-
 test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
   const { parseRuntimeVersion } = await import('../devices/ios.ts');
   expect(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2')).toBe('26.2');
@@ -227,24 +214,6 @@ test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
   });
   const sims = parseSimctlList(out);
   expect(sims.map((s) => s.udid)).toEqual(['IOS-1']);
-});
-
-test('parseOccupyingApps finds xctrunner bundles', () => {
-  const out = [
-    '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]',
-    '082a\t0\tUIKitApplication:com.callstack.agentdevice.runner.uitests.xctrunner[082a][rb-legacy]',
-  ].join('\n');
-  expect(parseOccupyingApps(out)).toEqual(['com.callstack.agentdevice.runner.uitests.xctrunner']);
-});
-
-test('parseOccupyingApps ignores apple system apps', () => {
-  const out = '507e\t0\tUIKitApplication:com.apple.Spotlight[507e][rb-legacy]';
-  expect(parseOccupyingApps(out)).toEqual([]);
-});
-
-test('parseOccupyingApps fails open on unparseable output', () => {
-  expect(parseOccupyingApps('')).toEqual([]);
-  expect(parseOccupyingApps(null as unknown as string)).toEqual([]);
 });
 
 test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () => {
@@ -471,7 +440,6 @@ test.each([
   ['uninstall', () => uninstallIosApp('UDID-B', 'com.example.app')],
   ['shutdown', () => shutdownIosSim('UDID-B')],
   ['delete', () => deleteIosSim('UDID-B')],
-  ['spawn', () => occupyingApps('UDID-B')],
 ])('simctl %s runs under a hard deadline so a stuck CoreSimulator cannot hold the caller', (verb, operation) => {
   const deadlines: { command: string; timeoutMs?: number; killSignal?: string }[] = [];
   const record = (command: string, opts?: { timeoutMs?: number; killSignal?: string }) => {
@@ -540,71 +508,6 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
   });
   expect(() => deleteIosSim('UDID-GONE')).not.toThrow();
   expect(deleted).toBe(false);
-});
-
-test('occupyingApps returns null (doubt, read as occupied) when the probe cannot answer', async () => {
-  setExecutor({ run: () => '', runFileQuiet: () => null, spawn: () => {} });
-  expect(occupyingApps('UDID-X')).toBe(null);
-  resetExecutor();
-});
-
-test('occupyingApps returns the counted xctrunner bundles, and [] for a free sim', async () => {
-  setExecutor({ run: () => '', runFileQuiet: () => '', spawn: () => {} });
-  expect(occupyingApps('UDID-X')).toEqual([]);
-  setExecutor({
-    run: () => '',
-    runFileQuiet: () => '1\t0\tUIKitApplication:com.example.app.xctrunner[a][rb-legacy]',
-    spawn: () => {},
-  });
-  expect(occupyingApps('UDID-X')).toEqual(['com.example.app.xctrunner']);
-  resetExecutor();
-});
-
-test('occupyingApps reports a shut-down device free without probing', async () => {
-  const devices = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        {
-          udid: 'UDID-X',
-          name: 'stim-x',
-          state: 'Shutdown',
-          isAvailable: true,
-          deviceTypeIdentifier: 'iphone-17',
-        },
-      ],
-    },
-  });
-  let probed = false;
-  setExecutor({
-    runFile: () => devices,
-    runFileQuiet: () => {
-      probed = true;
-      return null;
-    },
-    spawn: () => {},
-  });
-  expect(occupyingApps('UDID-X')).toEqual([]);
-  expect(probed).toBe(false);
-  resetExecutor();
-});
-
-test('occupyingApps still returns null (doubt) for a booted device whose probe cannot answer', async () => {
-  const devices = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        {
-          udid: 'UDID-X',
-          name: 'stim-x',
-          state: 'Booted',
-          isAvailable: true,
-          deviceTypeIdentifier: 'iphone-17',
-        },
-      ],
-    },
-  });
-  setExecutor({ run: () => devices, runFileQuiet: () => null, spawn: () => {} });
-  expect(occupyingApps('UDID-X')).toBe(null);
-  resetExecutor();
 });
 
 test('ownedSimName does not double the ownership prefix', () => {

@@ -318,10 +318,12 @@ export type MockExecutor = { [K in keyof Executor]?: (...args: any[]) => any };
 
 let active: Executor = debugExecutor;
 
+/** @internal Test seam that swaps the process executor. */
 export function setExecutor(e: MockExecutor): void {
   active = e as Executor;
 }
 
+/** @internal Test seam that restores the process executor. */
 export function resetExecutor(): void {
   active = debugExecutor;
 }

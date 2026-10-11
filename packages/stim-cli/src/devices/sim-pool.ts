@@ -40,8 +40,6 @@ export interface ParkedAvd extends ParkedRecord {
 
 type PoolRecords = { ios: ParkedSim; android: ParkedAvd };
 
-export const DEFAULT_PARKED_MAX = 3;
-
 export const POOL_SETTING_REMEDY: string =
   'Run `stim guide settings` for the device pool bounds and where it can be set.';
 

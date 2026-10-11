@@ -19,7 +19,7 @@
     "test:watch": "vitest",
     "build": "pnpm -r --filter \"./packages/*\" --filter @stim-cli/github-action run build",
     "test:e2e": "node --test test/e2e/*.e2e.js",
-    "knip": "knip",
+    "knip": "knip && knip --production",
     "benchmark:agent": "node scripts/agent-benchmark/driver.mjs",
     "release:prep": "node scripts/release-prep.mjs",
     "preinstall": "npx only-allow pnpm",

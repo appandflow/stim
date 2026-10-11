@@ -18,6 +18,9 @@ import {
   MEMORY_SOURCES,
   NATIVE_BUILD_STEPS,
   TUTORIAL_VERSION,
+  CAPACITY_REFUSAL_LIMIT,
+  CAPACITY_REFUSAL_MAX_AGE_MS,
+  PLACEMENT_DECISIONS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -34,13 +37,7 @@ import { detectTutorial } from '../workspace/project.ts';
 import webCommand from '../commands/web.ts';
 import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
-import {
-  CAPACITY_REFUSAL_LIMIT,
-  CAPACITY_REFUSAL_MAX_AGE_MS,
-  PLACEMENT_DECISIONS,
-  PLACEMENT_LIMIT,
-  PLACEMENT_MAX_AGE_MS,
-} from '../engine/stats.ts';
+import { PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
   topicNames,
   renderTopic,

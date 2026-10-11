@@ -7,7 +7,7 @@ import { getProjectSettings, writeConfigSetting } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
 
-export { lastUseFrom, readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
+export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@stim-cli/core/state';
 
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);

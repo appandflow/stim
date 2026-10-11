@@ -7,13 +7,11 @@ import {
   PREBUILD_ERROR,
   nativeDirInFingerprint,
   nativeDirName,
-  needsPrebuild,
   planPrebuild,
   prebuildAction,
   prebuildRefusal,
   recordPrebuild,
   runPrebuild,
-  shouldPrebuild,
 } from '../engine/prebuild.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readClaimSet } from '../ownership-claim.ts';
@@ -44,24 +42,9 @@ function installFakeExpoBin() {
 }
 
 describe('the decision', () => {
-  test('shouldPrebuild is expo AND no native directory, nothing else', () => {
-    expect(shouldPrebuild({ isExpo: true, nativeDirExists: false })).toBe(true);
-    expect(shouldPrebuild({ isExpo: true, nativeDirExists: true })).toBe(false);
-    expect(shouldPrebuild({ isExpo: false, nativeDirExists: false })).toBe(false);
-    expect(shouldPrebuild({ isExpo: false, nativeDirExists: true })).toBe(false);
-  });
-
   test('nativeDirName maps the platform to its directory', () => {
     expect(nativeDirName('ios')).toBe('ios');
     expect(nativeDirName('android')).toBe('android');
-  });
-
-  test('needsPrebuild reads the directory off the disk', () => {
-    expect(needsPrebuild(root, 'ios', true)).toBe(true);
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    expect(needsPrebuild(root, 'ios', true)).toBe(false);
-    expect(needsPrebuild(root, 'android', true)).toBe(true);
-    expect(needsPrebuild(root, 'android', false)).toBe(false);
   });
 
   test('prebuildAction regenerates a native dir outside the key unless its recorded prebuild ran on this fingerprint', () => {

@@ -16,15 +16,6 @@ import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/setti
 export { artifactIn, buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };
 
-export interface BuildRunOptions {
-  variant?: string;
-  abi?: string;
-  configuration?: string;
-  buildConfiguration?: string;
-  isSimulator?: boolean;
-  device?: string | boolean | null;
-}
-
 export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
   return join(root, platform, key);
 }

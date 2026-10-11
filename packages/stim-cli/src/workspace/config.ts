@@ -26,11 +26,9 @@ export {
   allMetroPorts,
   configCorruptRepair,
   findEnclosingWorktreeRoot,
-  findProjectByMetroPort,
   getConcurrencyLimits,
   getConfigPath,
   getProject,
-  getProjectSetting,
   getProjectSettings,
   getRepoSettings,
   isPathPrefix,
@@ -40,7 +38,6 @@ export {
   type ConcurrencyLimits,
   type DeviceRecord,
   type ProjectRecord,
-  type RepoRecord,
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 
@@ -253,49 +250,6 @@ export function clearSupervisor(projectPath: string, expected?: ProcessRecord | 
     delete cfg.projects[projectPath]!.supervisor;
     saveConfig(cfg);
     return true;
-  });
-}
-
-export function setProjectSetting(projectPath: string, dottedKey: string, value: unknown): void {
-  withConfigLock(() => {
-    const cfg = ensureConfig();
-    const proj = cfg.projects[projectPath];
-    if (!proj) throw new Error(`Project not registered: ${projectPath}`);
-    proj.settings = proj.settings || {};
-    writeNested(proj.settings, dottedKey, value);
-    saveConfig(cfg);
-  });
-}
-
-export function unsetProjectSetting(projectPath: string, dottedKey: string): boolean {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    const proj = cfg?.projects?.[projectPath];
-    if (!proj?.settings) return false;
-    const removed = deleteNested(proj.settings, dottedKey);
-    if (removed && cfg) saveConfig(cfg);
-    return removed;
-  });
-}
-
-export function setRepoSetting(gitCommonDir: string, dottedKey: string, value: unknown): void {
-  withConfigLock(() => {
-    const cfg = ensureConfig();
-    cfg.repos[gitCommonDir] = cfg.repos[gitCommonDir] || {};
-    cfg.repos[gitCommonDir].settings = cfg.repos[gitCommonDir].settings || {};
-    writeNested(cfg.repos[gitCommonDir].settings, dottedKey, value);
-    saveConfig(cfg);
-  });
-}
-
-export function unsetRepoSetting(gitCommonDir: string, dottedKey: string): boolean {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    const settings = cfg?.repos?.[gitCommonDir]?.settings;
-    if (!settings) return false;
-    const removed = deleteNested(settings, dottedKey);
-    if (removed && cfg) saveConfig(cfg);
-    return removed;
   });
 }
 

@@ -10,7 +10,6 @@ import {
   listOwnedSessionsArgs,
   ownedSessionName,
   parseCreatedSession,
-  parseSessionList,
   parseStoppedSession,
   remoteDaemonFrom,
   stopSessionArgs,
@@ -249,32 +248,6 @@ describe('remoteDaemonFrom', () => {
         agentDeviceRemoteSessionUrl: 'https://x',
       }),
     ).toBeNull();
-  });
-});
-
-describe('parseSessionList', () => {
-  test('reads the sessions array', () => {
-    const stdout = JSON.stringify({
-      sessions: [
-        { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
-        { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
-      ],
-      pageInfo: {},
-    });
-    expect(parseSessionList(stdout)).toEqual([
-      { id: 'a', name: 'stim-one', status: 'IN_PROGRESS', platform: 'IOS' },
-      { id: 'b', name: 'someone-else', status: 'NEW', platform: 'IOS' },
-    ]);
-  });
-
-  test('an empty or unparseable list is an empty array, never a throw', () => {
-    expect(parseSessionList(JSON.stringify({ sessions: [] }))).toEqual([]);
-    expect(parseSessionList('nope')).toEqual([]);
-  });
-
-  test('a session with no id is dropped rather than carried as a partial record', () => {
-    const stdout = JSON.stringify({ sessions: [{ name: 'stim-x' }, { id: 'ok', name: 'stim-y' }] });
-    expect(parseSessionList(stdout).map((s) => s.id)).toEqual(['ok']);
   });
 });
 

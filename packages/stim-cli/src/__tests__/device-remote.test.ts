@@ -9,7 +9,6 @@ import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
-  PUBLIC_METRO_ENV,
   remoteAndroidDeps,
   remoteIosDeps,
   resolveRemoteContext,
@@ -17,6 +16,7 @@ import {
   teardownRemote,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
+import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 

@@ -538,15 +538,6 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
   }
 }
 
-export function iosSimSlimProfileSettingError(settings: unknown, settingsRoot: string): string | null {
-  try {
-    iosSimSlimProfileSetting(settings, settingsRoot);
-    return null;
-  } catch (error) {
-    return String((error as Error)?.message || error);
-  }
-}
-
 function iosString(settings: unknown, key: string): unknown {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios)) return undefined;
   return settings.ios[key];

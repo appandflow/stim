@@ -149,24 +149,9 @@ export function getProjectSettings(projectPath: string): Record<string, unknown>
   return getProject(projectPath)?.settings || {};
 }
 
-export function getProjectSetting(projectPath: string, dottedKey: string): unknown {
-  return readNested(getProjectSettings(projectPath), dottedKey);
-}
-
 export function getRepoSettings(gitCommonDir: string): Record<string, unknown> {
   const cfg = loadConfig();
   return cfg?.repos?.[gitCommonDir]?.settings || {};
-}
-
-function readNested(obj: unknown, dottedKey: string): unknown {
-  if (!obj) return undefined;
-  const keys = dottedKey.split('.');
-  let cur: unknown = obj;
-  for (const k of keys) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[k];
-  }
-  return cur;
 }
 
 export function isPathPrefix(prefix: string, path: string): boolean {
@@ -199,12 +184,4 @@ export function allMetroPorts(): number[] {
   return Object.values(cfg.projects)
     .map((p) => p.metroPort)
     .filter((p) => typeof p === 'number');
-}
-
-export function findProjectByMetroPort(port: number): string | null {
-  const cfg = loadConfig();
-  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
-    if (proj.metroPort === port) return path;
-  }
-  return null;
 }

@@ -4,14 +4,13 @@ import { resolve, join } from 'path';
 import { detectPlatforms } from '../integrations/projects.ts';
 import {
   appProjectProblem,
-  declaresAppDependency,
   findProjectRoot,
   detectIsExpo,
   detectTutorial,
-  resolveRegisteredProject,
   projectShortcut,
   ownedDeviceLabel,
 } from '../workspace/project.ts';
+import { declaresAppDependency } from '../workspace/project-files.ts';
 import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { upsertProject, getProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
@@ -464,54 +463,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-});
-
-test('resolveRegisteredProject finds a project by absolute path', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('/Users/x/Developer/agent-1');
-  expect(r.found).toBe('/Users/x/Developer/agent-1');
-});
-
-test('resolveRegisteredProject matches by basename when unambiguous', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('agent-1');
-  expect(r.found).toBe('/Users/x/Developer/agent-1');
-});
-
-test('resolveRegisteredProject matches by an explicit --label', () => {
-  upsertProject('/Users/x/Developer/anything', { bundleId: 'a', androidPackage: 'a', isExpo: false, label: 'agent-2' });
-  const r = resolveRegisteredProject('agent-2');
-  expect(r.found).toBe('/Users/x/Developer/anything');
-});
-
-test('resolveRegisteredProject prefers a project label over a colliding basename', () => {
-  upsertProject('/a/agent-x', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/b/other', { bundleId: 'b', androidPackage: 'b', isExpo: false, label: 'agent-x' });
-  const r = resolveRegisteredProject('agent-x');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/Multiple projects/);
-});
-
-test('resolveRegisteredProject errors with collision when two basenames match', () => {
-  upsertProject('/a/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  upsertProject('/b/agent-1', { bundleId: 'b', androidPackage: 'b', isExpo: false });
-  const r = resolveRegisteredProject('agent-1');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/Multiple projects/);
-});
-
-test('resolveRegisteredProject errors when shortcut does not match anything', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('nope');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/No registered project/);
-});
-
-test('resolveRegisteredProject errors when path does not match anything', () => {
-  upsertProject('/Users/x/Developer/agent-1', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const r = resolveRegisteredProject('/no/such/path');
-  expect(r.found).toBe(null);
-  expect(r.error).toMatch(/No registered project/);
 });
 
 test('projectShortcut inherits the enclosing worktree label so same-basename app dirs stay unique', () => {

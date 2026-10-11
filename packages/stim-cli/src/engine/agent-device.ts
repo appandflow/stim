@@ -4,7 +4,7 @@ import { sanitizeDeviceLabel } from '../devices/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
 
 // agent-device and eas-cli share this token name. The token stays in the child environment.
-export const DAEMON_TOKEN_ENV = 'AGENT_DEVICE_DAEMON_AUTH_TOKEN';
+const DAEMON_TOKEN_ENV = 'AGENT_DEVICE_DAEMON_AUTH_TOKEN';
 
 const PROFILE_FILE = 'agent-device.remote.json';
 
@@ -110,16 +110,6 @@ export function disconnectArgs(profilePath: string): string[] {
 export function closeArgs(profilePath: string): string[] {
   // agent-device claims outlive leases, so close clears a prior workspace claim.
   return withProfile(profilePath, ['close']);
-}
-
-export function isLoopbackDaemon(baseUrl: string): boolean {
-  let host: string;
-  try {
-    host = new URL(baseUrl).hostname;
-  } catch {
-    return false;
-  }
-  return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
 }
 
 export type SimulatorArch = 'arm64' | 'x86_64';
