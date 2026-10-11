@@ -193,7 +193,8 @@ As soon as the pull request is open, assign a fresh agent that did not implement
 the change to review the issue, diff, tests, and user-facing guidance. Address
 every actionable finding and rerun the affected checks. Mark the pull request
 ready only after that fresh review is clear. Merge only after all required CI
-checks pass; if CI fails, fix the branch, repeat the review, and wait for the
+checks pass, and after `merge gate`, which waits for every other check, has
+passed; if CI fails, fix the branch, repeat the review, and wait for the
 new checks.
 
 The fresh reviewer records the outcome with labels. When the review is clear, it

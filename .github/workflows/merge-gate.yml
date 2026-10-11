@@ -2,6 +2,7 @@ name: Merge gate
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:
 
 concurrency:
@@ -10,14 +11,81 @@ concurrency:
 
 permissions:
   contents: read
+  checks: read
+  statuses: read
+  actions: read
 
 jobs:
   merge-gate:
     name: merge gate
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - if: github.event_name != 'merge_group'
-        run: echo "Validation runs in the merge queue."
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          # Waits for every other check run, workflow run and commit status on
+          # the head SHA, then fails if any ended unsuccessfully.
+          api() {
+            for attempt in 1 2 3; do
+              if out=$(gh api --paginate "$@"); then
+                jq -s . <<<"$out"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
+          grace=75
+          last=
+          while :; do
+            elapsed=$SECONDS
+            checks=$(api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq '.check_runs[] | {id, name, status, conclusion, suite: .check_suite.id}')
+            runs=$(api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id}')
+            statuses=$(api "repos/$REPO/commits/$SHA/status?per_page=100" \
+              --jq '.statuses[] | {context, state}')
+            result=$(jq -n -c --argjson c "$checks" --argjson r "$runs" --argjson s "$statuses" --argjson self "$RUN_ID" '
+              ($r | map(select(.id != $self))) as $runs
+              | ($c | map(select(.name != "merge gate"))
+                    | map(. as $k | .wf = (($runs | map(select(.suite == $k.suite)) | first | .workflow_id) // $k.suite))
+                    | group_by([.wf, .name]) | map(max_by(.id))) as $checks
+              | def superseded($suite):
+                  ($runs | map(select(.suite == $suite)) | first) as $me
+                  | $me != null and ($runs | any(.workflow_id == $me.workflow_id and .run_number > $me.run_number));
+                {
+                  pending: ([$checks[] | select(.status != "completed") | .name]
+                    + [$runs[] | select(.status != "completed") | "workflow run \(.id)"]
+                    + [$s[] | select(.state == "pending") | .context]),
+                  failed: ([$checks[]
+                      | select(.status == "completed" and (.conclusion | IN("success", "neutral", "skipped") | not))
+                      | select((.conclusion == "cancelled" and superseded(.suite)) | not)
+                      | "\(.name): \(.conclusion)"]
+                    + [$s[] | select(.state == "failure" or .state == "error") | "\(.context): \(.state)"])
+                }')
+            pending=$(jq -r '.pending | length' <<<"$result")
+            if [ "$result" != "$last" ]; then
+              echo "[$elapsed s] $result"
+              last=$result
+            fi
+            if [ "$elapsed" -ge "$grace" ] && [ "$pending" -eq 0 ]; then
+              failed=$(jq -r '.failed[]' <<<"$result")
+              if [ -n "$failed" ]; then
+                echo "::error::Checks failed on $SHA. Fix them, then re-run this job."
+                echo "$failed"
+                exit 1
+              fi
+              echo "All other checks on $SHA passed."
+              exit 0
+            fi
+            if [ "$elapsed" -lt 600 ]; then sleep 30; else sleep 60; fi
+          done
 
       - if: github.event_name == 'merge_group'
         uses: actions/checkout@v4
