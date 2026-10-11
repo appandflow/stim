@@ -2,13 +2,13 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { WebSocket } from 'ws';
+import { WebSocket } from 'ws';
 import { BuildHost, type BuildLimits } from '../src/build.ts';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const file = (path: string, text: string, size = text.length) => ({ path, kind: 'file', size, sha256: sha(text) });
 const frame = (digest: string, bytes: string) => Buffer.concat([Buffer.from(digest, 'hex'), Buffer.from(bytes)]);
-const socket = {} as WebSocket;
+const socket = { readyState: WebSocket.CLOSED, OPEN: WebSocket.OPEN, bufferedAmount: 0, send: () => {} };
 
 let home: string;
 let root: string;
