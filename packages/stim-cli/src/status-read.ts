@@ -246,11 +246,12 @@ type GitScope = 'all' | 'live' | 'none';
 export function readStatus({
   probes = liveProbes(),
   git = 'live',
-}: { probes?: StatusProbes; git?: GitScope } = {}): Promise<StatusSnapshot> {
-  return withStateReadCache(() => readStatusFacts(probes, git));
+  cwd = process.cwd(),
+}: { probes?: StatusProbes; git?: GitScope; cwd?: string } = {}): Promise<StatusSnapshot> {
+  return withStateReadCache(() => readStatusFacts(probes, git, cwd));
 }
 
-async function readStatusFacts(probes: StatusProbes, gitScope: GitScope): Promise<StatusSnapshot> {
+async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: string): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
   const iosReads = projects.map(([path]) => probes.hostedIos(hostedIosPlacements(readWorkspaceState(path))));
@@ -258,8 +259,8 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope): Promis
     probes.hostedAndroid(hostedAndroidPlacements(readWorkspaceState(path))),
   );
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
-  const cwdRoot = findServerWorkspace(process.cwd())?.root ?? null;
-  const { worktrees, commonDirs } = linkedWorktrees([process.cwd(), ...projects.map(([path]) => path)]);
+  const cwdRoot = findServerWorkspace(cwd)?.root ?? null;
+  const { worktrees, commonDirs } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
     projects.map(([p]) => p),

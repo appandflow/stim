@@ -158,6 +158,7 @@ function renderStatus(
   }: StatusSnapshot,
   json: boolean,
   settle: (payload: StatusPayload) => StatusPayload = (payload) => payload,
+  cwd = process.cwd(),
 ): string[] {
   const out: string[] = [];
   const totalMemoryMb = Math.round(totalmem() / (1024 * 1024));
@@ -308,7 +309,7 @@ function renderStatus(
         : `\n${cap.liveCount} active environment(s), roughly ${formatGb(cap.committedMb)} of ${formatGb(cap.totalMemoryMb)} committed.`,
     ),
   );
-  const volumes = readVolumes(cwdRoot || process.cwd());
+  const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);
   if (line) {
     const tight = tightVolumes(volumes);
@@ -345,7 +346,26 @@ function watchedPids({ roots, states }: StatusSnapshot): number[] {
   ];
 }
 
-async function watchStatus(json: boolean): Promise<void> {
+export interface StatusWatch {
+  stop(): void;
+}
+
+/**
+ * Reads status now and again on every change until stopped, and calls `emit` with each new rendering: the JSON payload
+ * with `json`, the human view otherwise. `emit` never sees the same rendering twice in a row. `cwd` stands for the
+ * directory status runs in, which marks the current workspace.
+ */
+export function runStatusWatch({
+  json,
+  cwd = process.cwd(),
+  emit,
+  failed,
+}: {
+  json: boolean;
+  cwd?: string;
+  emit: (text: string) => void;
+  failed: (message: string) => void;
+}): StatusWatch {
   let last: string | null = null;
   let lastPayload: StatusPayload | null = null;
   let archiveStamp: number | null = null;
@@ -382,6 +402,7 @@ async function watchStatus(json: boolean): Promise<void> {
           const first = snapshot === null;
           snapshot = await readStatus({
             git: first ? 'none' : 'all',
+            cwd,
             probes: liveProbes({
               simctlListing: sources?.simulatorListing(),
               gitMaxAgeMs: WATCH_GIT_MAX_AGE_MS,
@@ -395,9 +416,9 @@ async function watchStatus(json: boolean): Promise<void> {
           if (first) scheduler.trigger('full', 0);
         }
         measurer.schedule(snapshot.states, snapshot.worktrees);
-        text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full))).join('\n');
+        text = renderStatus(snapshot, json, (full) => (payload = watchPayload(lastPayload, full)), cwd).join('\n');
       } catch (error) {
-        console.error(chalk.red(String((error as Error)?.message || error)));
+        failed(String((error as Error)?.message || error));
         return;
       } finally {
         sources?.reconcile();
@@ -406,7 +427,7 @@ async function watchStatus(json: boolean): Promise<void> {
       if (key === last) return;
       last = key;
       lastPayload = payload;
-      process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`);
+      emit(text);
     },
   });
   const fallback = setInterval(() => scheduler.trigger('full'), WATCH_FALLBACK_MS);
@@ -415,19 +436,32 @@ async function watchStatus(json: boolean): Promise<void> {
     machineDue = true;
     scheduler.trigger('light');
   }, WATCH_MACHINE_INTERVAL_MS);
+  sources = watchStatusSources({ home: getConfigDir(), onChange: (kind) => scheduler.trigger(kind) });
+  scheduler.trigger('full', 0);
+  return {
+    stop() {
+      clearInterval(fallback);
+      clearInterval(machine);
+      scheduler.stop();
+      sources?.stop();
+    },
+  };
+}
+
+async function watchStatus(json: boolean): Promise<void> {
+  const watch = runStatusWatch({
+    json,
+    emit: (text) => process.stdout.write(`${!json && process.stdout.isTTY ? '\x1b[2J\x1b[H' : ''}${text}\n`),
+    failed: (message) => console.error(chalk.red(message)),
+  });
   const finish = () => {
-    clearInterval(fallback);
-    clearInterval(machine);
     stopReader();
-    scheduler.stop();
-    sources?.stop();
+    watch.stop();
     process.exit(0);
   };
   const stopReader = watchStdoutReader(finish);
   process.on('SIGINT', finish);
   process.on('SIGTERM', finish);
-  sources = watchStatusSources({ home: getConfigDir(), onChange: (kind) => scheduler.trigger(kind) });
-  scheduler.trigger('full', 0);
   await new Promise<never>(() => {});
 }
 

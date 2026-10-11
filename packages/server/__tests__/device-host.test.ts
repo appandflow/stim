@@ -54,7 +54,6 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { HostedViews } from '../src/hosted-view.ts';
 import { ControlHub } from '../src/control.ts';
 import { FramePool } from '../src/frames.ts';
-import { FeedPool } from '../src/feed.ts';
 
 const WORKER = `
 import { spawn, spawnSync } from 'node:child_process';
@@ -425,15 +424,13 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       );
       chmodSync(helper, 0o755);
       const frames = new FramePool(env);
-      const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
       const sent: ServerMessage[] = [];
       const control = new ControlHub({
         frameHelper: () => null,
         env,
         stimCli: join(home, 'unused-cli.mjs'),
-        feeds,
         frames,
-        statusFeed: { args: ['status', '--watch', '--json'], cwd: home, keep: 1, label: 'unused status' },
+        subscribeStatus: () => () => {},
         audit: () => {},
         lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
         idleMs: 60_000,
@@ -491,7 +488,6 @@ process.stdin.resume();process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
         writeFileSync(journal, original);
         await control.close();
         await frames.close();
-        await feeds.close();
       }
     },
   );
@@ -516,7 +512,6 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    const feeds = new FeedPool(join(home, 'unused-cli.mjs'), env);
     vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     vi.spyOn(frames, 'folded').mockImplementation(() => {});
@@ -524,9 +519,8 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       frameHelper: () => null,
       env,
       stimCli: join(home, 'unused-cli.mjs'),
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -591,7 +585,6 @@ ${ending === 'timeout' ? "process.on('SIGTERM',()=>{});setInterval(()=>{},1000);
       await vi.waitFor(() => expect(pid === null || !alive(pid)).toBe(true));
       vi.restoreAllMocks();
       await frames.close();
-      await feeds.close();
       releaseClaim(claim);
     }
   },
@@ -605,7 +598,6 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(tool, 0o755);
     const env = { ...process.env, PATH: `${home}:${process.env.PATH}` };
     const frames = new FramePool(env);
-    const feeds = new FeedPool('unused', env);
     vi.spyOn(frames, 'control').mockReturnValue({ send: () => {}, keys: () => true, detach: () => {} });
     vi.spyOn(frames, 'litPosture').mockReturnValue('folded');
     const claim = tryAcquireClaim({ root: join(home, 'identity-owner.claims'), mode: 'exclusive' }).acquired!;
@@ -613,9 +605,8 @@ test.skipIf(process.platform === 'win32')(
       frameHelper: () => null,
       env,
       stimCli: 'unused',
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -656,7 +647,6 @@ test.skipIf(process.platform === 'win32')(
       vi.restoreAllMocks();
       await control.close();
       await frames.close();
-      await feeds.close();
       releaseClaim(claim);
     }
   },
@@ -692,13 +682,13 @@ require('node:fs').writeFileSync(${JSON.stringify(started)},String(process.pid))
       script,
       `import {writeFileSync} from 'node:fs';
 import {DeviceHost} from ${imports('device-host')};import {HostedViews} from ${imports('hosted-view')};
-import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};import {FeedPool} from ${imports('feed')};
+import {ControlHub} from ${imports('control')};import {FramePool} from ${imports('frames')};
 const env={...process.env,PATH:${JSON.stringify(home)}+':'+process.env.PATH};
 const host=new DeviceHost({worker:${JSON.stringify(join(home, 'worker.mjs'))},env,agents:${NOAGENTS},allowed:()=>true,limits:{prepareMs:5000,stopMs:2000,killGraceMs:100}});
 const answer=(await host.reserve('client',${JSON.stringify(request)}));if('error' in answer)throw new Error(answer.error.message);
 let attached;for(let i=0;i<200;i++){attached=host.attach('client',{session:answer.result.id});if(attached.result?.state==='ready')break;await new Promise(r=>setTimeout(r,20));}
-const frames=new FramePool(env),feeds=new FeedPool('unused',env);
-const control=new ControlHub({env,stimCli:'unused',feeds,frames,statusFeed:{args:[],cwd:${JSON.stringify(home)},keep:1,label:'unused'},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
+const frames=new FramePool(env);
+const control=new ControlHub({env,stimCli:'unused',frames,subscribeStatus:()=>()=>{},audit:()=>{},lockLimits:{timeoutMs:1000,maxOutputBytes:1024},idleMs:60000,renewMs:60000,leaseFor:'1m',foldHelper:async()=> 'fixture-fold',foldTimeoutMs:60000,conflict:()=>{}});
 const views=new HostedViews(host,control,env,()=>${JSON.stringify(capture)});
 await new Promise(resolve=>views.subscribe('client',answer.result.id,{frame:resolve,delayed:()=>{},failed:()=>{}},{fps:5,maxEdge:480}));
 const owner={device:{id:'client',name:'Client'},send:()=>{}};
@@ -2012,7 +2002,6 @@ test('macOS offer and reserve refuse all 64 unresolved app slots without mutatin
 
 describe.skipIf(process.platform !== 'darwin')('hosted macOS view and input', () => {
   let frames: FramePool;
-  let feeds: FeedPool;
   let control: ControlHub;
   let views: HostedViews;
   let helper: string;
@@ -2037,14 +2026,12 @@ setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('Th
     );
     chmodSync(helper, 0o755);
     frames = new FramePool(process.env);
-    feeds = new FeedPool(join(home, 'unused-cli.mjs'), process.env);
     control = new ControlHub({
       frameHelper: () => null,
       env: process.env,
       stimCli: join(home, 'unused-cli.mjs'),
-      feeds,
       frames,
-      statusFeed: { args: [], cwd: home, keep: 1, label: 'unused hosted status' },
+      subscribeStatus: () => () => {},
       audit: () => {},
       lockLimits: { timeoutMs: 1000, maxOutputBytes: 1024 },
       idleMs: 60_000,
@@ -2060,7 +2047,6 @@ setInterval(()=>{try{process.kill(app.app.pid,0);}catch{process.stderr.write('Th
     await host.close();
     await control.close();
     await frames.close();
-    await feeds.close();
   });
 
   async function launch() {

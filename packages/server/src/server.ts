@@ -54,6 +54,7 @@ import { probeDirectories, STARTUP_PROBE_MS, STARTUP_RETRY_MS, type StartupState
 import { exclusiveClaimDir, sharedClaimDir } from '@stim-cli/core/ownership-claim';
 import { Player, recordedSpans, recordingDir, segmentKeyframe, timelineMarkers } from './replay.ts';
 import { FeedPool, type JsonObject } from './feed.ts';
+import { StatusFeed } from './status-feed.ts';
 import { buildFoldHelper, buildFrameHelper, type FrameHint } from './frame-helper.ts';
 import {
   DEFAULT_FRAME_LIMITS,
@@ -218,10 +219,7 @@ export interface ServerOptions {
   commandLimits?: Partial<CommandLimits>;
   actionLimits?: Partial<CommandLimits>;
   frameLimits?: Partial<FrameLimits>;
-  /**
-   * False runs no recorder, and so no status child while no client asks for status; true by default. The limits
-   * say how much footage it keeps.
-   */
+  /** False runs no recorder; true by default. The limits say how much footage it keeps. */
   record?: boolean;
   recordLimits?: Partial<RecordLimits>;
   /**
@@ -232,11 +230,13 @@ export interface ServerOptions {
   /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
   foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
-  /**
-   * False runs the notification rules only while a phone is registered for pushes, so no status child runs for the
-   * notification history alone; true by default.
-   */
+  /** False runs the notification rules only while a phone is registered for pushes; true by default. */
   history?: boolean;
+  /**
+   * False reads status only while something listens to it; true by default, which starts the status watch when the
+   * server becomes ready so the first client gets a payload at once.
+   */
+  statusAtBoot?: boolean;
   /** The Expo push API base URL; tests point it at a local server. */
   pushEndpoint?: string;
   pushLimits?: Partial<PushLimits>;
@@ -341,7 +341,6 @@ const CONTROL_LIMITS: ControlLimits = {
 const LOCK_LIMITS: CommandLimits = { timeoutMs: 30_000, maxOutputBytes: 64 * 1024 };
 const pushToken = new RegExp(PUSH_TOKEN_PATTERN);
 
-const STATUS_FEED = { args: ['status', '--watch', '--json'], cwd: homedir(), keep: 1, label: 'stim status --watch' };
 const HEALTH_ROUTE_TIMEOUT_MS = 1000;
 const LISTEN_RETRY_MS = 5000;
 const COMMAND_LIMITS: CommandLimits = { timeoutMs: 60_000, maxOutputBytes: 32 * 1024 * 1024 };
@@ -601,6 +600,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
   const feeds = new FeedPool(options.stimCli, options.env);
+  const statusFeed = new StatusFeed({
+    worker: join(dirname(options.stimCli), 'status-worker.mjs'),
+    env: options.env,
+    cwd: homedir(),
+  });
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
   let helperPath = options.frameHelper ?? null;
   let helperBuilding = false;
@@ -700,7 +704,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let stopRecording: (() => void) | null = null;
   const recordUsage = (): (() => void) => {
     recorders += 1;
-    stopRecording ??= feeds.subscribe(STATUS_FEED, {
+    stopRecording ??= statusFeed.subscribe({
       item: (payload) => usage.record(payload as unknown as StatusPayload),
       failed: () => {
         stopRecording = null;
@@ -854,9 +858,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const control = new ControlHub({
     env: options.env,
     stimCli: options.stimCli,
-    feeds,
     frames,
-    statusFeed: STATUS_FEED,
+    subscribeStatus: (listener) => statusFeed.subscribe(listener),
     audit: auditSafely,
     lockLimits: LOCK_LIMITS,
     idleMs: controlLimits.idleMs,
@@ -904,7 +907,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const push = new PushNotifier({
     name: options.name,
     endpoint: options.pushEndpoint ?? EXPO_PUSH_API,
-    subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+    subscribeStatus: (listener) => statusFeed.subscribe(listener),
     readVolumes: readDiskVolumes,
     readPressure: readMemoryPressure,
     pullRequests: options.pullRequests ?? ((worktrees) => worktreePullRequests()(worktrees)),
@@ -978,10 +981,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
     });
     if (options.frameHelper === undefined && !helperPath && !helperBuilding) buildHelper();
+    if (options.statusAtBoot !== false) statusFeed.hold();
     if (options.record !== false) {
       recorder ??= new Recorder({
         frames,
-        subscribeStatus: (listener) => feeds.subscribe(STATUS_FEED, listener),
+        subscribeStatus: (listener) => statusFeed.subscribe(listener),
         limits: options.recordLimits,
       });
     }
@@ -1289,7 +1293,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!subscription) return;
       const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
       const stopUsage = recordUsage();
-      const unsubscribe = feeds.subscribe(STATUS_FEED, {
+      const unsubscribe = statusFeed.subscribe({
         item: (_payload, text) => {
           const history = usage.history();
           const leases = control.ownLeaseTimes();
@@ -1624,7 +1628,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       let unsubscribeStatus: (() => void) | null = null;
       if (hosted) attach(hosted.view.device);
       else if (archive === undefined)
-        unsubscribeStatus = feeds.subscribe(STATUS_FEED, {
+        unsubscribeStatus = statusFeed.subscribe({
           item: (payload) => {
             if (ended) return;
             latest = payload as unknown as StatusPayload;
@@ -2714,7 +2718,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       updates.close();
       recorder?.close();
       await Promise.all(
-        [frames.close(), feeds.close(), ...[...running].map((cancel) => cancel()), cancelling.settled()].map(settle),
+        [
+          frames.close(),
+          feeds.close(),
+          statusFeed.close(),
+          ...[...running].map((cancel) => cancel()),
+          cancelling.settled(),
+        ].map(settle),
       );
     }
     wss.close();

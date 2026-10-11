@@ -81,6 +81,23 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
+const FAKE_STATUS_WORKER = `
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { parentPort, threadId, workerData } from 'node:worker_threads';
+const env = process.env;
+mkdirSync(env.FAKE_STIM_PIDS, { recursive: true });
+const beat = join(env.FAKE_STIM_PIDS, 'status-worker.' + threadId);
+appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker', cwd: workerData.cwd }) + '\\n');
+const payloads = JSON.parse(env.FAKE_STIM_PAYLOADS);
+let index = 0;
+setInterval(() => {
+  writeFileSync(beat, String(Date.now()));
+  if (index < payloads.length) return void parentPort.postMessage({ line: JSON.stringify(payloads[index++]) });
+  if (env.FAKE_STIM_EXIT) process.exit(3);
+}, 20);
+`;
+
 const FAKE_STIM = `
 import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -320,6 +337,7 @@ async function start(
     startupProbeMs?: number;
     startupRetryMs?: number;
     settle?: boolean;
+    statusAtBoot?: boolean;
     service?: ServerOptions['service'];
     requestLog?: ServerOptions['requestLog'];
   } = {},
@@ -327,6 +345,7 @@ async function start(
   const stimCli = join(root, 'fake-stim.mjs');
   writeFileSync(stimCli, FAKE_STIM);
   writeFileSync(join(root, 'offload-worker.mjs'), FAKE_WORKER);
+  writeFileSync(join(root, 'status-worker.mjs'), FAKE_STATUS_WORKER);
   const tailscale = join(root, 'tailscale');
   writeFileSync(tailscale, FAKE_TAILSCALE);
   chmodSync(tailscale, 0o755);
@@ -352,6 +371,7 @@ async function start(
       ...overrides.env,
     },
     tailscaleMonitor: overrides.tailscaleMonitor,
+    statusAtBoot: overrides.statusAtBoot ?? false,
     service: overrides.service,
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
@@ -442,6 +462,15 @@ function alive(pid: number): boolean {
 async function until(check: () => boolean): Promise<void> {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   expect(check()).toBe(true);
+}
+
+/** The fake status watch workers that ran in the last 200 ms. */
+function statusWorkers(): string[] {
+  if (!existsSync(pids)) return [];
+  return readdirSync(pids).filter(
+    (name) =>
+      name.startsWith('status-worker.') && Date.now() - Number(readFileSync(join(pids, name), 'utf8') || 0) < 200,
+  );
 }
 
 function childPids(): number[] {
@@ -2763,7 +2792,7 @@ describe('a client that leaves during hello', () => {
 });
 
 describe('status.subscribe', () => {
-  it('shares one status child across subscribers and stops it with the last one', async () => {
+  it('shares one status watch across subscribers and stops it with the last one', async () => {
     const port = await start();
     const { token } = await pair(port);
     const first = await connect(port);
@@ -2772,8 +2801,7 @@ describe('status.subscribe', () => {
     expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[0] });
     expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
 
-    const [pid] = childPids();
-    expect(readFileSync(join(pids, String(pid)), 'utf8')).toBe('status --watch --json');
+    await until(() => statusWorkers().length === 1);
 
     const second = await connect(port);
     await second.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
@@ -2781,31 +2809,44 @@ describe('status.subscribe', () => {
     expect(await second.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
     expect(await second.request('status.subscribe')).toMatchObject({ result: { subscription: 's2' } });
     expect(await second.next()).toEqual({ event: 'status', subscription: 's2', payload: PAYLOADS[1] });
-    expect(childPids()).toEqual([pid]);
+    expect(statusWorkers()).toHaveLength(1);
 
     expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
     expect(await first.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
     });
-    expect(alive(pid!)).toBe(true);
+    expect(statusWorkers()).toHaveLength(1);
 
     second.socket.close();
-    await until(() => !alive(pid!));
+    await until(() => statusWorkers().length === 0);
   });
 
-  it('stops the status child when the server closes', async () => {
+  it('starts the status watch when the server becomes ready, before any subscriber, and keeps it', async () => {
+    const port = await start({ statusAtBoot: true });
+    await until(() => statusWorkers().length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const client = await authed(port);
+    await client.request('status.subscribe');
+    expect(await client.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    client.socket.close();
+    await client.closed;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(statusWorkers()).toHaveLength(1);
+  });
+
+  it('stops the status watch when the server closes', async () => {
     const port = await start();
     const { token } = await pair(port);
     const client = await connect(port);
     await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     await client.request('status.subscribe');
     await client.next();
-    const [pid] = childPids();
-    expect(alive(pid!)).toBe(true);
+    await until(() => statusWorkers().length === 1);
 
     await server!.close();
     server = null;
-    await until(() => !alive(pid!));
+    await until(() => statusWorkers().length === 0);
+    expect(statusWorkers()).toEqual([]);
   });
 
   it('sends the CPU and memory history beside the payload once a payload reports machine owners', async () => {
@@ -2843,7 +2884,7 @@ describe('status.subscribe', () => {
     expect(app!.memoryMb.filter((value) => value !== null)).toEqual([1500]);
   });
 
-  it('ends the subscription with an error event when the status child exits', async () => {
+  it('ends the subscription with an error event when the status watch exits', async () => {
     const port = await start({ exit: true });
     const { token } = await pair(port);
     const client = await connect(port);
@@ -2854,7 +2895,7 @@ describe('status.subscribe', () => {
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',
-      error: { code: 'status-failed', message: 'stim status --watch exited (code 3): status failed on purpose' },
+      error: { code: 'status-failed', message: 'the status worker exited (code 3)' },
     });
     expect(await client.request('unsubscribe', { subscription: 's1' })).toMatchObject({
       error: { code: 'unknown-subscription' },
@@ -2872,26 +2913,24 @@ describe('push.register', () => {
     quietHours: { start: 22 * 60, end: 7 * 60, timeZone: 'America/Toronto' },
   };
 
-  it('stores the registration with the pairing and keeps a status child until it is removed', async () => {
+  it('stores the registration with the pairing and keeps the status watch until it is removed', async () => {
     const port = await start();
     const { token } = await pair(port);
     const client = await connect(port);
     await client.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     expect(await client.request('push.register', PUSH)).toEqual({ id: 2, result: {} });
     expect(readDevices()[0]!.push).toMatchObject(PUSH);
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
-    expect(readFileSync(join(pids, String(pid)), 'utf8')).toBe('status --watch --json');
+    await until(() => statusWorkers().length === 1);
 
     client.socket.close();
     await client.closed;
-    expect(alive(pid!)).toBe(true);
+    expect(statusWorkers()).toHaveLength(1);
 
     const again = await connect(port);
     await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     expect(await again.request('push.unregister')).toEqual({ id: 2, result: {} });
     expect(readDevices().every((device) => !device.push)).toBe(true);
-    await until(() => !alive(pid!));
+    await until(() => statusWorkers().length === 0);
   });
 
   it('moves a token registered from a new pairing of the same phone off the old pairing', async () => {
@@ -2908,11 +2947,10 @@ describe('push.register', () => {
     const port = await start();
     const client = await authed(port);
     await client.request('push.register', PUSH);
-    await until(() => childPids().length === 1);
-    const [pid] = childPids();
+    await until(() => statusWorkers().length === 1);
     revokeDevice(readDevices()[0]!.id);
     expect(readDevices()).toEqual([]);
-    await until(() => !alive(pid!));
+    await until(() => statusWorkers().length === 0);
   });
 
   it('reads the events an older phone registers: disk as machine, the rest as nothing', async () => {
