@@ -99,3 +99,22 @@ test('shuts down through teardown, never deleting, and keeps a device that becam
     log.mockRestore();
   }
 });
+
+test('a caller output receives the shutdown lines and records instead of console.log and gc results', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const lines: string[] = [];
+  const records: string[] = [];
+  try {
+    const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
+    await shutDownIdleDevices(report, 2 * HOUR, () => collect({ A: idle(3) }), {
+      log: (line) => lines.push(line),
+      record: (_kind, status, label) => records.push(`${status} ${label}`),
+      fail: () => {},
+    });
+    expect(lines.join('\n')).toMatch(/Shut down ios stim-a/);
+    expect(records).toEqual(['done stim-a (iPhone 27.0)', 'kept stim-a']);
+    expect(log).not.toHaveBeenCalled();
+  } finally {
+    log.mockRestore();
+  }
+});

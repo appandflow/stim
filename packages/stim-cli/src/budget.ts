@@ -301,7 +301,7 @@ async function reclaimIdleDevices({ root, dryRun, note, now }: StepContext): Pro
     );
   const idle = collect(now);
   if (dryRun || idle.length === 0) return { targets: idle.map(deviceLabel), failures: 0 };
-  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()));
+  const { failures, shutDown } = await shutDownIdleDevices(idle, 0, () => collect(Date.now()), stepOutput(note));
   return { targets: shutDown.map(deviceLabel), failures };
 }
 

@@ -8,7 +8,7 @@ import { teardownOwnedAvd, teardownOwnedIosSim } from '../../devices/teardown.ts
 import { ACTIVE_BUILD_KEY, activeBuildState, parseActiveBuild } from '../../engine/build-progress.ts';
 import type { Config } from '../../workspace/config.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface IdleDevice {
   kind: 'ios' | 'android';
@@ -172,11 +172,12 @@ export async function shutDownIdleDevices(
   devices: readonly IdleDevice[],
   idleMs: number,
   recollect: () => IdleDevice[],
+  { log, record }: GcOutput = GC_OUTPUT,
 ): Promise<{ failures: number; shutDown: IdleDevice[] }> {
   const candidates = idleShutdownCandidates(devices, idleMs);
   const shutDown: IdleDevice[] = [];
   if (candidates.length === 0) {
-    console.log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
+    log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
     return { failures: 0, shutDown };
   }
   const fresh = idleShutdownCandidates(recollect(), idleMs);
@@ -187,8 +188,8 @@ export async function shutDownIdleDevices(
       (d) => d.kind === device.kind && d.id === device.id && d.project === device.project && d.slot === device.slot,
     );
     if (!current) {
-      console.log(chalk.dim(`Kept ${what}: it is no longer idle for ${formatLongDuration(idleMs)}.`));
-      recordGcResult('idleDevice', 'kept', device.name, {
+      log(chalk.dim(`Kept ${what}: it is no longer idle for ${formatLongDuration(idleMs)}.`));
+      record('idleDevice', 'kept', device.name, {
         id: device.id,
         detail: `it is no longer idle for ${formatLongDuration(idleMs)}`,
       });
@@ -200,20 +201,20 @@ export async function shutDownIdleDevices(
         : await teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
     if (outcome.status === 'torn-down') {
       shutDown.push(device);
-      console.log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
-      recordGcResult('idleDevice', 'done', device.name, {
+      log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
+      record('idleDevice', 'done', device.name, {
         id: device.id,
         detail: `idle ${formatLongDuration(current.idleForMs)}`,
       });
     } else if (outcome.status === 'missing') {
-      console.log(chalk.dim(`${what} is already gone; nothing to shut down.`));
+      log(chalk.dim(`${what} is already gone; nothing to shut down.`));
     } else if (outcome.status === 'skipped') {
-      console.log(chalk.yellow(`Skipped ${what}: ${outcome.reason}`));
-      recordGcResult('idleDevice', 'kept', device.name, { id: device.id, detail: outcome.reason });
+      log(chalk.yellow(`Skipped ${what}: ${outcome.reason}`));
+      record('idleDevice', 'kept', device.name, { id: device.id, detail: outcome.reason });
     } else {
       failures++;
-      console.log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
-      recordGcResult('idleDevice', 'failed', device.name, { id: device.id, detail: outcome.reason });
+      log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
+      record('idleDevice', 'failed', device.name, { id: device.id, detail: outcome.reason });
     }
   }
   return { failures, shutDown };
