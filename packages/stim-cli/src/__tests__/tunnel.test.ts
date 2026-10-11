@@ -15,7 +15,16 @@ import { readMetroTunnel } from '../supervisor/state.ts';
 import assert from 'node:assert';
 import { resolve4 } from 'node:dns/promises';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+  type PathLike,
+  type WatchListener,
+} from 'node:fs';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -25,12 +34,24 @@ import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 vi.mock('node:dns/promises', () => ({ resolve4: vi.fn<typeof resolve4>() }));
 vi.mock('node:https', () => ({ request: vi.fn<typeof httpsRequest>() }));
+const watcher = vi.hoisted(() => ({ unavailable: false }));
+vi.mock('node:fs', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...fs,
+    watch: (file: PathLike, listener: WatchListener<string>) => {
+      if (watcher.unavailable) throw Object.assign(new Error('watch unavailable'), { code: 'ENOSYS' });
+      return fs.watch(file, listener);
+    },
+  };
+});
 
 afterEach(() => {
   resetExecutor();
   vi.unstubAllGlobals();
   vi.mocked(resolve4).mockReset();
   vi.mocked(httpsRequest).mockReset();
+  watcher.unavailable = false;
 });
 
 function clock(start = 1_000) {
@@ -389,6 +410,63 @@ describe('startTunnel: the happy path', () => {
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
+  test('reads a later URL through the safety fallback when watching is unavailable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-fallback-test-'));
+    const logFile = join(dir, 'ngrok.log');
+    writeFileSync(logFile, '');
+    watcher.unavailable = true;
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const promise = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        logFile,
+        spawnFn: () => makeChildProcess(),
+        requireReachable: false,
+      });
+      writeFileSync(logFile, `${JSON.stringify({ url: 'https://fallback.ngrok.app' })}\n`);
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await promise;
+      expect(result).toMatchObject({ url: 'https://fallback.ngrok.app' });
+      if ('cleanup' in result) await result.cleanup();
+    } finally {
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('reads a URL from atomic log replacements without a polling tick', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-watch-test-'));
+    const logFile = join(dir, 'ngrok.log');
+    writeFileSync(logFile, '');
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    let writing: NodeJS.Timeout | undefined;
+    try {
+      const promise = startVerified({
+        provider: 'ngrok',
+        port: 8081,
+        logFile,
+        spawnFn: () => makeChildProcess(),
+        urlTimeoutMs: 2000,
+        requireReachable: false,
+      });
+      const replacement = join(dir, 'replacement.log');
+      const replace = () => {
+        writeFileSync(replacement, `${JSON.stringify({ url: 'https://watched.ngrok.app' })}\n`);
+        renameSync(replacement, logFile);
+        writing = setTimeout(replace, 100);
+      };
+      replace();
+      const result = await promise;
+      expect(result).toMatchObject({ url: 'https://watched.ngrok.app' });
+      if ('cleanup' in result) await result.cleanup();
+    } finally {
+      clearTimeout(writing);
+      vi.useRealTimers();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test.each(['\n\n', ''])('tailscale reports the last trimmed conflict line with suffix %j on exit', async (suffix) => {
     const child = makeChildProcess();
     setExecutor({ findExecutable: () => 'tailscale' });
