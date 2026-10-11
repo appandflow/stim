@@ -1,8 +1,10 @@
+import type { StimContext } from '@stim-cli/core';
 import { formatElapsed } from '../command-output.ts';
 import type { ClaimHandle, ClaimHolder } from '../ownership-claim.ts';
 import type { ProcessIdentityStatus } from '../process-identity.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { clearWorkspaceStateKey, readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { isTermination, operationState } from './operation-state.ts';
 import { allowDeclaredSpawns, refuseDeclaredSpawns, signalDeclaredSpawns } from './spawn-claims.ts';
 import { withWorkspaceProcessLock } from './workspace-process-lock.ts';
 
@@ -128,23 +130,22 @@ export function clearNativeRunCancel(root: string, claimId: string): void {
   } catch {}
 }
 
-let cancelled: string | null = null;
-let cancellationSignal: AbortSignal | undefined;
-
-/** The active native run aborts this signal when it is cancelled. */
-export function runCancellationSignal(): AbortSignal | undefined {
-  return cancellationSignal;
+/** The active native run of `context`'s operation aborts this signal when it is cancelled. */
+export function runCancellationSignal(context: StimContext | undefined): AbortSignal | undefined {
+  return operationState(context).runSignal;
 }
 
-/** Why this process's native run was cancelled, or null while it was not. */
-export function runCancellation(): string | null {
-  return cancelled;
+/** Why `context`'s native run was cancelled, or null while it was not. */
+export function runCancellation(context: StimContext | undefined): string | null {
+  return operationState(context).cancelled;
 }
 
 export function cancelledFailure(
+  context: StimContext | undefined,
   platform: 'ios' | 'android',
   { code, message }: { code: string | undefined; message?: string | null },
 ): { code: string; message: string; remedy: string; lines: string[] } | null {
+  const cancelled = runCancellation(context);
   if (cancelled === null) return null;
   return {
     code: 'STIM_CANCELLED',
@@ -154,31 +155,30 @@ export function cancelledFailure(
   };
 }
 
-function cancelOnInterrupt({
+function cancelOnAbort({
+  context,
   root,
   claim,
   write,
-  exit,
   controller,
 }: {
+  context: StimContext;
   root: string;
   claim: ClaimHandle;
   write: (line: string) => void;
-  exit: (code: number) => void;
   controller: AbortController;
 }): () => void {
-  let signals = 0;
-  const onInterrupt = () => {
-    signals += 1;
-    if (signals > 1) {
-      exit(130);
-      return;
-    }
+  const state = operationState(context);
+  const onAbort = () => {
+    if (isTermination(context.signal.reason) || controller.signal.aborted) return;
     const request = cancelRequestFor(root, claim.claimId);
-    cancelled = request ? `cancelled by \`stim stop\` (pid ${request.pid})` : 'cancelled by an interrupt';
+    const cancelled = request ? `cancelled by \`stim stop\` (pid ${request.pid})` : 'cancelled by an interrupt';
+    state.cancelled = cancelled;
+    state.handled = true;
     controller.abort();
-    refuseDeclaredSpawns(`the run was ${cancelled}`);
-    const signalled = signalDeclaredSpawns('SIGINT');
+    refuseDeclaredSpawns(context, `the run was ${cancelled}`);
+    const signalled = signalDeclaredSpawns(context, 'SIGINT');
+    if (signalled > 0 || request) state.draining = true;
     write(
       signalled > 0
         ? `${cancelled}; stopping the running build tool`
@@ -186,49 +186,51 @@ function cancelOnInterrupt({
           ? `${cancelled}; stopping before the next build tool or install`
           : cancelled,
     );
-    if (signalled === 0 && !request) exit(130);
   };
-  process.on('SIGINT', onInterrupt);
+  context.signal.addEventListener('abort', onAbort);
+  if (context.signal.aborted) onAbort();
   return () => {
-    process.off('SIGINT', onInterrupt);
-    allowDeclaredSpawns();
+    context.signal.removeEventListener('abort', onAbort);
+    allowDeclaredSpawns(context);
     clearNativeRunCancel(root, claim.claimId);
   };
 }
 
 /**
  * Run an `ios`, `android` or `macos` invocation under the workspace's native-run lock: the claim records the
- * command, platform and slot, and a wait for another holder is reported on `write`. The first SIGINT
- * forwards the interrupt to the running declared build tool; a run `stim stop` cancelled between build
- * tools starts no further one; a terminal interrupt with no build tool running, or a second SIGINT, exits
- * with 130 at once.
+ * command, platform and slot, and a wait for another holder is reported on `write`. An abort of `context.signal`
+ * forwards an interrupt to the running declared build tool and refuses any later one; a run `stim stop` cancelled
+ * stops before its next build tool or install. A `SIGTERM` abort reason is left to the caller.
  */
 export function withNativeBuildRun<T>(
+  context: StimContext,
   root: string,
   details: NativeRunDetails,
   fn: (claim: ClaimHandle) => Promise<T>,
-  { write, exit = (code) => process.exit(code) }: { write: (line: string) => void; exit?: (code: number) => void },
+  { write }: { write: (line: string) => void },
 ): Promise<T> {
   const notice = nativeRunWaitNotice({ write });
+  const state = operationState(context);
   return withWorkspaceProcessLock(
     workspaceDir(root),
     NATIVE_RUN_LOCK,
     async (claim) => {
-      cancelled = null;
+      state.cancelled = null;
       const controller = new AbortController();
-      cancellationSignal = controller.signal;
-      const dispose = cancelOnInterrupt({ root, claim, write, exit, controller });
+      state.runSignal = controller.signal;
+      const dispose = cancelOnAbort({ context, root, claim, write, controller });
       try {
         return await fn(claim);
       } finally {
         dispose();
-        cancellationSignal = undefined;
+        state.runSignal = undefined;
       }
     },
     {
       external: true,
+      signal: context.signal,
       waitMs: NATIVE_RUN_WAIT_MS,
-      declareSpawns: true,
+      declareSpawnsFor: context,
       details: { ...details },
       onHeld: (holder) => notice(holder),
     },

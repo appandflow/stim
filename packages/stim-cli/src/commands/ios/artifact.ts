@@ -53,11 +53,13 @@ import {
 } from '../../integrations/ios-project.ts';
 import { runCancellationSignal } from '../../engine/native-run.ts';
 import type { BuildFailureFields, FailArgs, RemoteUploadLike, WaitedForBuild } from './types.ts';
+import type { StimContext } from '@stim-cli/core';
 
 const PROVIDER_SKIPPED_ON_DEVICE =
   'a device build is local-tier only: its cache key names the iphoneos slice, and a remote or provider entry is keyed for the simulator';
 
 interface IosArtifactRequest {
+  context: StimContext;
   buildMachine?: string;
   root: string;
   logFile: string;
@@ -136,6 +138,7 @@ function fail(failure: FailArgs): never {
 
 export async function acquireIosArtifact(
   {
+    context,
     root,
     logFile,
     recipe,
@@ -151,7 +154,7 @@ export async function acquireIosArtifact(
 ): Promise<IosArtifactResult> {
   const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const cachePolicy = cache.policy;
-  const signal = runCancellationSignal() ?? new AbortController().signal;
+  const signal = runCancellationSignal(context) ?? new AbortController().signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
   let useBuildCache = cachePolicy.read;
   let cacheIneligible: string | null = null;

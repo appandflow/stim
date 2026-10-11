@@ -3,7 +3,8 @@ import { closeSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
-import { LOG_ROTATE_BYTES, ambientEnv } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
+import { runProcessOperation } from '../cli-operation.ts';
 import { readMacosRecord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
@@ -41,6 +42,7 @@ import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-
  * back to a local launch.
  */
 export async function runMacos(
+  context: StimContext,
   root: string,
   note: (line: string) => void = console.error,
   remote?: string,
@@ -76,6 +78,7 @@ export async function runMacos(
   const macos = (await operation.load()).prepare(settings);
   ensureWorkspaceStorage(root);
   return withNativeBuildRun(
+    context,
     root,
     { command: 'macos', platform: 'macos' },
     async (claim) => {
@@ -120,7 +123,7 @@ export async function runMacos(
             }
           };
           if (!remote) {
-            const here = await launchHere(root, record, note);
+            const here = await launchHere(context, root, record, note);
             launched();
             return here;
           }
@@ -159,7 +162,7 @@ export async function runMacos(
             connection.connection.close();
           }
         },
-        { external: true, declareSpawns: true, ownerPurpose: 'build and launch macOS app' },
+        { external: true, declareSpawnsFor: context, ownerPurpose: 'build and launch macOS app' },
       ).finally(() => progress.clear());
     },
     { write: note },
@@ -267,12 +270,17 @@ export async function waitForLaunchServices(
   return 'timeout';
 }
 
-async function launchHere(root: string, record: MacosAppRecord, note: (line: string) => void): Promise<MacosAppRecord> {
+async function launchHere(
+  context: StimContext,
+  root: string,
+  record: MacosAppRecord,
+  note: (line: string) => void,
+): Promise<MacosAppRecord> {
   await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   let child;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(context, () =>
       getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
         cwd: root,
         detached: true,
@@ -354,7 +362,9 @@ export default function macosCommand(program: Command): void {
         return;
       }
       if (!root) throw new Error('Run stim macos from the Swift Package directory.');
-      const record = await runMacos(root, console.error, options.remote, options.remoteBuild).catch((error) => {
+      const { value: record } = await runProcessOperation(root, (context) =>
+        runMacos(context, root, console.error, options.remote, options.remoteBuild),
+      ).catch((error) => {
         const remedy = (error as { remedy?: unknown }).remedy;
         if (typeof remedy === 'string') console.error(`remedy: ${remedy}`);
         throw error;

@@ -1,3 +1,4 @@
+import { ambientContext } from '@stim-cli/core';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
@@ -455,6 +456,7 @@ async function configureOwnedIosSim({
     record = pending;
   }
   const result = await reconcileIosSimulator({
+    context: ambientContext(),
     udid: record.deviceUdid,
     profile,
     previouslyManaged,

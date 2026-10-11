@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { runReload } from '../commands/reload.ts';
@@ -537,6 +538,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     stdout,
     run: () =>
       runAndroid({
+        context: testContext(),
         ...options,
         install: async (args) => options.install(args),
         launch: async (args) => options.launch(args),
@@ -2867,6 +2869,7 @@ describe('--no-build-cache', () => {
   test('looks nothing up: not the local cache, not the provider', async () => {
     let activeReport: ReturnType<typeof buildReport> | undefined;
     await withNativeBuildRun(
+      testContext(),
       root,
       { command: 'android', platform: 'android', slot: 'default' },
       async (claim) => {
@@ -4517,7 +4520,10 @@ describe('the release APK swap', () => {
       writeFileSync(cache, 'cached bytes');
       writeFileSync(unrelated, 'unrelated bytes');
       let directory: string | undefined;
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
       const h = harness({
+        context,
         variant: 'productionRelease',
         resolveCached: () => cache,
         build: never('the build'),
@@ -4529,7 +4535,7 @@ describe('the release APK swap', () => {
             const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
             assert(claim);
             requestNativeRunCancel(root, claim.claimId);
-            process.emit('SIGINT');
+            controller.abort('SIGINT');
           }
           return { ok: true, apkPath, tmpDir: directory, hermes: true, durationMs: 1 };
         },
@@ -4545,7 +4551,9 @@ describe('the release APK swap', () => {
         },
       });
       const run = () =>
-        withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), { write: () => {} });
+        withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+          write: () => {},
+        });
       const completed = await run().then(
         (result) => ({ result, error: null }),
         (error: unknown) => ({ result: null, error }),
@@ -7644,7 +7652,10 @@ describe('named Android hosting placement', () => {
 
 test('stop cancels Android device preparation waiting for a slot before any build or boot', async () => {
   const boot = vi.fn<() => Promise<void>>(async () => {});
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
   const h = harness({
+    context,
     json: true,
     ensureDevice: async ({ flags }: Parameters<typeof ensureOwnedDevice>[0]) => {
       const policy = flags!.deviceSlotWait!;
@@ -7659,13 +7670,13 @@ test('stop cancels Android device preparation waiting for a slot before any buil
           const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
           assert(claim);
           requestNativeRunCancel(root, claim.claimId);
-          process.emit('SIGINT');
+          controller.abort('SIGINT');
         },
       });
       return { avdName: 'stim-new', owned: true, created: true };
     },
   });
-  const result = await withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), {
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
     write: () => {},
   });
   expect(result.error?.code).toBe('STIM_CANCELLED');
@@ -7680,7 +7691,7 @@ describe('registered Android project recipes', () => {
   afterEach(() => resetExecutor());
 
   function run(h: ReturnType<typeof harness>) {
-    return withNativeBuildRun(root, { command: 'android', platform: 'android' }, () => h.run(), {
+    return withNativeBuildRun(testContext(), root, { command: 'android', platform: 'android' }, () => h.run(), {
       write: () => {},
     });
   }

@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import * as results from '../commands/android/result.ts';
@@ -15,6 +16,9 @@ import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { getProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+let controller = new AbortController();
+const buildContext = () => testContext({ signal: controller.signal });
 
 let scratch: string;
 let root: string;
@@ -116,7 +120,7 @@ afterEach(() => {
 });
 
 test('build-only keeps artifacts after temporary cleanup, reuses compatible input and preserves an existing runtime', async () => {
-  const cold = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const cold = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(cold).toMatchObject({ androidPackage: 'org.example.native', abi: 'x86_64', cacheHit: false });
   expect(readWorkspaceState(root)).not.toHaveProperty('android');
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
@@ -126,7 +130,7 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   const runningLog = join(workspaceLogsDir(root), 'build-android.ndjson');
   writeFileSync(runningLog, '{"msg":"running app build"}\n');
   const bytes = readFileSync(cold.apkPath, 'utf8');
-  const warm = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const warm = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });
   expect(compilations).toBe(1);
   expect(readFileSync(warm.apkPath, 'utf8')).toBe(bytes);
@@ -134,12 +138,12 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   for (const options of [{ abi: 'arm64-v8a' as const }, { abi: 'x86_64' as const, variant: 'release' }]) {
-    const changed = await buildAndroidOperation(root, { ...options, remoteBuild: 'local' });
+    const changed = await buildAndroidOperation(buildContext(), root, { ...options, remoteBuild: 'local' });
     expect(changed.cacheHit).toBe(false);
     expect(changed.cacheKey).not.toBe(cold.cacheKey);
   }
   writeFileSync(join(root, 'Main.kt'), 'edited source');
-  const edited = await buildAndroidOperation(root, { abi: 'x86_64', remoteBuild: 'local' });
+  const edited = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(edited.cacheHit).toBe(false);
   expect(compilations).toBe(4);
@@ -154,12 +158,12 @@ test('a failed compiler releases the build claim so recovery works without stopp
   const existing = { serial: 'already-running', devicePlacement: { machine: 'paired-mini' } };
   writeWorkspaceState(root, { android: existing });
   failBuild = true;
-  await expect(buildAndroidOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+  await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'COMPILER_REFUSED',
   });
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   failBuild = false;
-  const recovered = await buildAndroidOperation(root, { remoteBuild: 'local' });
+  const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(recovered.apkPath)).toBe(true);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   expect(compilations).toBe(2);
@@ -169,7 +173,9 @@ function cancelActiveBuild() {
   const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
   if (!active) throw new Error('Expected an active claimed build');
   requestNativeRunCancel(root, active.claim.claimId);
-  process.emit('SIGINT');
+  const cancelled = controller;
+  controller = new AbortController();
+  cancelled.abort('SIGINT');
 }
 
 test.each(['compile', 'upload', 'materialize'])(
@@ -179,14 +185,14 @@ test.each(['compile', 'upload', 'materialize'])(
     writeWorkspaceState(root, { android: existing });
     if (during === 'compile') cancelCompile = true;
     else if (during === 'materialize') {
-      await buildAndroidOperation(root, { remoteBuild: 'local' });
+      await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
       cancelMaterialize = true;
     } else
       vi.spyOn(results, 'finishAndroidUpload').mockImplementationOnce(async () => {
         cancelActiveBuild();
         return false;
       });
-    await expect(buildAndroidOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
       code: 'STIM_CANCELLED',
     });
     expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
@@ -199,7 +205,7 @@ test.each(['compile', 'upload', 'materialize'])(
     expect(temporaryCopies.length > 0).toBe(during === 'materialize');
     cancelCompile = false;
     cancelMaterialize = false;
-    const recovered = await buildAndroidOperation(root, { remoteBuild: 'local' });
+    const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
     expect(existsSync(recovered.apkPath)).toBe(true);
     expect(readWorkspaceState(root)?.android).toEqual(existing);
   },

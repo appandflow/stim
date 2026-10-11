@@ -8,6 +8,7 @@ import type { NdjsonWriter } from '../ndjson.ts';
 import { macosToolchain } from '../offload/toolchain.ts';
 import { repoRoot } from '../workspace/worktree.ts';
 import type { MacosProject } from './macos-project.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export function swiftpmMacosProject(root: string): MacosProject {
   return {
@@ -96,7 +97,7 @@ async function tool(
   note: (line: string) => void,
   capture = false,
 ): Promise<string> {
-  const child = spawnDeclared(() =>
+  const child = spawnDeclared(ambientContext(), () =>
     getExecutor().spawn('swift', args, { cwd: root, detached: true, stdio: ['ignore', 'pipe', 'pipe'] }),
   );
   let stdout = '';

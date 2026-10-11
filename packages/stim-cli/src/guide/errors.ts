@@ -1201,8 +1201,8 @@ captured"  (in metro.ndjson, bare RN)
   stopped at. An interrupted build stores no artifact, so the next run looks
   up the cache as usual. Stopped between build tools, a run that \`stop\`
   cancelled starts no further build tool and stops before it installs. A
-  second SIGINT exits at once, and so does a run that holds a physical-device
-  lease; those exits print no payload. Run the same command again when you want the
+  second Ctrl-C exits at once, and so does a Ctrl-C with no build tool or
+  SimSlim to stop; those exits print no payload. Run the same command again when you want the
   app on a device.`,
     },
     STIM_STOP_BLOCKED: {

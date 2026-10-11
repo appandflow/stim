@@ -594,11 +594,12 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
           `const { acquireBuildSlot } = await import(${JSON.stringify(new URL('../engine/build-slots.ts', import.meta.url).href)});`,
           `const { withWorkspaceProcessLock } = await import(${JSON.stringify(new URL('../engine/workspace-process-lock.ts', import.meta.url).href)});`,
           `const { acquireBuildLock } = await import(${JSON.stringify(LOCK_URL)});`,
+          `const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});`,
           'setExecutor({',
           '  runFile: () => JSON.stringify({ project: { name: "App", schemes: ["App"] } }),',
           `  spawn: (_cmd, _args, opts) => spawn(process.execPath, [${JSON.stringify(tool)}], opts),`,
           '});',
-          `await withWorkspaceProcessLock(${JSON.stringify(workspace)}, "native-run", async () => {`,
+          `await runProcessOperation(${JSON.stringify(workspace)}, (context) => withWorkspaceProcessLock(${JSON.stringify(workspace)}, "native-run", async () => {`,
           `  if (!acquireBuildLock({ platform: "ios", key: ${JSON.stringify(key)}, root: ${JSON.stringify(workspace)} }).acquired) process.exit(3);`,
           `  await acquireBuildSlot({ max: 1, root: ${JSON.stringify(workspace)} });`,
           '  await buildIos({',
@@ -607,7 +608,7 @@ describe('a real race between real processes', { timeout: 30_000 }, () => {
           `    derivedDataPath: ${JSON.stringify(join(root, 'dd'))},`,
           '    logWriter: { write() {} }, onHeartbeat() {}, onNote() {},',
           '  });',
-          '}, { external: true, declareSpawns: true });',
+          '}, { external: true, declareSpawnsFor: context }));',
         ].join('\n'),
       );
 

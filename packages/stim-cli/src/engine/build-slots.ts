@@ -5,6 +5,7 @@ import type { BuildWaitingFor } from '@stim-cli/core/state';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
+import { ambientContext } from '@stim-cli/core';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -82,7 +83,7 @@ export function tryAcquireBuildSlot({
   if (!max || max <= 0) return { acquired: true, unlimited: true };
   const got = tryAcquireBuildSlotClaim({ max, details: { projectRoot: root, logFile } });
   if (!got) return null;
-  declareSpawnsOn(got.claim);
+  declareSpawnsOn(ambientContext(), got.claim);
   return {
     acquired: true,
     path: got.path,
@@ -153,7 +154,7 @@ export async function acquireBuildSlot({
 
 export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
-  stopDeclaringSpawnsOn(handle.claim);
+  stopDeclaringSpawnsOn(ambientContext(), handle.claim);
   return releaseClaim(handle.claim);
 }
 

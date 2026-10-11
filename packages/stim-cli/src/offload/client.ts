@@ -51,6 +51,7 @@ import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
+import { ambientContext } from '@stim-cli/core';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -996,7 +997,7 @@ export async function offloadBuild({
     closeOffload(choice);
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
-  const signal = runCancellationSignal();
+  const signal = runCancellationSignal(ambientContext());
   const checkCancelled = () => throwIfCancelled(signal, 'offloaded build');
   let settle!: (outcome: Record<string, unknown>) => void;
   let settled = false;

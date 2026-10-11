@@ -1,3 +1,5 @@
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -259,46 +261,47 @@ describe('offloadBuild', () => {
       );
       const backup = await fakeMachine('backup', offer(0.5), { result: { job: 'j2' } });
       machines.push(machine, backup);
-      await withNativeBuildRun(
-        repo,
-        { command: 'ios', platform: 'ios' },
-        async (claim) => {
-          let finished: unknown;
-          const operation = run(['mini', 'backup'], () => {}).then(
-            (value) => {
-              finished = { value };
-              return finished;
-            },
-            (error: unknown) => {
-              finished = { error };
-              return finished;
-            },
-          );
-          try {
-            await vi.waitFor(() =>
-              expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
+      await withAmbientContext(context, () =>
+        withNativeBuildRun(
+          context,
+          repo,
+          { command: 'ios', platform: 'ios' },
+          async (claim) => {
+            let finished: unknown;
+            const operation = run(['mini', 'backup'], () => {}).then(
+              (value) => {
+                finished = { value };
+                return finished;
+              },
+              (error: unknown) => {
+                finished = { error };
+                return finished;
+              },
             );
-            const before = [...machine.methods];
-            requestNativeRunCancel(repo, claim.claimId);
-            process.emit('SIGINT');
-            await vi.waitFor(() => expect(finished).toMatchObject({ error: { code: 'STIM_CANCELLED' } }));
-            await vi.waitFor(() => expect(machine.closeCodes).toContain(1000));
-            await backup.closed;
-            expect(machine.methods).toEqual(before);
-            expect(backup.methods).toEqual(['hello', 'build.offer']);
-          } finally {
-            machine.release();
-            await operation;
-          }
-        },
-        {
-          write: () => {},
-          exit: () => {
-            throw new Error('A requested stop must unwind the operation.');
+            try {
+              await vi.waitFor(() =>
+                expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+              );
+              const before = [...machine.methods];
+              requestNativeRunCancel(repo, claim.claimId);
+              controller.abort('SIGINT');
+              await vi.waitFor(() => expect(finished).toMatchObject({ error: { code: 'STIM_CANCELLED' } }));
+              await vi.waitFor(() => expect(machine.closeCodes).toContain(1000));
+              await backup.closed;
+              expect(machine.methods).toEqual(before);
+              expect(backup.methods).toEqual(['hello', 'build.offer']);
+            } finally {
+              machine.release();
+              await operation;
+            }
           },
-        },
+          { write: () => {} },
+        ),
       );
       await withNativeBuildRun(
+        testContext(),
         repo,
         { command: 'ios', platform: 'ios' },
         async () =>

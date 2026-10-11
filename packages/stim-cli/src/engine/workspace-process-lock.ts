@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   releaseClaim,
@@ -23,7 +24,8 @@ export interface WorkspaceProcessLockOptions {
   onHeld?: (holder: ClaimHolder) => void | Promise<void>;
   rejectOwnerPurposes?: readonly string[];
   external?: boolean;
-  declareSpawns?: boolean;
+  /** Record the children this operation starts through `spawnDeclared` on the lock's claim while it is held. */
+  declareSpawnsFor?: StimContext;
 }
 
 export function workspaceProcessLockError(err: unknown): 'refused' | 'timeout' | null {
@@ -51,7 +53,7 @@ export async function withWorkspaceProcessLock<T>(
     onHeld,
     rejectOwnerPurposes = [],
     external = false,
-    declareSpawns = false,
+    declareSpawnsFor,
   }: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
   const path = workspaceProcessLockPath(root, name, external);
@@ -67,11 +69,11 @@ export async function withWorkspaceProcessLock<T>(
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) {
-      if (declareSpawns) declareSpawnsOn(attempt.acquired);
+      if (declareSpawnsFor) declareSpawnsOn(declareSpawnsFor, attempt.acquired);
       try {
         return await fn(attempt.acquired);
       } finally {
-        stopDeclaringSpawnsOn(attempt.acquired);
+        if (declareSpawnsFor) stopDeclaringSpawnsOn(declareSpawnsFor, attempt.acquired);
         releaseClaim(attempt.acquired);
       }
     }

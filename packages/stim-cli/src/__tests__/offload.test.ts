@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import * as buildMachines from '../offload/build-machines.ts';
-import { resolveBuildMachine, requireConfiguredMachine, parseBuildMachineOption } from '../offload/selection.ts';
+import {
+  buildPlacementSettings,
+  parseBuildMachineOption,
+  requireConfiguredMachine,
+  resolveBuildMachine,
+  resolveBuildPlacement,
+} from '../offload/selection.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import type { MachineCapacity, OffloadMode, BuildMachineCredential } from '@stim-cli/core/state';
 import {
@@ -715,4 +723,23 @@ test('native Xcode worker matching ignores CocoaPods while retaining Xcode, SDK,
     expect.objectContaining({ code: 'arch' }),
     expect.objectContaining({ code: 'xcode' }),
   ]);
+});
+
+test('each operation reports its own --remote-build flag as the source of its placement', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-placement-'));
+  const operations = ['local', undefined].map((flag) => ({ flag, context: testContext({ home }) }));
+  try {
+    const sources = await Promise.all(
+      operations.map(({ flag, context }) =>
+        withAmbientContext(context, async () => {
+          resolveBuildPlacement(flag);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          return buildPlacementSettings('local').find((setting) => setting.key === 'remote.build')?.from;
+        }),
+      ),
+    );
+    expect(sources).toEqual(['flag', 'default']);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

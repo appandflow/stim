@@ -1,3 +1,5 @@
+import { type StimContext, withAmbientContext } from '@stim-cli/core';
+import { processContext } from '../cli-operation.ts';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -704,6 +706,11 @@ async function nativeIdentityRefusal(
   }
 }
 
+function workerOperation<T>(root: string, fn: (context: StimContext) => Promise<T>): Promise<T> {
+  const context = processContext(root, new AbortController().signal);
+  return withAmbientContext(context, () => fn(context));
+}
+
 async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter, time: Timer): Promise<Compiled> {
   if (job.native?.provider !== 'xcode' || !job.optimizations)
     return { ok: false, code: 'bad-request', message: 'The native Xcode build has no compiler options.' };
@@ -717,12 +724,14 @@ async function compileNativeIos(job: WorkerJob, root: string, log: NdjsonWriter,
   try {
     rmSync(logFile, { force: true });
     const built = await time('buildMs', () =>
-      buildIosOperation(root, {
-        scheme: job.scheme ?? undefined,
-        configuration: job.configuration ?? undefined,
-        arch: native.arch ?? 'all',
-        remoteBuild: 'local',
-      }),
+      workerOperation(root, (context) =>
+        buildIosOperation(context, root, {
+          scheme: job.scheme ?? undefined,
+          configuration: job.configuration ?? undefined,
+          arch: native.arch ?? 'all',
+          remoteBuild: 'local',
+        }),
+      ),
     );
     if (built.cacheKey !== native.cacheKey || built.cacheSkipped) {
       rmSync(dirname(built.appPath), { recursive: true, force: true });
@@ -758,11 +767,13 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   try {
     rmSync(logFile, { force: true });
     const built = await time('buildMs', () =>
-      buildAndroidOperation(root, {
-        variant: options.variant ?? undefined,
-        abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
-        remoteBuild: 'local',
-      }),
+      workerOperation(root, (context) =>
+        buildAndroidOperation(context, root, {
+          variant: options.variant ?? undefined,
+          abi: (options.abi ?? 'all') as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all',
+          remoteBuild: 'local',
+        }),
+      ),
     );
     if (built.cacheKey !== null || !built.cacheSkipped || !built.androidPackage) {
       rmSync(dirname(built.apkPath), { recursive: true, force: true });

@@ -1,4 +1,6 @@
+import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { queryJsonLogs } from '@stim-cli/core/state';
+import { processOperation, type ProcessOperation } from './cli-operation.ts';
 import { buildAndroidOperation } from './commands/android/build.ts';
 import { runAndroidOperation } from './commands/android.ts';
 import { buildIosOperation } from './commands/ios/build.ts';
@@ -13,10 +15,10 @@ import type { StimFailure, WorkerRequest, WorkerResponse } from './api/types.ts'
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { workspaceLogsDir } from './workspace/paths.ts';
 
-async function dispatch({
-  projectRoot: root,
-  ...request
-}: WorkerRequest & { projectRoot: string }): Promise<WorkerResponse> {
+async function dispatch(
+  context: StimContext,
+  { projectRoot: root, ...request }: WorkerRequest & { projectRoot: string },
+): Promise<WorkerResponse> {
   let directory: string | undefined;
   try {
     refuseRelativeStimPaths();
@@ -42,14 +44,20 @@ async function dispatch({
     if (request.operation === 'build') {
       switch (request.options.platform) {
         case 'ios':
-          return { ok: true, result: { platform: 'ios', facts: await buildIosOperation(root, request.options) } };
+          return {
+            ok: true,
+            result: { platform: 'ios', facts: await buildIosOperation(context, root, request.options) },
+          };
         case 'android':
           return {
             ok: true,
-            result: { platform: 'android', facts: await buildAndroidOperation(root, request.options) },
+            result: { platform: 'android', facts: await buildAndroidOperation(context, root, request.options) },
           };
         case 'macos':
-          return { ok: true, result: { platform: 'macos', facts: await buildMacosOperation(root, request.options) } };
+          return {
+            ok: true,
+            result: { platform: 'macos', facts: await buildMacosOperation(context, root, request.options) },
+          };
         default:
           throw new StimError({ code: 'STIM_BAD_ARG', message: 'Unknown Stim build platform.' });
       }
@@ -58,7 +66,7 @@ async function dispatch({
     switch (options.platform) {
       case 'ios': {
         let error: FailArgs | undefined;
-        const result = await runIosOperation(root, options, {}, (failure) => {
+        const result = await runIosOperation(context, root, options, {}, (failure) => {
           error = failure;
         });
         if (!result)
@@ -71,7 +79,7 @@ async function dispatch({
         return { ok: true, result: { platform: 'ios', facts: result.facts } };
       }
       case 'android': {
-        const result = await runAndroidOperation(root, options);
+        const result = await runAndroidOperation(context, root, options);
         if (!result.ok || !result.facts)
           throw new StimError({
             code: result.error?.code ?? 'STIM_RUN_FAILED',
@@ -81,7 +89,7 @@ async function dispatch({
         return { ok: true, result: { platform: 'android', facts: result.facts } };
       }
       case 'macos': {
-        const record = await runMacos(root, console.error, undefined, options.remoteBuild);
+        const record = await runMacos(context, root, console.error, undefined, options.remoteBuild);
         return {
           ok: true,
           result: {
@@ -121,13 +129,19 @@ async function dispatch({
   }
 }
 
+let operation: ProcessOperation | undefined;
+
 function interrupt(): void {
-  if (!process.emit('SIGINT')) process.exit(130);
+  if (operation) operation.cancel('SIGINT');
+  else process.exit(130);
 }
 
 process.once('disconnect', interrupt);
 process.on('message', async (request: (WorkerRequest & { projectRoot: string }) | { operation: 'cancel' }) => {
   if (request.operation === 'cancel') return interrupt();
-  const response = await dispatch(request);
+  operation = processOperation(request.projectRoot);
+  operation.listen();
+  const { context } = operation;
+  const response = await withAmbientContext(context, () => dispatch(context, request));
   process.send?.(response, () => process.exit(response.ok ? 0 : 1));
 });

@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
@@ -109,7 +110,7 @@ test.skipIf(process.platform !== 'darwin')(
   'missing macOS settings are a bad argument with a named remedy',
   async () => {
     writeFileSync(join(root, 'Package.swift'), '// swift-tools-version:6.0\n');
-    await expect(runMacos(root)).rejects.toMatchObject({
+    await expect(runMacos(testContext(), root)).rejects.toMatchObject({
       code: 'STIM_BAD_ARG',
       message: expect.stringContaining('macos.product'),
     });
@@ -294,7 +295,7 @@ describe('macOS build placement and promotion', () => {
     vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
     vi.spyOn(slots, 'acquireBuildSlot').mockResolvedValue({ unlimited: true });
     vi.spyOn(slots, 'releaseBuildSlot').mockReturnValue(true);
-    vi.spyOn(spawns, 'spawnDeclared').mockImplementation((spawn) => spawn());
+    vi.spyOn(spawns, 'spawnDeclared').mockImplementation((_context, spawn) => spawn());
     setExecutor({
       runFileQuiet: (file) => (file === 'git' ? root : '27.0'),
       runFile: (file: string, args: string[]) => {
@@ -389,12 +390,12 @@ describe('macOS build placement and promotion', () => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
       const previous = record();
       writeWorkspaceState(root, { macos: previous });
-      const first = await buildMacosOperation(root, { remoteBuild: 'local' });
+      const first = await buildMacosOperation(testContext(), root, { remoteBuild: 'local' });
       expect(first.build).toMatchObject({ state: 'ok', builtOn: 'here' });
       expect(readFileSync(first.executable, 'utf8')).toBe('local');
       expect(readWorkspaceState(root)?.macos).toEqual(previous);
       writeFileSync(join(bin, 'Sample'), 'edited');
-      const second = await buildMacosOperation(root, { remoteBuild: 'local' });
+      const second = await buildMacosOperation(testContext(), root, { remoteBuild: 'local' });
       expect(readFileSync(second.executable, 'utf8')).toBe('edited');
       expect(readFileSync(first.executable, 'utf8')).toBe('local');
       expect(readWorkspaceState(root)?.macos).toEqual(previous);
@@ -560,7 +561,9 @@ describe('macOS build placement and promotion', () => {
         vi.mocked(machines.pairedMachines).mockReturnValue([]);
       }
       const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
-      await expect(runMacos(root, () => {}, undefined, reason === 'invalid' ? '' : 'mini')).rejects.toMatchObject({
+      await expect(
+        runMacos(testContext(), root, () => {}, undefined, reason === 'invalid' ? '' : 'mini'),
+      ).rejects.toMatchObject({
         code: reason === 'invalid' ? 'STIM_BAD_ARG' : 'STIM_OFFLOAD_REFUSED',
       });
       expect(readMacosRecord(root)).toEqual(before);
@@ -584,7 +587,7 @@ describe('macOS build placement and promotion', () => {
       writeWorkspaceState(root, { macos: record() });
       const before = readMacosRecord(root);
       const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
-      await expect(runMacos(root, () => {})).rejects.toThrow(
+      await expect(runMacos(testContext(), root, () => {})).rejects.toThrow(
         reason === 'missing product' || reason === 'malformed settings'
           ? 'macos.product'
           : reason === 'invalid plist'

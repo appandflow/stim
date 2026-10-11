@@ -35,6 +35,7 @@ import {
 } from './hosted-client.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { ambientContext } from '@stim-cli/core';
 export {
   connectHost,
   probeHostedSession as probeHostedMacos,
@@ -89,9 +90,16 @@ export async function placeHostedMacos(
         ['preparing'],
         PREPARE_TIMEOUT_MS,
         'macos',
-        runCancellationSignal(),
+        runCancellationSignal(ambientContext()),
       );
-      session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, 'macos', runCancellationSignal());
+      session = await settle(
+        host,
+        session,
+        ['stopping'],
+        SESSION_TIMEOUT_MS,
+        'macos',
+        runCancellationSignal(ambientContext()),
+      );
     } catch (error) {
       if (!heldNoLonger(error)) throw error;
     }
@@ -127,7 +135,14 @@ export async function placeHostedMacos(
     agent: { driver: 'none', setting: 'hosting.agentDriver' },
   };
   reserved(placement);
-  session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, 'macos', runCancellationSignal());
+  session = await settle(
+    host,
+    session,
+    ['preparing'],
+    PREPARE_TIMEOUT_MS,
+    'macos',
+    runCancellationSignal(ambientContext()),
+  );
   if (session.state === 'unknown') throw unknownSession(host, session);
   if (session.state === 'stopped') throw stoppedSession(host, session);
   if (session.state !== 'ready')
@@ -175,7 +190,10 @@ export async function placeHostedMacos(
       );
     }
     if (Date.now() > deadline) throw new Error(`${host.machine} did not finish installing the app.`);
-    await cancellableSleep(POLL_MS, { signal: runCancellationSignal(), what: 'hosted app installation' });
+    await cancellableSleep(POLL_MS, {
+      signal: runCancellationSignal(ambientContext()),
+      what: 'hosted app installation',
+    });
     delivery = await call(host, 'device-host.app.attach', ids);
   }
   const appliedArguments = validHostedAppArguments(delivery.arguments) ? delivery.arguments : [];

@@ -38,6 +38,7 @@ test('does nothing when no profile is configured and Stim did not manage the sim
   let spawned = false;
   await expect(
     reconcileSimSlim({
+      context: undefined,
       udid: 'U1',
       spawn: () => {
         spawned = true;
@@ -55,6 +56,7 @@ test('applies a profile with the exact UDID and streams progress', async () => {
   const signals = ['SIGINT', 'SIGTERM', 'exit'] as const;
   const listeners = signals.map((signal) => process.listeners(signal));
   const result = await reconcileSimSlim({
+    context: undefined,
     udid: 'U1',
     profile,
     out: (line) => lines.push(line),
@@ -83,6 +85,7 @@ test('applies a profile with the exact UDID and streams progress', async () => {
 test('restores stock services after the configured profile is removed', async () => {
   const calls: string[][] = [];
   const result = await reconcileSimSlim({
+    context: undefined,
     udid: 'U1',
     previouslyManaged: true,
     spawn: (_command, args) => {
@@ -98,14 +101,15 @@ test('restores stock services after the configured profile is removed', async ()
 test('reports the install command when the SimSlim executable is missing', async () => {
   const child = makeChildProcess();
   queueMicrotask(() => child.emit('error', makeError('spawn simslim ENOENT', { code: 'ENOENT' })));
-  await expect(reconcileSimSlim({ udid: 'U1', profile: '/repo/dev.json', spawn: () => child })).rejects.toThrow(
-    'brew install mobai-app/tap/simslim',
-  );
+  await expect(
+    reconcileSimSlim({ context: undefined, udid: 'U1', profile: '/repo/dev.json', spawn: () => child }),
+  ).rejects.toThrow('brew install mobai-app/tap/simslim');
 });
 
 test('includes recent SimSlim output when the command fails', async () => {
   await expect(
     reconcileSimSlim({
+      context: undefined,
       udid: 'U1',
       profile: '/repo/dev.json',
       spawn: () => exitingChild({ stderr: ['iOS 17 does not persist launchd overrides'], code: 1 }),
@@ -123,6 +127,7 @@ test.skipIf(process.platform === 'win32')(
     try {
       await expect(
         reconcileSimSlim({
+          context: undefined,
           udid: 'U1',
           profile: '/private/profile.json',
           timeoutMs: 700,
@@ -171,6 +176,7 @@ test.skipIf(process.platform === 'win32')(
     try {
       await expect(
         reconcileSimSlim({
+          context: undefined,
           udid: 'U1',
           profile: '/private/profile.json',
           timeoutMs: 500,
@@ -205,6 +211,7 @@ test.skipIf(process.platform === 'win32')(
       expect(survey.live[0]?.childDeclared).toBe(true);
       await expect(
         reconcileSimSlim({
+          context: undefined,
           udid: 'U1',
           profile: '/private/profile.json',
           spawn: () => {
@@ -231,11 +238,14 @@ describe.skipIf(process.platform === 'win32')('POSIX signals and process groups;
       import { writeFileSync } from 'node:fs';
       import { reconcileSimSlim } from ${JSON.stringify(new URL('../engine/simslim.ts', import.meta.url).href)};
       import { getExecutor } from ${JSON.stringify(new URL('../exec.ts', import.meta.url).href)};
+      import { processOperation } from ${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)};
       import { captureProcessIdentity } from ${JSON.stringify(new URL('../process-identity.ts', import.meta.url).href)};
       let leader;
       process.stdin.on('data', () => process.exit(23));
+      const operation = processOperation(process.cwd());
+      operation.listen();
       await reconcileSimSlim({
-        udid: 'U1', profile: '/private/profile.json', timeoutMs: 60000, cleanupMs: 1000,
+        context: operation.context, udid: 'U1', profile: '/private/profile.json', timeoutMs: 60000, cleanupMs: 1000,
         out(line) {
           const match = /descendant:([0-9]+)/.exec(line);
           if (match) writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ leader, descendant: Number(match[1]) }));
@@ -259,7 +269,8 @@ describe.skipIf(process.platform === 'win32')('POSIX signals and process groups;
           writeFileSync(${JSON.stringify(leaderRecord)}, JSON.stringify({ pid: leader, processToken: captured.token }));
           return child;
         },
-      });
+      }).catch(() => {});
+      process.exit(operation.interrupted() ?? 1);
     `;
       writeFileSync(driver, script);
       const caller = getExecutor().spawn(process.execPath, ['--experimental-strip-types', driver], {

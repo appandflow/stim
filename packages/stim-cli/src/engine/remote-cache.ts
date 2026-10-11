@@ -179,20 +179,6 @@ export function cacheLevel(value: unknown): 'local' | 'remote' | false {
   return value === 'local' || value === 'remote' ? value : false;
 }
 
-export function exitAfterFlush(
-  code = 0,
-  {
-    exit = (c: number) => process.exit(c),
-    stream = process.stdout,
-  }: { exit?: (code: number) => void; stream?: NodeJS.WriteStream } = {},
-): void {
-  try {
-    stream.write('', () => exit(code));
-  } catch {
-    exit(code);
-  }
-}
-
 export function readProjectConfig(
   root: string,
   { run = null, timeoutMs = CONFIG_TIMEOUT_MS }: { run?: ExecFileFn | null; timeoutMs?: number } = {},
