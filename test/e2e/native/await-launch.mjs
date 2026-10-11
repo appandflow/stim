@@ -60,16 +60,16 @@ assert(typeof logsDir === 'string' && metroPort, 'the launch has no Metro eviden
 const executor = getExecutor();
 const knownPid = (observed) =>
   observed.state === 'running' ? observed.pid : observed.state === 'stopped' ? null : undefined;
-const probe = () => {
-  if (platform !== 'ios') return knownPid(androidAppProcess(deviceId, appId));
+const probe = async () => {
+  if (platform !== 'ios') return knownPid(await androidAppProcess(deviceId, appId));
   const started = performance.now();
   let failure;
-  const observed = iosAppProcess(deviceId, appId, {
+  const observed = await iosAppProcess(deviceId, appId, {
     exec: {
       ...executor,
-      runFile(...args) {
+      async runFileAsync(...args) {
         try {
-          return executor.runFile(...args);
+          return await executor.runFileAsync(...args);
         } catch (error) {
           failure = {
             code: error.code,
@@ -112,8 +112,8 @@ const result = await waitForKnownObservation(
       metroPort,
       platform,
       timeoutMs: Math.max(0, bundleDeadline - Date.now()),
-      processAlive: () => {
-        const observedPid = probe();
+      processAlive: async () => {
+        const observedPid = await probe();
         return observedPid === undefined ? null : observedPid === pid;
       },
       readNativeCrashes: readCrashes,

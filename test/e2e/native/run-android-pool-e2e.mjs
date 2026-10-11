@@ -76,7 +76,7 @@ async function deviceFor(index) {
   assert.match(displayDensity, /^Physical density: 420\s*$/);
   if (device.adopted) await resetAdoptedAvd(device.avdName, serial, packageName);
   const cleaned = performance.now();
-  const installed = installAndroidApp({ serial, apkPath, packageName });
+  const installed = await installAndroidApp({ serial, apkPath, packageName });
   assert(installed.ok, JSON.stringify(installed));
   const finished = performance.now();
   timings.push({
