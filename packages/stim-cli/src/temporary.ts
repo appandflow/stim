@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { buildCacheRoot } from '@stim-cli/core';
+import { ambientEnv, buildCacheRoot } from '@stim-cli/core';
 import { getConfigDir, loadConfig } from './workspace/config.ts';
 
 function existingPath(path: string): { existing: string; resolved: string } {
@@ -48,7 +48,7 @@ function inside(parent: string, path: string): boolean {
 export function temporaryRoot(near: string): string {
   const reference = existingPath(near);
   const insideReference = (path: string) => inside(reference.resolved, path);
-  const override = process.env.STIM_TMPDIR ?? loadConfig()?.tempDir;
+  const override = ambientEnv().STIM_TMPDIR ?? loadConfig()?.tempDir;
   if (override !== undefined) {
     if (typeof override !== 'string' || !isAbsolute(override)) {
       throw new Error('STIM_TMPDIR / tempDir must be an absolute directory path.');

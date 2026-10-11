@@ -743,3 +743,29 @@ test('each operation reports its own --remote-build flag as the source of its pl
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("two operations resolve STIM_REMOTE_BUILD from their own environments, not the host's", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-placement-'));
+  vi.stubEnv('STIM_REMOTE_BUILD', 'auto');
+  const operations = ['local', undefined].map((value) =>
+    testContext({ home, env: { ...process.env, STIM_REMOTE_BUILD: value } }),
+  );
+  try {
+    const selected = await Promise.all(
+      operations.map((context) =>
+        withAmbientContext(context, async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          const placement = resolveBuildPlacement();
+          return [placement.selected, buildPlacementSettings(placement.selected)[0]?.from];
+        }),
+      ),
+    );
+    expect(selected).toEqual([
+      ['local', 'env'],
+      ['auto', 'default'],
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
+});

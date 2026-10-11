@@ -1,3 +1,4 @@
+import { ambientEnv } from '@stim-cli/core';
 import {
   automaticMachineEnabled,
   isJsonObject,
@@ -188,7 +189,7 @@ export async function automaticDevicePlacement(
     });
   const config = loadConfig();
   const entries = configured.filter((machine) => automaticMachineEnabled('device', machine, config));
-  const preference = resolveBuildMachine(buildMachine, process.env.STIM_REMOTE_BUILD, config?.remote?.build);
+  const preference = resolveBuildMachine(buildMachine, ambientEnv().STIM_REMOTE_BUILD, config?.remote?.build);
   buildMachine = namedBuildMachine(preference) ? preference : undefined;
   const load = capacity();
   const here: PlacementHere = {

@@ -908,7 +908,7 @@ test('hosting setup routes approval through doctor and a separate person-granted
 
 test('access ticket guidance routes agents to settings and reserves setup for a person', () => {
   const source = readFileSync(new URL('../offload/access-ticket.ts', import.meta.url), 'utf8');
-  const env = /process\.env\.(STIM_[A-Z_]+)/.exec(source)?.[1];
+  const env = /(?:process\.env|ambientEnv\(\))\.(STIM_[A-Z_]+)/.exec(source)?.[1];
   assert(env);
   for (const topic of ['agent', 'settings']) {
     const body = renderTopic(topic);
