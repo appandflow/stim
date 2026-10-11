@@ -4,7 +4,7 @@ import { isJsonObject, type Config } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
-import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
+import { parseSimctlList, type IosSimRecord } from '../../devices/ios.ts';
 import {
   androidHome,
   androidToolPath,
@@ -138,8 +138,8 @@ function modelName(deviceTypeIdentifier: string): string {
   return deviceTypeIdentifier.replace(/^com\.apple\.CoreSimulator\.SimDeviceType\./, '').replaceAll('-', ' ');
 }
 
-function sdkmanagerCommand(pkg: string): string {
-  const tool = androidToolPath('sdkmanager');
+function sdkmanagerCommand(pkg: string, env: NodeJS.ProcessEnv): string {
+  const tool = androidToolPath('sdkmanager', process.platform, env);
   return `${tool === 'sdkmanager' ? tool : JSON.stringify(tool)} --uninstall ${JSON.stringify(pkg)}`;
 }
 
@@ -150,6 +150,7 @@ function buildInventory({
   systemImages,
   config,
   deadProjects = [],
+  env,
 }: {
   sims: readonly IosSimRecord[];
   avds: readonly AvdRecord[];
@@ -157,6 +158,7 @@ function buildInventory({
   systemImages: readonly { pkg: string; directory: string }[];
   config: Config | null;
   deadProjects?: readonly string[];
+  env: NodeJS.ProcessEnv;
 }): Omit<GcInventory, 'notices'> {
   const dead = new Set(deadProjects);
   const assigned = new Map<string, { project: string; slot: string }>();
@@ -247,7 +249,7 @@ function buildInventory({
       package: image.pkg,
       directory: image.directory,
       avdCount: avdsByImage.get(image.pkg) ?? 0,
-      command: sdkmanagerCommand(image.pkg),
+      command: sdkmanagerCommand(image.pkg, env),
     })),
   };
 }
@@ -265,21 +267,21 @@ function isMissing(error: unknown): boolean {
   return code === 'ENOENT' || code === 'ENOTDIR';
 }
 
-function unreadableNotice(what: string, error: unknown): string {
+function unreadableNotice(what: string, error: unknown, env: NodeJS.ProcessEnv): string {
   const notice = `${what} not listed: ${describeError(error)}`;
   if (process.platform !== 'darwin' || (error as NodeJS.ErrnoException).code !== 'EPERM') return notice;
-  const app = process.env.STIM_DESKTOP_APP ? 'Stim Desktop' : 'the app that runs stim';
+  const app = env.STIM_DESKTOP_APP ? 'Stim Desktop' : 'the app that runs stim';
   return `${notice}. macOS privacy protection blocked the read; allow ${app} under System Settings > Privacy & Security > Files and Folders (Removable Volumes for an external disk) or Full Disk Access`;
 }
 
-function listAvdRecords(notices: string[], roots: readonly string[] = avdStorageRoots()): AvdRecord[] {
+function listAvdRecords(notices: string[], env: NodeJS.ProcessEnv): AvdRecord[] {
   const records = new Map<string, AvdRecord>();
-  for (const root of roots) {
+  for (const root of avdStorageRoots(env)) {
     let names: string[];
     try {
       names = readdirSync(root);
     } catch (error) {
-      if (!isMissing(error)) notices.push(unreadableNotice(`AVDs in ${root}`, error));
+      if (!isMissing(error)) notices.push(unreadableNotice(`AVDs in ${root}`, error, env));
       continue;
     }
     for (const entry of names) {
@@ -290,7 +292,7 @@ function listAvdRecords(notices: string[], roots: readonly string[] = avdStorage
       try {
         ini = readFileSync(join(root, entry), 'utf8');
       } catch (error) {
-        if (!isMissing(error)) notices.push(unreadableNotice(`AVD ${name}`, error));
+        if (!isMissing(error)) notices.push(unreadableNotice(`AVD ${name}`, error, env));
         continue;
       }
       let directory: string | null = null;
@@ -305,7 +307,7 @@ function listAvdRecords(notices: string[], roots: readonly string[] = avdStorage
           if (!isMissing(error)) unreadable ??= error;
         }
       }
-      if (!directory && unreadable) notices.push(unreadableNotice(`details of AVD ${name}`, unreadable));
+      if (!directory && unreadable) notices.push(unreadableNotice(`details of AVD ${name}`, unreadable, env));
       records.set(name, {
         name,
         directory,
@@ -319,37 +321,46 @@ function listAvdRecords(notices: string[], roots: readonly string[] = avdStorage
   return [...records.values()];
 }
 
-function simctl(args: string[]): string {
-  return getExecutor().runFile('xcrun', ['simctl', ...args], {
+function simctl(args: string[], env: Record<string, string>): Promise<string> {
+  return getExecutor().runFileAsync('xcrun', ['simctl', ...args], {
     timeoutMs: DEVICE_LIST_TIMEOUT_MS,
     killSignal: 'SIGKILL',
+    env,
   });
 }
 
-export function collectInventory(config: Config | null, deadProjects: readonly string[]): GcInventory {
+export async function collectInventory(
+  config: Config | null,
+  deadProjects: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<GcInventory> {
+  const childEnv = Object.fromEntries(
+    Object.entries(env).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
   const notices: string[] = [];
   let sims: IosSimRecord[] = [];
   let runtimes: SimRuntimeRecord[] = [];
   if (process.platform === 'darwin') {
     try {
-      sims = listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS });
+      sims = parseSimctlList(await simctl(['list', 'devices', '--json'], childEnv));
     } catch (error) {
       notices.push(`simulators not listed: ${describeError(error)}`);
     }
     try {
-      runtimes = parseSimRuntimeList(simctl(['runtime', 'list', '-j']));
+      runtimes = parseSimRuntimeList(await simctl(['runtime', 'list', '-j'], childEnv));
     } catch (error) {
       notices.push(`simulator runtime images not listed: ${describeError(error)}`);
     }
     try {
-      runtimes.push(...unlistedRuntimes(simctl(['list', 'runtimes', '-j']), runtimes));
+      runtimes.push(...unlistedRuntimes(await simctl(['list', 'runtimes', '-j'], childEnv), runtimes));
     } catch (error) {
       notices.push(`simulator runtimes not listed: ${describeError(error)}`);
     }
   }
-  const imagesRoot = join(androidHome(), 'system-images');
-  const images = listInstalledSystemImages((error) =>
-    notices.push(unreadableNotice('Android system images', error)),
+  const imagesRoot = join(androidHome(env), 'system-images');
+  const images = listInstalledSystemImages(
+    (error) => notices.push(unreadableNotice('Android system images', error, env)),
+    env,
   ).map((image) => ({
     pkg: image.pkg,
     directory: join(imagesRoot, `android-${image.api}`, image.tag, image.arch),
@@ -357,11 +368,12 @@ export function collectInventory(config: Config | null, deadProjects: readonly s
   return {
     ...buildInventory({
       sims,
-      avds: listAvdRecords(notices),
+      avds: listAvdRecords(notices, env),
       runtimes,
       systemImages: images,
       config,
       deadProjects,
+      env,
     }),
     notices,
   };

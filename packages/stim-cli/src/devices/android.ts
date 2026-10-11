@@ -81,10 +81,11 @@ export interface ResolvedAvdSerial {
 export function androidHome(env: NodeJS.ProcessEnv = process.env): string {
   const configured = env.ANDROID_HOME || env.ANDROID_SDK_ROOT;
   if (configured) return configured;
+  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
   if (process.platform === 'win32') {
-    return join(env.LOCALAPPDATA || join(homedir(), 'AppData', 'Local'), 'Android', 'Sdk');
+    return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
   }
-  return join(homedir(), 'Library', 'Android', 'sdk');
+  return join(home, 'Library', 'Android', 'sdk');
 }
 
 const SDK_TOOL_LOCATIONS = {
@@ -105,11 +106,15 @@ const WINDOWS_SDK_TOOL_EXTENSIONS: Readonly<Record<AndroidTool, string>> = {
 
 type AndroidTool = keyof typeof SDK_TOOL_LOCATIONS;
 
-export function androidToolPath(tool: AndroidTool, platform: NodeJS.Platform = process.platform): string {
+export function androidToolPath(
+  tool: AndroidTool,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const location = SDK_TOOL_LOCATIONS[tool];
   const bare = location.at(-1) as string;
   const name = platform === 'win32' ? `${bare}${WINDOWS_SDK_TOOL_EXTENSIONS[tool]}` : bare;
-  const abs = join(androidHome(), ...location.slice(0, -1), name);
+  const abs = join(androidHome(env), ...location.slice(0, -1), name);
   return existsSync(abs) ? abs : bare;
 }
 
@@ -183,8 +188,11 @@ export function findBuildTool(
   return null;
 }
 
-export function listInstalledSystemImages(onUnreadable?: (error: unknown) => void): SystemImage[] {
-  const root = join(androidHome(), 'system-images');
+export function listInstalledSystemImages(
+  onUnreadable?: (error: unknown) => void,
+  env: NodeJS.ProcessEnv = process.env,
+): SystemImage[] {
+  const root = join(androidHome(env), 'system-images');
   const images: SystemImage[] = [];
   const list = (dir: string): string[] => {
     try {
@@ -684,8 +692,8 @@ export function avdIniPaths(root: string, ini: string): string[] {
   ].filter((candidate): candidate is string => candidate !== null);
 }
 
-export function avdStorageRoots(): string[] {
-  const env = process.env;
+export function avdStorageRoots(env: NodeJS.ProcessEnv = process.env): string[] {
+  const home = process.platform === 'win32' ? env.USERPROFILE || homedir() : env.HOME || homedir();
   return [
     ...new Set(
       [
@@ -694,7 +702,7 @@ export function avdStorageRoots(): string[] {
         env.ANDROID_USER_HOME ? join(env.ANDROID_USER_HOME, 'avd') : null,
         env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, '.android', 'avd') : null,
         env.ANDROID_SDK_HOME ? join(env.ANDROID_SDK_HOME, 'avd') : null,
-        join(homedir(), '.android', 'avd'),
+        join(home, '.android', 'avd'),
       ].filter((value): value is string => Boolean(value)),
     ),
   ];
