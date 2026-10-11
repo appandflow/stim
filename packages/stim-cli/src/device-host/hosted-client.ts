@@ -285,9 +285,17 @@ export async function settle(
   return session;
 }
 
+const reason = (session: HostedSession): string => (session.notice ? `: ${session.notice.replace(/\.+$/, '')}` : '');
+
 export function unknownSession(host: HostConnection, session: HostedSession): Error {
   return new Error(
-    `The hosted session ${session.id} on ${host.machine} is in an unknown state${session.notice ? `: ${session.notice}` : ''}. Run stim stop to reconcile it.`,
+    `The hosted session ${session.id} on ${host.machine} is in an unknown state${reason(session)}. Run stim stop to reconcile it.`,
+  );
+}
+
+export function stoppedSession(host: HostConnection, session: HostedSession): Error {
+  return new Error(
+    `The hosted session ${session.id} on ${host.machine} stopped before it was ready${reason(session)}. Retry when the host can take it; it needs no stim stop.`,
   );
 }
 
