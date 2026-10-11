@@ -647,15 +647,16 @@ describe('logs command', () => {
     upsertProject(project, { platforms: { android: { owned: true, avdName: 'stim-own' } } });
     const secs = Math.floor((since + 1000) / 1000);
     setExecutor({
-      runFile: () => String(Date.now()),
       runFileQuiet: (_file, args) =>
-        args.includes('emu')
-          ? 'stim-own\nOK'
-          : [
-              `${secs}.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main`,
-              `${secs}.001 E/AndroidRuntime( 44): Process: app.test, PID: 44`,
-              `${secs}.002 E/AndroidRuntime( 44): java.lang.IllegalStateException: failed`,
-            ].join('\n'),
+        args.includes('date')
+          ? String(Date.now())
+          : args.includes('emu')
+            ? 'stim-own\nOK'
+            : [
+                `${secs}.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main`,
+                `${secs}.001 E/AndroidRuntime( 44): Process: app.test, PID: 44`,
+                `${secs}.002 E/AndroidRuntime( 44): java.lang.IllegalStateException: failed`,
+              ].join('\n'),
     });
     const before = new Set([...process.listeners('SIGINT'), ...process.listeners('SIGTERM')]);
     try {

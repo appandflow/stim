@@ -153,7 +153,7 @@ async function nativeLaunchFailure({
   mode,
   waitedMs,
 }: {
-  readCrashes: (() => NdjsonRecord[]) | null;
+  readCrashes: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
   since: number | string | undefined;
   platform: 'ios' | 'android' | null;
   processAlive: (() => boolean | null | Promise<boolean | null>) | null;
@@ -161,7 +161,7 @@ async function nativeLaunchFailure({
   waitedMs: number;
 }): Promise<VerifyLaunchResult | null> {
   if (!readCrashes) return null;
-  const crashes = readCrashes().filter(
+  const crashes = (await readCrashes()).filter(
     (record) =>
       record.event === 'native_crash' && after(record, since) && recordCouldBelongToPlatform(record, platform),
   );
@@ -208,7 +208,7 @@ export async function verifyLaunch({
   readRecords?: (() => NdjsonRecord[]) | null;
   readDeviceRecords?: (() => NdjsonRecord[]) | null;
   readClientRecords?: (() => NdjsonRecord[]) | null;
-  readNativeCrashes?: (() => NdjsonRecord[]) | null;
+  readNativeCrashes?: (() => NdjsonRecord[] | Promise<NdjsonRecord[]>) | null;
   processAlive?: (() => boolean | null | Promise<boolean | null>) | null;
   onReadinessPending?: (() => void) | null;
   /**

@@ -200,7 +200,7 @@ async function verifyAndroidProcessRun({
     return { state: LAUNCH_UNVERIFIED };
   }
   const processCheck = await verifyReleaseLaunched({ serial, packageName: androidPackage });
-  const crashes = readNativeCrashes();
+  const crashes = await readNativeCrashes();
   if (processCheck?.verified && !crashes.length) {
     phase(
       'verify',
@@ -290,7 +290,7 @@ async function verifyAndroidMetroRun({
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
-    : readNativeCrashes();
+    : await readNativeCrashes();
   if (nativeCrashes.length) {
     verification.fatal = true;
   }
@@ -865,7 +865,7 @@ export async function finishAndroidRun({
     launchRelease,
   });
   if (launched.failed) {
-    printNativeCrashReport(
+    await printNativeCrashReport(
       { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
       logsDir,
       (line) => phase('launch', chalk.red(line)),
