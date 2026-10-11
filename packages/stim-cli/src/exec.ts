@@ -329,21 +329,27 @@ export type MockExecutor = { [K in keyof Executor]?: (...args: any[]) => any };
 
 let active: Executor = debugExecutor;
 
+const derivedAsync = new WeakSet<object>();
+
 /**
- * @internal Test seam that swaps the process executor. A mock without the async methods answers `runFileAsync` from
- * its `runFile` and `runFileQuietAsync` from its `runFileQuiet`.
+ * @internal Test seam that swaps the process executor. A mock without the async methods, or one spread from another
+ * mock, answers `runFileAsync` from its own `runFile` and `runFileQuietAsync` from its own `runFileQuiet`.
  */
 export function setExecutor(e: MockExecutor): void {
-  if (e.runFile)
-    e.runFileAsync ??= async (...args: Parameters<Executor['runFile']>) => {
+  if (e.runFile && (!e.runFileAsync || derivedAsync.has(e.runFileAsync))) {
+    e.runFileAsync = async (...args: Parameters<Executor['runFile']>) => {
       if (!e.runFile) throw new Error('the mock executor has no runFile');
       return e.runFile(...args);
     };
-  if (e.runFileQuiet)
-    e.runFileQuietAsync ??= async (...args: Parameters<Executor['runFileQuiet']>) => {
+    derivedAsync.add(e.runFileAsync);
+  }
+  if (e.runFileQuiet && (!e.runFileQuietAsync || derivedAsync.has(e.runFileQuietAsync))) {
+    e.runFileQuietAsync = async (...args: Parameters<Executor['runFileQuiet']>) => {
       if (!e.runFileQuiet) throw new Error('the mock executor has no runFileQuiet');
       return e.runFileQuiet(...args);
     };
+    derivedAsync.add(e.runFileQuietAsync);
+  }
   active = e as Executor;
 }
 
