@@ -303,12 +303,13 @@ struct RootView: View {
     }
     .onReceive(store.$payload) { payload in
       updateTutorial(payload)
+      var arrived: [String] = []
       if let payload {
         notices.dismissCards(notIn: payload)
         toasts.dismissCards(notIn: payload)
-        showNewWorkspaces(in: payload)
+        arrived = showNewWorkspaces(in: payload)
       }
-      showWorkspaceLink(in: payload)
+      showWorkspaceLink(in: payload, arrived: arrived)
       show(openRequests.target, in: payload)
       if case .worktree(let path) = selection,
         let environment = payload?.environments.filter({ $0.path == path || $0.worktree?.path == path }).map(\.path)
@@ -741,8 +742,9 @@ struct RootView: View {
     }
   }
 
-  private func showNewWorkspaces(in payload: StatusPayload) {
-    for workspace in notices.arrivals.update(payload.environments) {
+  private func showNewWorkspaces(in payload: StatusPayload) -> [String] {
+    let arrived = notices.arrivals.update(payload.environments)
+    for workspace in arrived {
       let path = workspace.path
       notices.show(
         Notice(
@@ -760,6 +762,7 @@ struct RootView: View {
     for workspace in payload.environments {
       notices.update(key: WorkspaceArrivals.cardKey(workspace.path), detail: newWorkspaceDetail(workspace))
     }
+    return arrived.map(\.path)
   }
 
   private func newWorkspaceDetail(_ workspace: Workspace) -> String {
@@ -790,14 +793,14 @@ struct RootView: View {
       return
     }
     pendingLink = PendingWorkspaceLink(request: request)
-    showWorkspaceLink(in: store.payload)
+    showWorkspaceLink(in: store.payload, arrived: [])
   }
 
   /// A link waits for a status payload that lists its workspace. Once one exists, "Workspace not found" shows after
   /// 10 seconds without a match, and a match within the next minute still replaces it with the workspace's card,
   /// since `stim status --watch` can lag the command that printed the link. A link without `archive=` opens the
   /// path's newest archive only after that wait, so a re-created worktree is not shadowed by its old archive.
-  private func showWorkspaceLink(in payload: StatusPayload?) {
+  private func showWorkspaceLink(in payload: StatusPayload?, arrived: [String]) {
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
       if let archive = payload.archive(for: pending.request, waited: pending.waited) {
@@ -827,7 +830,7 @@ struct RootView: View {
     pendingLink = nil
     let path = target.workspace.path
     let deviceID = target.device?.id
-    guard !notices.contains(key: WorkspaceArrivals.cardKey(path)) else {
+    guard !arrived.contains(path) else {
       toasts.dismiss(key: "workspace-link:\(path)")
       return
     }

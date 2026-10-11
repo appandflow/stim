@@ -71,8 +71,6 @@ final class NoticeCenter: ObservableObject {
     notices[position].detail = detail
   }
 
-  func contains(key: String) -> Bool { notices.contains { $0.key == key } }
-
   func remove(key: String) {
     for notice in notices where notice.key == key { remove(notice.id) }
   }
