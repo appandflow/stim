@@ -1,11 +1,18 @@
 import { join, sep } from 'node:path';
-import { configDir, ensurePrivateDir, withDirLock } from '../index.ts';
+import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 import { configLockPath, getConfigPath } from './paths.ts';
 
 export function withConfigLock<T>(fn: () => T): T {
   return withDirLock(configLockPath(), fn, {
+    ensureParent: () => ensurePrivateDir(configDir()),
+  });
+}
+
+/** `withConfigLock` that waits for a contended lock without blocking the event loop; `fn` still runs synchronously. */
+export function withConfigLockAsync<T>(fn: () => T): Promise<T> {
+  return withDirLockAsync(configLockPath(), fn, {
     ensureParent: () => ensurePrivateDir(configDir()),
   });
 }

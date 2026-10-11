@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { existsSync, lstatSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { getProject, loadConfig, withConfigLock } from '../workspace/config.ts';
+import { getProject, loadConfig, withConfigLock, withConfigLockAsync } from '../workspace/config.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { pidExists, signalProcessTree } from '../metro.ts';
 import { releaseBrowserPort } from '../named-ports.ts';
@@ -501,7 +501,7 @@ async function teardownClaimedAvd(
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
   try {
-    if (del || wipe) withConfigLock(() => assertAvdReferences(avdName, owner));
+    if (del || wipe) await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
     const resolved = resolveAvd(avdName);
     if (resolved.notOwned) {
       return {
@@ -553,7 +553,7 @@ async function teardownClaimedAvd(
       if (current.notOwned || current.missing) throw new Error(`AVD ${avdName} changed before its data was wiped.`);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before its data was wiped.`);
       assertStopped(avdName);
-      withConfigLock(() => assertAvdReferences(avdName, owner));
+      await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
       const directory = ownedAvdDirectory(avdName);
       if (!directory) throw new Error(`The data directory of AVD ${avdName} could not be resolved.`);
       onWipeStart?.();
@@ -571,7 +571,7 @@ async function teardownClaimedAvd(
       if (current.missing) return teardownUnregisteredAvd(avdName, del, owner);
       if (current.serial) throw new Error(`Owned AVD ${avdName} started again before deletion.`);
       assertStopped(avdName);
-      withConfigLock(() => assertAvdReferences(avdName, owner));
+      await withConfigLockAsync(() => assertAvdReferences(avdName, owner));
       if (park && park.max > 0) {
         try {
           const systemImage = ownedAvdSystemImage(avdName);

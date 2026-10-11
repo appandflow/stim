@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { withDirLock } from '../index.ts';
+import { withDirLock, withDirLockAsync } from '../index.ts';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 const faults = vi.hoisted(() => ({
@@ -424,4 +424,77 @@ test('a malformed compatibility marker refuses without removing the visible lock
   );
   expect(body).not.toHaveBeenCalled();
   expect(readFileSync(marker, 'utf8')).toBe('partial');
+});
+
+function holdInChild(holdMs: number) {
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const { withDirLock } = await import(process.argv[1]);
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.argv[3]));
+    });
+  `,
+      CORE_URL,
+      lock,
+      String(holdMs),
+    ],
+    { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const { stdout } = child;
+  if (!stdout) throw new Error('the holder has no stdout');
+  return { held: once(stdout, 'data'), exited: once(child, 'exit'), child };
+}
+
+test('an async acquisition waits for another process without blocking the event loop', async () => {
+  const holder = holdInChild(600);
+  try {
+    await holder.held;
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 20);
+    let ticksWhenEntered = -1;
+    try {
+      await withDirLockAsync(lock, () => {
+        ticksWhenEntered = ticks;
+        expect(readdirSync(lock)).toHaveLength(1);
+      });
+    } finally {
+      clearInterval(timer);
+    }
+    expect(ticksWhenEntered).toBeGreaterThan(5);
+    expect(existsSync(lock)).toBe(false);
+  } finally {
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
+test('an async acquisition that times out reports the same lock error as the sync wait', async () => {
+  const holder = holdInChild(5000);
+  try {
+    await holder.held;
+    const entered = vi.fn<() => void>();
+    await expect(withDirLockAsync(lock, entered, { waitMs: 100, pollMs: 10 })).rejects.toMatchObject({
+      code: 'STIM_LOCK_TIMEOUT',
+      lockPath: lock,
+    });
+    expect(entered).not.toHaveBeenCalled();
+  } finally {
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
+test('an async acquisition inside a held lock runs its body before the outer body returns', () => {
+  const order: string[] = [];
+  withDirLock(lock, () => {
+    void withDirLockAsync(lock, () => order.push('inner'));
+    order.push('outer');
+  });
+  expect(order).toEqual(['inner', 'outer']);
+  expect(existsSync(lock)).toBe(false);
 });

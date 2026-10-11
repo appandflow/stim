@@ -2,7 +2,15 @@ import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { workspaceId } from '../workspace/paths.ts';
-import { clearDevice, getConfigDir, loadConfig, saveConfig, setDevice, withConfigLock } from '../workspace/config.ts';
+import {
+  clearDevice,
+  getConfigDir,
+  loadConfig,
+  saveConfig,
+  setDevice,
+  withConfigLock,
+  withConfigLockAsync,
+} from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
 import { getExecutor } from '../exec.ts';
 import { hostMemoryPressureAdvice, memoryCulpritsUnder, readHostMemoryPressure } from '../host-memory.ts';
@@ -196,7 +204,7 @@ export async function ensureOwnedIosDevice({
         return record;
       }
     }
-    withConfigLock(() => {
+    await withConfigLockAsync(() => {
       const current = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.ios;
       if (!current) return;
       if (current.deviceUdid !== record.deviceUdid || current.owned !== record.owned) {

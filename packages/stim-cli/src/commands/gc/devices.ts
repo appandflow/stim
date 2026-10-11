@@ -3,7 +3,7 @@ import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-sl
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
 import chalk from 'chalk';
-import { clearDevice, getProject, withConfigLock } from '../../workspace/config.ts';
+import { clearDevice, getProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { plural } from '../../command-output.ts';
 import { directorySize } from '../../fs-util.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
@@ -633,7 +633,7 @@ export async function deleteProjectDevices(
     if (r.kind === 'android' && r.owned) {
       await reap({ ...r, name: r.id, idleDays: 0 }, true);
     } else {
-      const removed = withConfigLock(() => {
+      const removed = await withConfigLockAsync(() => {
         if (r.kind === 'android' && deviceSlotPlatforms(getProject(r.project), r.slot)?.android?.owned) return false;
         return clearDevice(r.project, r.kind, r.slot, r.id);
       });

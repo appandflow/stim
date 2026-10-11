@@ -69,7 +69,7 @@ import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../.
 import type { LoadProjectProviderResult } from '../../engine/remote-cache.ts';
 import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult, persistLastBuild } from './result.ts';
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
-import { loadConfig, saveConfig, setDevice, withConfigLock, upsertProject } from '../../workspace/config.ts';
+import { loadConfig, saveConfig, setDevice, withConfigLockAsync, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
@@ -593,7 +593,7 @@ async function resolveInstallSerial({
     phase('device', `reopen agent-device on ${resolved.serial}`);
   }
   const consolePort = Number(resolved.serial.replace(/^emulator-/, ''));
-  withConfigLock(() => {
+  await withConfigLockAsync(() => {
     const current = deviceSlotPlatforms(loadConfig()?.projects?.[root], slot)?.android;
     if (!current?.owned || current.avdName !== device.avdName)
       throw new Error('The owned emulator assignment changed before installation.');
@@ -798,7 +798,7 @@ export async function finishAndroidRun({
   }
   if (adopting) {
     try {
-      withConfigLock(() => {
+      await withConfigLockAsync(() => {
         const config = loadConfig();
         const current = deviceSlotPlatforms(config?.projects?.[root], slot)?.android;
         if (!config || !current || current.avdName !== device.avdName)

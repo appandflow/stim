@@ -1,6 +1,6 @@
 import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { withDirLockAsync } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   readHostedDevice,
@@ -73,7 +73,7 @@ export async function runHostedDevice(
       creationStarted = true;
       const created = await createOwnedIosSim('hosted', {}, selected);
       device = { ...selected, udid: created.udid, name: created.name };
-      withDirLock(join(home, 'hosted-device.lock'), () => {
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
@@ -118,7 +118,7 @@ export async function runHostedDevice(
       await resetIosPrivacy(device.udid);
       await resetIosKeychain(device.udid);
       for (const bundleId of await listUserApps(device.udid)) await uninstallIosApp(device.udid, bundleId);
-      withDirLock(join(home, 'hosted-device.lock'), () => {
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));

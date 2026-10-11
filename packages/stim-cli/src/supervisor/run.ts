@@ -20,6 +20,7 @@ import {
   writeWorkspaceState,
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
 import {
   DEV_SERVER_STOP_REQUEST_KEY,
@@ -359,7 +360,7 @@ export async function runSupervisor({
   const serverPid = server.serverPid;
   if (serverPid) {
     const serverProcessToken = captureProcessToken(serverPid);
-    withWorkspaceStateLock(root, () => {
+    await withWorkspaceStateLockAsync(root, () => {
       if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
         writeWorkspaceState(root, {
           supervisor: { ...record, serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) },

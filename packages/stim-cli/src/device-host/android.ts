@@ -1,6 +1,6 @@
 import { existsSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { withDirLock } from '@stim-cli/core';
+import { withDirLock, withDirLockAsync } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   hostedConsolePort,
@@ -34,7 +34,7 @@ import {
 } from '../devices/android.ts';
 import { forgetCreatedDevice } from '../devices/created-devices.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
-import { ensureConfig, loadConfig, withConfigLock } from '../workspace/config.ts';
+import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import type { HostedWorkerResult } from './worker.ts';
 import { removeHostedAppData } from './app.ts';
 import { installHostedAndroidApp, restoreHostedAndroidMetro } from './android-app.ts';
@@ -167,7 +167,7 @@ export async function runHostedAndroidDevice(
       if (!hostedConsolePort(request.consolePort) || portIsOccupied(request.consolePort))
         throw new Error('The selected Android console port is invalid or occupied.');
       device = { ...device, consolePort: request.consolePort, serial: `emulator-${request.consolePort}` };
-      withDirLock(join(home, 'hosted-device.lock'), () => {
+      await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });
         renameSync(temporary, join(home, 'hosted-device.json'));
@@ -203,7 +203,7 @@ export async function runHostedAndroidDevice(
       return { state: 'parked', device };
     }
     if (ledger === 'listed') {
-      withConfigLock(() => {
+      await withConfigLockAsync(() => {
         if (!loadConfig()) ensureConfig();
       });
       const outcome = await teardownOwnedAvd(device.avdName, { del: true });

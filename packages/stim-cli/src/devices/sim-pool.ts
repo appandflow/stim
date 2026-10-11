@@ -8,6 +8,7 @@ import {
   loadConfig,
   saveConfig,
   withConfigLock,
+  withConfigLockAsync,
 } from '../workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { getParkedMax, isJsonObject, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
@@ -257,7 +258,7 @@ async function settleParkedAfter<P extends PoolPlatform>(
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
-    const claimed = withConfigLock(() => {
+    const claimed = await withConfigLockAsync(() => {
       const cfg = loadConfig();
       if (!cfg) return null;
       const records = readParked(platform, { config: cfg });
@@ -297,7 +298,7 @@ async function settleParkedAfter<P extends PoolPlatform>(
       }
       completed = true;
     } finally {
-      withConfigLock(() => {
+      await withConfigLockAsync(() => {
         const cfg = loadConfig();
         if (!cfg) return;
         const records = readParked(platform, { config: cfg });

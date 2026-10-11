@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, realpathSync, renameSync, rmSync, writeFileSync 
 import { dirname } from 'node:path';
 import { WORKSPACE_AGENT_KEY, readWorkspaceState, type WorkspaceState } from '@stim-cli/core/state';
 import { agentFromEnv } from '../agent-sessions.ts';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { getProjectSettings, writeConfigSetting } from './config.ts';
 import { workspaceHiddenSetting } from './settings.ts';
 import { ensureWorkspaceStorage, workspaceStateFile, workspaceStateLock } from './paths.ts';
@@ -12,6 +12,17 @@ export { readWorkspaceState, workspaceLastUsed, type WorkspaceState } from '@sti
 export function withWorkspaceStateLock<T>(root: string, fn: () => T): T {
   const file = workspaceStateFile(root);
   return withDirLock(workspaceStateLock(root), fn, {
+    ensureParent: () => {
+      ensureWorkspaceStorage(root);
+      mkdirSync(dirname(file), { recursive: true });
+    },
+  });
+}
+
+/** `withWorkspaceStateLock` that waits for a contended lock without blocking the event loop; `fn` still runs synchronously. */
+export function withWorkspaceStateLockAsync<T>(root: string, fn: () => T): Promise<T> {
+  const file = workspaceStateFile(root);
+  return withDirLockAsync(workspaceStateLock(root), fn, {
     ensureParent: () => {
       ensureWorkspaceStorage(root);
       mkdirSync(dirname(file), { recursive: true });
