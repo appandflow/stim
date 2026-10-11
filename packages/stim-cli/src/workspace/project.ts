@@ -43,24 +43,75 @@ export const NO_PROJECT_REFUSAL = {
   remedy: 'Run this from the directory of a supported app.',
 };
 
+type ServerWorkspace = { root: string; from: string | null };
+
+function startServerWorkspace(
+  startDir: string,
+  registry: ProjectRegistry,
+): { found: ServerWorkspace | null } | { nearest: string } {
+  const nearest = registry.findProjectRoot(startDir);
+  if (!nearest) return { found: null };
+  if (registry.keepsWorkspace(nearest)) return { found: { root: nearest, from: null } };
+  if (Object.keys(getProject(nearest)?.ports ?? {}).length) return { found: { root: nearest, from: null } };
+  return { nearest };
+}
+
+function sameRepositoryApps(nearest: string, top: string, registry: ProjectRegistry): string[] {
+  const worktree = expandedRealpath(top);
+  return Object.keys(loadConfig()?.projects ?? {}).filter(
+    (path) => path !== nearest && isPathPrefix(worktree, expandedRealpath(path)) && registry.isMobileProject(path),
+  );
+}
+
+function chooseServerWorkspace(
+  nearest: string,
+  top: string,
+  candidates: string[],
+  owners: (string | null)[],
+): ServerWorkspace {
+  const worktree = expandedRealpath(top);
+  const apps = candidates.filter((_, index) => {
+    const owner = owners[index];
+    return owner !== null && owner !== undefined && expandedRealpath(owner) === worktree;
+  });
+  return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
+}
+
 export function findServerWorkspace(
   startDir: string,
   registry: ProjectRegistry = projectRegistry,
-): { root: string; from: string | null } | null {
-  const nearest = registry.findProjectRoot(startDir);
-  if (!nearest) return null;
-  if (registry.keepsWorkspace(nearest)) return { root: nearest, from: null };
-  if (Object.keys(getProject(nearest)?.ports ?? {}).length) return { root: nearest, from: null };
-  const top = repoRoot(nearest);
-  if (!top) return { root: nearest, from: null };
-  const worktree = expandedRealpath(top);
-  const apps = Object.keys(loadConfig()?.projects ?? {}).filter((path) => {
-    if (path === nearest || !isPathPrefix(worktree, expandedRealpath(path)) || !registry.isMobileProject(path))
-      return false;
-    const owner = repoRoot(path);
-    return owner !== null && expandedRealpath(owner) === worktree;
-  });
-  return apps.length === 1 ? { root: apps[0]!, from: nearest } : { root: nearest, from: null };
+): ServerWorkspace | null {
+  const start = startServerWorkspace(startDir, registry);
+  if ('found' in start) return start.found;
+  const top = repoRoot(start.nearest);
+  if (!top) return { root: start.nearest, from: null };
+  const candidates = sameRepositoryApps(start.nearest, top, registry);
+  return chooseServerWorkspace(start.nearest, top, candidates, candidates.map(repoRoot));
+}
+
+/** `findCommandWorkspace` with the repository roots read by `repoRootOf`, so no Git call blocks the event loop. */
+export async function findCommandWorkspaceAsync(
+  startDir: string,
+  repoRootOf: (dir: string) => Promise<string | null>,
+  note: (line: string) => void,
+): Promise<string | null> {
+  const start = startServerWorkspace(startDir, projectRegistry);
+  if ('found' in start) return start.found?.root ?? null;
+  const top = await repoRootOf(start.nearest);
+  if (!top) return start.nearest;
+  const candidates = sameRepositoryApps(start.nearest, top, projectRegistry);
+  const workspace = chooseServerWorkspace(
+    start.nearest,
+    top,
+    candidates,
+    await Promise.all(candidates.map(repoRootOf)),
+  );
+  if (workspace.from) noteWorkspace(workspace, note);
+  return workspace.root;
+}
+
+function noteWorkspace(workspace: ServerWorkspace, note: (line: string) => void): void {
+  note(`Using the Stim workspace ${workspace.root}: ${workspace.from} is not a React Native or Expo app.`);
 }
 
 export function findCommandWorkspace(
@@ -68,8 +119,7 @@ export function findCommandWorkspace(
   note: (line: string) => void = (line) => console.error(line),
 ): string | null {
   const workspace = findServerWorkspace(startDir);
-  if (workspace?.from)
-    note(`Using the Stim workspace ${workspace.root}: ${workspace.from} is not a React Native or Expo app.`);
+  if (workspace?.from) noteWorkspace(workspace, note);
   return workspace?.root ?? null;
 }
 

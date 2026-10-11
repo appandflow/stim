@@ -194,3 +194,120 @@ test('a throwing progress callback interrupts its worker and rejects without pre
   }
   expect((await stim.stop()).ok).toBe(true);
 });
+
+test('settings reads run in process against each client home and leave the caller context unchanged', async () => {
+  const first = fixture('settings-first');
+  const second = fixture('settings-second');
+  writeFileSync(join(first.home, 'config.json'), JSON.stringify({ archive: { maxCount: 7 } }));
+  writeFileSync(join(second.home, 'config.json'), JSON.stringify({ archive: { maxCount: 9 } }));
+  const cwd = process.cwd();
+  const environment = { ...process.env };
+  const interrupts = process.listeners('SIGINT');
+  const spawn = vi.spyOn(getExecutor(), 'spawn');
+  const stdout = vi.spyOn(console, 'log');
+  try {
+    const payloads = await Promise.all(
+      [first, second].map(({ root, home }) => createStim({ projectRoot: root, home }).settings()),
+    );
+    expect(
+      payloads.map((payload) => ({
+        project: payload.project,
+        machine: payload.files.machine,
+        maxCount: payload.settings.find((entry) => entry.key === 'archive.maxCount'),
+      })),
+    ).toEqual(
+      [first, second].map((item, at) => ({
+        project: item.root,
+        machine: join(item.home, 'config.json'),
+        maxCount: { key: 'archive.maxCount', value: 7 + 2 * at, origin: 'machine', layers: { machine: 7 + 2 * at } },
+      })),
+    );
+    expect(spawn).not.toHaveBeenCalledWith(process.execPath, expect.anything(), expect.anything());
+    expect(process.cwd()).toBe(cwd);
+    expect(process.env).toEqual(environment);
+    expect(process.listeners('SIGINT')).toEqual(interrupts);
+    expect(stdout).not.toHaveBeenCalled();
+  } finally {
+    spawn.mockRestore();
+    stdout.mockRestore();
+  }
+});
+
+test('a settings refusal rejects with its code and remedy, and an aborted read does not start', async () => {
+  const { root, home } = fixture('settings-refusal');
+  vi.stubEnv('STIM_BUDGET_MIN_FREE_DISK_GB', 'lots');
+  const stim = createStim({ projectRoot: root, home });
+  await expect(stim.settings()).rejects.toMatchObject({
+    name: 'StimError',
+    code: 'STIM_BAD_ARG',
+    message: 'Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots". Expected a number, 0 or more.',
+    remedy: expect.stringContaining('stim settings set budget.minFreeDiskGb'),
+  });
+  const controller = new AbortController();
+  controller.abort();
+  await expect(stim.settings({ signal: controller.signal })).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  vi.stubEnv('STIM_HOME', 'relative');
+  await expect(createStim({ projectRoot: root }).settings()).rejects.toMatchObject({ code: 'STIM_RELATIVE_PATH' });
+});
+
+test('a settings read uses only the client environment for its default home and its Git children', async () => {
+  const { root } = fixture('settings-env');
+  const userHome = join(scratch, 'user');
+  mkdirSync(join(userHome, '.stim'), { recursive: true });
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
+  const stim = createStim({ projectRoot: root, env: { PATH: process.env.PATH, HOME: userHome } });
+  vi.stubEnv('GIT_DIR', join(scratch, 'missing.git'));
+  const payload = await stim.settings();
+  expect(payload.files.machine).toBe(join(userHome, '.stim', 'config.json'));
+  expect(payload.files.repo).toContain(`repos["${realpathSync(join(root, '.git'))}"]`);
+});
+
+test('aborting a settings read kills its Stim Desktop lookup', async () => {
+  const { root, home } = fixture('settings-abort');
+  const executor = getExecutor();
+  const real = executor.runFileAsync.bind(executor);
+  let lookup: ChildProcess | null = null;
+  let ended: NodeJS.Signals | null = null;
+  const spy = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, opts) => {
+    if (file !== 'osascript') return real(file, args, opts);
+    const child = executor.spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { stdio: 'ignore' });
+    lookup = child;
+    opts.onSpawn?.(child);
+    return new Promise((resolve) =>
+      child.once('exit', (_code, signal) => {
+        ended = signal;
+        resolve('');
+      }),
+    );
+  });
+  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  try {
+    const controller = new AbortController();
+    const read = createStim({ projectRoot: root, home, env: { PATH: process.env.PATH } }).settings({
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(lookup).not.toBeNull());
+    controller.abort();
+    await expect(read).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    await vi.waitFor(() => expect(ended).toBe('SIGKILL'));
+  } finally {
+    spy.mockRestore();
+    vi.restoreAllMocks();
+  }
+});
+
+test('settings reads sharing one signal leave no abort listeners behind, even when Git cannot start', async () => {
+  const { root, home } = fixture('settings-listeners');
+  getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
+  const controller = new AbortController();
+  const added = vi.spyOn(controller.signal, 'addEventListener');
+  const removed = vi.spyOn(controller.signal, 'removeEventListener');
+  const found = createStim({ projectRoot: root, home });
+  const missing = createStim({ projectRoot: root, home, env: { PATH: join(scratch, 'no-bin') } });
+  for (let i = 0; i < 3; i++) {
+    await found.settings({ signal: controller.signal });
+    await missing.settings({ signal: controller.signal });
+  }
+  expect(added.mock.calls.length).toBeGreaterThan(0);
+  await vi.waitFor(() => expect(removed.mock.calls.length).toBe(added.mock.calls.length));
+});

@@ -1,4 +1,4 @@
-import type { MacosBuild, NdjsonRecord } from '@stim-cli/core/state';
+import type { MacosBuild, NdjsonRecord, SettingsPayload } from '@stim-cli/core/state';
 import type { AndroidBuildFacts, AndroidBuildOptions } from '../commands/android/build.ts';
 import type { MacosBuildFacts, MacosBuildOptions } from '../commands/macos-build.ts';
 import type { IosBuildFacts, IosBuildOptions } from '../commands/ios/build.ts';
@@ -16,8 +16,10 @@ export interface StimProgress {
 export interface StimOptions {
   /** Absolute or relative path to the app directory, resolved once when creating the client. */
   projectRoot: string;
-  /** Absolute Stim state directory. Omit to use the caller's STIM_HOME or the default home. */
+  /** Absolute Stim state directory. Omit to use STIM_HOME from `env` or the default home. */
   home?: string;
+  /** Environment Stim reads its settings overrides from and passes to its workers. Defaults to the caller's `process.env`. */
+  env?: NodeJS.ProcessEnv;
   /** Absolute native artifact cache directory. Its coordinating home must be shared by all writers. */
   buildCache?: string;
   /**
@@ -100,6 +102,12 @@ export interface StimDiagnostics {
   records: NdjsonRecord[];
 }
 
+export interface StimReadOptions {
+  signal?: AbortSignal;
+}
+
+export type StimSettings = SettingsPayload;
+
 export interface StimClient {
   readonly projectRoot: string;
   /** Builds an artifact without acquiring a device or starting a runtime. */
@@ -115,6 +123,11 @@ export interface StimClient {
   stop(options?: StimStopOptions): Promise<StimStopResult>;
   /** Reads the existing local timeline; available even when run failed before creating any logs. */
   diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
+  /**
+   * Every setting with its effective value, origin and per-layer values for this project, as `stim settings --json`
+   * prints them. Runs in the calling process without blocking its event loop on child processes.
+   */
+  settings(options?: StimReadOptions): Promise<StimSettings>;
 }
 
 export interface StimFailure {

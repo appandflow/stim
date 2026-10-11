@@ -113,6 +113,7 @@ import {
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
+import { createStim, StimError } from 'stim';
 import { worktreePullRequests } from 'stim/pull-requests';
 import { DEFAULT_STUCK_MINUTES } from '@stim-cli/core/oversight';
 import { NotificationLog, notificationLogFile, publicEntry } from './notification-log.ts';
@@ -382,6 +383,11 @@ const AUTH_REFUSALS: Record<Exclude<AuthOutcome, { ok: true }>['reason'], Protoc
     message: 'This Mac has too many pending build requests. Try again after they are approved or lapse.',
   },
 };
+
+function readFailure(cause: unknown): string {
+  if (!(cause instanceof StimError)) return cause instanceof Error ? cause.message : String(cause);
+  return `${cause.code}: ${cause.message}${cause.remedy ? ` ${cause.remedy}` : ''}`;
+}
 
 function isLoopback(address: string | undefined): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
@@ -1614,7 +1620,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       subscriptions.set(subscription, cleanup);
     }
 
-    function command<M extends 'logs.query' | 'stats.get' | 'settings.get' | 'build.plan'>(
+    function command<M extends 'logs.query' | 'stats.get' | 'build.plan'>(
       id: RequestId,
       args: string[],
       cwd: string,
@@ -1764,13 +1770,57 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return;
     }
 
+    function inProcessRead<M extends 'settings.get'>(
+      id: RequestId,
+      label: string,
+      read: (signal: AbortSignal) => Promise<Methods[M]['result']>,
+    ): void {
+      if (commands.size >= MAX_COMMANDS) {
+        return error(id, 'limit-exceeded', `A connection can run ${MAX_COMMANDS} requests at a time.`);
+      }
+      const abort = new AbortController();
+      const deadline = setTimeout(() => {
+        if (abort.signal.aborted) return;
+        abort.abort();
+        error(id, 'stim-failed', `${label} did not finish within ${commandLimits.timeoutMs / 1000} s.`);
+      }, commandLimits.timeoutMs);
+      const task = Promise.resolve(abort.signal)
+        .then(read)
+        .then(
+          (result) => {
+            if (!abort.signal.aborted) send(socket, { id, result });
+            return undefined;
+          },
+          (cause: unknown) => {
+            if (!abort.signal.aborted) error(id, 'stim-failed', readFailure(cause));
+            return undefined;
+          },
+        )
+        .finally(() => {
+          clearTimeout(deadline);
+          commands.delete(cancel);
+          running.delete(cancel);
+        });
+      const cancel = async () => {
+        abort.abort();
+        await task;
+      };
+      commands.add(cancel);
+      running.add(cancel);
+    }
+
     function workspaceCommand(id: RequestId, method: 'stats.get' | 'settings.get', params: unknown): void {
       if (params !== undefined && !isJsonObject(params)) return error(id, 'bad-request', 'params must be an object.');
       const cwd = workspaceDir(id, params?.workspace, false);
       if (!cwd) return;
+      if (method === 'settings.get') {
+        return inProcessRead<'settings.get'>(id, 'stim settings', (signal) =>
+          createStim({ projectRoot: cwd, env: options.env }).settings({ signal }),
+        );
+      }
       command<typeof method>(
         id,
-        [method === 'stats.get' ? 'stats' : 'settings', '--json'],
+        ['stats', '--json'],
         cwd,
         (stdout) => {
           const value: unknown = JSON.parse(stdout);
@@ -1779,7 +1829,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         },
         commandLimits,
         null,
-        method === 'stats.get',
+        true,
       );
     }
 

@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { getExecutor } from '../exec.ts';
 import type { SettingDefinition } from '@stim-cli/core/state';
 
@@ -27,6 +28,24 @@ export function stimDesktopInstalled(
   if (platform !== 'darwin') return false;
   if (env.STIM_DESKTOP_APP) return true;
   return launchServicesFinds(LAUNCH_SERVICES_LOOKUP);
+}
+
+/** `stimDesktopInstalled` without blocking the event loop. */
+export async function stimDesktopInstalledAsync(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+  onSpawn: (child: ChildProcess) => void,
+): Promise<boolean> {
+  if (platform !== 'darwin') return false;
+  if (env.STIM_DESKTOP_APP) return true;
+  const found = await getExecutor()
+    .runFileAsync('osascript', ['-l', 'JavaScript', '-e', LAUNCH_SERVICES_LOOKUP], {
+      timeoutMs: 5000,
+      killSignal: 'SIGKILL',
+      onSpawn,
+    })
+    .catch(() => '');
+  return Boolean(found);
 }
 
 function launchServicesFinds(script: string): boolean {

@@ -2,37 +2,31 @@ import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 
 import { join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
+import { getConfigPath, withConfigLock, writeConfigSetting } from '../workspace/config.ts';
+import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
+import type { SettingsObject } from '../workspace/settings.ts';
 import {
-  getConfigPath,
-  getProjectSettings,
-  getRepoSettings,
-  loadConfig,
-  withConfigLock,
-  writeConfigSetting,
-  type Config,
-} from '../workspace/config.ts';
-import { findCommandWorkspace, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
-import { readCommittedSettings, unknownSettingKeys, type SettingsObject } from '../workspace/settings.ts';
+  committedDirectory,
+  layerFile,
+  readSettingsContext,
+  readSettingsPayload,
+  settingEntry,
+  settingExample,
+  SettingsRefusal,
+  type SettingsContext,
+} from '../workspace/settings-payload.ts';
 import {
   coerceSettingText,
   isJsonObject,
   isSensitiveReference,
   SETTING_SCOPES,
   settingDefinition,
-  SETTINGS,
   settingValueError,
   type SettingDefinition,
   type SettingEntry,
   type SettingScope,
-  type SettingsPayload,
 } from '@stim-cli/core/state';
-import { gitCommonDir, repoRoot } from '../workspace/worktree.ts';
 import { deleteTurnedOffRecordings, recordingLayers } from '../workspace/recordings.ts';
-import { settingDefault, stimDesktopInstalled } from '../devices/stim-desktop.ts';
-
-const MASK = '********';
-
-const PRECEDENCE: readonly SettingScope[] = ['workspace', 'repo', 'committed', 'machine'];
 
 interface SettingsFailure {
   code: string;
@@ -40,188 +34,10 @@ interface SettingsFailure {
   remedy: string | null;
 }
 
-class Refusal extends Error {
-  readonly code: string;
-  readonly remedy: string | null;
-
-  constructor(code: string, message: string, remedy: string | null) {
-    super(message);
-    this.code = code;
-    this.remedy = remedy;
-  }
-}
-
-interface SettingsContext {
-  projectPath: string | null;
-  gitCommonDir: string | null;
-  repoRoot: string | null;
-  machine: Config | null;
-  env: NodeJS.ProcessEnv;
-  desktopInstalled: () => boolean;
-}
-
-function readContext(env: NodeJS.ProcessEnv, note: (line: string) => void = () => {}): SettingsContext {
-  const projectPath = findCommandWorkspace(process.cwd(), note);
-  const start = projectPath ?? process.cwd();
-  const common = gitCommonDir(start);
-  let installed: boolean | undefined;
-  return {
-    projectPath,
-    gitCommonDir: common,
-    repoRoot: common ? (repoRoot(start) ?? projectPath) : null,
-    machine: loadConfig(),
-    env,
-    desktopInstalled: () => (installed ??= stimDesktopInstalled(process.platform, env)),
-  };
-}
-
-function valueAt(settings: unknown, key: string): unknown {
-  let node = settings;
-  for (const segment of key.split('.')) {
-    if (!isJsonObject(node)) return undefined;
-    node = node[segment];
-  }
-  return node;
-}
-
-function committedDirectory(context: SettingsContext, setting: SettingDefinition | null): string | null {
-  return setting?.committedAt === 'repository' ? repositoryDirectory(context) : appDirectory(context);
-}
-
-function repositoryDirectory(context: SettingsContext): string | null {
-  return context.repoRoot ?? context.projectPath;
-}
-
-function appDirectory(context: SettingsContext): string | null {
-  return context.projectPath ?? context.repoRoot;
-}
-
-function layerFile(context: SettingsContext, scope: SettingScope, setting: SettingDefinition | null): string | null {
-  const machineFile = getConfigPath();
-  if (scope === 'machine') return machineFile;
-  if (scope === 'workspace') {
-    return context.projectPath ? `${machineFile} (projects["${context.projectPath}"].settings)` : null;
-  }
-  if (scope === 'repo') {
-    return context.gitCommonDir ? `${machineFile} (repos["${context.gitCommonDir}"].settings)` : null;
-  }
-  const directory = committedDirectory(context, setting);
-  return directory ? join(directory, '.stim.json') : null;
-}
-
-function layerSettings(context: SettingsContext, scope: SettingScope, setting: SettingDefinition | null): unknown {
-  if (scope === 'machine') return context.machine ?? {};
-  if (scope === 'workspace') return context.projectPath ? getProjectSettings(context.projectPath) : {};
-  if (scope === 'repo') return context.gitCommonDir ? getRepoSettings(context.gitCommonDir) : {};
-  return readCommittedSettings(committedDirectory(context, setting));
-}
-
-function masked(setting: SettingDefinition, value: unknown): unknown {
-  return setting.sensitive && value !== undefined && value !== null ? MASK : value;
-}
-
-function settingEntry(context: SettingsContext, setting: SettingDefinition): SettingEntry {
-  const layers: Partial<Record<SettingScope, unknown>> = {};
-  for (const scope of PRECEDENCE) {
-    if (!setting.scopes.includes(scope) || layerFile(context, scope, setting) === null) continue;
-    const value = valueAt(layerSettings(context, scope, setting), setting.key);
-    if (value !== undefined) layers[scope] = masked(setting, value);
-  }
-  const envValue = setting.env ? context.env[setting.env] : undefined;
-  const env = setting.env && envValue ? { name: setting.env, value: String(masked(setting, envValue)) } : undefined;
-  const scopedHome = !env && setting.scopedHomeValue !== undefined && context.env.STIM_HOME;
-  const ci = !env && setting.ciValue !== undefined && context.env.CI;
-  const winner = PRECEDENCE.find((scope) => scope in layers);
-  let value: unknown = null;
-  let origin: SettingEntry['origin'] = null;
-  let defaultReason: string | null = null;
-  if (env) {
-    value = masked(setting, envSettingValue(setting, envValue!));
-    origin = 'env';
-  } else if (scopedHome) {
-    value = setting.scopedHomeValue;
-    origin = 'env';
-  } else if (ci) {
-    value = setting.ciValue;
-    origin = 'env';
-  } else if (winner) {
-    value = layers[winner];
-    origin = winner;
-  } else if (setting.default !== undefined) {
-    const fallback = settingDefault(setting, context.desktopInstalled);
-    value = fallback.value;
-    origin = 'default';
-    defaultReason = fallback.reason;
-  }
-  return {
-    key: setting.key,
-    value,
-    origin,
-    layers,
-    ...(env
-      ? { env }
-      : scopedHome
-        ? { env: { name: 'STIM_HOME', value: context.env.STIM_HOME! } }
-        : ci
-          ? { env: { name: 'CI', value: context.env.CI! } }
-          : {}),
-    ...(setting.sensitive ? { sensitive: true as const } : {}),
-    ...(defaultReason ? { defaultReason } : {}),
-  };
-}
-
-function unknownEntries(context: SettingsContext): SettingsPayload['unknown'] {
-  const sources: Array<{ scope: SettingScope; file: string | null; settings: unknown }> = [
-    {
-      scope: 'machine',
-      file: layerFile(context, 'machine', null),
-      settings: { optimizations: context.machine?.optimizations },
-    },
-    {
-      scope: 'workspace',
-      file: layerFile(context, 'workspace', null),
-      settings: layerSettings(context, 'workspace', null),
-    },
-    { scope: 'repo', file: layerFile(context, 'repo', null), settings: layerSettings(context, 'repo', null) },
-    {
-      scope: 'committed',
-      file: layerFile(context, 'committed', null),
-      settings: layerSettings(context, 'committed', null),
-    },
-  ];
-  const repository = repositoryDirectory(context);
-  if (repository && repository !== appDirectory(context)) {
-    sources.push({
-      scope: 'committed',
-      file: join(repository, '.stim.json'),
-      settings: readCommittedSettings(repository),
-    });
-  }
-  return sources.flatMap(({ scope, file, settings }) =>
-    file === null
-      ? []
-      : unknownSettingKeys(settings).map((key) => ({ key, scope, file, value: valueAt(settings, key) })),
-  );
-}
-
-function settingsPayload(context: SettingsContext): SettingsPayload {
-  const files: SettingsPayload['files'] = {};
-  for (const scope of SETTING_SCOPES) {
-    const file = layerFile(context, scope, null);
-    if (file) files[scope] = file;
-  }
-  return {
-    project: context.projectPath,
-    files,
-    settings: SETTINGS.map((setting) => settingEntry(context, setting)),
-    unknown: unknownEntries(context),
-  };
-}
-
 function requireSetting(key: string): SettingDefinition {
   const setting = settingDefinition(key);
   if (setting) return setting;
-  throw new Refusal(
+  throw new SettingsRefusal(
     'STIM_BAD_ARG',
     `${JSON.stringify(key)} is not a Stim setting.`,
     'Run `stim settings` to list every setting, or `stim guide settings` for what each one does.',
@@ -231,18 +47,22 @@ function requireSetting(key: string): SettingDefinition {
 function readScope(raw: string | undefined, setting: SettingDefinition): SettingScope {
   if (raw === undefined) {
     if (setting.scopes.length === 1) return setting.scopes[0]!;
-    throw new Refusal(
+    throw new SettingsRefusal(
       'STIM_BAD_ARG',
       `${setting.key} can live in more than one layer, so the command needs --scope.`,
       `Pass --scope ${setting.scopes.join('|')}.`,
     );
   }
   if (!(SETTING_SCOPES as readonly string[]).includes(raw)) {
-    throw new Refusal('STIM_BAD_ARG', `--scope takes ${SETTING_SCOPES.join(', ')}, not ${JSON.stringify(raw)}.`, null);
+    throw new SettingsRefusal(
+      'STIM_BAD_ARG',
+      `--scope takes ${SETTING_SCOPES.join(', ')}, not ${JSON.stringify(raw)}.`,
+      null,
+    );
   }
   const scope = raw as SettingScope;
   if (!setting.scopes.includes(scope)) {
-    throw new Refusal(
+    throw new SettingsRefusal(
       'STIM_BAD_ARG',
       `${setting.key} is not read from the ${scope} layer.`,
       `Pass --scope ${setting.scopes.join('|')}.`,
@@ -255,38 +75,21 @@ function requireLayer(context: SettingsContext, scope: SettingScope, setting: Se
   const file = layerFile(context, scope, setting);
   if (file) return file;
   if (scope === 'repo') {
-    throw new Refusal(
+    throw new SettingsRefusal(
       'STIM_BAD_ARG',
       'The repo layer is keyed by a Git repository, and this directory is not inside one.',
       'Run this from inside the repository, or pick another --scope.',
     );
   }
-  throw new Refusal(NO_PROJECT_REFUSAL.code, NO_PROJECT_REFUSAL.message, NO_PROJECT_REFUSAL.remedy);
-}
-
-function example(setting: SettingDefinition): string {
-  switch (setting.type.kind) {
-    case 'boolean':
-      return 'false';
-    case 'number':
-      return String(setting.default ?? setting.type.minimum ?? 1);
-    case 'strings':
-      return `'["node_modules"]'`;
-    case 'object':
-      return `'{"key": "value"}'`;
-    case 'choice':
-      return setting.type.choices[0]!;
-    default:
-      return '<value>';
-  }
+  throw new SettingsRefusal(NO_PROJECT_REFUSAL.code, NO_PROJECT_REFUSAL.message, NO_PROJECT_REFUSAL.remedy);
 }
 
 function parseSettingValue(setting: SettingDefinition, raw: string): unknown {
   const invalid = (expected: string) =>
-    new Refusal(
+    new SettingsRefusal(
       'STIM_BAD_ARG',
       `Invalid ${setting.key} value ${JSON.stringify(raw)}. Expected ${expected}.`,
-      `For example: stim settings set ${setting.key} ${example(setting)}${setting.scopes.length > 1 ? ` --scope ${setting.scopes[0]}` : ''}`,
+      `For example: stim settings set ${setting.key} ${settingExample(setting)}${setting.scopes.length > 1 ? ` --scope ${setting.scopes[0]}` : ''}`,
     );
   const kind = setting.type.kind;
   const value = coerceSettingText(setting, raw);
@@ -295,22 +98,10 @@ function parseSettingValue(setting: SettingDefinition, raw: string): unknown {
   return value;
 }
 
-function envSettingValue(setting: SettingDefinition, raw: string): unknown {
-  const value = coerceSettingText(setting, raw);
-  const error = settingValueError(setting, value);
-  if (error) {
-    throw new Refusal(
-      'STIM_BAD_ARG',
-      `Invalid ${setting.env} value ${JSON.stringify(raw)}. Expected ${error}.`,
-      `Fix the environment variable, or unset it and run \`stim settings set ${setting.key} ${example(setting)}\`.`,
-    );
-  }
-  return value;
-}
-
 function committedTarget(context: SettingsContext, setting: SettingDefinition): string {
   const directory = committedDirectory(context, setting);
-  if (!directory) throw new Refusal(NO_PROJECT_REFUSAL.code, NO_PROJECT_REFUSAL.message, NO_PROJECT_REFUSAL.remedy);
+  if (!directory)
+    throw new SettingsRefusal(NO_PROJECT_REFUSAL.code, NO_PROJECT_REFUSAL.message, NO_PROJECT_REFUSAL.remedy);
   return join(directory, '.stim.json');
 }
 
@@ -323,7 +114,7 @@ function writeCommitted(file: string, key: string, value: unknown): boolean {
       try {
         parsed = JSON.parse(text);
       } catch (error) {
-        throw new Refusal(
+        throw new SettingsRefusal(
           'STIM_BAD_ARG',
           `${file} is not valid JSON: ${(error as Error).message}`,
           `Repair ${file}, then run the command again.`,
@@ -331,7 +122,11 @@ function writeCommitted(file: string, key: string, value: unknown): boolean {
       }
     }
     if (!isJsonObject(parsed)) {
-      throw new Refusal('STIM_BAD_ARG', `${file} is not a JSON object.`, `Repair ${file}, then run the command again.`);
+      throw new SettingsRefusal(
+        'STIM_BAD_ARG',
+        `${file} is not a JSON object.`,
+        `Repair ${file}, then run the command again.`,
+      );
     }
     const parts = key.split('.');
     const chain: SettingsObject[] = [parsed];
@@ -397,16 +192,16 @@ const CONSOLE: Output = {
   note: (line) => console.error(line),
 };
 
-function run(json: boolean, io: Output, action: () => void): void {
+async function run(json: boolean, io: Output, action: () => void | Promise<void>): Promise<void> {
   try {
-    action();
+    await action();
   } catch (error) {
     const code = (error as { code?: unknown }).code;
-    if (!(error instanceof Refusal) && !(typeof code === 'string' && code.startsWith('STIM_'))) throw error;
+    if (!(error instanceof SettingsRefusal) && !(typeof code === 'string' && code.startsWith('STIM_'))) throw error;
     const failure: SettingsFailure = {
       code: code as string,
       message: (error as Error).message,
-      remedy: error instanceof Refusal ? error.remedy : null,
+      remedy: error instanceof SettingsRefusal ? error.remedy : null,
     };
     io.note(chalk.red(`${failure.code}: ${failure.message}`));
     if (failure.remedy) io.note(chalk.dim(failure.remedy));
@@ -430,8 +225,8 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .description('Show every Stim setting with its effective value and layer, or change one')
     .option('--json', 'print every setting, its origin, and each layer value as JSON')
     .action((opts: { json?: boolean }) =>
-      run(Boolean(opts.json), io, () => {
-        const payload = settingsPayload(readContext(env, io.note));
+      run(Boolean(opts.json), io, async () => {
+        const payload = await readSettingsPayload(await readSettingsContext(process.cwd(), env, io.note));
         if (opts.json) {
           io.out(JSON.stringify(payload));
           return;
@@ -453,10 +248,10 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--scope <scope>', `read one layer: ${SETTING_SCOPES.join(', ')}`)
     .option('--json', 'print the setting entry as JSON')
     .action((key: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, () => {
+      run(wantsJson(opts, command), io, async () => {
         const setting = requireSetting(key);
         const scope = opts.scope === undefined ? null : readScope(opts.scope, setting);
-        const context = readContext(env, io.note);
+        const context = await readSettingsContext(process.cwd(), env, io.note);
         const entry = settingEntry(context, setting);
         const value = scope ? (entry.layers[scope] ?? null) : entry.value;
         if (wantsJson(opts, command)) {
@@ -475,18 +270,18 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--scope <scope>', `the layer to write: ${SETTING_SCOPES.join(', ')}`)
     .option('--json', 'print the written setting as JSON')
     .action((key: string, raw: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, () => {
+      run(wantsJson(opts, command), io, async () => {
         const setting = requireSetting(key);
         const scope = readScope(opts.scope, setting);
         const value = parseSettingValue(setting, raw);
         if (setting.sensitive && scope === 'committed' && !isSensitiveReference(value)) {
-          throw new Refusal(
+          throw new SettingsRefusal(
             'STIM_BAD_ARG',
             `${key} is sensitive, so a committed .stim.json takes only an env: or file: reference, never the secret.`,
             `Set the secret with --scope workspace or --scope repo, which store it in ${getConfigPath()}, readable only by you, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
           );
         }
-        const context = readContext(env, io.note);
+        const context = await readSettingsContext(process.cwd(), env, io.note);
         const file = requireLayer(context, scope, setting);
         const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
         const changed = writeSetting(context, setting, scope, value);
@@ -495,7 +290,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           wantsJson(opts, command),
           { key, scope, file, changed },
           setting,
-          readContext(env),
+          await readSettingsContext(process.cwd(), env),
           'set',
           recording,
         );
@@ -508,10 +303,10 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
     .option('--scope <scope>', `the layer to clear: ${SETTING_SCOPES.join(', ')}`)
     .option('--json', 'print the setting after removal as JSON')
     .action((key: string, opts: SubcommandOptions, command: Command) =>
-      run(wantsJson(opts, command), io, () => {
+      run(wantsJson(opts, command), io, async () => {
         const setting = requireSetting(key);
         const scope = readScope(opts.scope, setting);
-        const context = readContext(env, io.note);
+        const context = await readSettingsContext(process.cwd(), env, io.note);
         const file = requireLayer(context, scope, setting);
         const recording = setting.key === 'recording.enabled' ? recordingLayers() : null;
         const changed = writeSetting(context, setting, scope, undefined);
@@ -520,7 +315,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           wantsJson(opts, command),
           { key, scope, file, changed },
           setting,
-          readContext(env),
+          await readSettingsContext(process.cwd(), env),
           'unset',
           recording,
         );
