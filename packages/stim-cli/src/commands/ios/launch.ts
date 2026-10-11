@@ -54,7 +54,7 @@ interface VerifyIosRunArgs {
   slot?: string;
   appPath: string | null;
   d: IosDeps;
-  launched: ReturnType<IosDeps['launchIosApp']>;
+  launched: Awaited<ReturnType<IosDeps['launchIosApp']>>;
   configuration: string | null;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
@@ -82,7 +82,7 @@ interface IosRuntimeRoute {
   payloadUrl: string | null;
 }
 
-type IosRuntimeLaunchResult = ReturnType<IosDeps['launchIosApp']> | { error: FailArgs };
+type IosRuntimeLaunchResult = Awaited<ReturnType<IosDeps['launchIosApp']>> | { error: FailArgs };
 
 interface IosRuntimeLaunchContext {
   scheme?: string;
@@ -923,7 +923,7 @@ export async function finishIosRun({
     }
     enterPhase('install');
     const installTimer = stepTimer(d.now);
-    const installed = d.installIosApp(
+    const installed = await d.installIosApp(
       {
         udid,
         appPath: appPath!,

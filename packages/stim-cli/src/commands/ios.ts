@@ -682,8 +682,8 @@ async function runIos(
         checkDeviceCapacity: remoteDevice.checkDeviceCapacity,
         ensureOwnedDevice: remoteDevice.ensureOwnedDevice,
         ensureBooted: remoteDevice.ensureBooted,
-        installIosApp: remoteDevice.installIosApp,
-        launchIosApp: remoteDevice.launchIosApp,
+        installIosApp: async (args) => remoteDevice.installIosApp(args),
+        launchIosApp: async (args) => remoteDevice.launchIosApp(args),
       };
 
     const easBuild = await d.resolveEasDevelopmentBuild({
