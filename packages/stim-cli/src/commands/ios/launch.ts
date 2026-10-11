@@ -562,7 +562,7 @@ interface FinishIosRunArgs {
   enterActivity: BuildProgress['activity'];
 }
 
-function cleanAdoptedIosApps({
+async function cleanAdoptedIosApps({
   d,
   udid,
   bundleId,
@@ -576,15 +576,15 @@ function cleanAdoptedIosApps({
   devClient: boolean;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
-}): string | null {
-  const swept = d.clearOtherUserApps({ udid, keep: bundleId });
+}): Promise<string | null> {
+  const swept = await d.clearOtherUserApps({ udid, keep: bundleId });
   if (swept.removed.length) {
     phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
   }
   if (swept.listed && swept.failed.length === 0) {
     if (swept.kept && bundleId) {
       try {
-        d.clearIosAppData(udid, bundleId, {
+        await d.clearIosAppData(udid, bundleId, {
           defaultsPlist: devClient ? IOS_DEV_MENU_OFF_DEFAULTS_PLIST : null,
         });
       } catch (error) {
@@ -911,7 +911,7 @@ export async function finishIosRun({
   } else {
     const adopting = Boolean(device?.adoptionPending);
     if (adopting) {
-      const cleanupFailure = cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
+      const cleanupFailure = await cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
       if (cleanupFailure) {
         return fail({
           code: 'STIM_INSTALL_FAILED',

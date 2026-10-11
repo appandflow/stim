@@ -207,11 +207,13 @@ describe('ios', () => {
   test('clearOtherUserApps removes every user app except the adopting workspace app', async () => {
     const removed: string[] = [];
     expect(
-      clearOtherUserApps(
+      await clearOtherUserApps(
         { udid: 'U1', keep: 'com.example.keep' },
         {
-          list: () => ['com.example.old', 'com.example.keep', 'com.example.other'],
-          uninstall: (_udid, bundleId) => removed.push(bundleId),
+          list: async () => ['com.example.old', 'com.example.keep', 'com.example.other'],
+          uninstall: async (_udid, bundleId) => {
+            removed.push(bundleId);
+          },
         },
       ),
     ).toEqual({ listed: true, kept: true, removed: ['com.example.old', 'com.example.other'], failed: [] });
@@ -219,17 +221,17 @@ describe('ios', () => {
   });
 
   test('clearOtherUserApps distinguishes a failed listing from an empty simulator', async () => {
-    expect(clearOtherUserApps({ udid: 'U1', keep: 'com.example.keep' }, { list: () => [] })).toEqual({
+    expect(await clearOtherUserApps({ udid: 'U1', keep: 'com.example.keep' }, { list: async () => [] })).toEqual({
       listed: true,
       kept: false,
       removed: [],
       failed: [],
     });
     expect(
-      clearOtherUserApps(
+      await clearOtherUserApps(
         { udid: 'U1' },
         {
-          list: () => {
+          list: async () => {
             throw new Error('simctl unavailable');
           },
         },
@@ -239,11 +241,11 @@ describe('ios', () => {
 
   test('clearOtherUserApps reports each uninstall that must be retried', async () => {
     expect(
-      clearOtherUserApps(
+      await clearOtherUserApps(
         { udid: 'U1' },
         {
-          list: () => ['com.example.one', 'com.example.two'],
-          uninstall: (_udid, bundleId) => {
+          list: async () => ['com.example.one', 'com.example.two'],
+          uninstall: async (_udid, bundleId) => {
             if (bundleId === 'com.example.two') throw new Error('busy');
           },
         },

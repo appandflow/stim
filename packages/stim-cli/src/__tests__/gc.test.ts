@@ -299,7 +299,7 @@ test('parked deletion skips a simulator adopted after report collection', async 
 
   const output = await captureLog(() =>
     deleteParkedSims(report, {
-      deleteParkedIosSim: () => {
+      deleteParkedIosSim: async () => {
         deleted = true;
       },
     }),

@@ -71,7 +71,7 @@ export async function runHostedDevice(
         throw new Error('This hosted worker home already has a device record. Attach or stop its existing session.');
       const selected = selectHostedIosDevice(selectors);
       creationStarted = true;
-      const created = createOwnedIosSim('hosted', {}, selected);
+      const created = await createOwnedIosSim('hosted', {}, selected);
       device = { ...selected, udid: created.udid, name: created.name };
       withDirLock(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
@@ -115,9 +115,9 @@ export async function runHostedDevice(
       await bootIosSim(device.udid, { openViewer: false });
       if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
-      resetIosPrivacy(device.udid);
-      resetIosKeychain(device.udid);
-      for (const bundleId of listUserApps(device.udid)) uninstallIosApp(device.udid, bundleId);
+      await resetIosPrivacy(device.udid);
+      await resetIosKeychain(device.udid);
+      for (const bundleId of await listUserApps(device.udid)) await uninstallIosApp(device.udid, bundleId);
       withDirLock(join(home, 'hosted-device.lock'), () => {
         const temporary = join(home, 'hosted-device.json.tmp');
         writeFileSync(temporary, JSON.stringify(device), { mode: 0o600 });

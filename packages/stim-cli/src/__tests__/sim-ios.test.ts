@@ -347,7 +347,7 @@ test('sanitizeDeviceLabel strips characters simctl names should not carry', () =
   expect(sanitizeDeviceLabel('x  y"z`$')).toBe('x-y-z');
 });
 
-test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
+test('deleteIosSim refuses to delete a sim not owned by Stim', async () => {
   setExecutor({
     runFile: () =>
       JSON.stringify({
@@ -368,7 +368,7 @@ test('deleteIosSim refuses to delete a sim not owned by Stim', () => {
     },
     spawn: () => null,
   });
-  expect(() => deleteIosSim('UDID-A')).toThrow(/Stim/);
+  await expect(deleteIosSim('UDID-A')).rejects.toThrow(/Stim/);
 });
 
 const OWNED_SIM_LIST = JSON.stringify({
@@ -385,7 +385,7 @@ const OWNED_SIM_LIST = JSON.stringify({
   },
 });
 
-test('a created simulator stays Stim-owned through the ledger until Stim deletes it', () => {
+test('a created simulator stays Stim-owned through the ledger until Stim deletes it', async () => {
   const list = (name: string) =>
     JSON.stringify({
       devices: {
@@ -400,16 +400,16 @@ test('a created simulator stays Stim-owned through the ledger until Stim deletes
       args[1] === 'create' ? 'NEW-1\n' : args.includes('list') ? list(name) : '',
   });
   expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
-  createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null });
+  await createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null });
   expect(resolveOwnedIosSim('NEW-1').sim?.udid).toBe('NEW-1');
   name = 'My Phone';
   expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('My Phone');
   name = 'stim-wt';
-  deleteIosSim('NEW-1');
+  await deleteIosSim('NEW-1');
   expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
 });
 
-test('createOwnedIosSim passes a display name with spaces to simctl as one argument', () => {
+test('createOwnedIosSim passes a display name with spaces to simctl as one argument', async () => {
   const created: string[][] = [];
   setExecutor({
     runFile: (file: string, args: string[] = []) => {
@@ -418,7 +418,7 @@ test('createOwnedIosSim passes a display name with spaces to simctl as one argum
       return 'NEW-1\n';
     },
   });
-  const { name } = createOwnedIosSim(
+  const { name } = await createOwnedIosSim(
     'wt',
     {},
     { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: 'iPhone 17 Pro', runtime: 'iOS 26.5' },
@@ -440,7 +440,7 @@ test.each([
   ['uninstall', () => uninstallIosApp('UDID-B', 'com.example.app')],
   ['shutdown', () => shutdownIosSim('UDID-B')],
   ['delete', () => deleteIosSim('UDID-B')],
-])('simctl %s runs under a hard deadline so a stuck CoreSimulator cannot hold the caller', (verb, operation) => {
+])('simctl %s runs under a hard deadline so a stuck CoreSimulator cannot hold the caller', async (verb, operation) => {
   const deadlines: { command: string; timeoutMs?: number; killSignal?: string }[] = [];
   const record = (command: string, opts?: { timeoutMs?: number; killSignal?: string }) => {
     if (new RegExp(`simctl ${verb}\\b`).test(command)) {
@@ -465,13 +465,13 @@ test.each([
       return '';
     },
   });
-  operation();
+  await operation();
   expect(deadlines).toHaveLength(1);
   expect(deadlines[0]?.timeoutMs).toBeGreaterThan(0);
   expect(deadlines[0]?.killSignal).toBe('SIGKILL');
 });
 
-test('deleteIosSim deletes a Stim-owned sim', () => {
+test('deleteIosSim deletes a Stim-owned sim', async () => {
   const ran: string[][] = [];
   setExecutor({
     runFile: (file, args = []) => {
@@ -481,11 +481,11 @@ test('deleteIosSim deletes a Stim-owned sim', () => {
     runQuiet: () => null,
     spawn: () => null,
   });
-  deleteIosSim('UDID-B');
+  await deleteIosSim('UDID-B');
   expect(ran).toContainEqual(['xcrun', 'simctl', 'delete', 'UDID-B']);
 });
 
-test('deleteIosSim propagates a simctl failure instead of swallowing it', () => {
+test('deleteIosSim propagates a simctl failure instead of swallowing it', async () => {
   setExecutor({
     runFile: (_file, args = []) => {
       if (args[1] === 'delete') throw new Error('simctl: Unable to delete device');
@@ -494,10 +494,10 @@ test('deleteIosSim propagates a simctl failure instead of swallowing it', () => 
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(() => deleteIosSim('UDID-B')).toThrow(/Unable to delete device/);
+  await expect(deleteIosSim('UDID-B')).rejects.toThrow(/Unable to delete device/);
 });
 
-test('deleteIosSim no-ops quietly when the udid is already gone', () => {
+test('deleteIosSim no-ops quietly when the udid is already gone', async () => {
   let deleted = false;
   setExecutor({
     runFile: (_file, args = []) => {
@@ -506,11 +506,11 @@ test('deleteIosSim no-ops quietly when the udid is already gone', () => {
     },
     spawn: () => null,
   });
-  expect(() => deleteIosSim('UDID-GONE')).not.toThrow();
+  await expect(deleteIosSim('UDID-GONE')).resolves.not.toThrow();
   expect(deleted).toBe(false);
 });
 
-test('ownedSimName does not double the ownership prefix', () => {
+test('ownedSimName does not double the ownership prefix', async () => {
   expect(ownedSimName('stim-test-dialogue')).toBe('stim-test-dialogue');
   expect(ownedSimName('test-dialogue')).toBe('stim-test-dialogue');
   expect(ownedSimName('feat-a/tlon-mobile')).toBe('stim-feat-a-tlon-mobile');
@@ -518,7 +518,7 @@ test('ownedSimName does not double the ownership prefix', () => {
   expect(ownedSimName('Stim').startsWith('stim-')).toBeTruthy();
 });
 
-test('owned and parked simulator names show model and runtime and stay within 60 characters', () => {
+test('owned and parked simulator names show model and runtime and stay within 60 characters', async () => {
   expect(ownedSimName('feat-login', { model: 'iPhone 17', runtime: '26.5' })).toBe('stim-feat-login (iPhone 17 26.5)');
   expect(
     ownedSimName('58bd14ac-bench-luna-rc12-gpt-5-6-luna-native-stim', {
@@ -535,7 +535,7 @@ test('owned and parked simulator names show model and runtime and stay within 60
   expect(long.length).toBeLessThanOrEqual(60);
 });
 
-test('parseUserApps keeps only user applications', () => {
+test('parseUserApps keeps only user applications', async () => {
   expect(
     parseUserApps(
       JSON.stringify({
@@ -554,7 +554,7 @@ test('parseUserApps keeps only user applications', () => {
   );
 });
 
-test('listUserApps passes the udid as one argv element and converts the property list', () => {
+test('listUserApps passes the udid as one argv element and converts the property list', async () => {
   const calls: string[][] = [];
   setExecutor({
     run: () => {
@@ -568,7 +568,7 @@ test('listUserApps passes the udid as one argv element and converts the property
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
+  expect(await listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
   expect(calls[0]).toEqual(['xcrun', 'simctl', 'listapps', 'UDID WITH SPACES']);
   expect(calls[1]?.slice(0, 5)).toEqual(['plutil', '-convert', 'json', '-o', '-']);
 });
@@ -606,9 +606,9 @@ describe('clearIosAppData', () => {
     return calls;
   }
 
-  test('deletes the defaults domain, then empties the data directories and keeps the container', () => {
+  test('deletes the defaults domain, then empties the data directories and keeps the container', async () => {
     const calls = exec(null);
-    clearIosAppData('U1', 'com.example.app');
+    await clearIosAppData('U1', 'com.example.app');
     expect(calls).toEqual([
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'delete', 'com.example.app'],
       ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app', 'data'],
@@ -618,24 +618,24 @@ describe('clearIosAppData', () => {
     expect(readdirSync(container)).toContain('.com.apple.mobile_container_manager.metadata.plist');
   });
 
-  test('replaces the defaults domain with the given plist instead of deleting it', () => {
+  test('replaces the defaults domain with the given plist instead of deleting it', async () => {
     const inputs: Array<string | undefined> = [];
     const calls = exec(null, inputs);
-    clearIosAppData('U1', 'com.example.app', { defaultsPlist: '<plist/>' });
+    await clearIosAppData('U1', 'com.example.app', { defaultsPlist: '<plist/>' });
     expect(calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'import', 'com.example.app', '-']);
     expect(inputs[0]).toBe('<plist/>');
     expect(calls.some((call) => call.includes('delete'))).toBe(false);
     expect(readdirSync(join(container, 'Library'))).toEqual([]);
   });
 
-  test('removes a symlinked data directory without touching its target', () => {
+  test('removes a symlinked data directory without touching its target', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'stim-app-group-'));
     try {
       writeFileSync(join(outside, 'shared.db'), 'group data');
       rmSync(join(container, 'Documents'), { recursive: true });
       symlinkSync(outside, join(container, 'Documents'));
       exec(null);
-      clearIosAppData('U1', 'com.example.app');
+      await clearIosAppData('U1', 'com.example.app');
       expect(readdirSync(outside)).toEqual(['shared.db']);
       expect(readdirSync(container)).not.toContain('Documents');
     } finally {
@@ -643,20 +643,20 @@ describe('clearIosAppData', () => {
     }
   });
 
-  test('treats a missing defaults domain as nothing to delete', () => {
+  test('treats a missing defaults domain as nothing to delete', async () => {
     exec("Error: Domain 'com.example.app' not found.\nDefaults have not been changed.");
-    clearIosAppData('U1', 'com.example.app');
+    await clearIosAppData('U1', 'com.example.app');
     expect(readdirSync(join(container, 'Documents'))).toEqual([]);
   });
 
-  test('stops before touching files when the defaults delete fails for another reason', () => {
+  test('stops before touching files when the defaults delete fails for another reason', async () => {
     exec('Invalid device state');
-    expect(() => clearIosAppData('U1', 'com.example.app')).toThrow(/Invalid device state/);
+    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
     expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
   });
 });
 
-test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
+test('deleteParkedIosSim bounds ownership revalidation and deletion', async () => {
   const calls: Array<{ kind: 'run' | 'runFile'; timeoutMs?: number }> = [];
   setExecutor({
     runFile(_file, args, options) {
@@ -680,7 +680,7 @@ test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
     spawn: () => null,
   });
 
-  deleteParkedIosSim('U1');
+  await deleteParkedIosSim('U1');
 
   expect(calls).toEqual([
     { kind: 'runFile', timeoutMs: 30000 },
@@ -688,7 +688,7 @@ test('deleteParkedIosSim bounds ownership revalidation and deletion', () => {
   ]);
 });
 
-test('deleteParkedIosSim re-resolves the name before deletion', () => {
+test('deleteParkedIosSim re-resolves the name before deletion', async () => {
   const calls: string[][] = [];
   setExecutor({
     runFile(file, args = []) {
@@ -710,7 +710,7 @@ test('deleteParkedIosSim re-resolves the name before deletion', () => {
     runQuiet: () => null,
     spawn: () => null,
   });
-  expect(() => deleteParkedIosSim('U1')).toThrow(/not Stim-owned/);
+  await expect(deleteParkedIosSim('U1')).rejects.toThrow(/not Stim-owned/);
   expect(calls).toEqual([['xcrun', 'simctl', 'list', 'devices', '--json']]);
 });
 

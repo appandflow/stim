@@ -160,7 +160,7 @@ const defaultExecutor: Executor = {
   runFileAsync(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent, redact },
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, rejectStderr, onSpawn, detachedSilent, redact },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
@@ -168,7 +168,7 @@ const defaultExecutor: Executor = {
       const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
-        : { stdio: ['ignore', 'pipe', 'pipe'] };
+        : { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] };
       if (cwd) opts.cwd = cwd;
       if (env || omitEnv?.length || ambientContext()) {
         const childEnv = { ...ambientEnv(), ...env };
@@ -182,6 +182,10 @@ const defaultExecutor: Executor = {
         child.kill('SIGKILL');
         reject(error);
         return;
+      }
+      if (input !== undefined) {
+        child.stdin?.on('error', () => {});
+        child.stdin?.end(input);
       }
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
