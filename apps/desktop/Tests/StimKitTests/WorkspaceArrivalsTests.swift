@@ -29,3 +29,14 @@ private func workspace(_ path: String, phase: String? = nil) throws -> Workspace
   #expect(WorkspaceArrivals.buildLine(try workspace("/a", phase: "prebuild")) == "Building iOS")
   #expect(WorkspaceArrivals.buildLine(try workspace("/a")) == nil)
 }
+
+@Test func workspaceArrivalsSkipTemporaryFolders() throws {
+  var arrivals = WorkspaceArrivals()
+  _ = arrivals.update([try workspace("/a")])
+  let arrived = arrivals.update([
+    try workspace("/a"), try workspace("/tmp/scratch"), try workspace("/private/tmp/scratch2"),
+    try workspace("/var/folders/ab/cd/T/wt"), try workspace("/private/var/folders/ab/cd/T/wt2"),
+    try workspace("/tmpfiles/real"), try workspace("/Users/me/tmp/real"),
+  ])
+  #expect(arrived.map(\.path) == ["/tmpfiles/real", "/Users/me/tmp/real"])
+}

@@ -13,9 +13,17 @@ public struct WorkspaceArrivals: Sendable {
       seen = Set(workspaces.map(\.path))
       return []
     }
-    let arrived = workspaces.filter { known.insert($0.path).inserted }
+    let arrived = workspaces.filter { known.insert($0.path).inserted && !Self.isScratch($0.path) }
     seen = known
     return arrived
+  }
+
+  /// Whether the path is under a temporary folder, where agents create throwaway worktrees.
+  public static func isScratch(_ path: String) -> Bool {
+    let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    return ["/tmp", "/private/tmp", "/var/folders", "/private/var/folders"].contains {
+      resolved == $0 || resolved.hasPrefix($0 + "/")
+    }
   }
 
   /// The one card a new workspace gets.
