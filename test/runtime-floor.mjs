@@ -224,9 +224,10 @@ try {
     [join(repositoryRoot, 'packages/stim-cli/dist/cli.mjs'), 'stats', '--json'],
     options,
   );
-  const report = execFileSync(process.execPath, [join(repositoryRoot, 'packages/server/dist/stats-read.mjs')], options);
-  assert.deepEqual(JSON.parse(report), JSON.parse(cli));
-  assert.equal(JSON.parse(report).machine.ios.runs, 3);
+  const { createStim } = await import(pathToFileURL(join(repositoryRoot, 'packages/stim-cli/dist/api.mjs')).href);
+  const report = await createStim({ projectRoot: statsHome, home: statsHome }).stats();
+  assert.deepEqual(report, JSON.parse(cli));
+  assert.equal(report.machine.ios.runs, 3);
 } finally {
   rmSync(statsHome, { recursive: true, force: true });
 }
