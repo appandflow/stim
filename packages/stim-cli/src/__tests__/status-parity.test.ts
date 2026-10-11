@@ -184,7 +184,7 @@ function normalizeJson(output: string): string {
   for (const archive of payload.archived) archive.bytes = { ...archive.bytes, record: '<bytes>', total: '<bytes>' };
   payload.archivedUsage.bytes = '<bytes>';
   payload.archivedUsage.byKind.record = '<bytes>';
-  return JSON.stringify(payload, null, 1);
+  return JSON.stringify(payload, null, 2);
 }
 
 let home: string;
