@@ -4374,6 +4374,20 @@ test('a process runtime preserves Debug compilation, cache identity and signer p
   expect(result.facts).toMatchObject({ variant: 'productionDebug', metroPort: null, launched: true });
 });
 
+test('a native process launch without --variant labels the verify line debug', async () => {
+  const h = harness({
+    variant: null,
+    runtimePlan: androidProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })),
+    resolveMetro: never('the Metro probe'),
+    startServer: never('the dev server start'),
+    warmMetro: never('Metro warmup'),
+    verifyLaunched: never('bundle readiness'),
+    launch: never('Metro launch routing'),
+  });
+  await h.run();
+  expect(labelled(h.stderr, 'verify')[0]).toMatch(/\(debug: no bundle fetch to observe\)/);
+});
+
 describe('release skips Metro entirely', () => {
   test('no gate, no reservation needed, no port wiring, plain am start', async () => {
     const h = harness({
