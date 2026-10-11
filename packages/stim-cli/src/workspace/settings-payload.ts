@@ -59,7 +59,7 @@ function killOnAbort(signal: AbortSignal | undefined): (child: ChildProcess) => 
     if (signal.aborted) return void child.kill('SIGKILL');
     const kill = () => child.kill('SIGKILL');
     signal.addEventListener('abort', kill, { once: true });
-    child.once('exit', () => signal.removeEventListener('abort', kill));
+    child.once('close', () => signal.removeEventListener('abort', kill));
   };
 }
 

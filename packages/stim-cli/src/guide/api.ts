@@ -1,5 +1,5 @@
 export default {
-  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, and cancellation',
+  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -17,11 +17,19 @@ Import { createStim, StimError } from 'stim'. Node 22.12 or later is required.
     }
   }
 
-createStim takes projectRoot, optional absolute home and buildCache paths,
-and onProgress({ stream, message }). message is an output chunk. Without
-onProgress, operations write nothing to the caller's stdout or stderr. Each
-operation uses a bundled worker that calls the same lifecycle operations as
-the CLI; it never parses CLI arguments or changes the caller's cwd/environment.
+createStim takes projectRoot, optional absolute home and buildCache paths, an
+env object (default process.env) that Stim reads its settings overrides from
+and passes to its workers, and onProgress({ stream, message }). message is an
+output chunk. Without onProgress, operations write nothing to the caller's
+stdout or stderr. The home is fixed when the client is created: home, else
+STIM_HOME from env, else the default home. build, run, stop and diagnostics each
+use a bundled worker that calls the same lifecycle operations as the CLI. Reads
+such as settings run in the calling process against the client's home and
+project. None parses CLI arguments or changes the caller's cwd/environment.
+
+settings() returns the stim settings --json payload: every setting with its
+effective value, origin and per-layer values. An invalid environment override
+rejects with StimError STIM_BAD_ARG and its remedy.
 
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime
@@ -59,7 +67,8 @@ Do not interpret 'bundling' or 'unverified' as proven application readiness.
 
 stop({ slot? }) returns { ok, outcomes, summary }. It acts on the workspace,
 including resources from earlier runs. Use a dedicated workspace in CI.
-Cancellation waits for the operation worker to exit; stop with a fresh signal
+Cancellation waits for the operation worker to exit, and a read kills its child
+processes and rejects with STIM_CANCELLED; stop with a fresh signal
 after cancellation or partial failure. Always inspect cleanup.ok.
 
 diagnostics({ tail: 200, errors: false }) returns { directory, records } from

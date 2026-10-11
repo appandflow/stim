@@ -296,14 +296,18 @@ test('aborting a settings read kills its Stim Desktop lookup', async () => {
   }
 });
 
-test('settings reads sharing one signal leave no abort listeners behind', async () => {
+test('settings reads sharing one signal leave no abort listeners behind, even when Git cannot start', async () => {
   const { root, home } = fixture('settings-listeners');
   getExecutor().runFile('git', ['init', '-q', root], { timeoutMs: 60_000 });
   const controller = new AbortController();
   const added = vi.spyOn(controller.signal, 'addEventListener');
   const removed = vi.spyOn(controller.signal, 'removeEventListener');
-  const stim = createStim({ projectRoot: root, home });
-  for (let i = 0; i < 3; i++) await stim.settings({ signal: controller.signal });
+  const found = createStim({ projectRoot: root, home });
+  const missing = createStim({ projectRoot: root, home, env: { PATH: join(scratch, 'no-bin') } });
+  for (let i = 0; i < 3; i++) {
+    await found.settings({ signal: controller.signal });
+    await missing.settings({ signal: controller.signal });
+  }
   expect(added.mock.calls.length).toBeGreaterThan(0);
   expect(removed.mock.calls.length).toBe(added.mock.calls.length);
 });
