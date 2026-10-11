@@ -436,8 +436,12 @@ export class BuildHost {
       for (const repo of readdirSync(repos)) {
         const mirror = join(repos, repo, 'mirror.json');
         if (!existsSync(mirror)) continue;
-        const record = JSON.parse(readFileSync(mirror, 'utf8')) as Record<string, { sha256: string }>;
-        for (const entry of Object.values(record)) keep.add(entry.sha256);
+        const record: unknown = JSON.parse(readFileSync(mirror, 'utf8'));
+        if (typeof record !== 'object' || record === null) throw new Error('unreadable mirror record');
+        for (const entry of Object.values(record)) {
+          if (typeof entry?.sha256 !== 'string') throw new Error('unreadable mirror record');
+          keep.add(entry.sha256);
+        }
       }
       for (const prefix of readdirSync(blobs, { withFileTypes: true })) {
         if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
