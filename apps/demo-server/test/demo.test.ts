@@ -247,10 +247,10 @@ describe('the phone protocol', () => {
   it('refuses subscriptions beyond the per-connection limits and frees a slot on unsubscribe', async () => {
     const client = phone(new DemoMachine(fixtures, 'Demo Mac', TOKEN), { id: 'abcd1234', name: 'Phone' });
     const frames = { workspace: SEARCH, platform: 'ios', slot: 'default' };
-    const subscriptions: unknown[] = [];
+    const subscriptions: Message['result'][] = [];
     for (let open = 0; open < 16; open++) subscriptions.push((await client.request('frames.subscribe', frames)).result);
     expect((await client.request('frames.subscribe', frames)).error?.code).toBe('limit-exceeded');
-    await client.request('unsubscribe', subscriptions[0] as Record<string, unknown>);
+    await client.request('unsubscribe', { subscription: subscriptions[0]?.subscription });
     expect((await client.request('frames.subscribe', frames)).result?.subscription).toEqual(expect.any(String));
 
     await client.request('status.subscribe');
