@@ -35,6 +35,7 @@ import {
   readViewedDevices,
   tryAcquireBuildSlotClaim,
 } from '@stim-cli/core/state';
+import { createStim } from 'stim';
 import { BuildHost } from '../src/build.ts';
 import { HostedAgentHost } from '../src/agent-driver.ts';
 import { DeviceHost } from '../src/device-host.ts';
@@ -141,13 +142,6 @@ if (command === 'status') {
 } else if (env.FAKE_STIM_REFUSE) {
   print({ code: 'STIM_NO_DEVICE', message: 'No system image is installed.', remedy: 'Install one.' });
   exit(1);
-} else if (args.includes('--plan')) {
-  const answer = () => {
-    print({ platform: command, args: args.join(' '), cwd: process.cwd(), cacheHit: 'local' });
-    exit(0);
-  };
-  if (!env.FAKE_STIM_PLAN_GATE) answer();
-  else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
 } else if (command === 'settings' && env.FAKE_STIM_SETTINGS_MS) {
   setTimeout(() => {
     appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ ended: args.join(' ') }) + '\\n');
@@ -170,6 +164,13 @@ if (command === 'status') {
 } else if (env.FAKE_STIM_FAIL || env.FAKE_STIM_FAIL_COMMAND === command) {
   process.stderr.write(command + ' failed on purpose');
   exit(1);
+} else if (args.includes('--plan')) {
+  const answer = () => {
+    print({ platform: command, args: args.join(' '), cwd: process.cwd(), cacheHit: 'local' });
+    exit(0);
+  };
+  if (!env.FAKE_STIM_PLAN_GATE) answer();
+  else setInterval(() => existsSync(env.FAKE_STIM_PLAN_GATE) && answer(), 10);
 } else {
   print({ command, cwd: process.cwd() });
   exit(0);
@@ -620,7 +621,7 @@ syncBuiltinESMExports();
       'does not read Stim home files from timers before the first read returns',
       async () => {
         const blocked = blockRead('sweep-read');
-        const config = join(process.env.STIM_HOME!, 'config.json');
+        const config = join(root, 'home', 'config.json');
         const opened = join(root, 'config-opened');
         rmSync(config, { force: true });
         execFileSync('mkfifo', [config]);
@@ -3629,7 +3630,7 @@ describe('logs.subscribe', () => {
       await again.request('logs.subscribe', { workspace });
       await records(again, 3);
       const next = childPids().find((other) => other !== pid);
-      again.socket.send(JSON.stringify({ id: 9, method: 'settings.get' }));
+      again.socket.send(JSON.stringify({ id: 9, method: 'build.plan', params: { workspace, platform: 'ios' } }));
       await until(() => childPids().length === 2);
       const command = childPids().find((other) => other !== pid && other !== next);
       await server!.close();
@@ -3797,18 +3798,39 @@ describe.skipIf(process.platform !== 'darwin')('machine.get on macOS', () => {
 });
 
 describe('stats.get and settings.get', () => {
-  it('read stats directly and run settings in the home directory', async () => {
+  it('read stats and settings without running the CLI, settings in the home directory by default', async () => {
+    const config = join(root, 'home', 'config.json');
+    writeFileSync(config, JSON.stringify({ ...JSON.parse(readFileSync(config, 'utf8')), archive: { maxCount: 7 } }));
     const port = await start();
     const client = await authed(port);
     expect(await client.request('stats.get', { workspace })).toEqual({
       id: 2,
       result: readStatsReport(null, Date.now()).report,
     });
-    expect(await client.request('settings.get')).toEqual({
-      id: 3,
-      result: { command: 'settings', cwd: realpathSync(homedir()) },
+    const settings = await client.request('settings.get');
+    expect(settings).toEqual({ id: 3, result: await createStim({ projectRoot: homedir() }).settings() });
+    expect(settings).toMatchObject({
+      result: {
+        files: { machine: config },
+        settings: expect.arrayContaining([
+          { key: 'archive.maxCount', value: 7, origin: 'machine', layers: { machine: 7 } },
+        ]),
+      },
     });
-    expect(stimCalls().map((call) => call.args)).toEqual(['settings --json']);
+    expect(stimCalls()).toEqual([]);
+  });
+
+  it('reads settings with the server environment and reports a refusal with its code and remedy', async () => {
+    const port = await start({ env: { STIM_BUDGET_MIN_FREE_DISK_GB: 'lots' } });
+    const client = await authed(port);
+    expect(await client.request('settings.get', { workspace })).toMatchObject({
+      error: {
+        code: 'stim-failed',
+        message: expect.stringMatching(
+          /^STIM_BAD_ARG: Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots"\. Expected a number, 0 or more\. Fix the environment variable/,
+        ),
+      },
+    });
   });
 
   it('preserves seeded stats, rejects unregistered paths, and never repairs unreadable versions', async () => {
@@ -3971,6 +3993,29 @@ require('node:net').createServer().listen(0, '127.0.0.1');
   );
 
   test.skipIf(process.platform === 'win32')(
+    'reads settings in-process, keeping another socket responsive and killing its Git children at timeout and on disconnect',
+    async () => {
+      const slow = slowGit();
+      const gits = () => readdirSync(join(root, 'git-jobs')).map(Number);
+      const port = await start({ env: slow.env, commandLimits: { timeoutMs: 1000 } });
+      const first = await authed(port);
+      const second = await authed(port);
+      const reply = first.request('settings.get', { workspace });
+      await until(() => gits().length === 2);
+      expect(await second.request('machine.history')).toMatchObject({ result: expect.anything() });
+      expect(await reply).toMatchObject({
+        error: { code: 'stim-failed', message: 'stim settings did not finish within 1 s.' },
+      });
+      await until(() => gits().every((pid) => !alive(pid)));
+      first.socket.send(JSON.stringify({ id: 20, method: 'settings.get', params: { workspace } }));
+      await until(() => gits().length === 4);
+      first.socket.terminate();
+      await until(() => gits().every((pid) => !alive(pid)));
+      expect(stimCalls()).toEqual([]);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
     'keeps the shared details stats job after a socket closes and cancels it on server close',
     async () => {
       const slow = slowGit();
@@ -4001,15 +4046,15 @@ require('node:net').createServer().listen(0, '127.0.0.1');
   it('report a failing command with its stderr', async () => {
     const port = await start({ env: { FAKE_STIM_FAIL: '1' } });
     const client = await authed(port);
-    expect(await client.request('settings.get', { workspace })).toMatchObject({
-      error: { code: 'stim-failed', message: 'stim settings exited (code 1): settings failed on purpose' },
+    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
+      error: { code: 'stim-failed', message: 'stim ios exited (code 1): ios failed on purpose' },
     });
   });
 
   it('kill a running command when the client disconnects', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' } });
     const client = await authed(port);
-    client.socket.send(JSON.stringify({ id: 2, method: 'settings.get', params: { workspace } }));
+    client.socket.send(JSON.stringify({ id: 2, method: 'build.plan', params: { workspace, platform: 'ios' } }));
     await until(() => childPids().length === 1);
     const [pid] = childPids();
     expect(alive(pid!)).toBe(true);
@@ -4020,7 +4065,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
   it('kill a command that runs past its timeout', async () => {
     const port = await start({ env: { FAKE_STIM_HANG: '1' }, commandLimits: { timeoutMs: 300 } });
     const client = await authed(port);
-    expect(await client.request('settings.get')).toMatchObject({
+    expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
       error: { code: 'stim-failed', message: expect.stringContaining('did not finish') },
     });
     expect(childPids()).toEqual([]);
@@ -4031,8 +4076,8 @@ require('node:net').createServer().listen(0, '127.0.0.1');
     const port = await start({ env: { FAKE_STIM_GRANDCHILD: grandchild }, commandLimits: { timeoutMs: 2000 } });
     const client = await authed(port);
     try {
-      expect(await client.request('settings.get')).toMatchObject({
-        error: { code: 'stim-failed', message: 'stim settings did not finish within 2 s.' },
+      expect(await client.request('build.plan', { workspace, platform: 'ios' })).toMatchObject({
+        error: { code: 'stim-failed', message: 'stim ios did not finish within 2 s.' },
       });
       expect(alive(Number(readFileSync(grandchild, 'utf8')))).toBe(true);
     } finally {

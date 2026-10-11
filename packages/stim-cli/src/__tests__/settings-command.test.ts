@@ -30,6 +30,8 @@ beforeEach(() => {
     Object.assign(Object.create(real), {
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? Promise.resolve('') : real.runFileAsync(file, args, opts),
     }),
   );
   cwd = process.cwd();
@@ -166,6 +168,8 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
     Object.assign(Object.create(stubbed), {
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? Promise.resolve(desktop) : stubbed.runFileAsync(file, args, opts),
     }),
   );
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
@@ -203,6 +207,10 @@ test('a command run by Stim Desktop reports the Desktop viewer default without t
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'osascript') throw new Error('Launch Services lookup ran');
         return stubbed.runFileQuiet(file, args, opts);
+      },
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
+        if (file === 'osascript') throw new Error('Launch Services lookup ran');
+        return stubbed.runFileAsync(file, args, opts);
       },
     }),
   );

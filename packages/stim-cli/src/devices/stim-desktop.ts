@@ -29,6 +29,22 @@ export function stimDesktopInstalled(
   return launchServicesFinds(LAUNCH_SERVICES_LOOKUP);
 }
 
+/** `stimDesktopInstalled` without blocking the event loop. */
+export async function stimDesktopInstalledAsync(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  if (platform !== 'darwin') return false;
+  if (env.STIM_DESKTOP_APP) return true;
+  const found = await getExecutor()
+    .runFileAsync('osascript', ['-l', 'JavaScript', '-e', LAUNCH_SERVICES_LOOKUP], {
+      timeoutMs: 5000,
+      killSignal: 'SIGKILL',
+    })
+    .catch(() => '');
+  return Boolean(found);
+}
+
 function launchServicesFinds(script: string): boolean {
   return Boolean(
     getExecutor().runFileQuiet('osascript', ['-l', 'JavaScript', '-e', script], {

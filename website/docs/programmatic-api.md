@@ -37,20 +37,26 @@ try {
 ## Client context
 
 `createStim` resolves `projectRoot` to its canonical path once. It accepts
-optional absolute `home` and `buildCache` paths, and an `onProgress` callback.
-Omitted paths use the caller's environment captured when the client is created,
-and normal Stim configuration.
+optional absolute `home` and `buildCache` paths, an `env` object, and an
+`onProgress` callback. `env` defaults to the caller's `process.env`; Stim reads
+its settings overrides from it and passes it to its workers. Omitted paths use
+that environment, captured when the client is created, and normal Stim
+configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
 chunk which can contain partial lines. Without a callback the API stays silent.
 
-Each operation runs in a separate bundled worker and invokes the same lifecycle
-operations as the CLI. It does not parse Commander arguments. The importing
-process keeps its working directory, environment, output and signal handlers.
+`build`, `run`, `stop` and `diagnostics` each run in a separate bundled worker
+and invoke the same lifecycle operations as the CLI. Reads such as `settings`
+run in the importing process against the client's home and project, so clients
+for different homes can share a process. Neither parses Commander arguments. The
+importing process keeps its working directory, environment, output and signal
+handlers.
 
 The exported TypeScript contracts are `StimOptions`, `StimClient`,
 `StimBuildOptions`, `StimBuildResult`, `StimRunOptions`, `StimRunResult`,
 `StimStopOptions`, `StimStopResult`, `StimDiagnosticsOptions`,
-`StimDiagnostics`, `StimProgress`, and `StimPlatform`.
+`StimDiagnostics`, `StimReadOptions`, `StimSettings`, `StimProgress`, and
+`StimPlatform`.
 
 ## Build only
 
@@ -108,8 +114,9 @@ Test runners should wait for their own application-specific ready state.
 
 ## Cancellation and cleanup
 
-Every method accepts an `AbortSignal`. Cancellation interrupts its worker and
-waits for it to exit. Native tools retain their existing cooperative cancellation
+Every method accepts an `AbortSignal`. Cancellation interrupts a worker and
+waits for it to exit; a read stops its child processes and rejects with
+`STIM_CANCELLED`. Native tools retain their existing cooperative cancellation
 and ownership claims; this is not a forced-kill deadline.
 
 Call `stop()` in cleanup even when `run()` failed partway through. Use a fresh
@@ -125,6 +132,14 @@ Stim failures reject with `StimError`, whose `code`, `message`, `remedy`, and `d
 preserve failure information. Operation errors returned by workers include the workspace log path
 in `details.logs`. An exception thrown by `onProgress` cancels the worker and
 is propagated unchanged.
+
+## Settings
+
+`settings()` returns every setting with its effective value, origin and
+per-layer values for the client's project, the same payload as
+`stim settings --json`. It reads in the importing process and starts no Stim
+worker. An invalid environment override rejects with a `StimError` carrying
+`STIM_BAD_ARG` and its remedy.
 
 ## Diagnostics and CI state
 

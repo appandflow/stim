@@ -60,12 +60,12 @@ export interface SettingEntry {
 }
 
 /** The payload `stim settings --json` prints. */
-export interface SettingsPayload {
+export type SettingsPayload = {
   project: string | null;
   files: Partial<Record<SettingScope, string>>;
   settings: SettingEntry[];
   unknown: Array<{ key: string; scope: SettingScope; file: string; value: unknown }>;
-}
+};
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 

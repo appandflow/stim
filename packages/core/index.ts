@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,8 +26,15 @@ function absoluteEnvPath(name: 'STIM_HOME' | 'STIM_BUILD_CACHE' | 'STIM_METRO_CA
   return null;
 }
 
+const homeScope = new AsyncLocalStorage<string>();
+
+/** Runs `fn` with `configDir()` returning `home`, including after an `await` inside it, without changing `process.env`. */
+export function withStimHome<T>(home: string, fn: () => T): T {
+  return homeScope.run(home, fn);
+}
+
 export function configDir(): string {
-  return absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim');
+  return homeScope.getStore() ?? (absoluteEnvPath('STIM_HOME') || path.join(os.homedir(), '.stim'));
 }
 
 /** Creates `dir` and its missing parents owner-only, and narrows an existing `dir` that grants group or other access when the filesystem and owner allow it. */

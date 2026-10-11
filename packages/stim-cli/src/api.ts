@@ -1,12 +1,17 @@
 import { realpathSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
+import { withStimHome } from '@stim-cli/core';
 import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
+import { refuseRelativeStimPaths } from './workspace/config.ts';
+import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import type {
   StimBuildOptions,
   StimClient,
   StimFailure,
   StimOptions,
+  StimReadOptions,
   StimRunOptions,
   WorkerRequest,
   WorkerResponse,
@@ -21,8 +26,10 @@ export type {
   StimOptions,
   StimPlatform,
   StimProgress,
+  StimReadOptions,
   StimRunOptions,
   StimRunResult,
+  StimSettings,
   StimStopOptions,
   StimStopResult,
 } from './api/types.ts';
@@ -43,7 +50,10 @@ export class StimError extends Error {
 
 /**
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
- * Each operation runs in a separate Stim worker. Resources remain workspace-owned until stop() is called.
+ * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
+ * build, run, stop and diagnostics each run in a separate Stim worker. Reads such as settings run in the calling
+ * process against the client's home and project, so clients for different homes can share a process.
+ * Resources remain workspace-owned until stop() is called.
  */
 export function createStim(options: StimOptions): StimClient {
   let projectRoot: string;
@@ -64,18 +74,25 @@ export function createStim(options: StimOptions): StimClient {
       throw new StimError({ code: 'STIM_BAD_ARG', message: `${name} must be an absolute path.` });
     }
   }
+  const base = options.env ?? process.env;
+  const home = options.home ?? (base.STIM_HOME || join(homedir(), '.stim'));
   const context = {
     ...options,
     projectRoot,
     env: {
-      ...process.env,
+      ...base,
       ...(options.home === undefined ? {} : { STIM_HOME: options.home }),
       ...(options.buildCache === undefined ? {} : { STIM_BUILD_CACHE: options.buildCache }),
       FORCE_COLOR: '0',
     },
   };
+  const note = (line: string) => options.onProgress?.({ stream: 'stderr', message: `${line}\n` });
   return {
     projectRoot,
+    settings: ({ signal }: StimReadOptions = {}) =>
+      read(context, home, signal, async () =>
+        readSettingsPayload(await readSettingsContext(projectRoot, context.env, note, signal)),
+      ),
     build: (({ signal, ...request }: StimBuildOptions) =>
       invoke(context, { operation: 'build', options: request }, signal)) as StimClient['build'],
     run: (({ signal, ...request }: StimRunOptions) =>
@@ -92,6 +109,29 @@ export function createStim(options: StimOptions): StimClient {
       >;
     },
   };
+}
+
+async function read<T>(
+  context: { env: NodeJS.ProcessEnv },
+  home: string,
+  signal: AbortSignal | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (signal?.aborted) throw cancelled();
+  let result: T;
+  try {
+    refuseRelativeStimPaths(context.env);
+    result = await withStimHome(home, operation);
+  } catch (error) {
+    if (signal?.aborted) throw cancelled();
+    if (error instanceof Error && 'code' in error && typeof error.code === 'string' && error.code.startsWith('STIM_')) {
+      const remedy = error instanceof SettingsRefusal ? error.remedy : null;
+      throw new StimError({ code: error.code, message: error.message, remedy });
+    }
+    throw error;
+  }
+  if (signal?.aborted) throw cancelled();
+  return result;
 }
 
 function cancelled(): StimError {
