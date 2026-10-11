@@ -78,10 +78,10 @@ export function parseIosDebugArchitectures(output: string): ArchitectureReport {
   return { ...report, unknown: report.unknown || !inspected };
 }
 
-export function inspectIosDebugArchitectures(
+export async function inspectIosDebugArchitectures(
   projectRoot: string,
   iosProjectPath: string = DEFAULT_IOS_PROJECT_PATH,
-): Finding[] {
+): Promise<Finding[]> {
   const iosRoot = join(projectRoot, iosProjectPath);
   if (!existsSync(iosRoot)) return [];
   const findings: Finding[] = [];
@@ -108,7 +108,7 @@ export function inspectIosDebugArchitectures(
       continue;
     }
     try {
-      const output = getExecutor().runFile(
+      const output = await getExecutor().runFileAsync(
         'xcodebuild',
         [
           '-project',

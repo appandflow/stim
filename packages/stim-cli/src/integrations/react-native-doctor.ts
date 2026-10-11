@@ -3,9 +3,11 @@ import { phaseLine } from '../command-output.ts';
 import {
   detectFingerprintParity,
   detectLinkedLibraryGitMetadata,
+  mainCheckoutProjectRoot,
   reactNativeDoctorFindings,
   type DoctorPlatform,
 } from '../diagnostics/doctor.ts';
+import { inspectIosDebugArchitectures } from '../diagnostics/doctor-ios-architectures.ts';
 import { repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
 import { bundlerPin } from '../engine/bundler.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
@@ -17,13 +19,20 @@ import type { ProjectDoctor } from './project-doctor.ts';
 export function reactNativeProjectDoctor(root: string): ProjectDoctor {
   return {
     inspect: reactNativeDoctorFindings,
-    async inspectAsync({ options: { platform }, settings }) {
+    async inspectAsync({ options: { platform, host = process.platform, machineSettings }, settings }) {
+      const iosProjectPath = resolveIosProjectDir(settings, root).relative;
+      const architectures =
+        !machineSettings?.corrupt && platform !== 'android' && host === 'darwin'
+          ? await inspectIosDebugArchitectures(mainCheckoutProjectRoot(root), iosProjectPath)
+          : [];
       const parity = await detectFingerprintParity(root, {
         platform,
-        iosProjectPath: resolveIosProjectDir(settings, root).relative,
+        iosProjectPath,
       });
       const linkedGit = await detectLinkedLibraryGitMetadata(root, { platform });
-      return [parity, linkedGit?.code === parity?.code ? null : linkedGit].filter((finding) => finding !== null);
+      return [...architectures, parity, linkedGit?.code === parity?.code ? null : linkedGit].filter(
+        (finding) => finding !== null,
+      );
     },
     offloadTargets({ options: { platform, host = process.platform }, settings, repoRoot }, iosRuntime) {
       const checksIos = platform !== 'android' && host === 'darwin';

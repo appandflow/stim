@@ -1,4 +1,4 @@
-import { reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
+import { reactNativeProjectDoctor, reactNativeDoctorSuccessLines } from '../integrations/react-native-doctor.ts';
 import { execFileSync, execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
@@ -846,7 +846,7 @@ test('a missing Chrome is a finding only for a project that renders on the web',
   }
 });
 
-test('Android doctor skips iOS architecture metadata and findings', () => {
+test('Android doctor skips iOS architecture metadata and findings', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-architectures-platform-'));
   try {
     mkdirSync(join(project, 'ios', 'App.xcodeproj'), { recursive: true });
@@ -861,18 +861,30 @@ test('Android doctor skips iOS architecture metadata and findings', () => {
       runQuiet: () => null,
     });
     const options = { concurrency: { maxBuilds: 0, maxDevices: 0 }, lookupCcache: () => true };
-    expect(
-      runDoctor(project, { ...options, host: 'darwin', platform: 'android' }).some((f) =>
-        f.code?.startsWith('ios-debug-architectures'),
-      ),
-    ).toBe(false);
+    const doctor = reactNativeProjectDoctor(project);
+    const inspect = async (platform: 'ios' | 'android') => {
+      const { context } = inspectDoctor(project, { ...options, host: 'darwin', platform });
+      return await doctor.inspectAsync?.(context);
+    };
+    expect((await inspect('android'))?.some((f) => f.code?.startsWith('ios-debug-architectures'))).toBe(false);
     expect(queries).not.toContain('xcodebuild');
-    expect(
-      runDoctor(project, { ...options, host: 'darwin', platform: 'ios' }).some(
-        (f) => f.code === 'ios-debug-architectures-unknown',
-      ),
-    ).toBe(true);
+    expect((await inspect('ios'))?.some((f) => f.code === 'ios-debug-architectures-unknown')).toBe(true);
     expect(queries).toContain('xcodebuild');
+    queries.length = 0;
+    const { context } = inspectDoctor(project, {
+      ...options,
+      host: 'darwin',
+      platform: 'ios',
+      machineSettings: {
+        settings: {},
+        layers: [],
+        corrupt: { level: 'note', title: 'Invalid settings', detail: 'Settings cannot be read', fix: null },
+      },
+    });
+    expect((await doctor.inspectAsync?.(context))?.some((f) => f.code?.startsWith('ios-debug-architectures'))).toBe(
+      false,
+    );
+    expect(queries).not.toContain('xcodebuild');
   } finally {
     resetExecutor();
     rmSync(project, { recursive: true, force: true });
