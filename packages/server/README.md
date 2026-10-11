@@ -1406,6 +1406,8 @@ Events are `{ "event", "subscription", ... }`.
   `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
   device from an agent driving it: an `activity.driver` of `stim device lock`
   whose `since` is in `ownLeases` is a phone.
+- A server that offers the following status views lists `status-views` in its
+  `hello` features.
 - `workspaces.subscribe` returns a subscription id and sends `workspaces`
   events, each with a `seq` that starts at 0 and grows by one. The first
   carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each
@@ -1415,7 +1417,7 @@ Events are `{ "event", "subscription", ... }`.
   right before it, `logs` only `errorsSinceMarker`, a pull request no
   `reviewDecision` or `checkedAt`, and a macOS app no launch `arguments`.
   `worktrees` are the unprovisioned worktrees' `path`, `branch`, `repository`,
-  `git`, `gitChip` and pull request `number` and `state`; `archived` is
+  `git`, `gitChip` and pull request without `reviewDecision` or `checkedAt`; `archived` is
   `{ "count", "bytes", "newest" }` with the 10 newest archives. Later events
   carry only what changed: `workspaces` and `worktrees` as
   `{ "upsert", "remove" }` (whole entries by `path`, and the paths that are

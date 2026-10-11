@@ -48,7 +48,13 @@ export function pairingScope(state: ConnectionState): 'control' | 'read' | null 
   return state.capabilities.includes('control') ? 'control' : 'read';
 }
 
-type SubscribeMethod = 'status.subscribe' | 'logs.subscribe' | 'frames.subscribe';
+type SubscribeMethod =
+  | 'status.subscribe'
+  | 'workspaces.subscribe'
+  | 'workspace.subscribe'
+  | 'machine.subscribe'
+  | 'logs.subscribe'
+  | 'frames.subscribe';
 
 type SubscribeResult = Methods[SubscribeMethod]['result'];
 

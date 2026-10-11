@@ -12,6 +12,7 @@ import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, macToken, type PairedMac } from '@/lib/macs';
 import { StatusCache } from '@/lib/status-cache';
+import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/lib/status-views';
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
 import { statusStorage } from '@/storage';
 
@@ -23,6 +24,126 @@ const machines = createMachineStore({ cache: new StatusCache(statusStorage) });
 AppState.addEventListener('change', (state) => {
   if (state !== 'active') machines.flushAll();
 });
+
+const ARCHIVES_RETRY_MS = 5000;
+
+const views = new Map<string, StatusViews>();
+const followed = new Map<string, { count: number; stop: () => void }>();
+
+function publish(macId: string): void {
+  const shown = machines.store.getState().snapshots[macId]?.status ?? null;
+  const payload = viewsPayload(views.get(macId) ?? EMPTY_VIEWS, shown);
+  if (payload) machines.receiveStatus(macId, payload);
+}
+
+function update(macId: string, change: (current: StatusViews) => StatusViews): void {
+  views.set(macId, change(views.get(macId) ?? EMPTY_VIEWS));
+  publish(macId);
+}
+
+function follow(macId: string, path: string, connection: StimConnection): () => void {
+  const key = `${macId}\n${path}`;
+  const held = followed.get(key);
+  if (held) held.count++;
+  else {
+    const stop = connection.subscribe('workspace.subscribe', { workspace: path }, (event) => {
+      if (event.event !== 'workspace') return;
+      update(macId, (current) => {
+        const details = { ...current.details };
+        if (event.environment) details[path] = event.environment;
+        else delete details[path];
+        return { ...current, details };
+      });
+    });
+    followed.set(key, { count: 1, stop });
+  }
+  return () => {
+    const entry = followed.get(key);
+    if (!entry || --entry.count > 0) return;
+    entry.stop();
+    followed.delete(key);
+    update(macId, (current) => {
+      if (!(path in current.details)) return current;
+      const details = { ...current.details };
+      delete details[path];
+      return { ...current, details };
+    });
+  };
+}
+
+async function readArchives(macId: string, connection: StimConnection, summary: string): Promise<void> {
+  const archived: NonNullable<StatusViews['archives']>['archived'] = [];
+  let usage: NonNullable<StatusViews['archives']>['usage'] | null = null;
+  let before: string | null = null;
+  do {
+    const page: Awaited<ReturnType<typeof connection.request<'archived.list'>>> = await connection.request(
+      'archived.list',
+      before ? { before } : {},
+    );
+    archived.push(...page.archived);
+    usage = page.usage;
+    before = page.next;
+  } while (before);
+  if (JSON.stringify(views.get(macId)?.archivedSummary ?? null) !== summary) return;
+  update(macId, (current) => ({ ...current, archives: usage ? { archived, usage } : null }));
+}
+
+function followViews(macId: string, connection: StimConnection): () => void {
+  let stopped = false;
+  let archivesRead: string | null = null;
+  let retry: ReturnType<typeof setTimeout> | null = null;
+  const read = (summary: string) => {
+    readArchives(macId, connection, summary).catch(() => {
+      if (stopped || archivesRead !== summary) return;
+      retry = setTimeout(() => {
+        retry = null;
+        if (!stopped && archivesRead === summary) read(summary);
+      }, ARCHIVES_RETRY_MS);
+    });
+  };
+  let stopWorkspaces = () => {};
+  const subscribeWorkspaces = () => {
+    stopWorkspaces = connection.subscribe('workspaces.subscribe', {}, (event) => {
+      if (event.event !== 'workspaces') return;
+      const next = applyWorkspaces(views.get(macId) ?? EMPTY_VIEWS, event);
+      if (next === 'gap') {
+        stopWorkspaces();
+        subscribeWorkspaces();
+        return;
+      }
+      views.set(macId, next);
+      const summary = JSON.stringify(next.archivedSummary);
+      if (summary !== archivesRead) {
+        archivesRead = summary;
+        if (retry) clearTimeout(retry);
+        retry = null;
+        read(summary);
+      }
+      publish(macId);
+    });
+  };
+  subscribeWorkspaces();
+  const stopMachine = connection.subscribe('machine.subscribe', {}, (event) => {
+    if (event.event !== 'machine') return;
+    update(macId, (current) => ({ ...current, machine: event.machine, ownLeases: event.ownLeases }));
+    machines.setHistory(macId, event.usage);
+  });
+  return () => {
+    stopped = true;
+    if (retry) clearTimeout(retry);
+    stopWorkspaces();
+    stopMachine();
+    views.delete(macId);
+  };
+}
+
+function followStatus(macId: string, connection: StimConnection): () => void {
+  return connection.subscribe('status.subscribe', {}, (event) => {
+    if (event.event !== 'status') return;
+    machines.receiveStatus(macId, event.ownLeases ? { ...event.payload, ownLeases: event.ownLeases } : event.payload);
+    machines.setHistory(macId, event.usage);
+  });
+}
 
 function useMachines<T>(selector: (state: MachinesState) => T): T {
   return useStore(machines.store, selector);
@@ -73,7 +194,12 @@ function MacLink({ mac }: { mac: PairedMac }) {
           machines.patchLink(
             mac.id,
             state.kind === 'open'
-              ? { state, home: state.server.home ?? null, disconnectedAt: null }
+              ? {
+                  state,
+                  home: state.server.home ?? null,
+                  disconnectedAt: null,
+                  statusViews: state.features.includes('status-views'),
+                }
               : wasOpen
                 ? { state, disconnectedAt: Date.now() }
                 : { state },
@@ -101,17 +227,11 @@ function MacLink({ mac }: { mac: PairedMac }) {
     return () => listener.remove();
   }, [connection]);
 
+  const statusViews = useMachines((state) => state.links[mac.id]?.statusViews ?? null);
   useEffect(() => {
-    if (!connection) return;
-    return connection.subscribe('status.subscribe', {}, (event) => {
-      if (event.event !== 'status') return;
-      machines.receiveStatus(
-        mac.id,
-        event.ownLeases ? { ...event.payload, ownLeases: event.ownLeases } : event.payload,
-      );
-      machines.setHistory(mac.id, event.usage);
-    });
-  }, [connection, mac.id]);
+    if (!connection || statusViews === null) return;
+    return statusViews ? followViews(mac.id, connection) : followStatus(mac.id, connection);
+  }, [connection, mac.id, statusViews]);
 
   usePolledRequest(
     connection,
@@ -201,8 +321,15 @@ export function useMachineStatus(macId: string | undefined): StatusPayload | nul
   return useMachines((state) => (macId ? (state.snapshots[macId]?.status ?? null) : null));
 }
 
+/** The status of the Mac the current `/mac/[id]/...` route names, with the full environment of the workspace it shows. */
 export function useStatus(): StatusPayload | null {
-  const { id } = useLocalSearchParams<{ id?: string }>();
+  const { id, path, archive } = useLocalSearchParams<{ id?: string; path?: string; archive?: string }>();
+  const link = useMachines((state) => (id ? state.links[id] : undefined));
+  const connection = link?.statusViews ? link.connection : null;
+  useEffect(() => {
+    if (!id || !path || archive || !connection) return;
+    return follow(id, path, connection);
+  }, [id, path, archive, connection]);
   return useMachineStatus(id);
 }
 

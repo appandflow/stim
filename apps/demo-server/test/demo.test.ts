@@ -19,6 +19,7 @@ interface Message {
   subscription?: string;
   data?: string;
   records?: { workspace?: string }[];
+  environment?: { path: string } | null;
 }
 
 function phone(machine: DemoMachine, device: Device | null = null) {
@@ -224,6 +225,10 @@ describe('the phone protocol', () => {
     const client = pair(new DemoMachine(fixtures, 'Demo Mac', TOKEN));
     await client.hello;
     await client.request('status.subscribe');
+    await client.request('workspaces.subscribe');
+    await client.request('machine.subscribe');
+    await client.request('workspace.subscribe', { workspace: SEARCH });
+    expect((await client.request('archived.list')).result).toMatchObject({ next: null });
     await client.request('logs.subscribe', { workspace: SEARCH });
     for (const [workspace, platform] of [
       [SEARCH, 'ios'],
@@ -235,10 +240,12 @@ describe('the phone protocol', () => {
     }
     await vi.waitFor(() => {
       expect(client.events('status')).toHaveLength(1);
-      expect(client.events('logs')).toHaveLength(1);
+      for (const name of ['workspaces', 'machine', 'workspace', 'logs']) expect(client.events(name)).toHaveLength(1);
       expect(client.events('frame')).toHaveLength(4);
     });
-    for (const event of [...client.events('status'), ...client.events('logs'), ...client.events('frame')]) {
+    const views = ['status', 'workspaces', 'machine', 'workspace'].flatMap((name) => client.events(name));
+    expect(client.events('workspace')[0]?.environment).toMatchObject({ path: SEARCH });
+    for (const event of [...views, ...client.events('logs'), ...client.events('frame')]) {
       expect(isRpcEvent(event), `${String(event.event)} event the phone accepts`).toBe(true);
     }
     client.connection.close();

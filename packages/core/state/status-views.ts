@@ -40,7 +40,7 @@ export type WorkspaceSummary = Omit<
 
 /** An unprovisioned worktree as the workspace list shows it. */
 export type WorktreeRow = Pick<WorktreeFacts, 'path' | 'branch' | 'repository' | 'git' | 'gitChip'> & {
-  pullRequest?: { number: number; state: string } | null;
+  pullRequest?: Omit<NonNullable<WorktreeFacts['pullRequest']>, 'reviewDecision' | 'checkedAt'> | null;
 };
 
 /** The archives, counted, with the newest named; the rest are read a page at a time. */
@@ -126,7 +126,7 @@ function worktreeRow({ path, branch, repository, git, gitChip, pullRequest }: Wo
   if (git !== undefined) row.git = git;
   if (gitChip !== undefined) row.gitChip = gitChip;
   if (pullRequest !== undefined)
-    row.pullRequest = pullRequest && { number: pullRequest.number, state: pullRequest.state };
+    row.pullRequest = pullRequest && (({ reviewDecision: _review, checkedAt: _checked, ...kept }) => kept)(pullRequest);
   return row;
 }
 
