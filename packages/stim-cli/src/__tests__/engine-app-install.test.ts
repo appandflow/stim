@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Executor } from '../exec.ts';
+import type { ExecOptions, Executor } from '../exec.ts';
 import { debugLog } from '../debug-log.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { isBundleActivityLine } from '../supervisor/server-expo.ts';
@@ -543,29 +543,40 @@ describe('ios', () => {
     expect(exec.calls.some((call) => call.includes('terminate'))).toBe(true);
   });
 
-  test('an unreadable process list still terminates, without claiming a restart', () => {
-    const exec = recordingExec({ fail: 'launchctl list' });
+  test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', () => {
+    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
     const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
     expect(result.ok).toBe(true);
     expect(result.restartedPid).toBeUndefined();
-    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'terminate', 'spawn', 'launch']);
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toEqual([
+      'xcrun',
+      'simctl',
+      'launch',
+      '--terminate-running-process',
+      'U1',
+      'com.example.app',
+    ]);
   });
 
-  test('an unreadable process list tolerates simctl terminate finding nothing to terminate', () => {
-    const exec = recordingExec({
-      fail: ['launchctl list', 'simctl terminate'],
-      failStderr: 'Simulator device failed to terminate com.example.app.\nfound nothing to terminate',
-    });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+  test('an unreadable process list relaunches a dev client without console paths instead of an openurl into it', () => {
+    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
+    const result = launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
     expect(result.ok).toBe(true);
-    expect(result.restartedPid).toBeUndefined();
-  });
-
-  test('an unreadable process list and another terminate failure refuses the launch', () => {
-    const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failStderr: 'boom' });
-    const result = launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
-    expect(result.code).toBe(LAUNCH_ERROR);
-    expect(exec.calls.some((call) => call[2] === 'launch')).toBe(false);
+    expect(result.mode).toBe('launch');
+    expect(exec.calls.some((call) => call[2] === 'openurl' || call[2] === 'terminate')).toBe(false);
+    expect(exec.calls.at(-1)?.slice(0, 6)).toEqual([
+      'xcrun',
+      'simctl',
+      'launch',
+      '--terminate-running-process',
+      'U1',
+      'com.example.app',
+    ]);
+    expect(exec.calls.at(-1)?.[6]).toBe('--initialUrl');
   });
 
   test('launchIosApp opens the preapproved dev-client URL after the RCT defaults write', () => {
@@ -813,10 +824,14 @@ describe('ios', () => {
   });
 
   test.each([
-    { output: '4242\t0\tUIKitApplication:com.example.app[abcd]\n', state: 'running', pid: 4242 },
-    { output: '99\t0\tother.application\n', state: 'absent', pid: null },
-    { output: null, state: 'unknown', pid: undefined },
-  ])('process diagnostics distinguish $state without publishing native output', ({ output, state, pid }) => {
+    {
+      output: '4242\t0\tUIKitApplication:com.example.app[abcd]\n',
+      state: 'running',
+      probe: { state: 'running', pid: 4242 },
+    },
+    { output: '99\t0\tother.application\n', state: 'absent', probe: { state: 'stopped' } },
+    { output: null, state: 'unknown', probe: { state: 'unknown' } },
+  ])('process diagnostics distinguish $state without publishing native output', ({ output, state, probe }) => {
     const log = vi.spyOn(debugLog, 'log').mockImplementation(() => {});
     const exec = recordingExec();
     exec.runFile = () => {
@@ -829,12 +844,12 @@ describe('ios', () => {
       return output;
     };
     try {
-      expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(pid);
+      expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual(probe);
       expect(log).toHaveBeenCalledExactlyOnceWith('ios.app-process', {
         deviceId: 'U1',
         bundleId: 'com.example.app',
         state,
-        ...(typeof pid === 'number' ? { appPid: pid } : {}),
+        ...('pid' in probe ? { appPid: probe.pid } : {}),
         ms: expect.any(Number),
         ...(output === null ? { code: 'ETIMEDOUT' } : {}),
       });
@@ -849,18 +864,18 @@ describe('ios', () => {
         'launchctl list': '-\t0\tcom.apple.foo\n4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
       },
     });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(4242);
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'running', pid: 4242 });
     expect(exec.calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'launchctl', 'list']);
   });
 
-  test('iosAppProcess returns null when the app is not running', () => {
+  test('iosAppProcess reports stopped when the app is not running', () => {
     const exec = recordingExec({ outputs: { 'launchctl list': '-\t0\tcom.apple.foo\n' } });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBe(null);
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'stopped' });
   });
 
-  test('iosAppProcess returns undefined when the process probe fails', () => {
+  test('iosAppProcess reports unknown when the process probe fails', () => {
     const exec = recordingExec({ fail: 'launchctl list' });
-    expect(iosAppProcess('U1', 'com.example.app', { exec })).toBeUndefined();
+    expect(iosAppProcess('U1', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
   });
 });
 
@@ -935,12 +950,12 @@ describe('android: install and launch', () => {
   });
 
   test('adb install is bounded by the same five minutes devicectl install gets', () => {
-    const options: Array<Record<string, unknown> | undefined> = [];
+    const options: Array<ExecOptions | undefined> = [];
     const exec = recordingExec();
     const runFile = exec.runFile.bind(exec);
-    exec.runFile = (file: string, args: string[] = [], opts?: Record<string, unknown>) => {
+    exec.runFile = (file: string, args: string[], opts: ExecOptions) => {
       options.push(opts);
-      return runFile(file, args);
+      return runFile(file, args, opts);
     };
 
     installAndroidApp({ serial: 'emulator-5554', apkPath: '/tmp/app-debug.apk' }, { exec });
@@ -1119,6 +1134,87 @@ describe('android: install and launch', () => {
     expect(result.code).toBe(LAUNCH_ERROR);
     expect(result.reason).toMatch(/am force-stop com\.example\.app failed.*pid 4242/);
     expect(exec.calls.some((call) => call.includes('start'))).toBe(false);
+  });
+
+  test('an unreadable process list launches with am start -S instead of a separate force-stop', () => {
+    const exec = recordingExec({
+      fail: ['pidof', 'ps -A', 'force-stop'],
+      outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
+    });
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082 },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'am-start' });
+    expect(result.restartedPid).toBeUndefined();
+    expect(exec.calls.some((call) => call.includes('force-stop'))).toBe(false);
+    expect(exec.calls.at(-1)).toEqual([
+      'adb',
+      '-s',
+      'emulator-5554',
+      'shell',
+      'am',
+      'start',
+      '-S',
+      '-n',
+      'com.example.app/.MainActivity',
+    ]);
+  });
+
+  test('an unreadable process list opens a dev client deep link with am start -S', () => {
+    const exec = recordingExec({ fail: ['pidof', 'ps -A'] });
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'deep-link' });
+    expect(exec.calls.at(-1)?.slice(4, 8)).toEqual(['am', 'start', '-S', '-a']);
+  });
+
+  test('an unreadable process list starts a release app with am start -S -n', () => {
+    const exec = recordingExec({
+      fail: ['pidof', 'ps -A'],
+      outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
+    });
+    const result: LaunchResult = launchAndroidReleaseApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app' },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'am-start' });
+    expect(result.restartedPid).toBeUndefined();
+    expect(exec.calls.some((call) => call.includes('force-stop'))).toBe(false);
+    expect(exec.calls.at(-1)?.slice(4)).toEqual(['am', 'start', '-S', '-n', 'com.example.app/.MainActivity']);
+  });
+
+  test('an unreadable process list falls back from a failed deep link to am start -S -n', () => {
+    const exec = recordingExec({
+      fail: ['pidof', 'ps -A', 'android.intent.action.VIEW'],
+      outputs: { 'resolve-activity': 'com.example.app/.MainActivity\n' },
+    });
+    const result: LaunchResult = launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'am-start' });
+    expect(result.devClientNote).toMatch(/fell back to the launcher activity/);
+    expect(exec.calls.some((call) => call.includes('-S') && call.includes('android.intent.action.VIEW'))).toBe(true);
+    expect(exec.calls.at(-1)?.slice(4)).toEqual(['am', 'start', '-S', '-n', 'com.example.app/.MainActivity']);
+  });
+
+  test('an unreadable process list without a launcher activity tries a force-stop and still runs monkey', () => {
+    const exec = recordingExec({
+      fail: ['pidof', 'ps -A', 'force-stop'],
+      outputs: { 'resolve-activity': 'No activity found\n' },
+    });
+    const result: LaunchResult = launchAndroidReleaseApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app' },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'monkey' });
+    expect(exec.calls.slice(-2).map((call) => call.slice(4, 6))).toEqual([
+      ['am', 'force-stop'],
+      ['monkey', '-p'],
+    ]);
   });
 
   test('an am start failure is reported, not thrown', () => {
@@ -1569,6 +1665,35 @@ describe('optional app readiness', () => {
     );
     expect(result).toMatchObject({ verified: true, processAlive: true, readiness: 'ready', waitedMs: 5500 });
     expect(pendingNotices).toBe(1);
+  });
+
+  test('reports bundling from the app request, nothing once Metro delivered it, then waiting for ready', async () => {
+    const activity: [string | null, number][] = [];
+    const metro: NdjsonRecord[] = [
+      { ts: 1200, src: 'metro', platform: 'ios', event: 'bundle_response_started', requestId: 'app' },
+      { ts: 2600, src: 'metro', platform: 'ios', event: 'bundle_response_progress', requestId: 'app', percent: 40 },
+      { ts: 4000, src: 'metro', platform: 'ios', event: 'bundle_response_finished', requestId: 'app' },
+    ];
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'ios',
+      requireBundleResponse: true,
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => metro.filter((record) => Number(record.ts) <= clock.at()),
+      readDeviceRecords: () =>
+        [signal(5000, 'pending'), signal(6000, 'ready')].filter((r) => Number(r.ts) <= clock.at()),
+      readClientRecords: () => [],
+      processAlive: () => true,
+      onActivity: (name, at) => activity.push([name, at]),
+    });
+    expect(result).toMatchObject({ verified: true, readiness: 'ready' });
+    expect(activity).toEqual([
+      ['bundling', 1200],
+      [null, 4000],
+      ['waiting-ready', 5000],
+    ]);
   });
 
   test('a fast ready replaces the default stability delay', async () => {
@@ -2432,7 +2557,7 @@ describe('the android release process proof', () => {
 
   test('a failed process probe is unverified without claiming the app exited', async () => {
     const exec = recordingExec({ fail: 'adb' });
-    expect(androidAppProcess('emulator-5584', 'com.example.app', { exec })).toBeUndefined();
+    expect(androidAppProcess('emulator-5584', 'com.example.app', { exec })).toEqual({ state: 'unknown' });
     const result = await verifyAndroidReleaseLaunch({
       serial: 'emulator-5584',
       packageName: 'com.example.app',

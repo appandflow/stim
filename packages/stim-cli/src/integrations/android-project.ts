@@ -68,7 +68,7 @@ export interface AndroidProject {
   plan?(options: AndroidPlanOptions, resolved: ResolvedProjectSettings): Promise<ProjectPlanResult>;
   isExpo: boolean;
   packageRemedy: string;
-  appIds(): { bundleId: string | null; androidPackage: string | null };
+  appIds(): { bundleId: string | null; androidPackage: string | null; androidPackageProblem?: string | null };
   variantProblem(variant: string | null): { code: string; reason: string; remedy: string } | null;
   targets: readonly AndroidRunPlan['target']['kind'][];
   eas: boolean;

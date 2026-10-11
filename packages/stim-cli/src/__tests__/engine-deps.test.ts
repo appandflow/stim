@@ -177,34 +177,36 @@ describe('podEnv (#43, #44)', () => {
     expect(none.GEM_HOME).toBeUndefined();
   });
 
-  test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
-    const login = { PATH: '/gems/bin:/login/node:/ruby/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
-    const base = {
-      env: { PATH: '/usr/bin:/agent/bin' },
-      home: '/home/u',
-      exists: (p: string) => p === join('/ruby/bin', 'ruby'),
-      loginEnv: () => login,
-    };
-    const env = podEnv('/nonexistent', base);
-    expect(env.PATH).toBe(['/gems/bin', '/ruby/bin', '/usr/bin', '/agent/bin'].join(delimiter));
-    expect(env.GEM_HOME).toBe('/gems');
-    expect(env.GEM_PATH).toBe('/gems:/more');
-    const kept = podEnv('/nonexistent', { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
-    expect(kept.GEM_HOME).toBe('/mine');
-    const failed = podEnv('/nonexistent', { ...base, loginEnv: () => null });
-    expect(failed.PATH).toBe('/usr/bin:/agent/bin');
-    expect(failed.GEM_HOME).toBeUndefined();
-  });
-
-  test('keeps the caller PATH order and adds only login Ruby directories it lacks', () => {
-    const login = { PATH: '/usr/bin:/gems/bin:/opt/ruby/bin:/usr/local/bin', GEM_HOME: '/gems' };
-    const env = podEnv('/nonexistent', {
-      env: { PATH: '/agent/bin:/usr/local/bin:/usr/bin' },
-      home: '/home/u',
-      exists: (p) => p === '/usr/bin/ruby' || p === '/opt/ruby/bin/ruby' || p === '/usr/local/bin/pod',
-      loginEnv: () => login,
+  describe.skipIf(process.platform === 'win32')('login-shell Ruby, read only on darwin', () => {
+    test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
+      const login = { PATH: '/gems/bin:/login/node:/ruby/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };
+      const base = {
+        env: { PATH: '/usr/bin:/agent/bin' },
+        home: '/home/u',
+        exists: (p: string) => p === join('/ruby/bin', 'ruby'),
+        loginEnv: () => login,
+      };
+      const env = podEnv('/nonexistent', base);
+      expect(env.PATH).toBe(['/gems/bin', '/ruby/bin', '/usr/bin', '/agent/bin'].join(delimiter));
+      expect(env.GEM_HOME).toBe('/gems');
+      expect(env.GEM_PATH).toBe('/gems:/more');
+      const kept = podEnv('/nonexistent', { ...base, env: { PATH: '/usr/bin', GEM_HOME: '/mine' } });
+      expect(kept.GEM_HOME).toBe('/mine');
+      const failed = podEnv('/nonexistent', { ...base, loginEnv: () => null });
+      expect(failed.PATH).toBe('/usr/bin:/agent/bin');
+      expect(failed.GEM_HOME).toBeUndefined();
     });
-    expect(env.PATH).toBe(['/gems/bin', '/opt/ruby/bin', '/agent/bin', '/usr/local/bin', '/usr/bin'].join(delimiter));
+
+    test('keeps the caller PATH order and adds only login Ruby directories it lacks', () => {
+      const login = { PATH: '/usr/bin:/gems/bin:/opt/ruby/bin:/usr/local/bin', GEM_HOME: '/gems' };
+      const env = podEnv('/nonexistent', {
+        env: { PATH: '/agent/bin:/usr/local/bin:/usr/bin' },
+        home: '/home/u',
+        exists: (p) => p === '/usr/bin/ruby' || p === '/opt/ruby/bin/ruby' || p === '/usr/local/bin/pod',
+        loginEnv: () => login,
+      });
+      expect(env.PATH).toBe(['/gems/bin', '/opt/ruby/bin', '/agent/bin', '/usr/local/bin', '/usr/bin'].join(delimiter));
+    });
   });
 
   test('parseLoginRubyEnv ignores shell banners and empty values', () => {

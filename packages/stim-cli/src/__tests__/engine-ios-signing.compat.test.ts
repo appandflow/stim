@@ -69,24 +69,22 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     writeFileSync(join(dir, 'entitlements.plist'), SCRATCH_ENTITLEMENTS);
     writeFileSync(join(appPath, 'ip.txt'), '10.0.0.132:8081');
     const exec = getExecutor();
-    exec.runFile('clang', ['-o', join(appPath, 'Scratch'), join(dir, 'main.c')]);
-    exec.runFile('codesign', [
-      '--force',
-      '--sign',
-      '-',
-      '--entitlements',
-      join(dir, 'entitlements.plist'),
-      '--timestamp=none',
-      appPath,
-    ]);
+    exec.runFile('clang', ['-o', join(appPath, 'Scratch'), join(dir, 'main.c')], { timeoutMs: 60_000 });
+    exec.runFile(
+      'codesign',
+      ['--force', '--sign', '-', '--entitlements', join(dir, 'entitlements.plist'), '--timestamp=none', appPath],
+      { timeoutMs: 60_000 },
+    );
   }
 
   function sealIsValid(): boolean {
-    return getExecutor().runQuiet(`codesign --verify --strict ${JSON.stringify(appPath)}`) !== null;
+    return (
+      getExecutor().runQuiet(`codesign --verify --strict ${JSON.stringify(appPath)}`, { timeoutMs: 60_000 }) !== null
+    );
   }
 
   function entitlementsOf(): string {
-    return getExecutor().runFile('codesign', ['-d', '--entitlements', '-', '--xml', appPath]);
+    return getExecutor().runFile('codesign', ['-d', '--entitlements', '-', '--xml', appPath], { timeoutMs: 60_000 });
   }
 
   beforeEach(() => {
@@ -152,39 +150,47 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     const exec = getExecutor();
     const key = join(dir, 'signer.key');
     const pem = join(dir, 'signer.pem');
-    exec.runFile('openssl', [
-      'req',
-      '-x509',
-      '-newkey',
-      'rsa:2048',
-      '-keyout',
-      key,
-      '-out',
-      pem,
-      '-days',
-      '30',
-      '-nodes',
-      '-subj',
-      `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        key,
+        '-out',
+        pem,
+        '-days',
+        '30',
+        '-nodes',
+        '-subj',
+        `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
+      ],
+      { timeoutMs: 60_000 },
+    );
     const plist = join(dir, 'profile.plist');
     writeFileSync(plist, fixture('development-profile.plist'));
-    exec.runFile('openssl', [
-      'smime',
-      '-sign',
-      '-nodetach',
-      '-binary',
-      '-in',
-      plist,
-      '-signer',
-      pem,
-      '-inkey',
-      key,
-      '-outform',
-      'DER',
-      '-out',
-      join(appPath, EMBEDDED_PROFILE),
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'smime',
+        '-sign',
+        '-nodetach',
+        '-binary',
+        '-in',
+        plist,
+        '-signer',
+        pem,
+        '-inkey',
+        key,
+        '-outform',
+        'DER',
+        '-out',
+        join(appPath, EMBEDDED_PROFILE),
+      ],
+      { timeoutMs: 60_000 },
+    );
 
     const read = readEmbeddedProfile(appPath);
     expect(read.present).toBe(true);
@@ -192,11 +198,11 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     expect(read.profile?.expirationDate?.toISOString()).toBe('2027-06-01T12:00:00.000Z');
     expect(certificateCommonName(read.profile?.certificates[0])).toBe(JANE);
     const sha1 = exec
-      .runFile('openssl', ['x509', '-noout', '-fingerprint', '-sha1', '-in', pem])
+      .runFile('openssl', ['x509', '-noout', '-fingerprint', '-sha1', '-in', pem], { timeoutMs: 60_000 })
       .replace(/^.*=/, '')
       .replace(/:/g, '')
       .trim();
-    expect(exec.runFile('security', ['find-certificate', '-a', '-Z'])).not.toContain(sha1);
+    expect(exec.runFile('security', ['find-certificate', '-a', '-Z'], { timeoutMs: 60_000 })).not.toContain(sha1);
   }, 60_000);
 
   test('an app with no embedded.mobileprovision reads as absent rather than throwing', () => {
@@ -232,39 +238,47 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     const exec = getExecutor();
     const key = join(dir, 'signer.key');
     const pem = join(dir, 'signer.pem');
-    exec.runFile('openssl', [
-      'req',
-      '-x509',
-      '-newkey',
-      'rsa:2048',
-      '-keyout',
-      key,
-      '-out',
-      pem,
-      '-days',
-      '30',
-      '-nodes',
-      '-subj',
-      `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        key,
+        '-out',
+        pem,
+        '-days',
+        '30',
+        '-nodes',
+        '-subj',
+        `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
+      ],
+      { timeoutMs: 60_000 },
+    );
     const plist = join(dir, 'profile.plist');
     writeFileSync(plist, fixture('development-profile.plist'));
-    exec.runFile('openssl', [
-      'smime',
-      '-sign',
-      '-nodetach',
-      '-binary',
-      '-in',
-      plist,
-      '-signer',
-      pem,
-      '-inkey',
-      key,
-      '-outform',
-      'DER',
-      '-out',
-      join(appPath, EMBEDDED_PROFILE),
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'smime',
+        '-sign',
+        '-nodetach',
+        '-binary',
+        '-in',
+        plist,
+        '-signer',
+        pem,
+        '-inkey',
+        key,
+        '-outform',
+        'DER',
+        '-out',
+        join(appPath, EMBEDDED_PROFILE),
+      ],
+      { timeoutMs: 60_000 },
+    );
 
     const refused = sealAppForDevice({ appPath, udid: STRANGER, now: BEFORE_EXPIRY });
     expect(refused).toMatchObject({ ok: false, code: 'STIM_PROFILE_MISMATCH' });
@@ -283,39 +297,47 @@ describe('the re-seal primitive against the real codesign and security', { timeo
     const exec = getExecutor();
     const key = join(dir, 'gate.key');
     const pem = join(dir, 'gate.pem');
-    exec.runFile('openssl', [
-      'req',
-      '-x509',
-      '-newkey',
-      'rsa:2048',
-      '-keyout',
-      key,
-      '-out',
-      pem,
-      '-days',
-      '30',
-      '-nodes',
-      '-subj',
-      `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        key,
+        '-out',
+        pem,
+        '-days',
+        '30',
+        '-nodes',
+        '-subj',
+        `/CN=${JANE}/OU=TEAMID5678/O=Fixture Inc/C=US`,
+      ],
+      { timeoutMs: 60_000 },
+    );
     const plist = join(dir, 'gate-profile.plist');
     writeFileSync(plist, fixture('development-profile.plist'));
-    exec.runFile('openssl', [
-      'smime',
-      '-sign',
-      '-nodetach',
-      '-binary',
-      '-in',
-      plist,
-      '-signer',
-      pem,
-      '-inkey',
-      key,
-      '-outform',
-      'DER',
-      '-out',
-      join(appPath, EMBEDDED_PROFILE),
-    ]);
+    exec.runFile(
+      'openssl',
+      [
+        'smime',
+        '-sign',
+        '-nodetach',
+        '-binary',
+        '-in',
+        plist,
+        '-signer',
+        pem,
+        '-inkey',
+        key,
+        '-outform',
+        'DER',
+        '-out',
+        join(appPath, EMBEDDED_PROFILE),
+      ],
+      { timeoutMs: 60_000 },
+    );
 
     const calls: string[][] = [];
     const real = getExecutor();

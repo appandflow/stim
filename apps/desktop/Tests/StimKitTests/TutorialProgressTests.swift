@@ -91,7 +91,6 @@ private func log(
   #expect(state("build", in: result).state == .done)
   #expect(state("build", in: result).detail.contains("no earlier build"))
   #expect(state("build", in: result).ticks.contains { $0.id == "pods" && $0.done })
-  #expect(!state("parallel", in: result).canMarkDone)
 }
 
 @Test func tutorialFirstBuildMayBeACacheHit() throws {
@@ -131,7 +130,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("parallel", in: result).detail.contains("Local cache"))
 }
 
-@Test func tutorialParallelStaysOnACompiledSecondBuildAndIgnoresOtherRepositories() throws {
+@Test func tutorialParallelCompletesOnACompiledSecondBuildAndIgnoresOtherRepositories() throws {
   var base = try environment()
   base.repository = "/Users/example/stim-tutorial"
   var miss = try sibling()
@@ -141,7 +140,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   let result = progress.update(
     TutorialInput(environment: base, siblings: [foreign, miss], now: afterRebuild, record: saved(at: "parallel")))
   #expect(result.record.secondPath == secondPath)
-  #expect(result.currentStep == "parallel")
+  #expect(result.currentStep == "device")
   #expect(state("parallel", in: result).detail.contains("Cache miss"))
   var other = TutorialProgress()
   let none = other.update(
@@ -232,31 +231,128 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(state("device", in: result).detail == "Run the app first, then open its live view")
 }
 
-@Test func tutorialAgentRequiresFreshActionOnTourDevice() throws {
+@Test func tutorialDeviceTicksTheSecondChangesLiveViewToo() throws {
+  let tour = try environment("04-live-clean")
+  var second = tour
+  second.path = "/Users/example/stim-tutorial-second"
+  second.ios?.udid = "second-simulator"
+  var record = saved(at: "device")
+  record.secondPath = second.path
   var progress = TutorialProgress()
-  let actionDate = afterRebuild.addingTimeInterval(1)
-  let early = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
-  let wrong = try log("press", at: actionDate, source: "agent", event: "agent_action", device: "other")
-  let failed = try log("replay", at: actionDate, source: "agent", event: "agent_failed", device: "tutorial-simulator")
   var input = TutorialInput(
-    environment: try environment(), logRecords: [early, wrong, failed], now: actionDate,
-    record: saved(at: "agent", since: afterRebuild))
-  #expect(progress.update(input).currentStep == "agent")
-  input.logRecords = [
-    try log("open", at: actionDate, source: "agent", event: "agent_action", device: "tutorial-simulator", command: "open")
-  ]
-  let result = progress.update(input)
-  #expect(result.currentStep == "logs")
-  #expect(state("agent", in: result).ticks.first { $0.id == "action" }?.done == true)
+    environment: tour, siblings: [tour, second], viewerEvents: [.opened("second-simulator")], now: afterRebuild,
+    record: record)
+  var result = progress.update(input)
+  #expect(result.currentStep == "device")
+  #expect(state("device", in: result).ticks.map(\.done) == [true, false])
+  input.viewerEvents = [.input("second-simulator")]
+  result = progress.update(input)
+  #expect(result.currentStep == "agent")
+  #expect(state("device", in: result).state == .done)
 }
 
-@Test func tutorialLogsStepWaitsForTheUserToMarkItDone() throws {
+@Test func tutorialShareCompletesWithAPullRequestFromTheFirstChangesWorktree() throws {
+  var env = try environment()
+  var progress = TutorialProgress()
+  var result = progress.update(TutorialInput(environment: env, now: afterRebuild, record: saved(at: "share")))
+  #expect(result.currentStep == "share")
+  env.pullRequest = try JSONDecoder().decode(
+    PullRequestFacts.self,
+    from: Data(#"{"number":7,"url":"https://github.com/appandflow/stim-tutorial/pull/7","title":"Green","state":"open"}"#.utf8))
+  result = progress.update(TutorialInput(environment: env, now: afterRebuild))
+  #expect(result.currentStep == "finish")
+  #expect(state("share", in: result).state == .done)
+  #expect(state("share", in: result).link?.number == 7)
+}
+
+@Test func tutorialAgentTicksViewerEventsOnTheTourDeviceAndNextRecordsItDone() throws {
+  var progress = TutorialProgress()
+  let checked = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
+  var input = TutorialInput(
+    environment: try environment(), logRecords: [checked],
+    viewerEvents: [.actionsViewed("other"), .replayPlayed("other")], now: afterRebuild,
+    record: saved(at: "agent", since: afterRebuild))
+  var result = progress.update(input)
+  #expect(state("agent", in: result).detail.isEmpty)
+  #expect(state("agent", in: result).ticks.allSatisfy { !$0.done })
+  input.viewerEvents = [.actionsViewed("tutorial-simulator"), .replayPlayed("tutorial-simulator")]
+  result = progress.update(input)
+  #expect(result.currentStep == "agent")
+  #expect(state("agent", in: result).ticks.map(\.done) == [true, true])
+  progress.next(now: afterRebuild.addingTimeInterval(1))
+  result = progress.update(TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(1)))
+  #expect(result.currentStep == "logs")
+  #expect(state("agent", in: result).state == .done)
+}
+
+@Test func tutorialAgentTicksTheSecondChangesSimulatorToo() throws {
+  let tour = try environment()
+  var second = tour
+  second.path = secondPath
+  second.ios?.udid = "second-simulator"
+  var record = saved(at: "agent", since: afterRebuild)
+  record.secondPath = second.path
   var progress = TutorialProgress()
   let result = progress.update(
     TutorialInput(
-      environment: try environment(), logRecords: [try log("anything", at: afterRebuild)], now: afterRebuild,
-      record: saved(at: "logs", since: afterRebuild)))
-  #expect(result.currentStep == "logs")
+      environment: tour, siblings: [tour, second],
+      viewerEvents: [.actionsViewed("second-simulator"), .replayPlayed("second-simulator")], now: afterRebuild,
+      record: record))
+  #expect(state("agent", in: result).ticks.map(\.done) == [true, true])
+}
+
+@Test func tutorialLogsCompletesOnlyWhenATutorialWorkspacesLogsAreOpened() throws {
+  var progress = TutorialProgress()
+  var input = TutorialInput(
+    environment: try environment(), logRecords: [try log("anything", at: afterRebuild)],
+    viewerEvents: [.logsOpened("/Users/example/elsewhere")], now: afterRebuild,
+    record: saved(at: "logs", since: afterRebuild))
+  #expect(progress.update(input).currentStep == "logs")
+  input.viewerEvents = [.logsOpened(tourPath)]
+  let result = progress.update(input)
+  #expect(result.currentStep == "phone")
+  #expect(state("logs", in: result).state == .done)
+  #expect(state("logs", in: result).ticks.map(\.done) == [true])
+}
+
+private func disk(_ bytes: Double) throws -> WorkspaceDisk {
+  try JSONDecoder().decode(WorkspaceDisk.self, from: Data(#"{"worktreeBytes":\#(bytes)}"#.utf8))
+}
+
+@Test func tutorialStatsOutliveTheWorkspacesThatProducedThem() throws {
+  var base = try environment()
+  base.repository = "/Users/example/stim-tutorial"
+  base.disk = try disk(300)
+  var hit = try sibling()
+  hit.disk = try disk(200)
+  var clone = try sibling(path: "/Users/example/stim-tutorial")
+  clone.disk = try disk(500)
+  let action = try log("press", at: afterBuild, source: "agent", event: "agent_action", device: "tutorial-simulator")
+  var record = saved(at: "build", since: tourStart)
+  record.clonePath = "/Users/example/stim-tutorial"
+  var progress = TutorialProgress()
+  let live = progress.update(
+    TutorialInput(
+      environment: base, siblings: [hit, clone], logRecords: [action, action], now: afterRebuild, record: record))
+  #expect(live.currentStep == "device")
+  let stats = try #require(live.record.stats)
+  #expect(stats.firstBuild?.durationMs == 264_197)
+  #expect(stats.firstBuild?.cache == "none")
+  #expect(stats.secondBuild?.durationMs == 7_665)
+  #expect(stats.secondBuild?.cache == "local")
+  #expect(stats.savedMs == 256_532)
+  #expect(stats.buildsOverlapped == false)
+  #expect(stats.agentActions == 2)
+  #expect(stats.measuredBytes == 1000)
+
+  base.disk = try disk(100)
+  let later = progress.update(
+    TutorialInput(
+      environment: base, siblings: [hit, clone], logRecords: [action], now: afterRebuild.addingTimeInterval(30)))
+  #expect(later.record.stats == stats)
+
+  let gone = progress.update(TutorialInput(environment: nil, siblings: [], now: afterRebuild.addingTimeInterval(60)))
+  #expect(gone.record.stats == stats)
 }
 
 @Test func tutorialFinishCompletesWithArchiveWithoutIntermediateStopSnapshot() throws {
@@ -332,12 +428,24 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   let registered = progress.update(
     TutorialInput(environment: nil, siblings: [clone], cloneFolderExists: false, now: afterRebuild, record: record))
   #expect(registered.currentStep == "delete")
-  #expect(state("delete", in: registered).ticks.map(\.done) == [true, false])
+  #expect(state("delete", in: registered).ticks.map(\.id) == ["clone"])
   let folderLeft = progress.update(TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild))
   #expect(folderLeft.currentStep == "delete")
   let gone = progress.update(TutorialInput(environment: nil, cloneFolderExists: false, now: afterRebuild))
   #expect(gone.isComplete)
   #expect(state("delete", in: gone).state == .done)
+}
+
+@Test func tutorialDeleteTicksTheWorktreesOnlyWhenSomeRemainedAtItsStart() throws {
+  var record = saved(at: "delete")
+  record.clonePath = "/Users/example/stim-tutorial"
+  var progress = TutorialProgress()
+  let left = progress.update(
+    TutorialInput(environment: try environment(), cloneFolderExists: true, now: afterRebuild, record: record))
+  #expect(state("delete", in: left).ticks.map(\.id) == ["worktrees", "clone"])
+  #expect(state("delete", in: left).ticks.map(\.done) == [false, false])
+  let removed = progress.update(TutorialInput(environment: nil, cloneFolderExists: true, now: afterRebuild))
+  #expect(state("delete", in: removed).ticks.map(\.done) == [true, false])
 }
 
 @Test func tutorialCompletedBeforeTheDeleteStepExistedStaysComplete() throws {
@@ -349,22 +457,17 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(result.isComplete)
 }
 
-@Test func tutorialSkipAndTimedMarkDonePersistAndResumeAtFirstUnfinishedStep() throws {
+@Test func tutorialNextOnAnUndetectedStepRecordsSkippedAndResumesAtTheFirstUnfinishedStep() throws {
   var progress = TutorialProgress()
   _ = progress.update(
     TutorialInput(environment: try environment(), now: afterRebuild, record: saved(at: "phone", since: afterRebuild)))
-  let tooEarly = progress.markDone(now: afterRebuild.addingTimeInterval(119))
-  #expect(!tooEarly)
-  let waiting = progress.update(TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(120)))
-  #expect(state("phone", in: waiting).canMarkDone)
-  let marked = progress.markDone(now: afterRebuild.addingTimeInterval(120))
-  #expect(marked)
-  progress.skip(now: afterRebuild.addingTimeInterval(121))
+  progress.next(now: afterRebuild.addingTimeInterval(1))
+  progress.next(now: afterRebuild.addingTimeInterval(2))
   var relaunched = TutorialProgress()
   let result = relaunched.update(
-    TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(122), record: progress.record))
+    TutorialInput(environment: try environment(), now: afterRebuild.addingTimeInterval(3), record: progress.record))
   #expect(result.currentStep == "finish")
-  #expect(state("phone", in: result).state == .done)
+  #expect(state("phone", in: result).state == .skipped)
   #expect(state("share", in: result).state == .skipped)
 }
 
@@ -414,14 +517,15 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   #expect(paired.record.phonePairedAtStart == false)
 }
 
-@Test func tutorialAgentWithoutAnIosDeviceDoesNotAcceptUntargetedActions() throws {
+@Test func tutorialAgentSaysNoActionsWereRecordedForOtherDevicesOrFailures() throws {
   var progress = TutorialProgress()
-  let untargeted = try log("open", at: afterRebuild, source: "agent", event: "agent_action")
+  let wrong = try log("press", at: afterRebuild, source: "agent", event: "agent_action", device: "other")
+  let failed = try log("press", at: afterRebuild, source: "agent", event: "agent_failed", device: "tutorial-simulator")
   let result = progress.update(
     TutorialInput(
-      environment: try environment("01-started"), logRecords: [untargeted],
-      now: afterRebuild, record: saved(at: "agent")))
+      environment: try environment(), logRecords: [wrong, failed], now: afterRebuild, record: saved(at: "agent")))
   #expect(result.currentStep == "agent")
+  #expect(state("agent", in: result).detail.hasPrefix("No agent actions"))
 }
 
 @Test func tutorialArchiveDisabledRelaunchRecognizesAnAlreadyRemovedTour() {
@@ -444,7 +548,7 @@ private func sibling(path: String = secondPath, repository: String? = "/Users/ex
   var progress = TutorialProgress()
   let opened = progress.update(TutorialInput(environment: env, now: tourStart.addingTimeInterval(120)))
   #expect(opened.record.startedAt == env.build?.startedDate)
-  #expect(opened.currentStep == "build")
+  #expect(opened.currentStep == "parallel")
   let result = progress.update(TutorialInput(environment: try environment("02-after-ios1"), now: afterBuild))
   #expect(result.currentStep == "parallel")
 }
@@ -753,4 +857,70 @@ private func clone(_ path: String, doctorRanAt: Date? = nil) throws -> TutorialE
   let stale = progress.update(
     TutorialInput(environment: nil, newCloneFolder: TutorialCloneFolder(created: tourStart.addingTimeInterval(-10)), now: late))
   #expect(state("begin", in: stale).detail == "No tutorial workspace yet. Ask your agent what failed")
+}
+
+private func running(_ startedAt: String) throws -> Build {
+  try JSONDecoder().decode(
+    Build.self,
+    from: Data(
+      """
+      {"platform":"ios","slot":"default","state":"running","phase":"compile",
+      "startedAt":"\(startedAt)","phaseStartedAt":"\(startedAt)","basis":0}
+      """.utf8))
+}
+
+@Test func tutorialAdvancesAtEachBuildStartAndFillsStatsWhenTheBuildsFinish() throws {
+  var first = try environment("01-started")
+  first.repository = "/Users/example/stim-tutorial"
+  first.build = try running("2026-10-07T04:57:09.000Z")
+  var progress = TutorialProgress()
+  let building = progress.update(
+    TutorialInput(environment: first, now: tourStart.addingTimeInterval(80), record: saved(at: "build")))
+  #expect(building.currentStep == "parallel")
+  #expect(state("build", in: building).state == .done)
+  #expect(building.record.stats?.firstBuild == nil)
+
+  var second = try environment("01-started")
+  second.path = secondPath
+  second.repository = "/Users/example/stim-tutorial"
+  second.build = try running("2026-10-07T04:58:30.000Z")
+  let both = progress.update(TutorialInput(environment: first, siblings: [second], now: tourStart.addingTimeInterval(160)))
+  #expect(both.currentStep == "device")
+  #expect(state("parallel", in: both).state == .done)
+  #expect(state("device", in: both).detail == "Waiting for the build to launch the app")
+  #expect(both.record.stats?.secondBuild == nil)
+
+  var finished = try environment("02-after-ios1")
+  finished.repository = "/Users/example/stim-tutorial"
+  let done = progress.update(TutorialInput(environment: finished, siblings: [try sibling()], now: afterRebuild))
+  #expect(done.currentStep == "device")
+  #expect(state("build", in: done).detail.contains("no earlier build"))
+  #expect(done.record.stats?.firstBuild?.cache == "none")
+  #expect(done.record.stats?.secondBuild?.cache == "local")
+
+  let gone = progress.update(TutorialInput(environment: nil, now: afterRebuild.addingTimeInterval(60)))
+  #expect(state("build", in: gone).detail.contains("no earlier build"))
+  #expect(state("parallel", in: gone).detail.contains("Local cache"))
+}
+
+@Test func tutorialBuildThatFailsAfterTheStepAdvancedWarnsOnThatStep() throws {
+  var env = try environment("01-started")
+  env.build = try running("2026-10-07T04:57:09.000Z")
+  var progress = TutorialProgress()
+  _ = progress.update(TutorialInput(environment: env, now: tourStart.addingTimeInterval(80), record: saved(at: "build")))
+  env.build = nil
+  env.lastBuild = try JSONDecoder().decode(
+    LastBuild.self,
+    from: Data(
+      """
+      {"platform":"ios","status":"failed","cacheHit":false,"startedAt":"2026-10-07T04:57:09.000Z",
+      "cause":{"key":"App.swift:12","file":"App.swift","line":12},"diagnostics":[{"message":"Unknown symbol"}]}
+      """.utf8))
+  let failed = progress.update(TutorialInput(environment: env, now: afterBuild))
+  #expect(failed.currentStep == "parallel")
+  #expect(state("build", in: failed).state == .done)
+  #expect(state("build", in: failed).warning == "App.swift:12: Unknown symbol")
+  env.build = try running("2026-10-07T05:01:00.000Z")
+  let retrying = progress.update(TutorialInput(environment: env, now: afterBuild))
+  #expect(state("build", in: retrying).warning == nil)
 }

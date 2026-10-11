@@ -94,7 +94,7 @@ export async function installHostedAndroidApp(
   if (record.mode === 'development') return 'unverified';
   for (let tries = 0; tries < 10; tries++) {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    if (androidAppProcess(device.serial, record.bundleId, { exec: sdkExecutor })) return true;
+    if (androidAppProcess(device.serial, record.bundleId, { exec: sdkExecutor }).state === 'running') return true;
   }
   return 'unverified';
 }

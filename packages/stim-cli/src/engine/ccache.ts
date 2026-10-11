@@ -179,7 +179,9 @@ export function resolveCcache({
   );
   if (declared) {
     onNote(
-      chalk.dim(phaseLine('cache', `ccache off (${relative(root, moduleDir)}/build.gradle sets ${declared} itself)`)),
+      chalk.dim(
+        phaseLine('cache', `ccache off (${join(relative(root, moduleDir), 'build.gradle')} sets ${declared} itself)`),
+      ),
     );
     return null;
   }

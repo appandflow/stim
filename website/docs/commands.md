@@ -79,6 +79,17 @@ checkout without installed dependencies, it also reports fingerprint
 differences against a fresh worktree. The checkout is left untouched unless
 `--fix` is passed.
 
+Doctor never loads `fingerprint.config.js` or `fingerprint.config.cjs`: when
+either exists, it skips the fingerprint checks and reports that it did. It reads
+a project eas-cli's version from its `package.json`, and runs `eas whoami` only
+with an `eas` on `PATH` outside the repository and outside any `node_modules/.bin`
+above the project. On a checkout without its own dependencies, it skips the
+fingerprint parity check and says why when Expo packages resolve from outside
+the app or when the check would need `npx react-native config`, which it does for
+Android or a project without an `ios` directory. Its linked-library check can still run installed Expo packages on the
+main checkout, which evaluate a dynamic app config, as a build does.
+`worktree warm`, `start`, `ios`, and `android` run project code.
+
 `--platform ios` or `--platform android` limits native findings to that
 platform while keeping shared project checks. The selected project integration
 supplies framework checks and repairs; React Native and Expo checks include
@@ -250,9 +261,10 @@ or releasing. Failed stops retain the allocation. `release` removes the
 reservation without signalling the server. Omit the label to select all named
 ports. Neither command touches Metro; `stim stop` leaves named ports alone.
 
-`worktree remove` stops and releases named ports. `gc` reports allocations for
-missing workspaces, and `gc --delete` stops and releases them. Unmounted or
-unresolved workspace paths remain registered.
+`worktree remove`, `gc --delete` and automatic maintenance release named ports
+without signalling their listeners. `gc` reports allocations for missing
+workspaces, and `gc --delete` releases them. Unmounted or unresolved workspace
+paths remain registered.
 
 See [server examples and limitations](./dev-server-and-logs.md#named-server-ports).
 
@@ -1267,6 +1279,17 @@ For SwiftPM (`stim macos`), `unit` is `steps`, and `done` and `total` are the
 names. These are counts, not a completion percentage: one target can take ten
 minutes and a cached one no time at all.
 
+During `device` and `launch`, once Stim observes what the run waits on, `build`
+carries `activity`: `{ name, startedAt, percent? }`. `name` is `booting` while
+`device` waits for the owned simulator or emulator the run is booting. During
+`launch` it is `bundling` from the app's bundle request to this workspace's
+Metro until Metro delivers it, and `waiting-ready` while the app reports its
+readiness pending; `activity` is absent in between. `startedAt` is when that evidence was recorded. `percent`
+is Metro's own progress for that bundle request, present only once Metro
+reports one. Plain `stim status` shows it after the phase, as in
+`build: ios launch (bundling JS 45%, 12s), 58s elapsed`. `activity` does not
+change the run's `launched` result.
+
 `build.placement` says where the build runs: `"local"`, or, while it is
 offloaded to a [remote Mac](./settings.md#machine-settings), an object with
 the machine and its step there. `phase` is `sync`, `deps`, `prebuild`,
@@ -1727,6 +1750,14 @@ parked time; cache scopes omit hosted sessions. JSON adds
 `listed` (session-home ledger ownership, null when unreadable). Deletion results
 use `kind: "parkedHostedDevice"`. The server clears the parked marker when it
 reconciles the emptied ledger.
+
+Unscoped `stim gc` also lists stale entries of the machine EAS session ledger
+(`~/.stim/machine/eas/sessions.json`): entries whose id is not a UUID and whose
+absolute workspace root is missing on a mounted volume, such as ids written by a
+test fixture. A valid id, an existing root, or a root on an unmounted volume
+keeps the entry. `stim gc --delete` re-checks each entry and removes it under
+the ledger lock without contacting EAS. JSON adds `sections.staleEasLedgerEntries`
+entries with `id` and `workspaceRoot`.
 
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`

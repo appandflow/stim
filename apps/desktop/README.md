@@ -1489,10 +1489,16 @@ News the user can act on later shows as a card at the main window's bottom
 left: a title, one line of detail, a primary action and a dismiss button. A
 card stays until it is acted on or dismissed, with or without VoiceOver. Several
 cards stack, newest first, with a counter and previous and next buttons.
-Two things use them. When `stim ios` or `stim android` launches on a device
-Desktop lists, the card reads "<device> launched for <workspace>" with **Show**.
-Desktop keeps the current page and opens the launched device only when **Show**
-is clicked. A newer `stim` shows a card with
+Two things use them. When `stim status` first lists a workspace, the card reads
+"New workspace <workspace>" with **Show**, which opens the workspace and focuses
+the device of its running build. Each path gets one card per Desktop session:
+workspaces listed in the first status after launch get none, and a path that
+leaves and comes back gets none again. While the workspace's build runs, the
+card's detail reads "Building <platform>" instead of the path. A
+`stim-desktop://open` device URL from `stim ios` or `stim android` only opens
+the main window when it is closed.
+Desktop keeps the current page and opens the workspace only when **Show** is
+clicked. A newer `stim` shows a card with
 **Update** (see below); dismissing it keeps it away until a newer version is
 released. Agent and build notifications keep appearing as cards at the top right.
 
@@ -1547,7 +1553,7 @@ replaces its card. With the main window closed, the link reopens it.
   default runs without a restart. Without a launcher for `stim-server`, it
   tries again at most once a minute.
 
-At launch the app runs `stim --version` and needs 1.11.0 or later. When
+At launch the app runs `stim --version` and needs 1.17.2 or later. When
 `stim` is missing, too old, or reports no version, a banner explains Stim and
 offers **Install stim** or **Update stim**, and **Choose stim Executable…**.
 **Update stim** runs the package manager that owns the resolved `stim`: the
@@ -1834,48 +1840,46 @@ To check a bundle, point the DSN at a local listener, such as `http://<key>@127.
 **Help > Stim Tutorial…** and the setup guide's **Take the Tutorial** button open
 an inspector-width trailing column. It replaces the inspector until closed;
 Cmd-Opt-I returns to the inspector. A new tutorial path opens it once, after open
-sheets close. UserDefaults stores progress, skipped steps and whether the Commands section is open.
+sheets close. UserDefaults stores progress and skipped steps.
 Unfinished tours resume at launch when status lists the tracked path; archived
 ones show Done. Closing preserves progress. Restart shows the agent prompt and
 resets progress at once; see below for which worktrees count afterwards.
 The three-minute workspace warning starts at the first Copy of the run prompt
-and survives relaunch. Copying commands does not start it. Only archives
+and survives relaunch. Only archives
 removed after this run started can complete the tutorial.
 
 The panel clones appandflow/stim-tutorial and follows: a tutorial workspace
 appearing (Get the Test App; the clone only, which is never the tour), the first
 linked worktree of the clone and its first iOS build (Make a Change, `tourPath`),
 the next linked worktree created after that step began and its first iOS build,
-which must start after the step began and be a cache hit (Change It Again in
-Parallel, `secondPath`), optional live view, agent actions and logs steps,
+which must start after the step began (Change It Again in Parallel,
+`secondPath`). Both steps complete when their build starts running; the stats
+record each build when it succeeds, and a later failed iOS build of that
+worktree shows as a warning under the completed step. The steps continue with optional live view, agent actions and logs steps,
 optional phone and remote Mac steps, an optional Share Your Finish prompt, then
 removal and Archived of both tracked worktrees (Finish; the clone stays). The
 tutorial version is 2, from the repository's `expo.extra.stimTutorial`. A stored
 version 1 record is dropped and starts over on a version 2 workspace. Restart and
 "take the tutorial" start a fresh record at the current time that forgets the old tour paths even
 while the old worktrees are still registered; only linked worktrees whose creation time is after
-that start count, and the oldest one becomes the tour. Both optional steps
-keep Skip available.
+that start count, and the oldest one becomes the tour. Every step has one Next
+button: it records the step as done when its non-optional ticks are all done or
+its checkpoint completed, and as skipped otherwise. Detected steps advance on
+their own.
 Pair a Phone opens the Pair a Phone wizard, which
 turns on serving itself when the server is off. A pairing that exists when the step starts shows Done Already,
 followed by "Open Stim on your phone: the tutorial workspaces are there".
 
 Add Remote Machine opens the existing wizard using the tour workspace as its
-checkout. With no machine configured, Skip is the primary action. Once a machine
+checkout. Once a machine
 is approved, the step shows a prompt that names the approved machine, or asks you to
-name it when none is recorded. The commands include that name. Approval completes the step and preserves its handoff across status polls;
+name it when none is recorded. Approval completes the step and preserves its handoff across status polls;
 an iOS build offloaded after the step started ticks the optional "Build ran on another
 Mac" check. Completed optional steps stay expanded so their handoff remains
-visible. The tutorial never starts the server or pairs or grants access. Mark done
-appears after two minutes.
+visible. The tutorial never starts the server or pairs or grants access.
 
-Each step with a prompt shows it first, then a collapsed "Commands your agent will run"
-section; whether it is open is a per-user `tutorial.commandsExpanded` preference. The prompts and the
-short command lists come from `TUTORIAL_ASKS` and each step's `commands` in
-`tutorial-data.ts`, with the tracked paths, the agent-device state directory and the
-simulator UDID substituted; the guide's own `manual` lists are unchanged. Create the
-Tutorial has no commands. Desktop never runs the commands. Make a Change has a Run iOS button that calls the same `ActionCenter.runApp` as the
-Build section's Run, and is disabled while a build or action runs in the workspace.
+A step with a prompt shows it with a Copy button. The prompts come from `TUTORIAL_ASKS` in
+`tutorial-data.ts`, with the tracked paths substituted.
 The panel cannot see a removal refusal from an agent-run command: the finish
 step keeps showing the finish prompt. Check the agent's output and revert the
 tutorial edit before retrying.

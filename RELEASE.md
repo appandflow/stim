@@ -370,6 +370,9 @@ repeat the affected gate rather than waiving it.
    One tag for the repo, not one per package: the packages share a version, so
    a per-package tag would only repeat the same thing.
 
+   The Release workflow refuses to run unless the tagged commit is an ancestor
+   of `origin/main`, so push the candidate commit to `main` (step 3) first.
+
 6. **Publish the already-reviewed release notes in
    `docs/releases/X.Y.Z.md`.** This committed file is the single source of
    truth: the website's changelog page is GENERATED from it at site build

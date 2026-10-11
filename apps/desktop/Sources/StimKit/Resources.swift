@@ -247,6 +247,39 @@ public struct MachineMemory: Equatable, Sendable {
   }
 }
 
+/// The Mac's cumulative CPU ticks across every core, from `host_statistics`.
+public struct MachineCpuTicks: Equatable, Sendable {
+  public var busy: UInt32
+  public var idle: UInt32
+
+  public init(busy: UInt32, idle: UInt32) {
+    self.busy = busy
+    self.idle = idle
+  }
+
+  public static func read() -> MachineCpuTicks? {
+    var info = host_cpu_load_info()
+    var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info>.size / MemoryLayout<integer_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+      $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+        host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+      }
+    }
+    guard result == KERN_SUCCESS else { return nil }
+    let ticks = info.cpu_ticks
+    return MachineCpuTicks(busy: ticks.0 &+ ticks.1 &+ ticks.3, idle: ticks.2)
+  }
+
+  /// The share of all cores that were busy between two readings, from 0 to 1, or nil when no tick elapsed. The
+  /// kernel's counters are 32 bits wide, so a reading that wrapped still yields the right difference.
+  public static func fraction(from previous: MachineCpuTicks, to current: MachineCpuTicks) -> Double? {
+    let busy = Double(current.busy &- previous.busy)
+    let idle = Double(current.idle &- previous.idle)
+    let total = busy + idle
+    return total > 0 ? busy / total : nil
+  }
+}
+
 /// The parts of the `stim gc --json` dry run that size what Stim can reclaim.
 public struct GcReport: Decodable, Equatable, Sendable {
   /// Whether a finished `command` can change what `stim gc --json` reports: a cleanup, a run, start or stop,

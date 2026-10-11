@@ -149,7 +149,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'ios.scheme',
     type: STRING,
     scopes: ['workspace', 'committed'],
-    description: 'Shared Xcode scheme to build when the workspace has several',
+    description: 'Shared Xcode scheme to build when the workspace has several; the --scheme flag overrides it',
   },
   {
     key: 'ios.remote',
@@ -200,7 +200,11 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
   {
     key: 'android.deviceProfile',
-    type: STRING,
+    type: {
+      kind: 'string',
+      pattern: '^[A-Za-z0-9 ._()-]*$',
+      patternHelp: 'an avdmanager device id such as pixel_6 or Nexus 5X (`avdmanager list device -c`)',
+    },
     scopes: EVERY,
     default: 'pixel_6',
     description: 'avdmanager hardware profile id for new owned AVDs',
@@ -463,6 +467,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 7,
     env: 'STIM_ARCHIVE_AGENT_ACTIONS_MAX_AGE_DAYS',
     description: 'Days to keep archived agent-device sessions; 0 keeps none',
+  },
+  {
+    key: 'workspace.hidden',
+    type: BOOLEAN,
+    scopes: ['workspace'],
+    default: false,
+    description: 'Hide this workspace in Stim Desktop and the phone app; the next command that uses it unhides it',
   },
   {
     key: 'worktree.exclude',

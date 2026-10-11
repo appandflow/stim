@@ -2,7 +2,7 @@
 
 The machine App Review pairs the Stim iOS app with. It is a Cloudflare Worker that speaks the phone protocol of `stim-server` over `wss://` and serves fictional data: a Mac named `Demo Mac` with nine workspaces in two made-up repositories (`habitat-app`, `notes-app`), their simulators, emulators, logs, notifications and diffs. Device screens are renders of fictional apps (`frame-sources/`).
 
-It is not published and is not part of Stim. `apps/mobile/mock-server` is the development counterpart; both use the payload helpers in `apps/mobile/mock-server/payloads.mjs`.
+It is not published and is not part of Stim. `apps/mobile/mock-server` is the development counterpart; both use the payload helpers in `apps/mobile/mock-server/payloads.mjs` and add each environment's `stage`, `appPresence` and `gitChip` with core's `withDerivedFacts`.
 
 ## How it works
 
@@ -32,7 +32,7 @@ Render frames again with `frame-sources/render.sh [name...]` (macOS, Google Chro
 
 ## Deploy
 
-`.github/workflows/demo-server-deploy.yml` deploys on every push to `main` that changes this package, and on manual dispatch. It runs in the `demo-server` GitHub environment and skips with a notice when the Cloudflare secrets are missing. Limit that environment's deployment branches to `main` (Settings, Environments) so a manual run from another branch cannot deploy. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
+`.github/workflows/demo-server-deploy.yml` deploys on every push to `main` that changes this package or `packages/core`, and on manual dispatch. It runs in the `demo-server` GitHub environment and skips with a notice when the Cloudflare secrets are missing. Limit that environment's deployment branches to `main` (Settings, Environments) so a manual run from another branch cannot deploy. A deploy restarts the Durable Object and disconnects every phone; the app reconnects by itself.
 
 Secrets, on the repository or on the `demo-server` environment:
 

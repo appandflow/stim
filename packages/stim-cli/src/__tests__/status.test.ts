@@ -8,7 +8,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
@@ -797,15 +797,14 @@ function dfExecutor(byVolume: Record<string, string>) {
     run() {
       return '';
     },
-    runQuiet(cmd) {
-      const m = /^df -k '(.*)'$/.exec(cmd);
-      if (!m) return null;
-      const vol = m[1];
+    runQuiet: () => null,
+    runFileQuiet(file: string, args: string[]) {
+      if (file !== 'df' || args.length !== 2 || args[0] !== '-k') return null;
+      const vol = args[1];
       assert(vol !== undefined);
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
-    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -983,9 +982,12 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
       },
       runQuiet(cmd) {
         commands.push(cmd);
-        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+        return null;
       },
-      runFileQuiet: () => null,
+      runFileQuiet(file: string, args: string[] = []) {
+        commands.push([file, ...args].join(' '));
+        return args.join(' ') === '-s emulator-5556 emu avd name' ? 'stim-app\nOK' : null;
+      },
       spawn() {
         throw new Error('status must not spawn a device');
       },
@@ -1085,7 +1087,7 @@ test('status lists worktrees with no environment for every registered repository
         },
       }),
     );
-    const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
+    const real = (fallback: unknown) => (file: string, args: string[], opts: ExecOptions) =>
       file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
     const bootedSims = JSON.stringify({
       devices: {
@@ -1099,13 +1101,13 @@ test('status lists worktrees with no environment for every registered repository
       },
     });
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) =>
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git'
           ? realExecutor.runFileAsync(file, args, opts)
           : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
       runFile: real(''),
       runQuiet: () => null,
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git' ? realExecutor.runFileQuiet(file, args, opts) : null,
       spawn() {
         throw new Error('spawn should not be called from status');

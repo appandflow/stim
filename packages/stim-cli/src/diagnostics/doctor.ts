@@ -1,8 +1,10 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { createRequire } from 'module';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { gitQuiet } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
@@ -14,7 +16,7 @@ import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
 import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo, isPackageResolvable } from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
@@ -185,21 +187,19 @@ function hasLinkedWorktree(projectRoot: string): boolean {
 }
 
 function headBranch(root: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const ref = gitQuiet(root, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
 }
 
 function mainOperation(root: string): 'rebase' | 'merge' | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
   return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
 function dirtyTrackedPaths(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  const out = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
   return (out ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -214,9 +214,7 @@ function resolveDefaultBranch(root: string): string | null {
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
@@ -642,6 +640,15 @@ export function checkEasAuth({
     );
   }
 
+  if (status.code === 'project-cli') {
+    return finding(
+      'note',
+      'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository',
+      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}, which is in the repository, in a node_modules/.bin above it, or in a checkout whose repository root git did not report. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
+      status.remedy ?? null,
+    );
+  }
+
   if (status.code === 'logged-out') {
     return finding(
       'cost',
@@ -690,9 +697,49 @@ export function checkConcurrency({
   );
 }
 
+function easCliOutsideRepository(projectRoot: string): string | null {
+  const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
+  const root = found ? repoRoot(projectRoot) : null;
+  if (!found || !root) return null;
+  try {
+    const repository = realpathSync(root);
+    const directory = realpathSync(dirname(resolve(found)));
+    const within = (path: string) => {
+      const rel = relative(repository, path);
+      return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
+    };
+    if (within(join(directory, basename(found))) || within(realpathSync(found))) return null;
+    for (let dir = realpathSync(projectRoot); ; dir = dirname(dir)) {
+      if (directory === join(dir, 'node_modules', '.bin')) return null;
+      if (dirname(dir) === dir) return found;
+    }
+  } catch {
+    return null;
+  }
+}
+
 function readProjectEasCliVersion(projectRoot: string): string | null {
-  const bin = resolveEasCliBin(projectRoot);
-  return bin ? readInstalledEasCliVersion(bin.file, projectRoot) : null;
+  const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
+  if (packageJson) {
+    const version = readJsonObject(packageJson)?.version;
+    return typeof version === 'string' ? `eas-cli/${version}` : null;
+  }
+  const onPath = easCliOutsideRepository(projectRoot);
+  return onPath ? readInstalledEasCliVersion(onPath, projectRoot) : null;
+}
+
+function doctorEasAuth({ projectRoot, owner }: { projectRoot: string; owner?: string | null }): EasAuthResult {
+  const file = easCliOutsideRepository(projectRoot);
+  if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
+  const unchecked = resolveEasCliBin(projectRoot);
+  if (!unchecked) return probeEasAuth({ projectRoot, owner, resolveBin: () => null });
+  return {
+    failed: true,
+    code: 'project-cli',
+    reason: unchecked.file,
+    remedy:
+      'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
+  };
 }
 
 export function checkRemoteDevice({
@@ -1047,7 +1094,7 @@ export function reactNativeDoctorFindings({
   const {
     readFile = readFileSync,
     xcodeMajor = null,
-    easAuth = probeEasAuth,
+    easAuth = doctorEasAuth,
     remoteEnv = process.env,
     lookupAgentDevice = null,
     lookupEasCli = null,
@@ -1293,6 +1340,55 @@ export function checkFingerprintParity({
   );
 }
 
+function fingerprintConfigSkipped(root: string): Finding | null {
+  const file = ['fingerprint.config.js', 'fingerprint.config.cjs'].find((name) => existsSync(join(root, name)));
+  if (!file) return null;
+  return {
+    ...finding(
+      'note',
+      `Skipped the fingerprint checks: ${file} is code`,
+      `@expo/fingerprint loads ${file} with require(), and doctor does not execute project code, so it did not compare this checkout's fingerprint with a fresh worktree or look for linked libraries that carry Git metadata into it.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    ),
+    code: 'fingerprint-config-skipped',
+  };
+}
+
+function fingerprintParitySkipped(title: string, detail: string, fix: string): Finding {
+  return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
+}
+
+// @expo/fingerprint resolves through resolve-from, which follows the real path, NODE_PATH and global module folders.
+function fingerprintResolves(root: string, request: string): boolean {
+  try {
+    createRequire(join(realpathSync(root), 'package.json')).resolve(request);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
+  const resolved = ['expo/package.json', 'expo/config', 'expo-modules-autolinking/package.json']
+    .find((request) => fingerprintResolves(root, request))
+    ?.replace(/\/.*$/, '');
+  if (resolved) {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check: dependencies resolve from outside the app',
+      `This app has no node_modules of its own, but ${resolved} resolves from outside it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  if (platform !== 'ios') {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check for Android or a project without an iOS directory on a checkout without dependencies',
+      'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
+      'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  return null;
+}
+
 function gitMetadataAt(path: string): boolean {
   try {
     const git = lstatSync(join(path, '.git'));
@@ -1353,6 +1449,8 @@ export async function detectLinkedLibraryGitMetadata(
 ): Promise<Finding | null> {
   const mainRoot = mainCheckoutProjectRoot(projectRoot);
   if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  const skipped = fingerprintConfigSkipped(mainRoot);
+  if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
     sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
@@ -1394,14 +1492,15 @@ export async function detectFingerprintParity(
     iosProjectPath?: string;
   } = {},
 ): Promise<Finding | null> {
-  const exec = getExecutor();
-  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+  if (gitQuiet(projectRoot, ['rev-parse', '--git-dir']) == null) {
     return null;
   }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
+  const skipped = fingerprintConfigSkipped(projectRoot);
+  if (skipped) return skipped;
 
   const platform =
     selectedPlatform ??
@@ -1410,6 +1509,11 @@ export async function detectFingerprintParity(
       : existsSync(join(projectRoot, 'android'))
         ? 'android'
         : undefined);
+  const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
+  if (unsafe) return unsafe;
+  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  const coldFingerprint: typeof createFingerprint = (root, options) =>
+    createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 
   let base: string;
   try {
@@ -1418,17 +1522,25 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
-    timeoutMs: 60000,
-  });
+  const added = gitQuiet(
+    projectRoot,
+    ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+    { write: true, timeoutMs: 60000 },
+  );
   if (added == null) {
     rmSync(base, { recursive: true, force: true });
     return null;
   }
 
   try {
-    const project = await fingerprintProject(projectRoot, { platform, iosProjectPath, createFingerprint });
-    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint });
+    const headSkipped = fingerprintConfigSkipped(worktree) ?? coldFingerprintRunsProjectCode(worktree, platform);
+    if (headSkipped) return headSkipped;
+    const project = await fingerprintProject(projectRoot, {
+      platform,
+      iosProjectPath,
+      createFingerprint: coldFingerprint,
+    });
+    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint: coldFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
@@ -1446,8 +1558,8 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
+    gitQuiet(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
     rmSync(base, { recursive: true, force: true });
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
+    gitQuiet(projectRoot, ['worktree', 'prune'], { write: true });
   }
 }

@@ -1,16 +1,12 @@
-import { existsSync, mkdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
-import { configDir, withDirLock } from '../index.ts';
+import { configDir, ensurePrivateDir, withDirLock } from '../index.ts';
 import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 import { configLockPath, getConfigPath } from './paths.ts';
 
 export function withConfigLock<T>(fn: () => T): T {
   return withDirLock(configLockPath(), fn, {
-    ensureParent: () => {
-      const dir = configDir();
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    },
+    ensureParent: () => ensurePrivateDir(configDir()),
   });
 }
 
@@ -72,6 +68,7 @@ function registryFromJson(
   if (!isJsonObject(value)) throw configCorrupt(`has a ${key} that is not an object: ${JSON.stringify(value)}`, path);
   const registry: Record<string, Record<string, unknown>> = {};
   for (const [name, entry] of Object.entries(value)) {
+    if (name === '__proto__') continue;
     if (!isJsonObject(entry)) {
       throw configCorrupt(
         `has a ${key} entry ${JSON.stringify(name)} that is not an object: ${JSON.stringify(entry)}`,

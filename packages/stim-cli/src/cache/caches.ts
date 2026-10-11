@@ -228,7 +228,7 @@ function canonicalCacheDir(dir: string): string {
 export function sizeCaches(caches: CacheDescriptor[]): CacheDescriptor[] {
   return caches.map((c) =>
     Object.assign({}, c, {
-      bytes: c.bytes ?? directorySize(c.dir),
+      bytes: c.bytes ?? directorySize(c.dir, { timeoutMs: 'unbounded' }),
     }),
   );
 }
@@ -282,7 +282,7 @@ export function pruneCache(
     if (evictBytes !== undefined && bytes >= evictBytes) break;
     try {
       if (!existsSync(entry) || statSync(entry).mtimeMs >= cutoff) continue;
-      const entryBytes = isDirectory ? directorySize(entry) : size;
+      const entryBytes = isDirectory ? directorySize(entry, { timeoutMs: 'unbounded' }) : size;
       rmSync(entry, { recursive: true, force: true });
       removed++;
       bytes += entryBytes;

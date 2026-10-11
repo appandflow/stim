@@ -419,11 +419,11 @@ STALE STATUS CACHE ENTRIES
   if it comes back.
 
 NAMED SERVER PORTS
-  worktree remove stops TCP listeners on each named allocation and releases
-  the ports. gc reports named allocations for missing workspaces; gc --delete
-  stops their listeners and releases them. Unmounted or unresolved paths stay
-  registered. Failed stops retain their allocations for a later retry.
-  stim stop does not touch named ports. See guide ports.
+  worktree remove, gc --delete and automatic maintenance release named
+  allocations without signalling their listeners. gc reports named
+  allocations for missing workspaces; gc --delete releases them. Unmounted or
+  unresolved paths stay registered. Only ports stop stops a named listener,
+  and stim stop does not touch named ports. See guide ports.
 
 ON THE SOURCE CHECKOUT
   git cannot remove a repository's main working tree, and deleting the source
@@ -552,6 +552,14 @@ THE MIRROR IMAGE: A STALE DEVICE RECORD
   recreated since the report keeps its entry. A name reused before \`gc\`
   runs still counts as this home's; run \`gc\` after deleting a Stim AVD by
   hand.
+
+  The machine EAS session ledger (~/.stim/machine/eas/sessions.json) can hold
+  entries that no EAS session ever had, such as ids written by a test
+  fixture. \`gc\` reports an entry under "Stale EAS ledger entries" only when
+  its id is not a UUID AND its workspace root is an absolute path that is
+  missing on a mounted volume. A valid id, an existing root, or a root on an
+  unmounted volume keeps the entry. \`gc --delete\` re-checks each entry and
+  removes it under the ledger lock; it never contacts EAS.
 
 THE ONE CASE GC WILL NOT REAP
   If the config is gone entirely (deleted ~/.stim, or a throwaway

@@ -70,6 +70,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: false,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'stopped', since: null, platform: null, closedApps: [] },
     ios: { name: 'stopped', udid: 'stopped', owned: true, state: 'Shutdown' },
   };
   const b: EnvironmentState = {
@@ -77,6 +78,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: true,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'running', since: null, platform: null, closedApps: [] },
     ios: { name: 'phone', udid: 'phone', owned: true, state: 'Booted' },
     android: { name: 'pixel', owned: true, physical: false, state: 'detected' },
   };
@@ -85,6 +87,7 @@ it('keeps device ownership after ordering and applies stopped filtering to each 
     live: true,
     warnings: [],
     memoryMb: 0,
+    stage: { kind: 'running', since: null, platform: null, closedApps: [] },
     ios: { name: 'tablet', udid: 'tablet', owned: true, state: 'Booted' },
   };
   expect(worktreeDevices([a, b, c], Date.now()).map(({ device, env }) => [device.id ?? device.name, env.path])).toEqual(

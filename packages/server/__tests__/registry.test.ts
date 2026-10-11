@@ -1,12 +1,13 @@
 import Ajv2020 from 'ajv/dist/2020.js';
 import { protocolJsonSchema } from '../src/protocol.ts';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   authenticateDevice,
   BUILD_REQUEST_TTL_MS,
+  buildClientsReadable,
   capabilitiesFor,
   createPairingToken,
   grantDevice,
@@ -49,11 +50,37 @@ describe('build clients', () => {
     expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
   });
 
+  it('tells an unreadable build client registry apart from one with no client left', () => {
+    const { id } = request('nA');
+    expect(revokeDevice(id)).toBe(true);
+    expect(readBuildClients()).toEqual([]);
+    expect(buildClientsReadable()).toBe(true);
+    writeFileSync(join(home, 'server', 'build-clients.json'), '{"devices": [');
+    expect(readBuildClients()).toEqual([]);
+    expect(buildClientsReadable()).toBe(false);
+  });
+
   it('refuses a build name that could forge the approval listing', () => {
     for (const name of ['Laptop\n1234  Mini  build  from mini', 'Laptop\u202e', 'x'.repeat(65)]) {
       expect(requestBuildAccess(name, node('nA'))).toEqual({ ok: false, reason: 'bad-device-name' });
     }
     expect(readBuildClients()).toEqual([]);
+  });
+
+  it.each([
+    ['control and bidi characters', 'Phone\n1234  Mini\u202e  read', 'Phone 1234 Mini read'],
+    [
+      'a ZWJ emoji sequence',
+      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
+      'Janic\u2019s \u{1F468}\u200D\u{1F4BB} Pixel',
+    ],
+    ['a long name ending in a split emoji', `${'x'.repeat(63)}\u{1F4F1}`, 'x'.repeat(63)],
+    ['nothing printable', '\u0000\u2028', 'Phone'],
+  ])('pairs a phone whose OS name has %s under a cleaned-up name', (_case, name, stored) => {
+    const { token } = createPairingToken();
+    expect(spendPairingToken(token, name, node('nPhone'))).toMatchObject({ ok: true, device: { name: stored } });
+    expect(spendPairingToken(token, name, node('nPhone'))).toEqual({ ok: false, reason: 'pairing-unknown' });
+    expect(readDevices().map((device) => device.name)).toEqual([stored]);
   });
 
   it('keeps one pending request per node and caps the total', () => {

@@ -1045,6 +1045,25 @@ import Testing
 
 }
 
+@Suite struct MachineCpuTicksTests {
+  @Test func computesBusyShareOfAllTicksBetweenTwoReadings() {
+    let before = MachineCpuTicks(busy: 1_000, idle: 9_000)
+    let after = MachineCpuTicks(busy: 1_300, idle: 9_700)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.3)
+  }
+
+  @Test func survivesA32BitCounterWrap() {
+    let before = MachineCpuTicks(busy: UInt32.max - 99, idle: 0)
+    let after = MachineCpuTicks(busy: 100, idle: 200)
+    #expect(MachineCpuTicks.fraction(from: before, to: after) == 0.5)
+  }
+
+  @Test func reportsNothingWhenNoTickElapsed() {
+    let ticks = MachineCpuTicks(busy: 5, idle: 5)
+    #expect(MachineCpuTicks.fraction(from: ticks, to: ticks) == nil)
+  }
+}
+
 @Suite struct OpenURLTests {
   @Test func readsTheDeviceOnlyFromAnOpenURL() {
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=U1")!) == .simulator(udid: "U1"))
@@ -1059,19 +1078,6 @@ import Testing
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "siniulator://open?udid=U1")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?udid=")!) == nil)
     #expect(deviceOpenRequest(fromOpenURL: URL(string: "stim-desktop://open?serial=")!) == nil)
-  }
-
-  @Test func findsTheWorkspaceThatOwnsTheRequestedDevice() throws {
-    let url = Bundle.module.url(forResource: "status", withExtension: "json", subdirectory: "Fixtures")!
-    let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
-    let simulator = try #require(payload.owner(of: .simulator(udid: "D39CAF14-F4A4-4C0A-B8A4-3A30B2D268F0")))
-    #expect(simulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(simulator.device.slot == "ipad")
-    let emulator = try #require(payload.owner(of: .emulator(serial: "emulator-5554")))
-    #expect(emulator.workspace.path == "/Users/dev/app/.worktrees/wide-insets/apps/mobile")
-    #expect(emulator.device.id == "android:default:stim-wide-insets-mobile")
-    #expect(payload.owner(of: .simulator(udid: "emulator-5554")) == nil)
-    #expect(payload.owner(of: .emulator(serial: "emulator-5556")) == nil)
   }
 
   @Test func readsAWorkspaceLink() {

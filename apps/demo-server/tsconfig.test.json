@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
     "module": "preserve",
     "moduleResolution": "bundler",
     "allowJs": true,

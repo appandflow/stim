@@ -38,8 +38,8 @@ function reloadDeps(overrides: Partial<ReloadDeps> = {}): Partial<ReloadDeps> {
     readLaunches: () => ({ android: androidLaunch }),
     resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Booted' } }) as never,
     resolveAndroid: () => ({ serial: 'emulator-5554' }),
-    iosProcess: () => 42,
-    androidProcess: () => 43,
+    iosProcess: () => ({ state: 'running', pid: 42 }),
+    androidProcess: () => ({ state: 'running', pid: 43 }),
     resolveMetro: async () => ({ metro: { pid: 1, leader: 1, cwd: '/project' } }),
     reloadMetro: async () => ({ ok: true, peers: 1, targets: 1 }),
     readBrowser: () => null,
@@ -339,7 +339,7 @@ test('a bare reload keeps reporting a stopped native app instead of switching to
   const result = await runReload({
     root: '/project',
     deps: reloadDeps({
-      androidProcess: () => null,
+      androidProcess: () => ({ state: 'stopped' }),
       readBrowser: () => browser,
       reloadPage: async (record) => {
         reloaded.push(record.targetId);
@@ -357,7 +357,7 @@ test('reload ignores a stopped platform while auto-selecting the live one', asyn
     root: '/project',
     deps: reloadDeps({
       readLaunches: () => ({ ios: iosLaunch, android: androidLaunch }),
-      iosProcess: () => null,
+      iosProcess: () => ({ state: 'stopped' }),
     }),
   });
 
@@ -804,7 +804,7 @@ test('a stopped named slot keeps its slot in the reload recovery command', async
     deps: reloadDeps({
       getProject: () => ({ ...project, deviceSlots: { phone: { ios: { deviceUdid: 'U1', owned: true } } } }),
       readLaunches: () => ({ 'ios:phone': iosLaunch }),
-      iosProcess: () => null,
+      iosProcess: () => ({ state: 'stopped' }),
     }),
   });
   expect(result).toMatchObject({ ok: false, error: { remedy: 'Run `stim ios --slot phone` to launch it.' } });

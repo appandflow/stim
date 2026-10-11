@@ -7,7 +7,7 @@ import { collectHostedAndroidLogs } from '../device-host/android-logs.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: { timeoutMs?: number }) => string>(),
-  runQuiet: vi.fn<(command: string) => string>(),
+  runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
 }));
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
 let root: string;
@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.setSystemTime(start + 500);
   pid = '321';
   output = fixture;
-  native.runQuiet.mockReset().mockReturnValue(`${avdName}\nOK`);
+  native.runFileQuiet.mockReset().mockReturnValue(`${avdName}\nOK`);
   native.runFile.mockReset().mockImplementation((_file, args = []) => {
     if (args.includes('pidof')) return pidofOutput();
     if (args.includes('date')) return String(Date.now());
@@ -123,7 +123,7 @@ test.each(['foreign-ledger', 'wrong-avd', 'wrong-recorded-serial'])(
   (scenario) => {
     if (scenario === 'foreign-ledger')
       writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
-    else native.runQuiet.mockReturnValue('user-created\nOK');
+    else native.runFileQuiet.mockReturnValue('user-created\nOK');
     if (scenario === 'wrong-recorded-serial') {
       const path = join(home, 'hosted-device.json');
       const device = JSON.parse(readFileSync(path, 'utf8'));

@@ -93,49 +93,63 @@ clone with its own simulator and dev server, and each checks its own work on the
 device. The panel clones [appandflow/stim-tutorial](https://github.com/appandflow/stim-tutorial),
 a tiny Expo app, and shows:
 
-- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step removes it. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
-- **Make a Change:** ask your agent for a visual change in your own words, for example "Make the title purple and check it on the simulator." Your agent works in the first linked worktree of the clone. Watch its first build, usually a cache miss on a fresh Mac, including the readiness phase, which proves the app came up before the agent checks the change. The first build takes a few minutes.
-- **Change It Again in Parallel:** while that runs, ask for another change, for example "Try a dark background and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit.
-- **Live View and Control, Agent Actions and Replay, App Logs (optional):** open the live view, watch what your agent did on the device and replay it, and read the logs.
-- **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there". **Skip** stays available.
-- **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with a screenshot of your change. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it.
+- **Get the Test App:** the prompt above. It clones, installs and runs `stim doctor` so Stim registers the clone, and builds nothing; the clone is the base for your changes and is never run; only the optional last step and **Restart Tutorial** remove it. An existing `~/stim-tutorial` that is a clean clone of the tutorial repository is reused; any other existing folder makes your agent ask for another one. **Restart Tutorial** asks before it deletes the folder and its tutorial worktrees through `stim worktree remove`, then moves the folder to the Trash; a folder without the tutorial marker is left alone. While your agent works, the step ticks **Test app cloned**, **Dependencies installed** and **Registered with Stim**. The first two read `~/stim-tutorial` itself, so a clone in another folder ticks only the last.
+- **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes; the step moves on as soon as it starts.
+- **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit. The step moves on as soon as that build starts. The completion card's build times fill in when the builds finish, and a build that fails after its step moved on shows a warning under that step.
+- **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow leads there: the tutorial worktree's sidebar row when you are on another page, then the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
+- **Agent Actions and Replay (optional):** "Open Agent Actions to see what your agent did, then press Play to replay it." A glow leads there: the tutorial worktree's sidebar row when you are on another page, then its device's live view, then the Agent Actions list, then the replay's Play button. **Open Agent Actions** in the step opens the first change's live view with Agent Actions shown, or the second change's once the first is gone. The step ticks **Agent actions viewed** and **Replay played** on either tutorial simulator and stays open so you can keep watching; **Next** then records it done. When no agent actions were recorded on the first change's simulator, the step says so.
+- **App Logs (optional):** "Open Logs to see your app's output and errors." A glow leads from the tutorial worktree's sidebar row to the toolbar's Show Logs toggle; **Open Logs** in the step opens them directly. The step ticks **Logs opened** and completes when you show the Logs of either tutorial worktree while the step is current.
+- **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there".
+- **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with before and after screenshots of your change, a short note on how Stim verified it, and a link to Stim. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it. When Stim reports a pull request for the first change's worktree, including one from your fork, the step ticks **Pull request opened**, links it and completes; Stim checks GitHub every few minutes, so the tick can take up to five minutes.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
-- **Delete the Test App (optional):** a prompt to remove the tutorial for good. Your agent removes any worktrees of the clone and then the clone itself with a plain `stim worktree remove`, stopping to ask if one holds changes, so their simulators, Metro ports and Stim records are torn down, and then deletes the clone's folder. The step completes when Stim no longer lists the clone and its folder is gone. Skip it to keep the clone.
+- **Delete the Test App (optional):** "Delete the test app's clone, or press Next to keep it." The prompt asks your agent to run `stim worktree remove` on the clone and then delete its folder. As a safety net, `stim guide tutorial delete` first removes any tutorial worktree still left, with a plain `stim worktree remove` that stops to ask if one holds changes, so simulators, Metro ports and Stim records are torn down before the files go; when worktrees were left, the step also ticks **Tutorial worktrees removed**. The step completes when Stim no longer lists the clone and its folder is gone.
+
+When the tutorial ends, the panel shows a completion card: the time from clone to archive, the first build, the second build's cache hit and the time it saved, the two worktrees, the agent actions you can replay, and the space Delete freed, each only when Stim measured it. Each optional step you finished is a badge; a skipped one stays dashed.
+
+Your agent checks each change on its simulator with agent-device, following
+`stim guide tutorial run`: it taps **Tap me**, toggles **Dark accent**, picks a
+**Size** and takes a screenshot, so Desktop records its actions for the Agent
+Actions and Replay step.
 
 When agent-device is not installed, **Make a Change** shows a card with
 `npm i -g agent-device` and a prompt that installs it. The tutorial completes
 either way; without it your agent can only check the build and logs.
 
-Completed optional steps stay expanded so you can follow the phone handoff. The tutorial does not start the server, pair phones or
-grant access. Its only build is the **Run iOS** button.
+The panel shows one step at a time. Click a node on the progress track, use the arrows beside it, or press the left and right arrow keys to look at another step; this never changes your progress, and Desktop keeps detecting the current step meanwhile. A later step shows dimmed and read-only, **Go to Current Step** returns, and when the step you are looking at completes, the panel moves on with it. The completion card is the last slide.
 
-Accent rings and short callouts point to existing controls without covering the
-app with a dimming layer. **Show me** selects the tutorial workspace when its
-control is not visible. Build details and the device viewer keep their own
-highlights when opened.
+**Float (Experimental)** in the **…** menu moves the panel into a small window that stays above other apps without taking focus, so you can keep it beside your editor or terminal. Drag it anywhere; Desktop remembers where. The pin turns staying on top off and on, and **Dock in Sidebar** puts it back.
+
+The tutorial does not start the server, pair phones or
+grant access, and it runs no builds itself.
+
+A soft glow with a short label points at the control a step needs, without
+covering the app with a dimming layer, and fades after a few seconds; it shows
+again when the step or page changes. On **Make a Change** and **Change It Again in
+Parallel**, it points at the **Show** button of the "New workspace" notice for
+your first change's worktree, which reads "Building iOS" while its build runs;
+if that notice is gone, **Open the build** in the step does the same. When the
+control is not on screen, the glow points at the hop before it, such as the
+tutorial worktree's sidebar row. With the sidebar hidden, **Show Me** selects the
+tutorial workspace instead. A step's
+prompt shows only while it is the current step. The step lists only workspace
+issues that block it, as a sentence with its fix below; Finish and Delete hide
+the warnings that stopping the workspaces causes.
 
 Progress stays in this app's preferences. Closing the panel preserves it;
 Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
-its path, and an archived tour opens at Delete the Test App. **Skip Step** advances without
-waiting for a signal. **Mark Done** appears after two minutes. The **…** menu
+its path, and an archived tour opens at Delete the Test App. Every step has
+**Next**, which moves on without waiting for a signal. It records the step as
+done when its checks are all ticked or Desktop detected it, and as skipped
+otherwise. Steps Desktop detects move on by themselves. The **…** menu
 also offers **Restart Tutorial**, which starts over at Get the Test App as on a
 first start; worktrees from before the restart stay and no longer count. When
 the tutorial workspace comes from an older tutorial version, the panel says so
 and offers only **Restart Tutorial**.
 
-Each step shows a plain request to copy for your coding agent, with the paths
-filled in from the tour's repository. Below it, a collapsed **Commands your agent
-will run** section lists the same work as a short set of commands you can type
-yourself, with the agent-device state directory and simulator filled in when
-known. Create the Tutorial has only the prompt. Desktop remembers whether the
-section is open. Copying a command does not start the three-minute workspace
-warning. The default base is `~/stim-tutorial`.
-**Run iOS** on Make a Change runs `stim ios --remote local --remote-build local`
-for the tour workspace, so it builds and runs on this Mac whatever `ios.remote` or
-`remote.build` say. The agent keeps the tutorial's own runs local the same way. To
-read the complete manual:
-
-<StimTabs code={`stim guide tutorial manual`} />
+A step that needs your agent shows a plain request to copy, with the paths
+filled in from the tour's repository. The default base is `~/stim-tutorial`.
+The agent keeps the tutorial's own runs local, whatever `ios.remote` or
+`remote.build` say.
 
 Desktop reads the archive setting through `stim settings --json`. If that
 setting cannot be read, finish waits ten seconds after a previously stopped
@@ -217,7 +231,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote Mac and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. Checks run automatically while visible, reusing a completed build or check
+  plan. While a run boots its simulator or emulator, builds the app's first JS
+  bundle in Metro, or waits for the app to report ready, the progress and the
+  current phase say so with that step's own elapsed time: **Booting
+  simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports
+  one) or **Waiting for app ready**. A step with no percentage draws its bar
+  segment as indeterminate. Checks run automatically while visible, reusing a completed build or check
   for 60 seconds and skipping running builds; there is no manual Check button. The header's running-build progress opens the current
   run in the same sheet. **Open in Logs Panel** opens the selected run in the
   logs drawer, filtered by platform, slot and timestamps. Clear the Build run
@@ -496,6 +515,12 @@ it only when you press **Run**. The project check lists each `stim doctor`
 finding with its fix, and offers **Fix** for the findings `stim doctor --fix`
 repairs. Reopen the guide from **Help > Setup Guide…**.
 
+Desktop shows owned simulators itself, so Device Hub is not needed to see them. If
+you open it and quit it by accident, Xcode 27 can shut down booted simulators.
+[Owned devices](./owned-devices#keep-simulators-running-when-device-hub-quits)
+lists optional `defaults write` preferences you can set yourself, with their
+limits and how to undo them. Stim never sets them.
+
 In a project, warm a worktree and run the app:
 
 <StimTabs
@@ -537,6 +562,10 @@ contents are not logged. Older compatible payloads and extra fields remain
 supported. Binary video uses its existing stream format.
 
 ![The Pair a Phone sheet with a QR code to scan with the phone app](/img/desktop/pair.webp)
+
+When an agent creates a workspace while Desktop is open, a "New workspace"
+card appears at the bottom left with **Show**, once per workspace. It reads
+"Building iOS" or "Building Android" while that workspace's build runs.
 
 Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
 starts work, and coding agents share the same link, so you can jump straight to

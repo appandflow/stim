@@ -875,6 +875,11 @@ RULES
                               root, and browser profile paths whose
                               directory is gone; --delete forgets the
                               ledger entry only
+    staleEasLedgerEntries   { id, workspaceRoot }  entries of the machine
+                              EAS session ledger whose id is not a UUID and
+                              whose absolute workspace root is missing on a
+                              mounted volume; --delete forgets the entry
+                              only and contacts no EAS session
     staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
                               file, bytes }  entries of $STIM_HOME/disk-usage
                               and pull-requests whose path is gone from a
@@ -1022,6 +1027,8 @@ RULES
               absent until it has run.
   recording   { enabled }: whether stim-server may record the workspace's
               device screens for replay, from recording.enabled
+  hidden      true when workspace.hidden is set; absent otherwise. The next
+              command that uses the workspace clears it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.
@@ -1289,8 +1296,8 @@ RULES
   build   { platform, slot, state, phase, startedAt, phaseStartedAt,
             outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs,
             completedPhaseMs?, basis,
-            plannedPhases, missReason?, missProvisional?, detail?, placement,
-            waitingOn?, waitingFor? }
+            plannedPhases, missReason?, missProvisional?, detail?, activity?,
+            placement, waitingOn?, waitingFor? }
 
   state            "running" while the run's own native-run claim is live;
                    "stale" when that claim was released or its process is
@@ -1382,6 +1389,16 @@ RULES
                    to file names, at most 160 characters
     updatedAt      when the build last wrote it; the run writes it at most
                    every 2 seconds
+  activity         during device or launch, once Stim observed what the run
+                   waits on: { name, startedAt, percent? }. name is
+                   "booting" while device waits for the owned simulator or
+                   emulator the run is booting; during launch, "bundling"
+                   from the app's bundle request to this workspace's Metro
+                   until Metro delivered it, or "waiting-ready" while the
+                   app reports its readiness pending; absent in between.
+                   startedAt is the evidence's time. percent is Metro's own
+                   progress for that request, present only once Metro
+                   reported one. Activity never changes launched.
   placement        where the build runs: "local", or while it is offloaded
                    { host, phase, startedAt, phaseStartedAt }. host is the
                    remote.machines entry; phase is the step there: sync,
@@ -1402,6 +1419,7 @@ RULES
 
     build: ios compile, 1m10s elapsed -- about 3 min left (median of 4 cold runs)
     build: ios compile on janics-mac-mini (build, 2m10s), 3m05s elapsed
+    build: ios launch (bundling JS 45%, 12s), 58s elapsed
 
   An environment with a recorded run also carries lastBuilds, each
   platform's most recent ios or android run, finished or failed:

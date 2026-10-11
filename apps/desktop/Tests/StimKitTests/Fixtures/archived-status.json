@@ -3,12 +3,14 @@
     {
       "path": "/work/new/app",
       "live": true,
-      "warnings": []
+      "warnings": [],
+      "memoryMb": 0
     },
     {
       "path": "/work/idle/app",
       "live": false,
-      "warnings": []
+      "warnings": [],
+      "memoryMb": 0
     }
   ],
   "archived": [
@@ -19,7 +21,6 @@
       "workspace": "feature-search",
       "worktree": {
         "repository": "/work/example",
-        "branch": "feature-search",
         "head": "abc123",
         "subject": "Add search",
         "merged": true,
@@ -28,7 +29,8 @@
           "state": "merged",
           "title": "Keep earlier workspace runs",
           "url": "https://example.invalid/pull/2602"
-        }
+        },
+        "branch": "feature-search"
       },
       "removedAt": "2026-10-04T12:00:00Z",
       "removedBy": "worktree-remove",
@@ -100,5 +102,13 @@
       "agentActions": 1024,
       "record": 1024
     }
-  }
+  },
+  "capacity": {
+    "liveCount": 1,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
 }

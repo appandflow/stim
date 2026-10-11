@@ -40,6 +40,7 @@ import { useAppForeground } from '@/hooks/app-foreground';
 import { useReplayRangeState } from '@/hooks/replay-range';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
+import { isGitHubPullUrl } from '@/lib/github';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
 import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
 import { useAnnounce } from '@/hooks/screen-reader';
@@ -183,7 +184,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
               subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
               onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
             >{t`Copy Path`}</Stack.Toolbar.MenuAction>
-            {pr ? (
+            {pr && isGitHubPullUrl(pr.url) ? (
               <Stack.Toolbar.MenuAction
                 icon="arrow.up.right"
                 onPress={() => void Linking.openURL(pr.url)}
@@ -622,7 +623,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const all = orderDevices(devicesOf(env));
   const { byDevice, general } = deviceWarnings(env.warnings, all);
   const build = runningBuild(env);
-  const stage = workspaceStage(env, all, now);
+  const stage = workspaceStage(env, now);
   const devices = stage.kind === 'stopped' ? all.filter((device) => device.platform === 'macos') : all;
   const open = (pathname: '/mac/[id]/resources' | '/mac/[id]/build' | '/mac/[id]/work', platform?: Platform) =>
     router.push({ pathname, params: { id: macId, path, ...(platform ? { platform } : {}) } });
@@ -782,7 +783,7 @@ function WorktreeContent({
   const entries = buildEntries(apps);
   const page = worktreePage({ path, environments: apps, entries, now });
   const lead = apps.find((app) => app.path === page.lead)!;
-  const stage = workspaceStage(lead, orderDevices(devicesOf(lead)), now);
+  const stage = workspaceStage(lead, now);
   const devices = worktreeDevices(apps, now);
   const captions = worktreePage({ path, environments: apps, entries: devices, now }).subtitles;
   const firstDevice = devices.findIndex((entry) => entry.path === path);

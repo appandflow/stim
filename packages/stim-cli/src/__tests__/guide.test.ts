@@ -577,9 +577,16 @@ test('the run section names the marker version the status payload reports and on
   });
 });
 
+test('the run section checks each change on the tutorial app with agent-device', () => {
+  const run = flat('run');
+  for (const testID of ['tap-button', 'dark-accent-switch', 'size-m']) expect(run).toContain(testID);
+  expect(run).toContain('agent-device open dev.stim.tutorial --platform ios --udid <ios.udid>');
+  expect(run).toMatch(/snapshot -i before every action/);
+});
+
 test('tutorial setup protects existing folders and the user repository', () => {
   const run = flat('run');
-  expect(run).toMatch(/If \{base\} exists, stop and ask the user for another folder; never overwrite or delete it/i);
+  expect(run).toMatch(/stop and ask the user for another folder; never overwrite or delete it/i);
   expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
@@ -618,14 +625,16 @@ test('tutorial restart removes nothing, so it cannot contradict the finish force
   expect(flat('restart')).toMatch(/remove nothing/i);
 });
 
-test('the share step comes before finish and pushes to a fork with the simulator udid', () => {
+test("the share step comes before finish, pushes to a fork, and attaches the body's screenshots", () => {
   const ids = TUTORIAL_STEPS.map((step) => step.id);
   expect(ids.indexOf('share')).toBeLessThan(ids.indexOf('finish'));
-  const commands = TUTORIAL_STEPS.find((step) => step.id === 'share')!.commands.join('\n');
-  expect(commands).toContain('{udid}');
-  expect(commands).not.toContain('booted');
-  expect(commands).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
-  expect(flat('share')).toMatch(/never booted/);
+  const share = flat('share');
+  expect(share).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
+  expect(share).toMatch(/never booted/);
+  for (const shot of ['before', 'after']) {
+    expect(share).toContain(`--attach ".expo/screenshots/${shot}.png`);
+    expect(flat('share')).toContain(`(./.expo/screenshots/${shot}.png)`);
+  }
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {
@@ -937,6 +946,9 @@ test('the macos guide covers the declared command flags and project settings', (
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
+  const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
+  expect(agentActions.indexOf('lsappinfo find bundleid=<bundleId> pid=<app.pid>')).toBeGreaterThan(-1);
+  expect(agentActions.indexOf('lsappinfo find')).toBeLessThan(agentActions.indexOf('agent-device open <bundleId>'));
 });
 
 test.each([registerIos, registerAndroid, macosCommand])(

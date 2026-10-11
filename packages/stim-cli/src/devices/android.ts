@@ -182,11 +182,6 @@ export function findBuildTool(
   return null;
 }
 
-function androidTool(tool: AndroidTool): string {
-  const resolved = androidToolPath(tool);
-  return resolved === tool ? tool : `"${resolved}"`;
-}
-
 export function listInstalledSystemImages(onUnreadable?: (error: unknown) => void): SystemImage[] {
   const root = join(androidHome(), 'system-images');
   const images: SystemImage[] = [];
@@ -385,7 +380,7 @@ export function deleteAvd(avdName: string): void {
   const root = process.env.ANDROID_AVD_HOME
     ? undefined
     : avdStorageRoots().find((candidate) => avdPathExists(join(candidate, `${avdName}.ini`)));
-  getExecutor().run(`${androidTool('avdmanager')} delete avd -n "${avdName}"`, {
+  getExecutor().runFile(androidToolPath('avdmanager'), ['delete', 'avd', '-n', avdName], {
     timeoutMs: AVDMANAGER_DELETE_TIMEOUT_MS,
     killSignal: 'SIGKILL',
     ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
@@ -431,7 +426,9 @@ export function parseAdbDevices(text: string): AdbDevices {
   return { emulators, physical, unhealthy };
 }
 
-export function listAvds({ timeoutMs }: { timeoutMs?: number } = {}): string[] {
+const ANDROID_LISTING_TIMEOUT_MS = 30_000;
+
+export function listAvds({ timeoutMs = ANDROID_LISTING_TIMEOUT_MS }: { timeoutMs?: number } = {}): string[] {
   return parseAvdList(
     getExecutor().runFile(androidToolPath('emulator'), ['-list-avds'], { timeoutMs, killSignal: 'SIGKILL' }),
   );
@@ -450,7 +447,7 @@ export function androidToolCwd(platform: NodeJS.Platform = process.platform): st
 }
 
 export function listAdbDevices({
-  timeoutMs,
+  timeoutMs = ANDROID_LISTING_TIMEOUT_MS,
   platform = process.platform,
 }: { timeoutMs?: number; platform?: NodeJS.Platform } = {}): AdbDevices {
   return parseAdbDevices(
@@ -1026,7 +1023,9 @@ export function parseEmulatorVersion(text: unknown): number | null {
 }
 
 function emulatorMajorVersion(): number | null {
-  return parseEmulatorVersion(getExecutor().runQuiet(`${androidTool('emulator')} -version`, { timeoutMs: 10_000 }));
+  return parseEmulatorVersion(
+    getExecutor().runFileQuiet(androidToolPath('emulator'), ['-version'], { timeoutMs: 10_000 }),
+  );
 }
 
 /** The first emulator whose launcher accepts `-crash-report-mode`; an older one refuses to start with it. */
@@ -1175,18 +1174,18 @@ export function emulatorFailureRemedy(lines: string[]): string {
 // for most of a boot: adb answers "device offline" or "device not found" until
 // the emulator has registered. Null is "not booted yet", so it reads as an
 // empty string and the poll continues.
-function getprop(exec: Executor, serial: string, prop: string, timeoutMs?: number): string {
-  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} shell getprop ${prop}`, { timeoutMs });
+function getprop(exec: Executor, serial: string, prop: string, timeoutMs: number): string {
+  const out = exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'shell', 'getprop', prop], { timeoutMs });
   return typeof out === 'string' ? out.trim() : '';
 }
 
 // The emulator sets sys.boot_completed before the package manager service is
 // registered, and `adb install` fails with "Can't find service: package" in
 // that window (#897).
-const PACKAGE_MANAGER_PROBE = 'shell pm path android';
+const PACKAGE_MANAGER_PROBE = ['shell', 'pm', 'path', 'android'];
 
-function packageManagerReady(exec: Executor, serial: string, timeoutMs?: number): boolean {
-  const out = exec.runQuiet(`${androidTool('adb')} -s ${serial} ${PACKAGE_MANAGER_PROBE}`, { timeoutMs });
+function packageManagerReady(exec: Executor, serial: string, timeoutMs: number): boolean {
+  const out = exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, ...PACKAGE_MANAGER_PROBE], { timeoutMs });
   return typeof out === 'string' && /^package:/m.test(out);
 }
 
@@ -1202,10 +1201,7 @@ export async function waitForBoot(
   const exec = getExecutor();
   const start = Date.now();
   let exited = false;
-  const probeTimeout = () =>
-    commandTimeoutMs === undefined
-      ? undefined
-      : Math.max(1, Math.min(commandTimeoutMs, timeoutMs - (Date.now() - start)));
+  const probeTimeout = () => Math.max(1, Math.min(commandTimeoutMs ?? timeoutMs, timeoutMs - (Date.now() - start)));
   while (Date.now() - start < timeoutMs) {
     const booted =
       getprop(exec, serial, 'sys.boot_completed', probeTimeout()) === '1' ||
@@ -1223,21 +1219,21 @@ export async function waitForBoot(
     );
   }
   const diagnosticDeadline = Date.now() + Math.min(commandTimeoutMs ?? 5000, 5000);
-  const diagnosticQuery = (args: string): string => {
+  const diagnosticQuery = (args: string[]): string => {
     const remaining = diagnosticDeadline - Date.now();
     if (remaining <= 0) return '';
-    const value = exec.runQuiet(`${androidTool('adb')} ${args}`, { timeoutMs: remaining });
+    const value = exec.runFileQuiet(androidToolPath('adb'), args, { timeoutMs: remaining });
     return typeof value === 'string' ? value.trim() : '';
   };
   return {
     ok: false,
     ...(exited ? { exited: true as const } : {}),
     diagnostic: {
-      devices: diagnosticQuery('devices'),
-      sysBoot: diagnosticQuery(`-s ${serial} shell getprop sys.boot_completed`),
-      devBoot: diagnosticQuery(`-s ${serial} shell getprop dev.bootcomplete`),
-      bootAnim: diagnosticQuery(`-s ${serial} shell getprop init.svc.bootanim`),
-      packageManager: diagnosticQuery(`-s ${serial} ${PACKAGE_MANAGER_PROBE}`),
+      devices: diagnosticQuery(['devices']),
+      sysBoot: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'sys.boot_completed']),
+      devBoot: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'dev.bootcomplete']),
+      bootAnim: diagnosticQuery(['-s', serial, 'shell', 'getprop', 'init.svc.bootanim']),
+      packageManager: diagnosticQuery(['-s', serial, ...PACKAGE_MANAGER_PROBE]),
     },
   };
 }
@@ -1252,11 +1248,13 @@ export function shutdownAndroidEmulator(
   const exec = getExecutor();
   const started = Date.now();
   if (
-    exec.runQuiet(`${androidTool('adb')} -s ${serial} shell sync`, { timeoutMs: Math.min(5000, timeoutMs) }) === null
+    exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'shell', 'sync'], {
+      timeoutMs: Math.min(5000, timeoutMs),
+    }) === null
   ) {
     console.error(`warning: could not flush ${serial} before shutdown; shutting it down anyway`);
   }
-  exec.runQuiet(`${androidTool('adb')} -s ${serial} emu kill`, {
+  exec.runFileQuiet(androidToolPath('adb'), ['-s', serial, 'emu', 'kill'], {
     timeoutMs: Math.max(1, timeoutMs - (Date.now() - started)),
   });
 }
@@ -1540,7 +1538,7 @@ export function getAvdNameForSerial(
   serial: string,
   { timeoutMs = EMU_AVD_NAME_TIMEOUT_MS }: { timeoutMs?: number } = {},
 ): string | null {
-  const out = getExecutor().runQuiet(`${androidTool('adb')} -s ${serial} emu avd name`, {
+  const out = getExecutor().runFileQuiet(androidToolPath('adb'), ['-s', serial, 'emu', 'avd', 'name'], {
     timeoutMs: Math.min(timeoutMs, EMU_AVD_NAME_TIMEOUT_MS),
     killSignal: 'SIGKILL',
   });

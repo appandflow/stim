@@ -245,12 +245,13 @@ test('warm refuses an unregistered target, missing source checkout, or mismatche
         if (kind === 'unregistered' && args.includes('worktree') && args.includes('list')) {
           return `worktree ${root}\nbranch refs/heads/main\n`;
         }
-        if (kind === 'missing main' && args.includes('--show-toplevel') && args[1] === root) return null;
+        if (kind === 'missing main' && args.includes('--show-toplevel') && args[args.indexOf('-C') + 1] === root)
+          return null;
         if (
           kind === 'different common' &&
           args.at(-1) === '--git-common-dir' &&
           !args.includes('--git-dir') &&
-          args[1] === root
+          args[args.indexOf('-C') + 1] === root
         ) {
           return base;
         }

@@ -2,23 +2,33 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  DEVICE_HOST_LIMITS,
   HOSTED_APP_CHUNK_BYTES,
+  hostedWorkerSettleMs,
   hostedMacosAppSlot,
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
   type HostedAppOffer,
 } from '@stim-cli/core/state';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
 import { pinnedEndpoint } from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 export const POLL_MS: number = 500;
-/** Covers 90s stop + 15s final logs + three 10s worker group-settle bounds, with 45s for polling and transport. */
-export const SESSION_TIMEOUT_MS: number = 90_000 + 15_000 + 3 * 10_000 + 45_000;
-export const PREPARE_TIMEOUT_MS: number = 5 * 60_000 + 10_000 + 45_000;
-export const INSTALL_TIMEOUT_MS: number = 5 * 60_000;
+export const HOSTED_POLL_MARGIN_MS: number = 45_000;
+export const HOSTED_REQUEST_MARGIN_MS: number = 5_000;
+const workerBoundMs = (deadlineMs: number): number => deadlineMs + hostedWorkerSettleMs();
+export const SESSION_TIMEOUT_MS: number =
+  hostedWorkerSettleMs() +
+  workerBoundMs(DEVICE_HOST_LIMITS.logsMs) +
+  workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
+  HOSTED_POLL_MARGIN_MS;
+export const PREPARE_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const OFFER_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + HOSTED_REQUEST_MARGIN_MS;
 
 interface ManifestFile {
   path: string;
@@ -41,7 +51,6 @@ export interface HostConnection {
   connection: BuildConnection;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 export const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
 function credentialRefusal(message: string, remedy = 'Run stim doctor.'): Error & { code: string; remedy: string } {
@@ -262,12 +271,15 @@ export async function settle(
   passing: string[],
   timeoutMs: number,
   platform: 'ios' | 'android' | 'macos' = 'macos',
+  signal?: AbortSignal,
 ): Promise<HostedSession> {
   const deadline = Date.now() + timeoutMs;
+  const what = `wait for hosted session ${session.id}`;
   while (passing.includes(session.state)) {
+    throwIfCancelled(signal, what);
     if (Date.now() > deadline)
       throw new Error(`The hosted session ${session.id} on ${host.machine} stayed ${session.state}.`);
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS, { signal, what });
     session = await attach(host, session.id, undefined, platform);
   }
   return session;

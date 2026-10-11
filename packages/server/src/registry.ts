@@ -77,7 +77,8 @@ function validTimeZone(timeZone: string): boolean {
   }
 }
 
-const minuteOfDay = (value: unknown) => Number.isInteger(value) && (value as number) >= 0 && (value as number) < 1440;
+const minuteOfDay = (value: unknown) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 1440;
 
 /** Quiet hours as `push.register` takes them, or null when `value` is not valid. */
 export function parseQuietHours(value: unknown): QuietHours | null {
@@ -89,7 +90,7 @@ export function parseQuietHours(value: unknown): QuietHours | null {
 
 /** Whether `value` is a stuck threshold `push.register` takes: whole minutes from 1 to 240. */
 export function validStuckMinutes(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 240;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 240;
 }
 
 interface PairingRecord {
@@ -170,6 +171,21 @@ function validClientName(name: string): boolean {
   return name.length <= MAX_CLIENT_NAME && !/[\p{Cc}\p{Cf}]/u.test(name);
 }
 
+/**
+ * A phone sends its OS device name, which the person cannot edit in the app, so pairing cleans it up instead of
+ * refusing it. U+200D stays because emoji sequences join with it.
+ */
+function pairingName(name: string): string {
+  const clean = name
+    .replace(/(?![\u200d\s])[\p{Cc}\p{Cf}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CLIENT_NAME)
+    .replace(/[\ud800-\udbff]$/, '')
+    .trim();
+  return clean || 'Phone';
+}
+
 function newDeviceId(): string {
   const taken = new Set(
     [...readDevices(), ...readRecords(clientsFile('build')), ...readRecords(clientsFile('device-host'))].map(
@@ -248,6 +264,11 @@ function lapsed(client: PairedDevice, now: number): boolean {
  */
 export function readBuildClients(now: number = Date.now()): PairedDevice[] {
   return readRecords(clientsFile('build')).filter((client) => !lapsed(client, now));
+}
+
+/** Whether the build client registry parses, so an empty `readBuildClients` means no client rather than a read failure. */
+export function buildClientsReadable(): boolean {
+  return Array.isArray(readJsonObject(clientsFile('build'))?.devices);
 }
 
 /** Device-host approvals live apart from read/control pairings and build clients. */
@@ -332,7 +353,7 @@ export function spendPairingToken(
     const at = new Date(now).toISOString();
     const device: PairedDevice = {
       id: newDeviceId(),
-      name,
+      name: pairingName(name),
       tokenHash: hashToken(deviceToken),
       identity,
       pairedAt: at,

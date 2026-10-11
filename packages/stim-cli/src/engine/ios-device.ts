@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
-import { INSTALL_ERROR } from './app-install.ts';
+import { appProcessFromPid, INSTALL_ERROR, type AppProcessProbe } from './app-install.ts';
 import { TOOL_ERROR_PREFIX } from '../collector/ios-device.ts';
 
 const DEVICECTL_TIMEOUT_MS = 30_000;
@@ -438,7 +438,7 @@ export function deviceProcessPid(processes: readonly IosDeviceProcess[], appName
 export function iosDeviceProcess(
   { udid, appName }: { udid: string; appName: string },
   { exec = null }: { exec?: Executor | null } = {},
-): number | null | undefined {
+): AppProcessProbe {
   const executor = exec || getExecutor();
   const dir = mkdtempSync(join(tmpdir(), 'stim-devicectl-'));
   const out = join(dir, 'processes.json');
@@ -450,9 +450,9 @@ export function iosDeviceProcess(
         timeoutMs: DEVICECTL_TIMEOUT_MS,
       },
     );
-    return deviceProcessPid(parseDeviceProcesses(readFileSync(out, 'utf-8')), appName);
+    return appProcessFromPid(deviceProcessPid(parseDeviceProcesses(readFileSync(out, 'utf-8')), appName));
   } catch {
-    return undefined;
+    return { state: 'unknown' };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -567,7 +567,7 @@ export async function awaitIosDeviceLaunch({
   appName: string;
   collectorPid?: number | null;
   readRecords: () => NdjsonRecord[];
-  probe?: () => number | null | undefined;
+  probe?: () => AppProcessProbe;
   wireless?: boolean;
   timeoutMs?: number;
   pollMs?: number;
@@ -579,8 +579,8 @@ export async function awaitIosDeviceLaunch({
   for (;;) {
     const records = collectorRecordsFor(readRecords(), collectorPid);
     const ended = records.find((entry) => typeof entry.event === 'string' && COLLECTOR_ENDED_EVENTS.has(entry.event));
-    const pid = probeProcess();
-    if (typeof pid === 'number') return { pid };
+    const running = probeProcess();
+    if (running.state === 'running') return { pid: running.pid };
     if (ended) {
       const evidence = launchEvidence(records);
       const lines = evidence.slice(-6);
@@ -641,17 +641,19 @@ export async function verifyIosDeviceReleaseLaunch({
   udid: string;
   appName: string;
   waitMs?: number;
-  probe?: () => number | null | undefined;
+  probe?: () => AppProcessProbe;
   now?: () => number;
   sleep?: (ms: number) => Promise<unknown>;
 }): Promise<IosDeviceReleaseVerification> {
   const probeProcess = probe ?? (() => iosDeviceProcess({ udid, appName }));
   const startedAt = now();
   await sleep(Math.max(0, waitMs));
-  const pid = probeProcess();
+  const running = probeProcess();
   const waitedMs = now() - startedAt;
-  if (pid === undefined) return { verified: false, reason: 'probe-failed', waitedMs };
-  return pid === null ? { verified: false, reason: 'exited', waitedMs, pid: null } : { verified: true, waitedMs, pid };
+  if (running.state === 'unknown') return { verified: false, reason: 'probe-failed', waitedMs };
+  return running.state === 'running'
+    ? { verified: true, waitedMs, pid: running.pid }
+    : { verified: false, reason: 'exited', waitedMs, pid: null };
 }
 
 // CFNetwork's errno-50 shapes -- `failed to connect 1:50`, `error(1:50)`,

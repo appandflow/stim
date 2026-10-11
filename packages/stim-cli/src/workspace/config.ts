@@ -4,9 +4,9 @@ import {
   projectDeviceSlots,
   removeSlotDevice,
 } from '../devices/device-slots.ts';
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute } from 'path';
-import { configDir } from '@stim-cli/core';
+import { configDir, ensurePrivateDir } from '@stim-cli/core';
 import {
   getConfigPath,
   loadConfig,
@@ -60,16 +60,11 @@ export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): v
   }
 }
 
-function ensureDir() {
-  const dir = getConfigDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
-
 export function saveConfig(config: Config): void {
-  ensureDir();
+  ensurePrivateDir(getConfigDir());
   const target = getConfigPath();
   const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n');
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
   try {
     renameSync(tmp, target);
   } catch (err) {

@@ -16,7 +16,7 @@ import type {
 import { reserveBrowserPort } from '../named-ports.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { sleep } from '../commands/native-runtime.ts';
+import { cancellableSleep } from '../cancellation.ts';
 import { liveWebRecord, sendToOwnedPage } from './page.ts';
 import { readWebRecord, updateWebRecord, webSupervisorLogFile, type WebLaunchConfig, type WebRecord } from './state.ts';
 
@@ -90,7 +90,7 @@ async function waitForSupervisor(root: string, child: ChildProcess, launchId: st
     const record = readWebRecord(root);
     if (record?.launchId === launchId && record.targetId) return record;
     if (exited) return null;
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
   }
   return null;
 }

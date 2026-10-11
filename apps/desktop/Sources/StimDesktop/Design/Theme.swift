@@ -144,6 +144,14 @@ enum BrandAssets {
     url(scheme == .dark ? "stim-build-dark.json" : "stim-build-light.json", websitePath: "static/img/branding")
   }
 
+  static func tutorial(_ scheme: ColorScheme) -> URL? {
+    url(scheme == .dark ? "stim-tutorial-dark.json" : "stim-tutorial-light.json", websitePath: "static/img/branding")
+  }
+
+  static func stepDone(_ scheme: ColorScheme) -> URL? {
+    url(scheme == .dark ? "stim-step-done-dark.json" : "stim-step-done-light.json", websitePath: "static/img/branding")
+  }
+
   /// The wordmark's path art as a template image, so callers tint it with `Palette.primary`.
   static let wordmark: NSImage? = {
     let art = image("wordmark.svg")

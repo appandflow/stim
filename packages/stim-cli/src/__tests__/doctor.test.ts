@@ -425,6 +425,14 @@ test('a fingerprinted library directory that still hashes .git gets both .finger
     }) as unknown as typeof createFingerprint;
     expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint: failing })).toBeNull();
 
+    writeFileSync(join(project, 'fingerprint.config.js'), 'module.exports = {};\n');
+    const configured = calls.length;
+    expect((await detectLinkedLibraryGitMetadata(project, { createFingerprint }))?.code).toBe(
+      'fingerprint-config-skipped',
+    );
+    expect(calls.length).toBe(configured);
+    rmSync(join(project, 'fingerprint.config.js'));
+
     rmSync(join(project, 'node_modules', '@org'), { recursive: true, force: true });
     const before = calls.length;
     expect(await detectLinkedLibraryGitMetadata(project, { createFingerprint })).toBeNull();
@@ -1288,6 +1296,110 @@ test('the EAS finding reaches the report runDoctor returns', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+function writeMarkerScript(file: string, marker: string, output: string, exitCode = 0) {
+  mkdirSync(join(file, '..'), { recursive: true });
+  writeFileSync(file, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\necho ${JSON.stringify(output)}\nexit ${exitCode}\n`);
+  chmodSync(file, 0o755);
+}
+
+function writeProjectEasCli(project: string, marker: string, version: string) {
+  const cli = join(project, 'node_modules', 'eas-cli');
+  mkdirSync(cli, { recursive: true });
+  writeFileSync(join(cli, 'package.json'), JSON.stringify({ name: 'eas-cli', version, bin: { eas: 'bin/run' } }));
+  writeMarkerScript(join(cli, 'bin', 'run'), marker, 'eas-cli/99.0.0 darwin-arm64 node-v22.22.2');
+  writeMarkerScript(join(project, 'node_modules', '.bin', 'eas'), marker, 'eas-cli/99.0.0 darwin-arm64 node-v22.22.2');
+}
+
+test.skipIf(process.platform === 'win32')(
+  'doctor reads the project eas-cli version from its package.json without running it',
+  () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-version-')));
+    const marker = join(project, 'ran');
+    try {
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'x' }));
+      writeFileSync(join(project, 'eas.json'), '{}');
+      writeProjectEasCli(project, marker, '18.0.3');
+      const findings = runDoctor(project, { lookupEasCli: () => true });
+      expect(findings.map((f) => f.title)).toContain('eas-cli 18.0.3 cannot download EAS builds for --eas-profile');
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+    }
+  },
+);
+
+const EAS_SESSION_UNCHECKED =
+  'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository';
+
+test.skipIf(process.platform === 'win32')(
+  'doctor runs eas whoami only with an eas on PATH outside the repository',
+  () => {
+    const project = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-whoami-')));
+    const global = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-global-')));
+    const marker = join(project, 'ran');
+    const globalMarker = join(global, 'ran');
+    const path = process.env.PATH;
+    const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
+    try {
+      execSync('git init -q', { cwd: project });
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+      writeFileSync(join(project, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+      writeProjectEasCli(project, marker, '18.9.0');
+      process.env.PATH = [join(project, 'node_modules', '.bin'), ...pathWithoutEas].join(delimiter);
+
+      const projectOnly = runDoctor(project).find((f) => /EAS session/.test(f.title));
+      expect(projectOnly?.title).toBe(EAS_SESSION_UNCHECKED);
+      expect(existsSync(marker)).toBe(false);
+
+      writeMarkerScript(join(global, 'eas'), globalMarker, 'Not logged in', 1);
+      process.env.PATH = [join(global), join(project, 'node_modules', '.bin'), ...pathWithoutEas].join(delimiter);
+      const findings = runDoctor(project);
+      expect(findings.map((f) => f.title)).toContain('Not logged in to EAS, so the shared build cache never answers');
+      expect(existsSync(globalMarker)).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      process.env.PATH = path;
+      rmSync(project, { recursive: true, force: true });
+      rmSync(global, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')('doctor never runs a PATH eas it cannot place outside the repository', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-doctor-eas-placement-')));
+  const marker = join(base, 'ran');
+  const path = process.env.PATH;
+  const pathWithoutEas = (path ?? '').split(delimiter).filter((dir) => dir && !existsSync(join(dir, 'eas')));
+  const unchecked = (project: string, binDir: string) => {
+    process.env.PATH = [binDir, ...pathWithoutEas].join(delimiter);
+    return runDoctor(project).find((f) => /EAS session/.test(f.title))?.title;
+  };
+  try {
+    const workspace = join(base, 'workspace');
+    const app = join(workspace, 'apps', 'mobile');
+    mkdirSync(app, { recursive: true });
+    writeFileSync(join(app, 'package.json'), JSON.stringify({ dependencies: { expo: '~57.0.0' } }));
+    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { buildCacheProvider: 'eas' } }));
+    writeMarkerScript(join(workspace, 'node_modules', '.bin', 'eas'), marker, 'janic');
+    expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
+
+    execSync('git init -q', { cwd: app });
+    expect(unchecked(app, join(workspace, 'node_modules', '.bin'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
+
+    const outside = join(base, 'outside', 'eas');
+    writeMarkerScript(outside, marker, 'janic');
+    mkdirSync(join(app, 'tools'));
+    symlinkSync(outside, join(app, 'tools', 'eas'));
+    expect(unchecked(app, join(app, 'tools'))).toBe(EAS_SESSION_UNCHECKED);
+    expect(existsSync(marker)).toBe(false);
+  } finally {
+    process.env.PATH = path;
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test.each(['buildCache', 'remoteBuildCache'])('doctor skips EAS auth when %s is disabled', (setting) => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   try {
@@ -1578,7 +1690,9 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
     git('git config user.name test');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'app' }));
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add package.json app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add package.json app.json ios');
     git('git commit -q -m init');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
 
@@ -1618,7 +1732,9 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
     git('git config user.email test@example.com');
     git('git config user.name test');
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    git('git add app.json');
+    mkdirSync(join(repo, 'ios'));
+    writeFileSync(join(repo, 'ios', 'Podfile'), '');
+    git('git add app.json ios');
     git('git commit -q -m init');
 
     const createFingerprint = async (dir: string) => {
@@ -1635,6 +1751,35 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
   }
 });
 
+test.skipIf(process.platform === 'win32')(
+  "detectFingerprintParity's temporary worktree runs none of the repository's hooks",
+  async () => {
+    resetExecutor();
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hooks-')));
+    const marker = join(repo, 'hook-ran');
+    try {
+      const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
+      git('git init -q');
+      git('git config user.email test@example.com');
+      git('git config user.name test');
+      writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+      mkdirSync(join(repo, 'ios'));
+      writeFileSync(join(repo, 'ios', 'Podfile'), '');
+      writeMarkerScript(join(repo, '.husky', 'post-checkout'), marker, '');
+      git('git config core.hooksPath .husky');
+      git('git add . && git commit -q -m init');
+      rmSync(marker, { force: true });
+
+      const createFingerprint = async () => ({ hash: 'same', sources: [] });
+      expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
+      expect(existsSync(marker)).toBe(false);
+      expect(git('git worktree list').trim().split('\n').length).toBe(1);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  },
+);
+
 test('detectFingerprintParity fingerprints only the selected platform', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-platform-'));
@@ -1646,14 +1791,22 @@ test('detectFingerprintParity fingerprints only the selected platform', async ()
     mkdirSync(join(base, 'ios'));
     mkdirSync(join(base, 'android'));
     execSync('git add . && git commit -q -m init', { cwd: base });
-    const platforms: string[][] = [];
-    const createFingerprint = async (_root: string, options?: { platforms?: string[] }) => {
-      platforms.push(options?.platforms ?? []);
+    const calls: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean }[] = [];
+    const createFingerprint = async (
+      _root: string,
+      options?: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean },
+    ) => {
+      calls.push(options ?? {});
       return { hash: 'same', sources: [] };
     };
 
-    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'android' })).toBe(null);
-    expect(platforms).toEqual([['android'], ['android']]);
+    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'ios' })).toBe(null);
+    expect(calls.map((options) => options.platforms)).toEqual([['ios'], ['ios']]);
+    expect(calls.every((options) => options.useRNCoreAutolinkingFromExpo === true)).toBe(true);
+
+    const android = await detectFingerprintParity(base, { createFingerprint, platform: 'android' });
+    expect(android?.code).toBe('fingerprint-parity-skipped');
+    expect(calls.length).toBe(2);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -1688,6 +1841,76 @@ test('detectFingerprintParity skips a cold comparison when dependencies are inst
     };
     expect(await detectFingerprintParity(base, { createFingerprint })).toBe(null);
     expect(called).toBe(false);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity never fingerprints or adds a worktree when an app without node_modules resolves Expo from the repository root', async () => {
+  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hoisted-')));
+  const base = join(outside, 'repo');
+  const commands: string[][] = [];
+  setExecutor({
+    runQuiet: () => null,
+    runFileQuiet: (file: string, args: string[]) => {
+      commands.push([file, ...args]);
+      return file === 'git' && args.includes('rev-parse') ? '.git' : null;
+    },
+  });
+  try {
+    const app = join(base, 'apps', 'mobile');
+    mkdirSync(join(app, 'ios'), { recursive: true });
+    for (const name of ['expo', 'expo-modules-autolinking']) {
+      mkdirSync(join(base, 'node_modules', name), { recursive: true });
+      writeFileSync(join(base, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '2.0.0' }));
+    }
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+
+    const finding = await detectFingerprintParity(app, { createFingerprint });
+    expect(finding?.code).toBe('fingerprint-parity-skipped');
+    expect(finding?.fix).toBeTruthy();
+    const link = join(outside, 'linked-app');
+    symlinkSync(app, link);
+    expect((await detectFingerprintParity(link, { createFingerprint }))?.code).toBe('fingerprint-parity-skipped');
+    expect(called).toBe(false);
+    expect(commands.filter((command) => command.includes('worktree'))).toEqual([]);
+  } finally {
+    resetExecutor();
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('detectFingerprintParity never fingerprints a checkout whose fingerprint.config.js would run, in the tree or at HEAD', async () => {
+  resetExecutor();
+  const base = mkdtempSync(join(tmpdir(), 'stim-parity-config-'));
+  try {
+    const git = (cmd: string) => execSync(cmd, { cwd: base, encoding: 'utf-8' });
+    git('git init -q');
+    git('git config user.email test@example.com');
+    git('git config user.name test');
+    writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
+    writeFileSync(join(base, 'fingerprint.config.js'), 'module.exports = {};\n');
+    mkdirSync(join(base, 'ios'));
+    writeFileSync(join(base, 'ios', 'Podfile'), '');
+    git('git add . && git commit -q -m init');
+    let called = false;
+    const createFingerprint = async () => {
+      called = true;
+      return { hash: 'x', sources: [] };
+    };
+
+    const inTree = await detectFingerprintParity(base, { createFingerprint });
+    expect(inTree?.code).toBe('fingerprint-config-skipped');
+    expect(inTree?.title).toContain('fingerprint.config.js');
+
+    rmSync(join(base, 'fingerprint.config.js'));
+    expect((await detectFingerprintParity(base, { createFingerprint }))?.code).toBe('fingerprint-config-skipped');
+    expect(called).toBe(false);
+    expect(git('git worktree list').trim().split('\n').length).toBe(1);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

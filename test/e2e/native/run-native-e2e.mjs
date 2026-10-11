@@ -117,6 +117,11 @@ async function main() {
     return;
   }
 
+  if (SINGLE_EMULATOR) {
+    cleanup.recordWorkspace(wt1);
+    stop(wt1);
+  }
+
   const start2 = startAndAssertMode(wt2);
   log(`wt2 start mode: ${start2.mode}`);
   const build2 = buildAndAssert(wt2, { expectCacheHit: true });
@@ -131,13 +136,20 @@ async function main() {
 
   cleanup.recordWorkspace(wt2);
   stop(wt2);
-  verifyDeviceSlots(wt1, build1, flags);
-  cleanup.recordWorkspace(wt1);
-  stop(wt1);
+  if (!SINGLE_EMULATOR) {
+    verifyDeviceSlots(wt1, build1, flags);
+    cleanup.recordWorkspace(wt1);
+    stop(wt1);
+  }
   worktreeRemove(wt2);
   worktreeRemove(wt1);
   await verifyCleanup({ h, cleanup, appDir, created });
 }
+
+// GitHub's 4-vCPU windows-latest runner starves the adb server and the package verifier with two
+// or more concurrent emulators, so Windows runs one at a time and skips the named-slot proof:
+// https://github.com/appandflow/stim/issues/3086
+const SINGLE_EMULATOR = process.platform === 'win32';
 
 function stop(cwd) {
   cli(['stop'], { cwd, env: { ...ENV, STIM_DEBUG: '1' } });

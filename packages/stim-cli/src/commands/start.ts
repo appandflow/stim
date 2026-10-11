@@ -9,7 +9,7 @@ import { type WorkspaceLinks, workspaceLinkLine, workspaceLinks } from '../devic
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { pidExists, resolveProjectMetro, signalProcessTree } from '../metro.ts';
-import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { captureProcessToken, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { resolveSupervisorTarget, type SupervisorStateRecord } from '../supervisor/ownership.ts';
 import type { MetroResolution } from '../metro.ts';
 import { IDLE_STOP_KEY, queryLogs } from '@stim-cli/core/state';
@@ -72,6 +72,7 @@ import {
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
+import { cancellableSleep } from '../cancellation.ts';
 
 const DEFAULT_WAIT_SECONDS = 60;
 const POLL_MS = 500;
@@ -210,8 +211,6 @@ export function readLogTail(file: string, n: number = LOG_TAIL_LINES): string[] 
   }
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
 export default function startCommand(program: Command): void {
   registerStart(program);
 }
@@ -242,11 +241,21 @@ interface StartCommandDeps {
 export interface SupervisorProcess extends TerminableChild {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   unref(): void;
+  recordedIdentity?: ProcessRecord;
 }
 
-function recordedSupervisorProcess(pid: number | undefined): SupervisorProcess {
+export function supervisorSignalable(
+  child: Pick<SupervisorProcess, 'recordedIdentity'>,
+  inspectIdentity: typeof inspectProcessIdentity = inspectProcessIdentity,
+): boolean {
+  return !child.recordedIdentity || inspectIdentity(child.recordedIdentity) === 'same';
+}
+
+function recordedSupervisorProcess(recorded: ProcessRecord | null): SupervisorProcess {
+  const pid = typeof recorded?.pid === 'number' ? recorded.pid : undefined;
   return Object.assign(new EventEmitter(), {
     pid,
+    ...(recorded ? { recordedIdentity: recorded } : {}),
     stdout: null,
     stderr: null,
     kill: (signal: NodeJS.Signals | number = 'SIGTERM') =>
@@ -279,7 +288,7 @@ const DEFAULT_START_DEPS: StartCommandDeps = {
       alreadyExited: false,
       timeoutMs: 1_000,
       now: Date.now,
-      sleep,
+      sleep: cancellableSleep,
       isAlive: pidExists,
     }),
   withWorktreeLock: withManagedRemoteWorktreeLock,
@@ -609,7 +618,7 @@ export async function startDevServer(
         return child;
       };
 
-      const recordedSupervisorPid = async (since: number): Promise<number | null> => {
+      const recordedSupervisor = async (since: number): Promise<ProcessRecord | null> => {
         const deadline = Date.now() + RECORDED_SUPERVISOR_WAIT_MS;
         while (Date.now() < deadline) {
           const record = readWorkspaceState(root)?.supervisor as SupervisorStateRecord | undefined;
@@ -619,8 +628,8 @@ export async function startDevServer(
             Date.parse(String(record.startedAt)) >= since &&
             pidExists(record.pid)
           )
-            return record.pid;
-          await sleep(25);
+            return { pid: record.pid, processToken: record.processToken };
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -647,15 +656,15 @@ export async function startDevServer(
           shell.on?.('error', (error) => resolve({ code: null, signal: null, error }));
         });
         const launcherFailed = exit.code !== 0 || exit.error;
-        const pid = launcherFailed ? null : await recordedSupervisorPid(since);
-        if (pid === null) {
+        const recorded = launcherFailed ? null : await recordedSupervisor(since);
+        if (recorded === null) {
           const reason = launcherFailed
             ? `the supervisor launcher exited (${exit.error ? exit.error.message : `code ${exit.code}`})`
             : `the supervisor did not record itself within ${RECORDED_SUPERVISOR_WAIT_MS / 1000}s`;
           appendFileSync(logFile, `Stim start: ${reason}.\n${stderr.join('')}`);
           childExit = { code: exit.code, signal: exit.signal, ...(exit.error ? { error: exit.error } : {}) };
         }
-        return recordedSupervisorProcess(pid ?? undefined);
+        return recordedSupervisorProcess(recorded);
       };
 
       const spawnSupervisor = async (origin: string | null): Promise<SupervisorProcess> => {
@@ -694,7 +703,7 @@ export async function startDevServer(
           const found = liveSupervisor({ state: readWorkspaceState(root), project: getProject(root), port });
           if (found?.pid === child.pid) return found;
           if (childExit !== null || (child.pid ? !pidExists(child.pid) : true)) return null;
-          await sleep(25);
+          await cancellableSleep(25);
         }
         return null;
       };
@@ -883,7 +892,11 @@ export async function startDevServer(
               }
               const handoffRecord = {
                 pid: child.pid as number,
-                processToken: child.pid ? captureProcessToken(child.pid) : null,
+                processToken: child.recordedIdentity
+                  ? (child.recordedIdentity.processToken ?? null)
+                  : child.pid
+                    ? captureProcessToken(child.pid)
+                    : null,
                 port,
                 mode: serverMode,
                 startedAt: new Date(spawnedTs ?? Date.now()).toISOString(),
@@ -893,14 +906,18 @@ export async function startDevServer(
               } catch {
                 const handedOff = await waitForSupervisorHandoff(child);
                 if (!handedOff) {
-                  const stopped = await d.terminateSupervisorChild(child);
+                  const stopped = supervisorSignalable(child) && (await d.terminateSupervisorChild(child));
                   return {
                     failed: {
                       code: 'STIM_SUPERVISOR_EXITED',
                       message: `Could not record supervisor pid ${child.pid ?? 'unknown'} before releasing the managed start lock.`,
                       remedy: stopped
                         ? 'The supervisor process was stopped. Retry `stim start --remote`.'
-                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it before retrying.`,
+                        : `Cleanup failed. Unmanaged supervisor pid ${child.pid ?? 'unknown'} may still be running. Stop it with \`stim stop\`${
+                            child.pid === undefined
+                              ? ''
+                              : `, or \`${d.platform === 'win32' ? `taskkill /PID ${child.pid} /T /F` : `kill ${child.pid}`}\``
+                          } before retrying.`,
                     },
                   };
                 }
@@ -1250,7 +1267,7 @@ async function waitForMetro({
     const resolution = await probe(port, root);
     if (resolution.metro) return true;
     if (aborted()) return false;
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
   }
   const last = await probe(port, root);
   return Boolean(last.metro);
@@ -1269,7 +1286,7 @@ async function waitForExpoTunnel({
   while (Date.now() < deadline) {
     if (aborted()) return false;
     if (readMetroTunnel(root)?.kind === 'expo') return true;
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS);
   }
   return !aborted() && readMetroTunnel(root)?.kind === 'expo';
 }

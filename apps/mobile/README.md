@@ -48,8 +48,8 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   and checkouts stay separate even when they share a branch name. Primary checkouts
   and older servers without an explicit checkout identity retain separate app rows;
   [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
-  Source-only worktrees share their repo's section and count as idle. **Idle**, **All**
-  and **Show All** reveal them; the default **Active** filter hides them. Their rows
+  Source-only worktrees share their repo's section and count as idle. **Not set up**,
+  **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
   than one is paired. They have no app activity or controls and do not open a
   workspace page. Machine and project filters apply; errors and remote-session
@@ -136,8 +136,10 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   worktree share a heading and keep their app labels. Rows show removal time,
   size, the PR number (or Merged), and an indicator for expired content or
   content expiring within 24 hours. Missing branch or repository facts fall back
-  to the worktree folder. Active and Idle show only current workspaces; All
-  shows them followed by the archived ones.
+  to the worktree folder. **Show** in Filters is a multi-select over Active, Idle,
+  Not set up and Archived; **All** selects all four, so it includes archived
+  workspaces, which follow the current ones. At least one stays selected. A
+  filter saved by an older app version keeps what it showed.
   An archive opens the same workspace page as a read-only variant: Status shows
   removal, last activity, retention dates, size by content and activity totals;
   Build opens the same build history sheet with cache results, durations,
@@ -153,7 +155,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   history and recording discovery. Archive log or replay refusals show an update hint.
 - **Filters**: the filter button filters the list by machine, by project, by active
   or idle, and to workspaces with errors or with remote sessions. The filters
-  are saved on the phone; a dot on the button shows that some are on. Active only
+  are saved on the phone; a dot on the button shows that some are on. Active and Idle
   is the default.
 - **Machine Status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
@@ -203,7 +205,9 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   locale, on the clipboard for a bug report. A tap on home, a swipe left, or Android's back button closes the
   menu. Pairing scans the QR code Stim Desktop
   shows under **Pair a Phone**, or takes the endpoint and pairing token typed
-  in. A failed QR pairing keeps its error visible and pauses scanning until
+  in. Either way, the app shows the endpoint host and connects only after
+  **Connect**; a host that is not a `.ts.net` name or this device gets a warning.
+  A failed QR pairing keeps its error visible and pauses scanning until
   **Retry** or manual entry is chosen; unrelated QR codes do not pause scanning.
   The token field is masked, with a button that shows it, and drops
   what a token cannot hold, such as the spaces and line breaks of a paste, as you
@@ -272,7 +276,7 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
     running or ended, shows as a link that opens it in the Claude app, or
     claude.ai/code without the app. Below come the upstream, ahead, behind, changed and untracked
     files, merged into, and the pull request's title, state, checks and review
-    with **Open in GitHub**. **Changed** and **Untracked** open a file list on a
+    with **Open in GitHub**, offered only for a `github.com` pull request link. **Changed** and **Untracked** open a file list on a
     Mac that supports workspace diffs. Select a file to read its staged and
     unstaged patches or new text. These requests run only when opening the list
     or selecting a file; home and status updates fetch no diff data. The list
@@ -935,6 +939,9 @@ A checkout that installed the app with npm before it joined the workspace has an
 `apps/mobile/node_modules` pnpm does not clean up. Delete it once, then run
 `pnpm install` from the root.
 
+The mock server imports `@stim-cli/core/state` from its build, so run
+`pnpm --filter @stim-cli/core run build` before starting it.
+
 `pnpm run mock-server` serves a Stim server on `ws://127.0.0.1:7787` that
 replays payloads captured from a real Mac in `mock-server/fixtures/`: a
 `stim status --json` payload taken while `stim ios` was installing, records
@@ -1049,7 +1056,9 @@ notifications. The server rereads the JSON file for each status push (every 5
 seconds) and `machine.get`: `freeGb` replaces `--free-gb`, and `environments`
 maps a workspace path to fields that replace the fixture's, such as a
 `phase` of `warming`, an `ios` device whose `activity` is `driven`, or a
-`builds` history with three failed runs.
+`builds` history with three failed runs. The server then derives each
+workspace's `stage`, `appPresence` and `gitChip` again with core's
+`withDerivedFacts`, so an overlay's changes reach the stage line.
 
 ## Design system
 

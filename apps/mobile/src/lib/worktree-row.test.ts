@@ -1,6 +1,6 @@
 import type { HomeItem } from '@/lib/home';
 import { platformStates, worktreeRowLabel, worktreeRowSummary } from '@/lib/worktree-row';
-import type { EnvironmentState } from '@/protocol/types';
+import type { EnvironmentState, StageFacts } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -32,6 +32,12 @@ const macos = (state: string, build: string) =>
     state,
     build: { state: build, startedAt: ago(HOUR) },
   }) as EnvironmentState['macos'];
+const stage = (kind: StageFacts['kind'], platform: StageFacts['platform'] = null): StageFacts => ({
+  kind,
+  since: null,
+  platform,
+  closedApps: [],
+});
 const failedBuild = (platform: string, at = HOUR) =>
   ({
     [platform]: {
@@ -94,10 +100,11 @@ describe('worktreeRowSummary', () => {
     env('/w/apps/desktop', {
       live: true,
       macos: macos('running', 'ok'),
+      stage: stage('running'),
       ...extra,
     });
   const mobile = (extra: Partial<EnvironmentState> = {}) =>
-    env('/w/apps/mobile', { live: true, ios: booted, ...extra });
+    env('/w/apps/mobile', { live: true, ios: booted, stage: stage('running'), ...extra });
 
   it('keeps a single app as it is', () => {
     const summary = worktreeRowSummary([item(mobile())], NOW, null);
@@ -138,6 +145,7 @@ describe('worktreeRowSummary', () => {
         phase: 'compile',
         startedAt: ago(1000),
       } as EnvironmentState['build'],
+      stage: stage('building', 'ios'),
     });
     const idle = env('/w/apps/idle', { ios: shutdown });
     const summary = worktreeRowSummary([item(idle), item(desktop()), item(building)], NOW, null);
@@ -150,7 +158,7 @@ describe('worktreeRowSummary', () => {
   });
 
   it('puts a failed app first and keeps its platform failed when another app runs it', () => {
-    const failed = mobile({ ios: shutdown, lastBuilds: failedBuild('ios') });
+    const failed = mobile({ ios: shutdown, lastBuilds: failedBuild('ios'), stage: stage('build-failed', 'ios') });
     const summary = worktreeRowSummary(
       [item(desktop()), item(failed), item(mobile({ path: '/w/apps/other' } as never))],
       NOW,

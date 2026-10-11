@@ -36,17 +36,19 @@ import {
   bundleManifest,
   sha256,
   upload,
-  sleep,
   POLL_MS,
   SESSION_TIMEOUT_MS,
   PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
+  OFFER_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
 import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
 import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
   return Object.assign(new Error(`${machine}: ${error instanceof Error ? error.message : String(error)}`), {
@@ -105,8 +107,9 @@ export async function prepareHostedNative(
           ['preparing'],
           PREPARE_TIMEOUT_MS,
           platform,
+          runCancellationSignal(),
         );
-        session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, platform);
+        session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, platform, runCancellationSignal());
       } catch (error) {
         if (!heldNoLonger(error)) throw error;
       }
@@ -139,7 +142,7 @@ export async function prepareHostedNative(
       }
     }
     if (resumeOnly) return null;
-    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, 45_000);
+    const offer = await call(host, 'device-host.offer', { platform, ...selectors }, OFFER_TIMEOUT_MS);
     const parsedOffer = parseHostedNativeOffer(offer);
     const choice =
       platform === 'ios'
@@ -259,7 +262,7 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     reserved(placement);
-    session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform);
+    session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform, runCancellationSignal());
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
     if (
@@ -346,7 +349,7 @@ export async function placeHostedNative(
             } catch (offerError) {
               if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
                 throw offerError;
-              await sleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())));
+              await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())));
             }
           }
         }
@@ -363,7 +366,7 @@ export async function placeHostedNative(
           typeof delivery.notice === 'string' ? delivery.notice : 'App installation or launch is unknown.',
         );
       if (Date.now() > deadline) throw new Error('App installation did not finish.');
-      await sleep(POLL_MS);
+      await cancellableSleep(POLL_MS);
       delivery = await call(host, 'device-host.app.attach', ids);
     }
     if (typeof delivery.notice === 'string') note(delivery.notice);

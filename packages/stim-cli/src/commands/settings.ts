@@ -483,7 +483,7 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           throw new Refusal(
             'STIM_BAD_ARG',
             `${key} is sensitive, so a committed .stim.json takes only an env: or file: reference, never the secret.`,
-            `Set the secret with --scope workspace or --scope repo, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
+            `Set the secret with --scope workspace or --scope repo, which store it in ${getConfigPath()}, readable only by you, or commit a reference such as env:MY_KEYSTORE_PASSWORD.`,
           );
         }
         const context = readContext(env, io.note);
