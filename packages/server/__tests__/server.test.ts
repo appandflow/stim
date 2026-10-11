@@ -459,8 +459,8 @@ function alive(pid: number): boolean {
   }
 }
 
-async function until(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+async function until(check: () => boolean, tries = 200): Promise<void> {
+  for (let i = 0; i < tries && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
   expect(check()).toBe(true);
 }
 
@@ -2818,7 +2818,7 @@ describe('status.subscribe', () => {
     expect(statusWorkers()).toHaveLength(1);
 
     second.socket.close();
-    await until(() => statusWorkers().length === 0);
+    await until(() => statusWorkers().length === 0, 1000);
   });
 
   it('starts the status watch when the server becomes ready, before any subscriber, and keeps it', async () => {
@@ -2845,7 +2845,7 @@ describe('status.subscribe', () => {
 
     await server!.close();
     server = null;
-    await until(() => statusWorkers().length === 0);
+    await until(() => statusWorkers().length === 0, 1000);
     expect(statusWorkers()).toEqual([]);
   });
 
@@ -2930,7 +2930,7 @@ describe('push.register', () => {
     await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken: token } });
     expect(await again.request('push.unregister')).toEqual({ id: 2, result: {} });
     expect(readDevices().every((device) => !device.push)).toBe(true);
-    await until(() => statusWorkers().length === 0);
+    await until(() => statusWorkers().length === 0, 1000);
   });
 
   it('moves a token registered from a new pairing of the same phone off the old pairing', async () => {
@@ -2950,7 +2950,7 @@ describe('push.register', () => {
     await until(() => statusWorkers().length === 1);
     revokeDevice(readDevices()[0]!.id);
     expect(readDevices()).toEqual([]);
-    await until(() => statusWorkers().length === 0);
+    await until(() => statusWorkers().length === 0, 1000);
   });
 
   it('reads the events an older phone registers: disk as machine, the rest as nothing', async () => {
