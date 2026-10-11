@@ -86,8 +86,8 @@ Run results preserve the CLI's launch evidence, including `'bundling'` and
 
 `build`, `run`, `stop` and `diagnostics` each use a separate bundled worker so
 their home, cancellation and process state cannot change the importing process.
-`settings()` reads the `stim settings --json` payload in the importing process,
-against the client's own home. The CLI and workers call
+`settings()` and `stats()` read the `stim settings --json` and `stim stats --json`
+payloads in the importing process, against the client's own home. The CLI and workers call
 the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.
 Cancellation waits for the worker to exit, and does not replace `stop()`.

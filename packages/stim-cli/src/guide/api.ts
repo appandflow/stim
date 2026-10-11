@@ -1,5 +1,5 @@
 export default {
-  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, and cancellation',
+  summary: 'Typed lifecycle API: createStim, build, run, stop, diagnostics, settings, stats, and cancellation',
   body: () => `PROGRAMMATIC API
 
 Install stim as a project dependency: npm install --save-dev stim.
@@ -24,12 +24,14 @@ output chunk. Without onProgress, operations write nothing to the caller's
 stdout or stderr. The home is fixed when the client is created: home, else
 STIM_HOME from env, else the default home. build, run, stop and diagnostics each
 use a bundled worker that calls the same lifecycle operations as the CLI. Reads
-such as settings run in the calling process against the client's home and
+such as settings and stats run in the calling process against the client's home and
 project. None parses CLI arguments or changes the caller's cwd/environment.
 
 settings() returns the stim settings --json payload: every setting with its
 effective value, origin and per-layer values. An invalid environment override
-rejects with StimError STIM_BAD_ARG and its remedy.
+rejects with StimError STIM_BAD_ARG and its remedy. stats() returns the
+stim stats --json payload with the last recorded agent-device and SwiftPM cache
+usage instead of measuring them again.
 
 run takes platform plus its options:
   ios:     configuration, scheme, deviceType, runtime

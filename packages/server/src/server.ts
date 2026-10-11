@@ -1773,10 +1773,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       )
         .then(
           (result) => {
-            if (abort.signal.aborted) return undefined;
-            if (Buffer.byteLength(JSON.stringify(result)) > commandLimits.maxOutputBytes) {
-              error(id, 'stim-failed', `${label} printed more than ${commandLimits.maxOutputBytes} bytes.`);
-            } else send(socket, { id, result });
+            if (!abort.signal.aborted) send(socket, { id, result });
             return undefined;
           },
           (cause: Error) => {
