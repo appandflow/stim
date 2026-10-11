@@ -107,7 +107,13 @@ history (the workflow checks out with `fetch-depth: 0`).
 `Lottie.framework`; Sparkle's `Installer.xpc`, `Downloader.xpc` (keeping its
 entitlements), `Autoupdate`, `Updater.app` and `Sparkle.framework`, in the
 order [Sparkle documents](https://sparkle-project.org/documentation/sandboxing/#code-signing);
-`sim-fold`; the app; then the DMG.
+`sim-fold`; the bundled server's `unique-pid` addons and its `node`, with
+`Support/Node/node.entitlements` (`com.apple.security.cs.allow-jit`, which V8
+needs under the hardened runtime, and
+`com.apple.security.cs.disable-library-validation`, so `stim` commands can load a
+project's native addons); the app; then the DMG. Notarization covers
+`node` and the addons with the rest of the app, so a rejected nested binary
+fails `release.sh`'s `notarytool` step and the log names it.
 
 A Developer ID build carries no entitlements. Hardened Runtime's library
 validation accepts code signed by Apple or by the app's own team, and Xcode's

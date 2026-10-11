@@ -14,7 +14,7 @@ app=build/Stim.app
 dmg=$out/Stim-$version.dmg
 zip=$out/Stim-$version.zip
 
-./scripts/bundle.sh --universal --release >/dev/null
+./scripts/bundle.sh --universal --release ${DESKTOP_SERVER_RUNTIME:+--server "$DESKTOP_SERVER_RUNTIME"} >/dev/null
 rm -rf "$out"
 mkdir -p "$out"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" -c "Set :CFBundleVersion $build_number" \
@@ -36,6 +36,10 @@ sign "$sparkle/Versions/B/Autoupdate"
 sign "$sparkle/Versions/B/Updater.app"
 sign "$sparkle"
 sign --entitlements Support/SimFold/runtime.entitlements "$app/Contents/Resources/sim-fold"
+for addon in "$app"/Contents/Resources/stim-server/node_modules/unique-pid/prebuilds/darwin-*/node.napi.node; do
+  sign "$addon"
+done
+sign --entitlements Support/Node/node.entitlements "$app/Contents/Resources/stim-server/bin/node"
 sign $app_entitlements "$app"
 codesign --verify --strict --deep "$app"
 

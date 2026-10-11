@@ -117,6 +117,7 @@ function macName(tailscale: TailscaleState): string {
 }
 
 async function serve(port: number, extraEnv: string[], pathPrepend: string[], loopbackOnly: boolean): Promise<void> {
+  delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
   const login = loginShellEnvironment();
   if (!login) console.error('stim-server: could not read the login shell environment; using this process environment.');
@@ -125,6 +126,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   delete env.CODEX_THREAD_ID;
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
+  Object.assign(process.env, env);
 
   const launchdLabel = process.env.XPC_SERVICE_NAME;
   const tailscaleBinary = findTailscale(env);

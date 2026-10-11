@@ -6,6 +6,11 @@ public enum StimHome {
     return "\(home)/.stim"
   }
 
+  /// Whether two paths name the same Stim home once symbolic links are resolved.
+  public static func isSame(_ a: String, _ b: String) -> Bool {
+    canonical(a) == canonical(b)
+  }
+
   public static func isDefault(_ path: String, home: String = NSHomeDirectory()) -> Bool {
     canonical(path) == canonical("\(home)/.stim")
   }

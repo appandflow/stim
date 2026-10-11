@@ -31,6 +31,7 @@ jobs:
       SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
       STIM_DESKTOP_SENTRY_DSN: ${{ vars.STIM_DESKTOP_SENTRY_DSN }}
       APPCAST_URL: https://github.com/${{ github.repository }}/releases/download/desktop-latest/appcast.xml
+      DESKTOP_SERVER_RUNTIME: ${{ github.workspace }}/apps/desktop/.build/stim-server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -73,9 +74,24 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+
+      - name: Install the bundled server's workspace packages (lifecycle scripts stay blocked)
+        run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+
       - name: Build before any secret is loaded
         working-directory: apps/desktop
-        run: scripts/bundle.sh --universal --release
+        run: |
+          node scripts/server-runtime.mjs "$DESKTOP_SERVER_RUNTIME" --universal
+          scripts/bundle.sh --universal --release --server "$DESKTOP_SERVER_RUNTIME"
 
       - name: Import the Developer ID certificate
         env:

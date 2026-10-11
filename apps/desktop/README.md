@@ -992,8 +992,9 @@ Instead of a screen, the tile says:
 
 - **Connecting to stim-server** while it starts, or why the server is
   unreachable.
-- **Update stim-server** with the install command when the server's hello
-  lacks `physical-ios` or `physical-android` for the device.
+- **The stim-server on this port is older than Stim Desktop** when the server's
+  hello lacks `physical-ios` or `physical-android` for the device: Desktop adopted
+  a server it did not start. Updating or stopping that server lets Desktop start its own.
 - **Disconnected** when `stim status` reads the device as disconnected.
 - **The workspace's lease on this device ended**, with the `--device` command
   that leases it again, once the lease's end time passes, before `stim status`
@@ -1005,8 +1006,12 @@ ended), Control turns off and the tile says why.
 
 ## stim-server
 
-Desktop runs a local `stim-server` from `@stim-cli/server` while it is open; there
-is no switch. Replay, the diff viewer, archived logs, hosted app and simulator
+Desktop runs a local `stim-server` while it is open; there is no switch. The app
+bundles it: `Contents/Resources/stim-server` holds a pinned official Node.js LTS
+(universal, `strip -x`, signed with the hardened runtime) and `@stim-cli/server` with the `stim`
+packages it runs, so the server always matches the app and needs no global install,
+Node version manager or login shell to start. A Mac that serves without Desktop, such
+as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff viewer, archived logs, hosted app and simulator
 views and device recordings all read from it. At launch the app checks
 `http://127.0.0.1:7787/health`. When a server answers, the app uses it if
 Desktop uses the default home or the server serves Desktop's resolved
@@ -1026,8 +1031,21 @@ interrupts. `--loopback-only` removes the server's own Tailscale listeners and m
 request that a `tailscale serve --https` route forwards to the port, so paired phones and other
 Macs cannot reach it; Desktop never removes or edits the route. Turning the Phone app flag off, or **Serve to phones** off, restarts the
 server Desktop started in loopback-only mode, which disconnects paired phones until
-they are served again. `stim-server` is found on the login shell's `PATH`, or at the path you
-choose in **Settings > Advanced**. A test copy can move the port from 7787 with
+they are served again. The bundled server runs unless you choose another `stim-server` in
+**Settings > Advanced**, such as a checkout's build; a build without the bundle, such as a
+`stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. On a
+launch where no server answers, Desktop starts the bundled server at once, before the
+login shell returns, with the launch environment and the Stim home it expects: the
+launch's `STIM_HOME`, else the one the login shell reported on the last launch, else
+`~/.stim`. It passes `STIM_HOME` only for a home other than `~/.stim`, since an explicit
+`STIM_HOME` turns on the scoped-home defaults. The server reads the login shell's environment itself for the commands it
+runs, and answers once it has. Until Desktop's own login shell confirms that home, Desktop
+treats the server like a provisionally adopted one: it reads status but holds pairing,
+device and control writes. When the login shell names another home, Desktop stops that
+server and starts it again with the new home. The bundled server keeps V8's compile cache for its own
+scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
+`NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
+runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
 the Mac's own server. While a server runs, the Phones tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
@@ -1571,7 +1589,8 @@ the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
 global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
 global bin directory is not on the `PATH` is not offered, because pnpm refuses
-global installs then. `stim-server` is still installed and updated with npm.
+global installs then. `stim-server` ships inside the app; with an override in
+**Settings > Advanced**, that one is still installed and updated with npm.
 
 Once a day, and at launch, the app also reads the
 `latest` version of `stim` from `registry.npmjs.org/stim/latest`; it skips the
@@ -1585,7 +1604,7 @@ background, because replacing `stim` while agents run commands would break them,
 and a `stim` that no package manager owns, such as a linked checkout, is never
 offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
-served, `stim-server --version` gets the same check, installing
+served and an override is set, `stim-server --version` gets the same check, installing
 `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
 to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
@@ -1775,6 +1794,35 @@ which reaches the release app, never Stim Dev.
 id `dev.stim.desktop`, which `scripts/release.sh` and the release workflow use.
 
 The bundle copies Inter, JetBrains Mono, and the brand artwork, including the animated jar's and the build animation's Lottie files, from `website/`, and embeds `Lottie.framework` from the `lottie-spm` package and `Sparkle.framework` from the `Sparkle` package in `Contents/Frameworks`. Sentry is linked into the executable. Resolving the `sentry-cocoa` package downloads every xcframework it declares, about 450 MB, and extracts about 3 GB into `.build/artifacts` ([getsentry/sentry-cocoa#9146](https://github.com/getsentry/sentry-cocoa/issues/9146)).
+
+`bundle.sh` needs the repository's pnpm workspace installed (`pnpm install`).
+`scripts/server-runtime.mjs` stages the bundled server into
+`Contents/Resources/stim-server`: it downloads the Node.js release it pins
+(`NODE_VERSION`) from nodejs.org once into `.build/node`, checks the tarball
+against the SHA-256 the script pins and against that release's `SHASUMS256.txt`,
+keeps `bin/node` and its `LICENSE`, strips local symbols, and joins the arm64 and
+x64 binaries with `lipo` for `--universal`. It builds `@stim-cli/server` and the
+workspace packages it imports, packs them with `pnpm pack`, and lays out their
+third-party dependencies at the versions `pnpm-lock.yaml` resolves, without
+symbolic links, keeping only the darwin `unique-pid` prebuilds. It refuses a
+layout in which any package would load a dependency other than the one the
+lockfile names, and a staged server whose `--version` does not match
+`packages/server`. `bundle.sh --server <dir>` copies a server staged earlier
+instead; the release workflow stages it before any secret is loaded and
+`release.sh` reuses it through `DESKTOP_SERVER_RUNTIME`. To move to a
+newer Node, change `NODE_VERSION` and both hashes from that release's
+`SHASUMS256.txt`. Universal costs about 199 MB on disk (98 MB arm64 + 101 MB
+x86_64); the app and its Sparkle feed are universal, so it ships both.
+
+`release.sh` signs each `unique-pid` addon and then `bin/node` with the
+hardened runtime and `Support/Node/node.entitlements`:
+`com.apple.security.cs.allow-jit`, which V8 needs, and
+`com.apple.security.cs.disable-library-validation`, because the `stim`
+commands the server runs on this Node can load a project's own native addons,
+signed by another team or not at all. Both are in the set Node.js signs its own
+macOS release with. The Desktop workflow stages the server on every run, signs
+it the same way ad hoc and checks that it answers `/health` under an empty
+environment.
 
 ## Updates
 
