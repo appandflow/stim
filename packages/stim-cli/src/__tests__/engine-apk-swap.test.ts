@@ -1,7 +1,16 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   ANDROID_BUNDLE_NAME,
   androidBundleCommand,
@@ -21,8 +30,9 @@ import {
 } from '../engine/apk-swap.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
 import type { BuildToolsEntry } from '../devices/android.ts';
+import type { ExecOptions } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
-import { androidLayoutSetting } from '../workspace/settings.ts';
+import { androidLayoutSetting, defaultAndroidLayout } from '../workspace/settings.ts';
 
 describe('hermesEnabledFromGradleProperties', () => {
   test('default is enabled: no file, no key, an unrelated file', () => {
@@ -250,6 +260,45 @@ describe('keystore resolution', () => {
     expect(resolveKeystore('/w/app', { android: { keystore: '' } }).path).toBe(debugKeystore);
   });
 
+  describe('a keystore from the committed .stim.json', () => {
+    let repo: string;
+    let outside: string;
+    beforeEach(() => {
+      repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ks-repo-')));
+      outside = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ks-out-')));
+      mkdirSync(join(repo, 'keys'));
+      writeFileSync(join(repo, 'keys', 'release.jks'), 'k');
+      writeFileSync(join(outside, 'release.jks'), 'k');
+      symlinkSync(join(outside, 'release.jks'), join(repo, 'keys', 'link.jks'));
+    });
+    afterEach(() => {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    });
+    const resolve = (keystore: string) =>
+      resolveKeystore(repo, { android: { keystore } }, defaultAndroidLayout(repo), repo).path;
+
+    test('a path inside the repository is accepted, relative or absolute', () => {
+      expect(resolve('keys/release.jks')).toBe(join(repo, 'keys', 'release.jks'));
+      expect(resolve(join(repo, 'keys', 'release.jks'))).toBe(join(repo, 'keys', 'release.jks'));
+    });
+
+    test('an absolute path outside the repository, a ../ escape and a symlink out are refused', () => {
+      for (const escape of [
+        join(outside, 'release.jks'),
+        '../' + basename(outside) + '/release.jks',
+        'keys/link.jks',
+      ]) {
+        expect(() => resolve(escape)).toThrow(/Could not use android\.keystore .* from the committed \.stim\.json/);
+      }
+    });
+
+    test('the same absolute path is kept as given when the value is not from the committed layer', () => {
+      const path = join(outside, 'release.jks');
+      expect(resolveKeystore(repo, { android: { keystore: path } }).path).toBe(path);
+    });
+  });
+
   test('a literal android.keystorePassword reaches apksigner through its environment, and a reference passes through', () => {
     const literal = { pass: `env:${KEYSTORE_PASSWORD_ENV}`, password: 'hunter2' };
     expect(keystorePassArg(undefined)).toEqual({ pass: 'pass:android', password: null });
@@ -300,7 +349,7 @@ interface Call {
   op: string;
   file?: string;
   args?: string[];
-  opts?: Record<string, unknown>;
+  opts?: ExecOptions;
 }
 
 function manifest(assets: Record<string, string>): AssetManifest {
@@ -333,7 +382,7 @@ function harness({
   const bundleOutput = join(stage, 'assets', ANDROID_BUNDLE_NAME);
   const hermesc = androidHermescPath(root, { exists: () => false });
   const exec = makeExecutor({
-    runFile: (file: string, args: string[] = [], opts: Record<string, unknown> = {}) => {
+    runFile: (file: string, args: string[], opts: ExecOptions) => {
       calls.push({ op: 'runFile', file, args, opts });
       if (failOn && (file === failOn || args[0] === failOn)) throw new Error(`${failOn} blew up`);
       if (file === hermesc) writeFileSync(args[args.indexOf('-out') + 1]!, 'hermes bytecode');
@@ -563,7 +612,11 @@ describe('swapApkBundle', () => {
     const sign = calls.find((c) => c.file === apksigner);
     expect(sign?.args).toContain(`env:${KEYSTORE_PASSWORD_ENV}`);
     expect(sign?.args?.join(' ')).not.toContain('hunter2');
-    expect(sign?.opts).toEqual({ env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' }, redact: ['hunter2'] });
+    expect(sign?.opts).toEqual({
+      timeoutMs: 'unbounded',
+      env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' },
+      redact: ['hunter2'],
+    });
   });
 
   test('an apksigner failure fails at the apksigner step -- an unsigned APK is never handed back', async () => {

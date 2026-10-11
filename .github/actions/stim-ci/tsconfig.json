@@ -1,6 +1,7 @@
 {
   "extends": "../../../tsconfig.base.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": true,
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "types": ["node", "vitest/globals"],

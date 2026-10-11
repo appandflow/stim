@@ -9,6 +9,7 @@ import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts'
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
 import type { CcacheActivity } from '../../engine/build-facts.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../../engine/native-run.ts';
+import { cancelledError, throwIfCancelled } from '../../cancellation.ts';
 import { checkEasAuth, resolveRemote, uploadRemote } from '../../engine/remote-cache.ts';
 import { createRunRecorder, readRunEstimates, recordRunStats, statsProjectKey } from '../../engine/stats.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
@@ -183,8 +184,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
             details: acquired.failure.extra,
           });
         artifact = acquired.artifact;
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The Android build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(), 'Android build');
         if (!artifact.apkPath)
           throw Object.assign(new Error('The Android build produced no APK.'), { code: 'STIM_BUILD_FAILED' });
         const artifacts = join(workspaceDir(root), 'artifacts');
@@ -198,8 +198,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           artifact.providerName,
         );
         if (uploaded) phase('cache', uploaded.line);
-        if (runCancellationSignal()?.aborted)
-          throw Object.assign(new Error('The Android build was cancelled.'), { code: 'STIM_CANCELLED' });
+        throwIfCancelled(runCancellationSignal(), 'Android build');
         record.appPath = apkPath;
         record.bundleId = artifact.androidPackage;
         finishRecord('ok');
@@ -226,9 +225,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           logs: { dir: logs },
         };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted
-          ? Object.assign(new Error('The Android build was cancelled.'), { code: 'STIM_CANCELLED', cause: error })
-          : error;
+        const failure = runCancellationSignal()?.aborted ? cancelledError('Android build', error) : error;
         finishRecord('failed', (failure as { code?: string }).code);
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;

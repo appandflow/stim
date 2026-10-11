@@ -36,12 +36,13 @@ import {
   type RecordingPlatform,
   type NdjsonRecord,
   type StatusPayload,
+  type DeviceHostLimits,
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
 import { AgentDeviceDriver } from './agent-device-driver.ts';
 import { HostedAgentHost } from './agent-driver.ts';
-import { DeviceHost, type DeviceHostLimits } from './device-host.ts';
+import { DeviceHost } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -118,6 +119,7 @@ import { NotificationLog, notificationLogFile, publicEntry } from './notificatio
 import { EXPO_PUSH_API, PushNotifier, type PushLimits, type PushNotifierOptions } from './push.ts';
 import {
   authenticateDevice,
+  buildClientsReadable,
   dropPushToken,
   parseLevels,
   parseQuietHours,
@@ -919,7 +921,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!paired.has(device.id)) socket.close(CLOSE_UNAUTHORIZED, 'device revoked');
     }
     hostedDevices.revoke();
-    builds.abandonDetached((client) => paired.get(client)?.capabilities.includes('build') ?? false);
+    builds.abandonDetached(
+      (client) => paired.get(client)?.capabilities.includes('build') ?? false,
+      buildClientsReadable(),
+    );
     void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
       const capabilities = paired.get(controller.device.id)?.capabilities;
@@ -1357,12 +1362,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const wantsVideo = (video as string[] | undefined)?.includes('h264') === true;
       const maxFps = wantsVideo ? FRAME_FPS.video : FRAME_FPS.max;
-      if (fps !== undefined && (!Number.isInteger(fps) || (fps as number) < 1 || (fps as number) > maxFps)) {
+      if (fps !== undefined && (typeof fps !== 'number' || !Number.isInteger(fps) || fps < 1 || fps > maxFps)) {
         return error(id, 'bad-request', `fps must be a whole number from 1 to ${maxFps}.`);
       }
       if (
         maxEdge !== undefined &&
-        (!Number.isInteger(maxEdge) || (maxEdge as number) < FRAME_EDGE.min || (maxEdge as number) > FRAME_EDGE.max)
+        (typeof maxEdge !== 'number' ||
+          !Number.isInteger(maxEdge) ||
+          maxEdge < FRAME_EDGE.min ||
+          maxEdge > FRAME_EDGE.max)
       ) {
         return error(
           id,
@@ -1403,8 +1411,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(id, 'bad-request', 'Replay needs a video subscription: pass video: ["h264"].');
       }
       const hint: FrameHint = {
-        fps: Math.min((fps as number | undefined) ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
-        maxEdge: (maxEdge as number | undefined) ?? FRAME_EDGE.default,
+        fps: Math.min(fps ?? FRAME_FPS.default, offersVideo ? FRAME_FPS.video : FRAME_FPS.max),
+        maxEdge: maxEdge ?? FRAME_EDGE.default,
       };
       const replayDir =
         platform === 'macos'
@@ -2495,11 +2503,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (message.method === 'notifications.list') {
         const params = message.params ?? {};
         const since = isJsonObject(params) ? params.since : undefined;
-        if (!isJsonObject(params) || (since !== undefined && !(Number.isInteger(since) && (since as number) >= 0))) {
+        if (
+          !isJsonObject(params) ||
+          (since !== undefined && !(typeof since === 'number' && Number.isInteger(since) && since >= 0))
+        ) {
           return error(id, 'bad-request', 'notifications.list takes an optional since, a cursor of 0 or more.');
         }
         listeners.add(socket);
-        return send(socket, { id, result: notificationLog.list(device.id, since as number | undefined) });
+        return send(socket, { id, result: notificationLog.list(device.id, since) });
       }
       if (message.method === 'push.unregister') {
         setDevicePush(device.id, null);

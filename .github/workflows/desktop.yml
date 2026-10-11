@@ -10,6 +10,7 @@ on:
       - 'apps/desktop/**'
       - 'apps/mobile/src/design/tokens.ts'
       - 'apps/mobile/src/lib/agent-prompts.ts'
+      - 'apps/mobile/mock-server/fixtures/status.json'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -18,6 +19,7 @@ on:
       - 'apps/desktop/**'
       - 'apps/mobile/src/design/tokens.ts'
       - 'apps/mobile/src/lib/agent-prompts.ts'
+      - 'apps/mobile/mock-server/fixtures/status.json'
       - 'packages/server/helper/**'
       - '.github/workflows/desktop.yml'
       - '.github/workflows/desktop-release.yml'
@@ -76,6 +78,8 @@ jobs:
           name: build-machines-screenshots
           path: ${{ runner.temp }}/build-machines-screenshots
           if-no-files-found: warn
+      - name: Compile the Release configuration
+        run: swift build -c release -Xswiftc -warnings-as-errors
       - name: Compile the stim-server frames helper
         run: |
           sed 's|^|Sources/|' ../../packages/server/helper/desktop-sources.txt \

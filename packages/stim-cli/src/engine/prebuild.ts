@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { FingerprintSource } from '@expo/fingerprint';
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
@@ -72,11 +73,7 @@ function prebuildRecord(state: WorkspaceState | null): Record<string, unknown> {
 function gitTracksNativeDir(root: string, platform: string): boolean {
   try {
     return (
-      getExecutor()
-        .runFile('git', ['-C', root, 'ls-files', '--', nativeDirName(platform)], {
-          env: { LC_ALL: 'C', LANGUAGE: 'C' },
-        })
-        .trim() !== ''
+      git(root, ['ls-files', '--', nativeDirName(platform)], { env: { LC_ALL: 'C', LANGUAGE: 'C' } }).trim() !== ''
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false;

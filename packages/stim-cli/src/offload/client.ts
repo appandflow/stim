@@ -11,7 +11,7 @@ import {
   rmSync,
   writeSync,
 } from 'node:fs';
-import { basename, dirname, join, relative } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import type { ConnectionOptions } from 'node:tls';
 import { setTimeout as wait } from 'node:timers/promises';
 import { WebSocket, type ClientOptions } from 'ws';
@@ -32,8 +32,10 @@ import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -557,9 +559,8 @@ interface RepoIdentity {
 
 /** The repository on the remote Mac: one area per git common dir, shared by all its worktrees. */
 function repoIdentity(projectRoot: string): RepoIdentity {
-  const run = getExecutor().runFile;
-  const repoRoot = realpathSync(run('git', ['-C', projectRoot, 'rev-parse', '--show-toplevel']));
-  const common = realpathSync(run('git', ['-C', repoRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir']));
+  const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
+  const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
   const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
   const lock = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'].find((file) => existsSync(join(repoRoot, file)));
@@ -954,6 +955,14 @@ async function syncSource(
   };
 }
 
+function stagedArtifactEscapes(stagingDir: string, artifactPath: string, hasContents: boolean): boolean {
+  const paths = hasContents ? [artifactPath, join(artifactPath, 'Contents')] : [artifactPath];
+  if (paths.some((path) => lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink())) return true;
+  if (!existsSync(artifactPath)) return false;
+  const inside = relative(realpathSync(stagingDir), realpathSync(artifactPath));
+  return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside);
+}
+
 /**
  * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
  * sha256 the machine reports. The caller re-fingerprints and stores it.
@@ -988,10 +997,7 @@ export async function offloadBuild({
     return { ok: false, machine: choice.machine, reason: reason.split('\n')[0]!.slice(0, 300) };
   };
   const signal = runCancellationSignal();
-  const throwIfCancelled = () => {
-    if (signal?.aborted)
-      throw Object.assign(new Error('The offloaded build was cancelled.'), { code: 'STIM_CANCELLED' });
-  };
+  const checkCancelled = () => throwIfCancelled(signal, 'offloaded build');
   let settle!: (outcome: Record<string, unknown>) => void;
   let settled = false;
   const outcome = new Promise<Record<string, unknown>>((resolve) => {
@@ -1006,7 +1012,7 @@ export async function offloadBuild({
   };
   signal?.addEventListener('abort', cancel, { once: true });
   try {
-    throwIfCancelled();
+    checkCancelled();
     if (!validArtifactIdentity(request, expectedFingerprint))
       return fail('The build request has an invalid reusable artifact identity.');
     if (native?.provider === 'xcode' && native.snapshot.hash !== expectedFingerprint)
@@ -1067,7 +1073,7 @@ export async function offloadBuild({
         return fail(reason);
       }
       const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
-      throwIfCancelled();
+      checkCancelled();
       if ('failure' in synced) {
         if (moveOn(synced.failure)) continue;
         return fail(synced.failure);
@@ -1082,7 +1088,7 @@ export async function offloadBuild({
       early = [];
       choice.connection.onProgress((event) => (job === null ? early.push(event) : handle(event)));
       if (choice.automatic) requireAutomaticMachine('build', choice.machine);
-      throwIfCancelled();
+      checkCancelled();
       const reply = await choice.connection.request('build.start', {
         repo: identity.repo,
         project: identity.project,
@@ -1122,7 +1128,7 @@ export async function offloadBuild({
             }),
         stimBuild: choice.target.local.stimBuild,
       });
-      throwIfCancelled();
+      checkCancelled();
       if ('result' in reply) {
         job = (reply.result as { job: string }).job;
         break;
@@ -1139,7 +1145,7 @@ export async function offloadBuild({
     );
     const result = await outcome;
     clearTimeout(timer);
-    throwIfCancelled();
+    checkCancelled();
     const { connection, machine } = choice;
     connection.onProgress(null);
     const workerMs = Date.now() - workerStarted;
@@ -1155,7 +1161,7 @@ export async function offloadBuild({
     }
 
     onEnter('fetch');
-    throwIfCancelled();
+    checkCancelled();
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
@@ -1182,7 +1188,7 @@ export async function offloadBuild({
     const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
     connection.onBinary(null);
     closeSync(fd);
-    throwIfCancelled();
+    checkCancelled();
     const fetchFailure = replyError(fetched);
     if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
     const digest = hash.digest('hex');
@@ -1194,9 +1200,12 @@ export async function offloadBuild({
       );
     }
     await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
-    throwIfCancelled();
+    checkCancelled();
     rmSync(archive, { force: true });
     const artifactPath = join(stagingDir, name);
+    if (stagedArtifactEscapes(stagingDir, artifactPath, request.platform === 'macos')) {
+      return fail(`fetch: ${machine} returned ${name} as or through a symbolic link or outside the staging directory`);
+    }
     if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
       return fail(`fetch: ${name} has no Info.plist`);
     }
@@ -1238,7 +1247,7 @@ export async function offloadBuild({
     };
   } catch (error) {
     closeOffload(choice);
-    throwIfCancelled();
+    checkCancelled();
     return fail((error as Error).message.split('\n')[0] ?? String(error));
   } finally {
     signal?.removeEventListener('abort', cancel);

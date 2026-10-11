@@ -612,9 +612,10 @@ describe('adopted Android installs', () => {
             if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
             throw new Error(`Unexpected run: ${cmd}`);
           },
-          runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
+          runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
           runFile(file, args = []) {
-            if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
+            if (args[0] === '-list-avds' || args[0] === 'devices')
+              return this.run!([file, ...args].join(' '), { timeoutMs: 60_000 });
             const cmd = [file, ...args].join(' ');
             commands.push(cmd);
             if (args.includes('list')) return 'package:com.example.app\npackage:com.example.other';
@@ -699,9 +700,10 @@ describe('adopted Android storage', () => {
           if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
           throw new Error(`Unexpected run: ${cmd}`);
         },
-        runQuiet: (cmd) => (cmd.includes('emu avd name') ? 'stim-adopted\nOK' : null),
+        runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
         runFile(file, args = []) {
-          if (args[0] === '-list-avds' || args[0] === 'devices') return this.run!([file, ...args].join(' '));
+          if (args[0] === '-list-avds' || args[0] === 'devices')
+            return this.run!([file, ...args].join(' '), { timeoutMs: 60_000 });
           if (args.includes('list')) return 'package:com.example.app';
           if (args.includes('clear')) return 'Success';
           if (args.includes('path')) return '';
@@ -1336,6 +1338,7 @@ describe('explicit remote backend behavior', () => {
         output: () => {},
         deviceSetup: () => {},
         deviceSetupKnown: () => undefined,
+        activity: () => {},
         waitingOn: () => {},
         estimate: () => {},
         durations: () => ({}),
@@ -2037,6 +2040,31 @@ describe('the applicationId comes from the built APK', () => {
     expect(h.calls.launch[0]?.packageName).toBe('com.example.app');
     assert(result.facts);
     expect(result.facts.bundleId).toBe('com.example.app');
+  });
+
+  describe('a project applicationId that is not a literal package name', () => {
+    beforeEach(() => {
+      writeFileSync(
+        join(root, 'android', 'app', 'build.gradle'),
+        'android {\n  defaultConfig {\n    applicationId "${appId}"\n  }\n}\n',
+      );
+    });
+
+    test('is refused with the file named when the APK package cannot be read either', async () => {
+      const h = harness();
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.message).toMatch(/Invalid Android package "\$\{appId\}" in .*build\.gradle/);
+      expect(h.calls.install.length).toBe(0);
+      expect(h.calls.launch.length).toBe(0);
+    });
+
+    test('is ignored when the built APK names the package', async () => {
+      const h = harness({ readApkPackage: () => 'io.tlon.groups' });
+      const result = await h.run();
+      expect(result.ok).toBe(true);
+      expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
+    });
   });
 
   test('the install gets the APK applicationId, not the project namespace', async () => {
@@ -4552,6 +4580,21 @@ describe('the release APK swap', () => {
     });
   });
 
+  test('a committed android.keystore outside the repository is never used to re-sign', async () => {
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ android: { keystore: '/etc/passwd' } }));
+    const h = harness({
+      variant: 'productionRelease',
+      resolveCached: () => cached,
+      swapApk: never('the APK swap'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.stderr.join('\n')).toMatch(
+      /Could not use android\.keystore \/etc\/passwd from the committed \.stim\.json/,
+    );
+    expect(h.calls.build.length).toBe(1);
+  });
+
   test('a debug cache hit never swaps', async () => {
     const h = harness({
       resolveCached: () => '/cache/app-debug.apk',
@@ -6314,6 +6357,7 @@ describe('run statistics', () => {
       output: () => {},
       deviceSetup: () => {},
       deviceSetupKnown: () => undefined,
+      activity: () => {},
       waitingOn: () => {},
       estimate: () => {},
       durations: () => ({}),
@@ -6341,6 +6385,7 @@ describe('run statistics', () => {
       output: () => {},
       deviceSetup: (setup: unknown) => seen.push(setup),
       deviceSetupKnown: () => undefined,
+      activity: () => {},
       waitingOn: () => {},
       estimate: () => {},
       durations: () => ({}),
@@ -7903,7 +7948,7 @@ describe('registered Android project recipes', () => {
           findWorkspace: () => root,
           getProject: () => getProject(root),
           resolveAndroid: () => ({ serial: 'emulator-5584' }),
-          androidProcess: () => 4242,
+          androidProcess: () => ({ state: 'running', pid: 4242 }),
           readBrowser: () => null,
           resolveMetro: never('a native reload Metro probe'),
           reloadMetro: never('a native reload Metro command'),

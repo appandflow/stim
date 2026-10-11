@@ -23,7 +23,7 @@ import {
   type MacosAppRecord,
   type MacosProcess,
 } from '@stim-cli/core/state';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
@@ -418,9 +418,9 @@ describe('macOS build placement and promotion', () => {
     const base = getExecutor();
     setExecutor({
       ...base,
-      runFile: (file: string, args: string[]) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         calls.push([file, args]);
-        return base.runFile(file, args);
+        return base.runFile(file, args, opts);
       },
     });
     const fetched = remoteBundle();
@@ -460,9 +460,9 @@ describe('macOS build placement and promotion', () => {
         const run = getExecutor().runFile;
         setExecutor({
           ...getExecutor(),
-          runFile: (file: string, args: string[]) => {
+          runFile: (file: string, args: string[], opts: ExecOptions) => {
             if (file === 'codesign' && args.includes('--verify')) throw new Error('invalid signature');
-            return run(file, args);
+            return run(file, args, opts);
           },
         });
       }
@@ -736,9 +736,9 @@ describe('macOS build placement and promotion', () => {
     const run = getExecutor().runFile;
     setExecutor({
       ...getExecutor(),
-      runFile: (file: string, args: string[]) => {
+      runFile: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'codesign') throw new Error('signing failed');
-        return run(file, args);
+        return run(file, args, opts);
       },
     });
     await expect(build()).rejects.toThrow('signing failed');
@@ -913,6 +913,28 @@ describe('macOS resource staging', () => {
       expect(existsSync(bundle)).toBe(false);
     },
   );
+
+  it('refuses a symlinked Info.plist before any plist is read or rewritten', () => {
+    const outside = join(dir, 'outside.plist');
+    writeFileSync(outside, 'outside');
+    symlinkSync(outside, join(root, 'Linked.plist'));
+    expect(() => stageBundle(root, 'Sample', 'Linked.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
+      /macos.infoPlist.*stim guide macos/,
+    );
+    expect(calls).toEqual([]);
+    expect(existsSync(bundle)).toBe(false);
+    expect(readFileSync(outside, 'utf8')).toBe('outside');
+  });
+
+  it('refuses an Info.plist reached through a symlinked directory that leaves the project', () => {
+    mkdirSync(join(dir, 'elsewhere'));
+    writeFileSync(join(dir, 'elsewhere', 'Info.plist'), '{}');
+    symlinkSync(join(dir, 'elsewhere'), join(root, 'config'));
+    expect(() => stageBundle(root, 'Sample', 'config/Info.plist', bin, bundle, 'dev.sample.stim.test')).toThrow(
+      /macos.infoPlist/,
+    );
+    expect(calls).toEqual([]);
+  });
 
   it.each(['icon', 'branding', 'absent.xcassets'])('refuses an invalid asset catalog %s', (source) => {
     expect(() => resolveBundleExtras(root, root, {}, source)).toThrow(/macos.assetCatalog.*stim guide macos/);

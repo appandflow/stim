@@ -13,6 +13,7 @@ struct Sidebar: View {
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -37,6 +38,11 @@ struct Sidebar: View {
                 Label(store.title(of: tree.summary.project), systemImage: "archivebox")
               } else {
                 ProjectRow(store: store, summary: tree.summary, selected: selection == .project(tree.summary.project))
+                  .tutorialGlowInPlace(
+                    tutorialHint, .sidebarRow,
+                    workspaces: isExpanded(tree).wrappedValue
+                      ? [] : store.environments(in: tree.summary.project).map(\.path)
+                  )
                   .sidebarTag(.project(tree.summary.project), selection: selection)
               }
             }
@@ -97,6 +103,9 @@ struct Sidebar: View {
     }
     .onAppear { forgetStaleHidden() }
     .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: store.payload == nil, initial: true) { _, missing in
+      if !missing { LaunchMilestones.reach("sidebar-rows") }
+    }
   }
 
   private func reconciledHidden() -> HiddenWorkspaces? {
@@ -345,6 +354,7 @@ struct WorkspaceRow: View {
   @EnvironmentObject private var actions: ActionCenter
   @State private var confirmingStop = false
   @State private var removal: WorktreeRemoval?
+  @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
@@ -352,7 +362,7 @@ struct WorkspaceRow: View {
     TimelineView(.everyMinute) { _ in
       WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
     }
-    .tutorialAnchor(.sidebarRow, workspace: env.path)
+    .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
     .sidebarTag(.environment(env.path), selection: selection)
     .contextMenu {
       WorkspaceActionsMenu(

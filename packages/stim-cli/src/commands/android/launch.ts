@@ -13,7 +13,7 @@ import type { ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { basename } from 'node:path';
 import chalk from 'chalk';
-import type { BuildPhase, recordFinishedBuild } from '../../engine/build-progress.ts';
+import type { BuildPhase, BuildProgress, recordFinishedBuild } from '../../engine/build-progress.ts';
 import type { ProviderCallResult } from '@stim-cli/cache';
 import {
   verifyAndroidReleaseLaunch,
@@ -96,6 +96,7 @@ interface VerifyAndroidRunArgs {
   scheme?: string | null;
   component?: string | null;
   phase: (label: unknown, text: string) => void;
+  enterActivity?: BuildProgress['activity'];
 }
 
 interface AndroidRuntimeLaunchContext {
@@ -251,6 +252,7 @@ async function verifyAndroidMetroRun({
   scheme,
   component = null,
   phase,
+  enterActivity,
 }: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
   const readNativeCrashes = () =>
@@ -273,6 +275,7 @@ async function verifyAndroidMetroRun({
         slot: launchSlotScope(root, slot),
         platformShared: siblings.length > 0,
         onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+        onActivity: enterActivity,
         logsDir,
         since: launchedAt,
         metroPort,
@@ -280,8 +283,8 @@ async function verifyAndroidMetroRun({
         mode: workspaceDevServerMode(root, isExpo),
         readNativeCrashes,
         processAlive: () => {
-          const pid = androidAppProcess(serial, androidPackage);
-          return pid === undefined ? null : pid !== null;
+          const running = androidAppProcess(serial, androidPackage);
+          return running.state === 'unknown' ? null : running.state === 'running';
         },
       })
     : { verified: false, skipped: true };
@@ -431,8 +434,11 @@ interface FinishAndroidRunArgs {
   resolveAvdSerial: typeof resolveOwnedAvdSerial;
   waitForDeviceBoot: typeof waitForBoot;
   bootDuration: () => string;
+  /** Whether the run's own simulator or emulator boot is still running. */
+  bootPending: () => boolean;
   apkPath: string | null;
   androidPackage: string | null;
+  androidPackageProblem?: string | null;
   record: AndroidRecord;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
@@ -473,6 +479,7 @@ interface FinishAndroidRunArgs {
   reclaimed: ReportAndroidResultArgs['reclaimed'];
   devServer: ReportAndroidResultArgs['devServer'];
   enterPhase: (phase: BuildPhase) => void;
+  enterActivity: BuildProgress['activity'];
   rebootDevice: () => Promise<AndroidBootLike>;
   dataFreeBytes?: typeof androidDataFreeBytes;
   trimCaches?: typeof trimAndroidCaches;
@@ -618,8 +625,10 @@ export async function finishAndroidRun({
   resolveAvdSerial,
   waitForDeviceBoot,
   bootDuration,
+  bootPending,
   apkPath,
   androidPackage: initialPackage,
+  androidPackageProblem,
   record,
   waitedForBuild,
   ccache,
@@ -655,6 +664,7 @@ export async function finishAndroidRun({
   reclaimed,
   devServer,
   enterPhase,
+  enterActivity,
   rebootDevice,
   dataFreeBytes = androidDataFreeBytes,
   trimCaches = trimAndroidCaches,
@@ -677,7 +687,9 @@ export async function finishAndroidRun({
   };
 
   enterPhase('device');
+  if (bootPending()) enterActivity('booting');
   const booted = await bootPromise;
+  enterActivity(null);
   const runCommand = nativeRunCommand('android', slot, { physical, deviceId: booted.serial });
   if (booted.failed) {
     const diag = diagnoseBootFailure(booted, emuLog, runCommand, physical);
@@ -718,6 +730,9 @@ export async function finishAndroidRun({
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
   androidPackage = packageFromApk || androidPackage || readProjectPackage();
+  if (!androidPackage && androidPackageProblem) {
+    return fail(LAUNCH_FAILED, androidPackageProblem, packageRemedy, { lastBuildStatus: true });
+  }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
   if (adopting) {
@@ -957,6 +972,7 @@ export async function finishAndroidRun({
     scheme,
     component: launched.component ?? null,
     phase,
+    enterActivity,
   });
   if (launchState === LAUNCH_FATAL) {
     return fail(

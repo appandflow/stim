@@ -55,7 +55,7 @@ tear down the same app the same way):
 | suite      | driver                       | proves                                                  | platforms           | when                                        |
 | ---------- | ---------------------------- | ------------------------------------------------------- | ------------------- | ------------------------------------------- |
 | **smoke**  | `run-native-e2e.mjs --smoke` | one worktree builds, launches and stops                 | iOS, Linux, Windows | every push to `main`, `e2e-smoke`, dispatch |
-| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux          | nightly, `e2e-loop`, dispatch               |
+| **loop**   | `run-native-e2e.mjs`         | the dev loop works end to end                           | iOS, Linux, Windows | nightly, `e2e-loop`, dispatch               |
 | **caches** | `run-cache-e2e.mjs`          | each individual cache is engaged, storing and reused    | iOS, Linux          | `e2e-caches`, dispatch                      |
 | **pool**   | `run-pool-e2e.mjs`           | iOS simulators are parked, evicted, adopted, and reaped | iOS                 | `e2e-pool`, dispatch                        |
 
@@ -266,6 +266,18 @@ PATH).
   `test (windows)`, repeats install, build, typecheck and the unit suite on
   `windows-latest`.
 
+- **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
+  the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
+  Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
+  to cover the warm path. It runs on dispatch, on a pull request labeled
+  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
+  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
+  `scripts/ci`, the action or the workflow. A change to the other packages or
+  to the lockfile does not start it on push; a pull request label or dispatch
+  runs it on demand.
+  No workflow uses a larger runner, because larger runners are billed per minute
+  even on public repositories.
+
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
@@ -275,7 +287,7 @@ PATH).
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
   | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
-  | nightly schedule    | loop on iOS and Linux Android; the Windows loop is off until #3086 is fixed                         |
+  | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
 
@@ -284,7 +296,7 @@ PATH).
   `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
   turns event, labels and input into one suite list per platform, filtered by
   what the platform supports: iOS smoke, loop, caches, pool; Linux Android
-  smoke, loop, caches; Windows Android smoke (loop off until #3086). Each
+  smoke, loop, caches; Windows Android smoke and loop. Each
   platform job reads its list as the `suite` matrix axis and is skipped when
   the list is empty. The
   smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
@@ -324,9 +336,10 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
 ### Assumptions a reviewer must confirm
 
 - `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
-  queue longer and break sooner than a GA image, and `xcode-27-xlarge` is the
-  only other size. The iOS lane is worth that because Swift compilation caching
-  cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
+  queue longer and break sooner than a GA image, and its larger size,
+  `xcode-27-xlarge`, is billed per minute even on public repositories, so no
+  workflow uses it. The iOS lane is worth the preview risk because Swift
+  compilation caching cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
 - The image's Xcode still has to suit the RN/Expo template the fixture creates,
   and this is now the likelier failure: `xcode-27` ships only the iOS 27 SDK and
   the iOS 27 simulator runtimes, with no older runtime to fall back to. A
@@ -385,7 +398,9 @@ and profile reconciliation, then shuts it down through Stim. It does not start
 Metro, build the app, or populate the native artifact cache. Stock fixtures
 and Android do not take this preparation path.
 
-The loop still asserts three distinct simulators are booted simultaneously.
+The loop still asserts three distinct simulators are booted simultaneously. The
+Windows Android loop runs one emulator at a time and skips the named-slot proof, because
+the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
 Cache suites still require a cold artifact miss and race two commands against
 one empty cache. The preparation reduces overlapping first-boot work; it does
 not establish that host memory caused earlier failures or guarantee enough

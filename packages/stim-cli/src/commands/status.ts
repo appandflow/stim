@@ -64,6 +64,7 @@ import {
   ACTIVE_BUILD_KEY,
   activeBuildState,
   buildReport,
+  bundlingActivity,
   buildStatusLine,
   parseActiveBuild,
   type BuildReport,
@@ -71,7 +72,7 @@ import {
 import { formatBytes, volumeRootFor } from '../fs-util.ts';
 import { workspacePhase } from '../engine/warm-progress.ts';
 import { workspaceRecordingEnabled } from '../workspace/recordings.ts';
-import { resolveSettings } from '../workspace/settings.ts';
+import { resolveSettings, workspaceHiddenSetting } from '../workspace/settings.ts';
 import { formatDuration, plural } from '../command-output.ts';
 import { listLeaseFiles, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { readIosDevices, type IosDeviceEntry } from '../engine/ios-device.ts';
@@ -499,6 +500,7 @@ async function readStatusFacts(
         })(),
         recording: { enabled: workspaceRecordingEnabled(path, proj, cfg, process.env) },
       });
+      if (workspaceHiddenSetting(proj.settings)) state.hidden = true;
       const tutorial = detectTutorial(readAppJson(path));
       if (tutorial) state.tutorial = tutorial;
       const doctorRuns = doctorRunTimes(proj);
@@ -608,6 +610,8 @@ function readLogDerivedFacts(states: EnvironmentState[]): void {
       const detail = record.phase === 'compile' ? readBuildDetail(state.path, record.claim.claimId) : null;
       if (detail) state.build.detail = detail;
       else delete state.build.detail;
+      const activity = bundlingActivity(state.build.activity, state.build.platform, state.metro?.bundle);
+      if (activity) state.build.activity = activity;
     }
   }
 }
@@ -1136,8 +1140,7 @@ export function readVolumes(projectPath: string): VolumeInfo[] {
   const roots = [...new Set(['/', volumeRootFor(getConfigDir()), volumeRootFor(projectPath)])];
   const volumes: VolumeInfo[] = [];
   for (const volume of roots) {
-    const quoted = `'${volume.replace(/'/g, "'\\''")}'`;
-    const disk = parseDfFree(getExecutor().runQuiet(`df -k ${quoted}`, { timeoutMs: 5000 }));
+    const disk = parseDfFree(getExecutor().runFileQuiet('df', ['-k', volume], { timeoutMs: 5000 }));
     if (disk) volumes.push({ volume, disk });
   }
   return volumes;

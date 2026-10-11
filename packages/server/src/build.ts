@@ -14,6 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -63,6 +64,8 @@ export interface BuildLimits {
   maxJobs: number;
   /** Free bytes the worker root's volume must keep for a build to start there. */
   minFreeBytes: number;
+  /** Sum of the declared file sizes one manifest may hold. */
+  maxManifestBytes: number;
   timeoutMs: number;
   killGraceMs: number;
   /** How long a build whose connection dropped keeps running for a new connection to attach to it. */
@@ -80,6 +83,7 @@ export interface BuildLimits {
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
   maxJobs: 1,
   minFreeBytes: 10 * 1024 ** 3,
+  maxManifestBytes: 20 * 1024 ** 3,
   timeoutMs: 60 * 60_000,
   killGraceMs: 5000,
   detachGraceMs: 5 * 60_000,
@@ -222,6 +226,8 @@ export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
   private readonly owned = new Map<string, Job>();
+  private readonly sessions = new Map<BuildSession, string>();
+  private readonly served = new Set<string>();
   private readonly retained = new Map<
     string,
     { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
@@ -371,6 +377,14 @@ export class BuildHost {
     this.draining = reason;
   }
 
+  /** Why the worker root's volume cannot take `bytes` more, or null when it can. */
+  lowDisk(bytes = 0): string | null {
+    const free = freeBytes(this.root());
+    return free !== null && free - bytes < this.limits.minFreeBytes
+      ? `${gb(free)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
+      : null;
+  }
+
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;
@@ -380,9 +394,7 @@ export class BuildHost {
       this.draining ??
       (running >= this.limits.maxJobs
         ? `already running ${running} offloaded build(s), its limit`
-        : diskFreeBytes !== null && diskFreeBytes < this.limits.minFreeBytes
-          ? `${gb(diskFreeBytes)} GB free, builds need ${gb(this.limits.minFreeBytes)} GB`
-          : saturation({ ...machine, builds }));
+        : (this.lowDisk() ?? saturation({ ...machine, builds })));
     return {
       running,
       max: this.limits.maxJobs,
@@ -398,7 +410,57 @@ export class BuildHost {
   }
 
   session(client: string, socket: WebSocket, send: (event: BuildProgressEvent) => void): BuildSession {
-    return new BuildSession(this, client, socket, send);
+    const session = new BuildSession(this, client, socket, send);
+    this.sessions.set(session, client);
+    this.served.add(client);
+    return session;
+  }
+
+  ended(session: BuildSession): void {
+    this.sessions.delete(session);
+  }
+
+  /**
+   * Deletes the blobs of `client` that no `mirror.json` of its repositories and no open connection's manifest
+   * references, unless a build of that client runs.
+   */
+  pruneBlobs(client: string): void {
+    if ([...this.jobs].some((job) => job.client === client)) return;
+    const keep = new Set<string>();
+    for (const [session, owner] of this.sessions) {
+      if (owner === client) for (const sha256 of session.digests()) keep.add(sha256);
+    }
+    try {
+      const repos = join(this.clientDir(client), 'repos');
+      const blobs = join(this.clientDir(client), 'blobs');
+      for (const repo of readdirSync(repos)) {
+        const mirror = join(repos, repo, 'mirror.json');
+        if (!existsSync(mirror)) continue;
+        const record = JSON.parse(readFileSync(mirror, 'utf8')) as Record<string, { sha256: string }>;
+        for (const entry of Object.values(record)) keep.add(entry.sha256);
+      }
+      for (const prefix of readdirSync(blobs, { withFileTypes: true })) {
+        if (!prefix.isDirectory() || !/^[0-9a-f]{2}$/.test(prefix.name)) continue;
+        for (const blob of readdirSync(join(blobs, prefix.name), { withFileTypes: true })) {
+          if (blob.isFile() && /^[0-9a-f]{64}$/.test(blob.name) && !keep.has(blob.name))
+            rmSync(join(blobs, prefix.name, blob.name), { force: true });
+        }
+      }
+    } catch {}
+  }
+
+  /** Cancels the builds of `client`, a client that lost `build`, and deletes its area once they end. */
+  async remove(client: string): Promise<void> {
+    if (!client || client === '.' || client === '..' || basename(client) !== client) return;
+    for (const [token, entry] of this.retained) if (entry.client === client) this.drop(token);
+    const jobs = [...this.jobs].filter((job) => job.client === client);
+    for (const job of jobs) job.cancel();
+    await Promise.all(jobs.map((job) => job.done));
+    try {
+      await rm(this.clientDir(client), { recursive: true, force: true, maxRetries: 3 });
+    } catch (error) {
+      console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+    }
   }
 
   /** Starts the build of one synced manifest; the job belongs to the caller's connection. */
@@ -591,6 +653,7 @@ export class BuildHost {
             durationMs: Date.now() - started,
           });
           resolve();
+          this.pruneBlobs(client);
         };
         settle();
       });
@@ -687,13 +750,19 @@ export class BuildHost {
 
   /**
    * Cancels the jobs no connection holds, and deletes the retained bundles, of clients `allowed` no longer accepts,
-   * such as a revoked one.
+   * such as a revoked one. With `deleteAreas`, the area of each such client this server process served is deleted
+   * once its builds end.
    */
-  abandonDetached(allowed: (client: string) => boolean): void {
+  abandonDetached(allowed: (client: string) => boolean, deleteAreas = false): void {
     for (const job of this.owned.values()) {
       if (!job.session && !allowed(job.client)) this.abandon(job);
     }
     for (const [token, entry] of this.retained) if (!allowed(entry.client)) this.drop(token);
+    for (const client of this.served) {
+      if (!deleteAreas || allowed(client)) continue;
+      this.served.delete(client);
+      void this.remove(client);
+    }
   }
 
   async close(): Promise<void> {
@@ -745,6 +814,7 @@ function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradl
 export class BuildSession {
   private repo: string | null = null;
   private files = new Map<string, BuildFile>();
+  private bytes = 0;
   private done = false;
   private readonly expected = new Map<string, number>();
   private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
@@ -775,9 +845,12 @@ export class BuildSession {
       return refusal('bad-request', 'build.sync needs params.repo, params.files and params.done.');
     }
     if (typeof params.done !== 'boolean') return refusal('bad-request', 'build.sync needs params.done.');
+    const low = this.host.lowDisk();
+    if (low) return refusal('build-busy', `This Mac declines the upload: ${low}.`);
     if (this.done || this.repo !== params.repo) {
       this.repo = params.repo;
       this.files = new Map();
+      this.bytes = 0;
       this.done = false;
     }
     if (this.files.size + params.files.length > MAX_MANIFEST_FILES) {
@@ -788,6 +861,10 @@ export class BuildSession {
       if (!validFile(file)) {
         return refusal('bad-request', `Invalid manifest entry ${JSON.stringify(file).slice(0, 200)}.`);
       }
+      if (this.bytes + file.size > this.host.limits.maxManifestBytes) {
+        return refusal('limit-exceeded', `A manifest holds at most ${gb(this.host.limits.maxManifestBytes)} GB.`);
+      }
+      this.bytes += file.size;
       this.files.set(file.path, file);
       if (this.expected.has(file.sha256) || existsSync(this.blobPath(file.sha256))) continue;
       this.expected.set(file.sha256, file.size);
@@ -795,6 +872,10 @@ export class BuildSession {
     }
     this.done = params.done;
     return { result: { missing } };
+  }
+
+  digests(): string[] {
+    return [...this.files.values()].map((file) => file.sha256);
   }
 
   /** One binary frame: a 32-byte sha256, then the next bytes of that blob. Returns why the frame is refused. */
@@ -806,6 +887,8 @@ export class BuildSession {
     if (!this.incoming) {
       const size = this.expected.get(sha256);
       if (size === undefined) return `blob ${sha256} was not asked for`;
+      const low = this.host.lowDisk(size);
+      if (low) return `this Mac declines the upload: ${low}`;
       const tmp = join(this.blobs(), `.incoming-${randomUUID()}`);
       mkdirSync(this.blobs(), { recursive: true, mode: 0o700 });
       this.incoming = { sha256, size, received: 0, hash: createHash('sha256'), tmp };
@@ -1041,6 +1124,7 @@ export class BuildSession {
 
   close(dropped: boolean): void {
     this.closed = true;
+    this.host.ended(this);
     for (const job of this.jobs.values()) {
       if (dropped) this.host.detach(job);
       else this.host.abandon(job);

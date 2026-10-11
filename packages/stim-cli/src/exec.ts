@@ -4,8 +4,9 @@ import which from 'which';
 import { basename } from 'path';
 import { debugLog } from './debug-log.ts';
 
-interface ExecOptions {
-  timeoutMs?: number;
+export interface ExecOptions {
+  /** Milliseconds before the child is killed, or 'unbounded' for a call that may legitimately run as long as it needs, such as a native build. */
+  timeoutMs: number | 'unbounded';
   killSignal?: NodeJS.Signals;
   cwd?: string;
   env?: Record<string, string>;
@@ -27,12 +28,12 @@ interface ExecOptions {
 }
 
 export interface Executor {
-  run(cmd: string, opts?: ExecOptions): string;
-  runFile(file: string, args?: string[], opts?: ExecOptions): string;
+  run(cmd: string, opts: ExecOptions): string;
+  runFile(file: string, args: string[], opts: ExecOptions): string;
   /** `runFile` without blocking the event loop; rejects where `runFile` throws. */
-  runFileAsync(file: string, args?: string[], opts?: ExecOptions): Promise<string>;
-  runQuiet(cmd: string, opts?: ExecOptions): string | null;
-  runFileQuiet(file: string, args?: string[], opts?: ExecOptions): string | null;
+  runFileAsync(file: string, args: string[], opts: ExecOptions): Promise<string>;
+  runQuiet(cmd: string, opts: ExecOptions): string | null;
+  runFileQuiet(file: string, args: string[], opts: ExecOptions): string | null;
   spawn(cmd: string, args?: readonly string[], opts?: SpawnOptions): ChildProcess;
   /** Absolute path of `name` on PATH, or null. Windows resolves PATH through PATHEXT. */
   findExecutable(name: string): string | null;
@@ -40,11 +41,47 @@ export interface Executor {
 
 const MAX_BUFFER = 64 * 1024 * 1024;
 
-function nameTimeout(error: unknown, command: string, timeoutMs: number | undefined): unknown {
+function budgetMs(timeoutMs: ExecOptions['timeoutMs']): number | undefined {
+  if (timeoutMs === 'unbounded') return undefined;
+  if (!(timeoutMs > 0))
+    throw new RangeError(`timeoutMs must be a positive number of milliseconds or 'unbounded', got ${timeoutMs}`);
+  return timeoutMs;
+}
+
+/** Whether an exec error is a child killed for exceeding its `timeoutMs`. */
+export function isTimeoutError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ETIMEDOUT';
+}
+
+function nameTimeout(error: unknown, command: string, timeoutMs: ExecOptions['timeoutMs']): unknown {
   if ((error as NodeJS.ErrnoException)?.code === 'ETIMEDOUT' && error instanceof Error) {
     error.message = `Command timed out after ${timeoutMs}ms: ${command}`;
   }
   return error;
+}
+
+const WINDOWS_BATCH_FILE = /\.(?:bat|cmd)$/i;
+const BATCH_UNSAFE_ARGUMENT = /["\r\n]/;
+
+// cross-spawn runs a .bat/.cmd target through `cmd.exe /d /s /c` with escaping the batch file's own
+// %* expansion undoes (moxystudio/node-cross-spawn#171). A quote or line break lets `&`/`|` escape it;
+// `%` is left through because cross-spawn already escapes it as `^%` and URL-encoded arguments need it.
+export function isUnsafeBatchSpawn(
+  target: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === 'win32' && WINDOWS_BATCH_FILE.test(target) && args.some((arg) => BATCH_UNSAFE_ARGUMENT.test(arg));
+}
+
+function refuseUnsafeBatchArguments(file: string, args: readonly string[]): void {
+  if (process.platform !== 'win32') return;
+  const target = which.sync(file, { nothrow: true }) ?? file;
+  if (isUnsafeBatchSpawn(target, args)) {
+    throw new Error(
+      `Refusing to run ${basename(target)}: an argument contains a character cmd.exe could misinterpret (a double quote or a line break).`,
+    );
+  }
 }
 
 function redactError<T>(error: T, values: readonly string[] | undefined): T {
@@ -62,13 +99,14 @@ function redactError<T>(error: T, values: readonly string[] | undefined): T {
 }
 
 const defaultExecutor: Executor = {
-  run(cmd, { timeoutMs, killSignal, cwd, env } = {}) {
+  run(cmd, { timeoutMs, killSignal, cwd, env }) {
     const opts: Parameters<typeof execSync>[1] = {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       maxBuffer: MAX_BUFFER,
     };
-    if (timeoutMs) opts.timeout = timeoutMs;
+    const timeout = budgetMs(timeoutMs);
+    if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (env) opts.env = { ...process.env, ...env };
@@ -85,7 +123,7 @@ const defaultExecutor: Executor = {
   runFile(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent, redact } = {},
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, detachedSilent, redact },
   ) {
     const opts: NonNullable<Parameters<typeof spawn.sync>[2]> & { detached?: boolean } = {
       encoding: 'utf-8',
@@ -93,7 +131,8 @@ const defaultExecutor: Executor = {
       maxBuffer: MAX_BUFFER,
     };
     if (detachedSilent) opts.detached = true;
-    if (timeoutMs) opts.timeout = timeoutMs;
+    const timeout = budgetMs(timeoutMs);
+    if (timeout !== undefined) opts.timeout = timeout;
     if (killSignal) opts.killSignal = killSignal;
     if (cwd) opts.cwd = cwd;
     if (input !== undefined) opts.input = input;
@@ -102,6 +141,7 @@ const defaultExecutor: Executor = {
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
+    refuseUnsafeBatchArguments(file, args);
     const result = spawn.sync(file, args, opts);
     if (result.error) {
       throw redactError(nameTimeout(Object.assign(result.error, result), [file, ...args].join(' '), timeoutMs), redact);
@@ -117,10 +157,12 @@ const defaultExecutor: Executor = {
   runFileAsync(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent, redact } = {},
+    { timeoutMs, killSignal, cwd, env, omitEnv, rejectStderr, onSpawn, detachedSilent, redact },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
+      refuseUnsafeBatchArguments(file, args);
+      const timeout = budgetMs(timeoutMs);
       const opts: SpawnOptions = detachedSilent
         ? { stdio: 'ignore', detached: true }
         : { stdio: ['ignore', 'pipe', 'pipe'] };
@@ -141,12 +183,13 @@ const defaultExecutor: Executor = {
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
       let timedOut = false;
-      const timer = timeoutMs
-        ? setTimeout(() => {
-            timedOut = true;
-            child.kill(killSignal ?? 'SIGTERM');
-          }, timeoutMs)
-        : undefined;
+      const timer =
+        timeout === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true;
+              child.kill(killSignal ?? 'SIGTERM');
+            }, timeout);
       child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
       child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
       child.on('error', (error) => {
@@ -176,6 +219,7 @@ const defaultExecutor: Executor = {
     });
   },
   runQuiet(cmd, opts) {
+    budgetMs(opts.timeoutMs);
     try {
       return this.run(cmd, opts);
     } catch {
@@ -183,6 +227,7 @@ const defaultExecutor: Executor = {
     }
   },
   runFileQuiet(file, args, opts) {
+    budgetMs(opts.timeoutMs);
     try {
       return this.runFile(file, args, opts);
     } catch {
@@ -190,6 +235,7 @@ const defaultExecutor: Executor = {
     }
   },
   spawn(cmd, args = [], opts = {}) {
+    refuseUnsafeBatchArguments(cmd, args);
     return spawn(cmd, args, opts);
   },
   findExecutable(name) {
@@ -240,9 +286,9 @@ function timedSync<A extends unknown[]>(
 
 const debugExecutor: Executor = {
   ...defaultExecutor,
-  run: timedSync((cmd: string, opts?: ExecOptions) => defaultExecutor.run(cmd, opts), programOf),
+  run: timedSync((cmd: string, opts: ExecOptions) => defaultExecutor.run(cmd, opts), programOf),
   runFile: timedSync(
-    (file: string, args?: string[], opts?: ExecOptions) => defaultExecutor.runFile(file, args, opts),
+    (file: string, args: string[], opts: ExecOptions) => defaultExecutor.runFile(file, args, opts),
     (file) => basename(file),
   ),
   async runFileAsync(file, args, opts) {

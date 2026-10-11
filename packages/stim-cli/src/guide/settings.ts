@@ -298,7 +298,11 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         android project carries -- the right default, because
                         what this signs is a local emulator install and never
                         anything distributed. Set it only when the release
-                        variant must be signed with the repo's own key.
+                        variant must be signed with the repo's own key. A
+                        value in the committed .stim.json must resolve
+                        inside the repository (symlinks included); an
+                        absolute path outside it needs --scope workspace
+                        or repo.
   android.keystorePassword
                         the password for it. apksigner's SCHEMED form is
                         passed through unchanged (\`env:MY_KS_PASS\`,
@@ -1012,6 +1016,19 @@ the recordings of every workspace it turns off, and stim-server stops recording
 them within seconds, as soon as \`stim status\` shows recording.enabled false
 for them. Turning it back on records from then on. See \`guide cleanup\` for
 how recordings are removed otherwise.
+
+HIDE A WORKSPACE IN THE APPS
+\`workspace.hidden\` is a boolean, false by default, set only at workspace
+scope, so it needs no --scope. Run it from the workspace:
+
+  stim settings set workspace.hidden true
+  stim settings unset workspace.hidden
+
+\`stim status --json\` then reports hidden: true on that environment, and
+clients that read it list the workspace under Hidden. The next start, ios,
+android, web, macos, reload or worktree warm in the workspace clears it, so
+a workspace in use is never hidden. \`worktree remove\` drops it with the
+workspace.
 
 STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to

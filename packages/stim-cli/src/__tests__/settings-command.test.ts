@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
 let base: string;
@@ -20,14 +21,14 @@ beforeEach(() => {
   app = join(repo, 'apps', 'mobile');
   mkdirSync(home);
   mkdirSync(app, { recursive: true });
-  getExecutor().runFile('git', ['init', '-q', repo]);
+  getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
   writeFileSync(join(repo, 'package.json'), '{}\n');
   writeFileSync(join(app, 'package.json'), '{}\n');
   process.env.STIM_HOME = home;
   const real = getExecutor();
   setExecutor(
     Object.assign(Object.create(real), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
     }),
   );
@@ -163,7 +164,7 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
   let desktop = '/Applications/Stim.app';
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
     }),
   );
@@ -199,7 +200,7 @@ test('a command run by Stim Desktop reports the Desktop viewer default without t
   const stubbed = getExecutor();
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) => {
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'osascript') throw new Error('Launch Services lookup ran');
         return stubbed.runFileQuiet(file, args, opts);
       },
@@ -322,6 +323,23 @@ test('a recording.enabled write that turns nothing off deletes nothing, whatever
   expect(JSON.parse(on.out[0]!).recordingsDeleted).toEqual([]);
   await settings(['unset', 'recording.enabled', '--scope', 'workspace']);
   expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
+});
+
+test('workspace.hidden is written to the workspace layer without --scope and cleared by the next use', async () => {
+  const other = join(base, 'other');
+  saveConfig({
+    version: 2,
+    projects: { [app]: {}, [other]: { settings: { workspace: { hidden: true } } } },
+    repos: {},
+  });
+
+  expect((await settings(['set', 'workspace.hidden', 'true'])).exitCode).toBe(0);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({ workspace: { hidden: true } });
+  expect((await settings(['set', 'workspace.hidden', 'true', '--scope', 'repo'])).exitCode).not.toBe(0);
+
+  recordWorkspaceUse(app);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({});
+  expect(loadConfig()?.projects[other]?.settings).toEqual({ workspace: { hidden: true } });
 });
 
 test('archive settings persist in their declared layers and scoped homes resolve disabled', async () => {

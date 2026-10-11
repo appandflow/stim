@@ -25,7 +25,6 @@ struct Inspector: View {
             cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
           )
-          .tutorialAnchor(.buildSection, workspace: env.path)
           .id(env.path)
         }
 

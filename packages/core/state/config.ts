@@ -68,6 +68,7 @@ function registryFromJson(
   if (!isJsonObject(value)) throw configCorrupt(`has a ${key} that is not an object: ${JSON.stringify(value)}`, path);
   const registry: Record<string, Record<string, unknown>> = {};
   for (const [name, entry] of Object.entries(value)) {
+    if (name === '__proto__') continue;
     if (!isJsonObject(entry)) {
       throw configCorrupt(
         `has a ${key} entry ${JSON.stringify(name)} that is not an object: ${JSON.stringify(entry)}`,

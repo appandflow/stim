@@ -9,7 +9,7 @@ import { spawnEntry } from '../../spawn-entry.ts';
 import { verifyCollectorOwnership } from '../../collector/ownership.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
 import { pidExists, signalProcessTree } from '../../metro.ts';
-import { sleep } from '../native-runtime.ts';
+import { cancellableSleep } from '../../cancellation.ts';
 import { getExecutor } from '../../exec.ts';
 
 function collectorLogFile(root: string, slot: string): string {
@@ -94,7 +94,7 @@ export async function stopPreviousCollector({
       }
       const deadline = Date.now() + waitMs;
       while (Date.now() < deadline && alive(previousPid)) {
-        await sleep(COLLECTOR_POLL_MS);
+        await cancellableSleep(COLLECTOR_POLL_MS);
       }
     } else if (ownership.status === 'unverified') {
       note(

@@ -1,8 +1,10 @@
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
+import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { gitQuiet } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
@@ -185,21 +187,19 @@ function hasLinkedWorktree(projectRoot: string): boolean {
 }
 
 function headBranch(root: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+  const ref = gitQuiet(root, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
   return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
 }
 
 function mainOperation(root: string): 'rebase' | 'merge' | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
   return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
 function dirtyTrackedPaths(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+  const out = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
   return (out ?? '')
     .split('\n')
     .map((line) => line.trim())
@@ -214,9 +214,7 @@ function resolveDefaultBranch(root: string): string | null {
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
@@ -1356,6 +1354,41 @@ function fingerprintConfigSkipped(root: string): Finding | null {
   };
 }
 
+function fingerprintParitySkipped(title: string, detail: string, fix: string): Finding {
+  return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
+}
+
+// @expo/fingerprint resolves through resolve-from, which follows the real path, NODE_PATH and global module folders.
+function fingerprintResolves(root: string, request: string): boolean {
+  try {
+    createRequire(join(realpathSync(root), 'package.json')).resolve(request);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
+  const resolved = ['expo/package.json', 'expo/config', 'expo-modules-autolinking/package.json']
+    .find((request) => fingerprintResolves(root, request))
+    ?.replace(/\/.*$/, '');
+  if (resolved) {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check: dependencies resolve from outside the app',
+      `This app has no node_modules of its own, but ${resolved} resolves from outside it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  if (platform !== 'ios') {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check for Android or a project without an iOS directory on a checkout without dependencies',
+      'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
+      'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  return null;
+}
+
 function gitMetadataAt(path: string): boolean {
   try {
     const git = lstatSync(join(path, '.git'));
@@ -1459,8 +1492,7 @@ export async function detectFingerprintParity(
     iosProjectPath?: string;
   } = {},
 ): Promise<Finding | null> {
-  const exec = getExecutor();
-  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+  if (gitQuiet(projectRoot, ['rev-parse', '--git-dir']) == null) {
     return null;
   }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
@@ -1477,6 +1509,11 @@ export async function detectFingerprintParity(
       : existsSync(join(projectRoot, 'android'))
         ? 'android'
         : undefined);
+  const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
+  if (unsafe) return unsafe;
+  // @expo/fingerprint 0.20 spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  const coldFingerprint: typeof createFingerprint = (root, options) =>
+    createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 
   let base: string;
   try {
@@ -1485,10 +1522,10 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet(
-    'git',
-    ['-C', projectRoot, '-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
-    { timeoutMs: 60000 },
+  const added = gitQuiet(
+    projectRoot,
+    ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+    { write: true, timeoutMs: 60000 },
   );
   if (added == null) {
     rmSync(base, { recursive: true, force: true });
@@ -1496,10 +1533,14 @@ export async function detectFingerprintParity(
   }
 
   try {
-    const headSkipped = fingerprintConfigSkipped(worktree);
+    const headSkipped = fingerprintConfigSkipped(worktree) ?? coldFingerprintRunsProjectCode(worktree, platform);
     if (headSkipped) return headSkipped;
-    const project = await fingerprintProject(projectRoot, { platform, iosProjectPath, createFingerprint });
-    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint });
+    const project = await fingerprintProject(projectRoot, {
+      platform,
+      iosProjectPath,
+      createFingerprint: coldFingerprint,
+    });
+    const clean = await fingerprintProject(worktree, { platform, iosProjectPath, createFingerprint: coldFingerprint });
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
@@ -1517,8 +1558,8 @@ export async function detectFingerprintParity(
   } catch {
     return null;
   } finally {
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
+    gitQuiet(projectRoot, ['worktree', 'remove', '--force', worktree], { write: true, timeoutMs: 30000 });
     rmSync(base, { recursive: true, force: true });
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
+    gitQuiet(projectRoot, ['worktree', 'prune'], { write: true });
   }
 }

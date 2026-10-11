@@ -27,7 +27,7 @@ import {
   type ManagedTunnelRecord,
 } from '../supervisor/state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
+import { isJsonObject, LAST_BUILD_KEYS, readMacosRecord } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
 import { readWebRecord } from '../web/state.ts';
@@ -204,8 +204,8 @@ export function describeDereferenced(project: ProjectRecord | null): string[] {
 
 function lastBuildCacheKey(projectPath: string, platform: 'ios' | 'android'): string | null {
   const build = readWorkspaceState(projectPath)?.[LAST_BUILD_KEYS[platform]];
-  if (build === null || typeof build !== 'object' || Array.isArray(build)) return null;
-  const { cacheKey } = build as Record<string, unknown>;
+  if (!isJsonObject(build)) return null;
+  const { cacheKey } = build;
   return typeof cacheKey === 'string' ? cacheKey : null;
 }
 

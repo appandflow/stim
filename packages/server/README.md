@@ -37,7 +37,8 @@ runs (see [Tailscale](#tailscale)). Stim Desktop starts its own server with the 
 unless it serves phones.
 
 `--env KEY=VALUE` and `--path-prepend <dir>` (each repeatable) apply to the
-serving command: see [Run as a service](#run-as-a-service).
+serving command: see [Run as a service](#run-as-a-service). When serving, a bare
+`--env KEY` takes the value from the server's own environment.
 
 `pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
@@ -1052,9 +1053,15 @@ created a route to another `--port`, run `uninstall` first.
 the server. stim-server replaces its environment with the login shell's at
 start, so a `PATH` or `GEM_HOME` in the plist alone is lost and an entry in
 `~/.zshrc` changes the terminal too. These flags apply after that capture, to
-the server and to the builds it starts, and the plist stores them as
-`ProgramArguments`. `--path-prepend` puts directories in front of PATH in the
-order given; `--env` cannot set `STIM_HOME`. The values sit in plain text in the plist and in the process arguments, so do not pass secrets. For a private CocoaPods:
+the server and to the builds it starts. The plist stores each `--env` value in
+`EnvironmentVariables`, so it stays out of the server's process arguments, and
+passes only the name as `--env KEY`; the server reads that variable from the
+environment launchd gives it. The values sit in plain text in the plist. A
+plist written by an earlier release keeps `--env KEY=VALUE` in its
+`ProgramArguments` until the next `service install`. `--path-prepend` puts
+directories in front of PATH in the order given, as `ProgramArguments`; `--env`
+cannot set `STIM_HOME` or `SHELL`, which the job takes from the installing
+process. For a private CocoaPods:
 
 ```bash
 stim-server service install --serve \
@@ -1166,7 +1173,9 @@ A client with `build` runs its iOS simulator builds and Android emulator
 debug builds and macOS SwiftPM Debug builds here with these methods.
 They need `build`, not `read`; a device without `build` gets `forbidden`.
 The server re-reads the build clients on every call, and revoking a client
-closes its connections and cancels its builds.
+closes its connections and cancels its builds. Once those builds end, it
+deletes the client's directory under the worker root. A client that has not
+connected since stim-server started keeps its directory when revoked.
 
 - `build.offer` takes `repo` (the client's name for its repository: letters,
   digits, `.`, `_` and `-`, at most 80), an optional `lockfile` sha256, and an
@@ -1209,7 +1218,13 @@ closes its connections and cancels its builds.
   the sha256, then the next bytes of that blob, one blob after another. A frame
   for a blob that was not asked for, one that overruns its size, or bytes that
   do not match the digest close the connection with 4400. Blobs are kept per
-  client and shared by all its repositories.
+  client and shared by all its repositories. `build.sync` fails with
+  `build-busy` while the worker root's volume has less than 10 GiB free, and
+  with `limit-exceeded` once the sizes in one manifest add up to more than
+  20 GiB. A blob whose size would leave that volume under 10 GiB free also
+  closes the connection with 4400. When a client's build ends and no other
+  build of that client runs, the server deletes the client's blobs that no
+  repository checkout and no open connection's manifest uses.
 - `build.start` takes `repo`, `project` (the app directory in the repository),
   `platform` (`ios`, `android` or `macos`), `configuration`, `scheme`, `runtime` (a
   simulator runtime identifier, required for `ios`, null for `android`),

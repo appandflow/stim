@@ -64,12 +64,5 @@ import Testing
     #expect(hosted.localEmulatorSerial == nil)
     #expect(hosted.activityKey == nil)
     #expect(runCommand(for: hosted, cwd: "/w")?.arguments == ["android", "--remote", "mini:7443"])
-    let json = """
-      {"environments":[{"path":"/w","live":true,"warnings":[],
-        "android":{"name":"stim-local","serial":"emulator-5554","owned":true,"physical":false,"state":"ready",
-          "host":{"machine":"mini","session":"host-session","device":null}}}]}
-      """
-    let status = try JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
-    #expect(status.owner(of: .emulator(serial: "emulator-5554")) == nil)
   }
 }

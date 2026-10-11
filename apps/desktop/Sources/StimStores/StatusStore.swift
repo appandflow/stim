@@ -5,13 +5,23 @@ import StimKit
 public final class StatusStore: ObservableObject {
   static let pollInterval: TimeInterval = 10
 
-  @Published public private(set) var payload: StatusPayload?
+  @Published public private(set) var payload: StatusPayload? {
+    didSet {
+      newestArchiveCache = nil
+      sidebarCache = nil
+    }
+  }
   @Published public private(set) var error: String?
   @Published public private(set) var updatedAt: Date?
   @Published public private(set) var projects: [String: Project] = [:] {
-    didSet { projectTitleMap = projectTitles(roots: projects.values.map(\.root)) }
+    didSet {
+      projectTitleMap = projectTitles(roots: projects.values.map(\.root))
+      sidebarCache = nil
+    }
   }
   private var projectTitleMap: [String: String] = [:]
+  private var newestArchiveCache: [ArchivedWorkspace]?
+  private var sidebarCache: SidebarCache?
   @Published public private(set) var watching = false
   @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim" {
     didSet { syncServerFeed() }
@@ -46,7 +56,10 @@ public final class StatusStore: ObservableObject {
   init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
     self.cli = cli
     self.fetch = fetch
-    Task { stimHome = await cli.value.stimHome }
+    Task {
+      stimHome = await cli.value.stimHome
+      LaunchMilestones.reach("cli-ready")
+    }
   }
 
   public convenience init(cli: Task<StimCLI, Never>) {
@@ -107,6 +120,7 @@ public final class StatusStore: ObservableObject {
               MainActor.assumeIsolated {
                 guard let self, generation == self.watchGeneration else { return }
                 if let decoded {
+                  LaunchMilestones.reach("first-watch-payload")
                   self.accept(decoded)
                 } else {
                   self.watchStderr.append(line.text)
@@ -123,6 +137,7 @@ public final class StatusStore: ObservableObject {
             }
           })
         self.watching = true
+        LaunchMilestones.reach("watch-spawned")
       } catch {
         self.error = error.localizedDescription
         self.restartWatch(ranFor: 0)
@@ -144,6 +159,7 @@ public final class StatusStore: ObservableObject {
 
   private func restartWatch(ranFor duration: TimeInterval) {
     let delay = backoff.delay(afterRunning: duration)
+    DebugLog.info(.cli, "status watch restarts in \(delay)s after running \(Int(duration))s")
     restartTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
       MainActor.assumeIsolated { self?.startWatch() }
     }
@@ -205,8 +221,15 @@ public final class StatusStore: ObservableObject {
     let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
     let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
     Task.detached {
-      let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
+      let resolved = await withTaskGroup(of: (String, Project).self) { group in
+        for path in Set(missing) { group.addTask { (path, Project.resolve(workspace: path)) } }
+        return await group.reduce(into: [String: Project]()) { $0[$1.0] = $1.1 }
+      }
       await MainActor.run {
+        DebugLog.debug(
+          .cli,
+          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
+        )
         self.projects.merge(reported) { old, _ in old }
         self.projects.merge(resolved) { old, _ in old }
         guard sequence > self.shown else { return }
@@ -218,6 +241,8 @@ public final class StatusStore: ObservableObject {
         self.payload = payload
         self.error = nil
         self.updatedAt = Date()
+        LaunchMilestones.reach(
+          "first-payload-shown", "environments=\(payload.environments.count) archived=\(payload.archived?.count ?? 0)")
         self.checkDoctor()
       }
     }
@@ -254,22 +279,48 @@ public final class StatusStore: ObservableObject {
       project: project(ofPath:))
   }
 
+  /// The payload's archives, newest first.
+  public var newestArchives: [ArchivedWorkspace] {
+    if let newestArchiveCache { return newestArchiveCache }
+    let newest = ArchivedWorkspace.newestFirst(payload?.archived ?? [])
+    newestArchiveCache = newest
+    return newest
+  }
+
   public func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
-    StimKit.sidebarTrees(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let trees = cache.trees { return trees }
+    let trees = StimKit.sidebarTrees(
+      visible: cache.visible, environments: payload?.environments ?? [],
+      unprovisioned: payload?.unprovisionedWorktrees ?? [], project: project(ofPath:), options: options)
+    cache.trees = trees
+    sidebarCache = cache
+    return trees
   }
 
   public func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
-    StimKit.sidebarList(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let list = cache.list { return list }
+    let list = StimKit.sidebarList(visible: cache.visible, project: project(ofPath:), options: options)
+    cache.list = list
+    sidebarCache = cache
+    return list
   }
 
   public func sidebarStatusCounts(_ options: SidebarOptions) -> [StatusFilter: Int] {
-    StimKit.sidebarStatusCounts(
+    sidebar(options).counts
+  }
+
+  private func sidebar(_ options: SidebarOptions) -> SidebarCache {
+    if let sidebarCache, sidebarCache.options == options { return sidebarCache }
+    let entries = sidebarEntries(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+      project: project(ofPath:), options: options, newestArchives: newestArchives)
+    let cache = SidebarCache(
+      options: options, visible: visibleSidebarEntries(entries, options),
+      counts: StimKit.sidebarStatusCounts(entries, hidden: options.hiddenWorkspaces))
+    sidebarCache = cache
+    return cache
   }
 
   private func checkDoctor() {
@@ -323,4 +374,12 @@ public final class StatusStore: ObservableObject {
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
       stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
   }
+}
+
+private struct SidebarCache {
+  var options: SidebarOptions
+  var visible: [SidebarEntry]
+  var counts: [StatusFilter: Int]
+  var trees: [ProjectTree]?
+  var list: [SidebarEntry]?
 }

@@ -72,10 +72,25 @@ export interface BuildReport {
   missProvisional?: true;
   /** What the native build tool is doing now, once it printed a line Stim recognizes. */
   detail?: BuildDetail;
+  /** What the `device` or `launch` phase is waiting on, once Stim observed it; absent otherwise and from older Stim. */
+  activity?: BuildActivity;
   placement: BuildPlacement;
   /** While `phase` is `wait`: the workspace whose build of the same artifact this run waits on, when it is known. */
   waitingOn?: { path: string };
   waitingFor?: BuildWaitingFor;
+}
+
+/**
+ * What a run's `device` or `launch` phase is waiting on. `booting` lasts while the run waits for the owned simulator or
+ * emulator it started booting. `bundling` starts when the app's bundle request reaches this workspace's
+ * Metro and ends when Metro delivered it; `percent` is Metro's own progress for that request, present only once Metro
+ * reported one. `waiting-ready` lasts while the app reports its readiness pending. `startedAt` is when the evidence was
+ * recorded.
+ */
+export interface BuildActivity {
+  name: 'booting' | 'bundling' | 'waiting-ready';
+  startedAt: string;
+  percent?: number;
 }
 
 /** One phase a running build is expected to go through, and its median duration in comparable runs. */
@@ -449,9 +464,10 @@ export const WORKSPACE_STAGE_KINDS = ['building', 'warming', 'ready', 'build-fai
 
 /**
  * Where a workspace is, first match wins: `building` while a build runs, `warming` and `ready` from `phase` when
- * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live or holds
- * a remote device, else `stopped`. `since` is when that began: the build's start, the warm phase's time, the failed
- * run's end (else start), the supervisor's start, or Metro's last stop. `platform` names the build for `building`
+ * nothing is live, `build-failed` when the newest run of either platform failed, `running` when it is live, its
+ * macOS app is running or orphaned, or it holds a remote device, else `stopped`. `since` is when that began: the
+ * build's start, the warm phase's time, the failed run's end (else start), the supervisor's start (else the running
+ * macOS app's build end, else its start), or Metro's last stop. `platform` names the build for `building`
  * and `build-failed`. `closedApps` lists, for `running`, the devices whose `appPresence` is `closed`.
  */
 export interface WorkspaceStage {
@@ -637,6 +653,8 @@ export interface EnvironmentState {
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
   recording?: { enabled: boolean };
+  /** Present when `workspace.hidden` is true: clients list the workspace under Hidden. */
+  hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */

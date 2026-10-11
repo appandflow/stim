@@ -93,32 +93,38 @@ export function parseHostedMacosChoice(value: unknown): HostedMacosChoice | null
 export function parseHostedMacosDevice(value: unknown): HostedMacosDevice | null {
   if (
     !isJsonObject(value) ||
-    !parseHostedMacosChoice(value) ||
     !hostedMacosAppSlot(value.appSlot) ||
     Object.keys(value).some((key) => !['architecture', 'macosVersion', 'appSlot'].includes(key))
   )
     return null;
-  return value as unknown as HostedMacosDevice;
+  const choice = parseHostedMacosChoice(value);
+  return choice && { ...choice, appSlot: value.appSlot };
 }
 
 const AGENT_PATH = /^\/device-host\/agent\/[a-f0-9-]{36}\/$/;
 const LEASE_NAME = /^[A-Za-z0-9._-]{1,128}$/;
 const LEASE_DEVICE_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$/;
 
+function leaseName(value: unknown): value is string {
+  return typeof value === 'string' && LEASE_NAME.test(value);
+}
+
 function parseHostedAgentLease(value: unknown): HostedAgentLease | null {
+  if (!isJsonObject(value)) return null;
+  const { tenant, runId, clientId, deviceKey, backend } = value;
   if (
-    !isJsonObject(value) ||
-    Object.keys(value).length !== (value.backend === 'ios-instance' || value.backend === 'android-instance' ? 5 : 4) ||
-    ![value.tenant, value.runId, value.clientId].every((name) => typeof name === 'string' && LEASE_NAME.test(name)) ||
-    typeof value.deviceKey !== 'string' ||
-    !(value.backend === 'ios-instance'
-      ? /^ios:mobile:[a-fA-F0-9-]{36}$/.test(value.deviceKey)
-      : value.backend === 'android-instance'
-        ? /^android:mobile:emulator-[0-9]+$/.test(value.deviceKey)
-        : value.backend === undefined && LEASE_DEVICE_KEY.test(value.deviceKey))
+    Object.keys(value).length !== (backend === 'ios-instance' || backend === 'android-instance' ? 5 : 4) ||
+    !leaseName(tenant) ||
+    !leaseName(runId) ||
+    !leaseName(clientId) ||
+    typeof deviceKey !== 'string'
   )
     return null;
-  return value as unknown as HostedAgentLease;
+  if (backend === 'ios-instance')
+    return /^ios:mobile:[a-fA-F0-9-]{36}$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  if (backend === 'android-instance')
+    return /^android:mobile:emulator-[0-9]+$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  return backend === undefined && LEASE_DEVICE_KEY.test(deviceKey) ? { tenant, runId, clientId, deviceKey } : null;
 }
 
 /** A grant naming a driver this client does not know is not usable; it parses as null. */

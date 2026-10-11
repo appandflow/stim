@@ -2,6 +2,7 @@ import type * as Wire from './protocol.ts';
 import type * as State from './state/index.ts';
 
 export { ACTIONS, PROTOCOL_VERSION } from './protocol.ts';
+export { withDerivedFacts } from './state/status-derived.ts';
 
 export type PhonePlatform = Wire.BuildPlanParams['platform'];
 export type PhoneDevicePlatform = Wire.Platform;
@@ -45,6 +46,7 @@ export type PhoneBuildReport = Omit<
   | 'plannedPhases'
   | 'missReason'
   | 'detail'
+  | 'activity'
   | 'waitingFor'
 > & {
   outcomeKnown?: boolean;
@@ -58,10 +60,12 @@ export type PhoneBuildReport = Omit<
   plannedPhases?: { phase: PhoneBuildPhase; expectedMs: number }[] | null;
   missReason?: PhoneBuildMissReason;
   detail?: PhoneBuildDetail;
+  activity?: PhoneBuildActivity;
   waitingFor?: Omit<State.BuildWaitingFor, 'kind'> & { kind: string };
 };
 export type PhoneBuildPlacement = string | Exclude<State.BuildPlacement, string>;
 export type PhoneBuildDetail = Omit<State.BuildDetail, 'step' | 'unit'> & { step: string | null; unit: string | null };
+export type PhoneBuildActivity = Omit<State.BuildActivity, 'name'> & { name: string };
 export type PhoneBuildCacheHit = string | false;
 export type PhoneBuildMissCategory = string;
 export type PhoneBuildMissChange = Omit<State.BuildMissChange, 'change' | 'category'> & {
@@ -459,6 +463,7 @@ export type {
   PhoneBuildReport as BuildReport,
   PhoneBuildPlacement as BuildPlacement,
   PhoneBuildDetail as BuildDetail,
+  PhoneBuildActivity as BuildActivity,
   PhoneBuildCacheHit as BuildCacheHit,
   PhoneBuildMissCategory as BuildMissCategory,
   PhoneBuildMissChange as BuildMissChange,

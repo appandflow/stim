@@ -23,6 +23,8 @@ public struct Build: Decodable, Hashable, Sendable {
   public var plannedPhases: [PlannedPhase]?
   /// Present once the build tool printed a recognized line; a current stim sends it only during `compile`.
   public var detail: BuildDetail?
+  /// What the `device` or `launch` phase waits on, once the CLI observed it; nil otherwise or from an older stim.
+  public var activity: BuildActivity?
   /// Present once the run knows why the cache missed.
   public var missReason: BuildMissReason?
   /// True while `missReason` is the first lookup's miss and the run looks the key up again after prebuild or pods.
@@ -170,6 +172,14 @@ public struct BuildDetail: Decodable, Hashable, Sendable {
   public var total: Int?
   public var line: String?
   public var updatedAt: String?
+}
+
+/// What a running build's `device` or `launch` phase waits on: `booting` its simulator or emulator, `bundling` the app's
+/// first JS bundle in Metro, with Metro's own `percent` once it reported one, or `waiting-ready` for the app's readiness.
+public struct BuildActivity: Decodable, Hashable, Sendable {
+  public var name: String
+  public var startedAt: String
+  public var percent: Double?
 }
 
 public struct BuildProgress: Equatable, Sendable {

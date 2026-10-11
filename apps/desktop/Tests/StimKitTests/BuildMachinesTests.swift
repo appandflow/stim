@@ -337,3 +337,37 @@ import Testing
     #expect(decoded == target && decoded.path == nil)
   }
 }
+
+struct TailnetProbeTests {
+  private func fakeTailscale(_ body: String) throws -> (dir: URL, environment: [String: String]) {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tailnet-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let script = dir.appendingPathComponent("tailscale")
+    try "#!/bin/sh\n\(body)\n".write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    return (dir, ["PATH": dir.path + ":/usr/bin:/bin"])
+  }
+
+  @Test func reportsAStalledTailscaleAsTimedOutWithinTheTimeout() throws {
+    let (dir, environment) = try fakeTailscale("exec sleep 30")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let started = Date()
+    let probe = Tailnet.probe(environment: environment, timeout: 0.5, appBinary: "/nonexistent/Tailscale")
+    #expect(probe == .timedOut)
+    #expect(Date().timeIntervalSince(started) < 10)
+    #expect(MacTailscale(probe: probe, install: .cli) == .unresponsive)
+  }
+
+  @Test func returnsTheStatusOfATailscaleThatAnswers() throws {
+    let (dir, environment) = try fakeTailscale(#"echo '{"BackendState":"Running"}'"#)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let probe = Tailnet.probe(environment: environment, timeout: 5, appBinary: "/nonexistent/Tailscale")
+    #expect(probe == .answered(Data("{\"BackendState\":\"Running\"}\n".utf8)))
+  }
+
+  @Test func readsAFailingTailscaleAsUnavailable() throws {
+    let (dir, environment) = try fakeTailscale("exit 1")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    #expect(Tailnet.probe(environment: environment, timeout: 5, appBinary: "/nonexistent/Tailscale") == .unavailable)
+  }
+}

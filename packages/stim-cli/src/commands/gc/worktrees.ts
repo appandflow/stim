@@ -7,7 +7,8 @@ import { ownedAvdSerialResolver } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../../devices/ios.ts';
 import { leaseIsExpired, listLeaseFiles } from '../../engine/device-lease.ts';
-import { getExecutor } from '../../exec.ts';
+import { isTimeoutError } from '../../exec.ts';
+import { gitQuiet } from '../../workspace/git.ts';
 import { MAINTENANCE_LOG_NAME, settingDefinition } from '@stim-cli/core/state';
 import { getProject, loadConfig } from '../../workspace/config.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../../workspace/paths.ts';
@@ -65,7 +66,7 @@ export interface WorktreeFacts {
   locked: boolean;
   porcelain: string[] | null;
   unpushed: string[] | null;
-  submodules: boolean;
+  submodules: boolean | null;
   inUse: string[];
   idleDays: number | null;
   merge: MergeState | null;
@@ -184,6 +185,7 @@ function removalBlocker(facts: WorktreeFacts, olderThan: number | null): Worktre
   if (facts.unpushed.length && !merged?.coversUnpushed && ended?.state !== 'merged') {
     return skip('unpushed', `unpushed: ${plural(facts.unpushed.length, 'commit')} on no remote or other branch`);
   }
+  if (facts.submodules === null) return skip('submodules', 'initialized submodules could not be checked');
   if (facts.submodules) return skip('submodules', 'initialized submodules');
   if (merged || ended) return null;
   const notMerged = facts.merge && !facts.merge.merged ? facts.merge : null;
@@ -321,9 +323,7 @@ function logFiles(key: string): { path: string; basis: string }[] | null {
 }
 
 function worktreeActivityOf(path: string, keys: readonly string[]): WorktreeActivity | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['--no-optional-locks', '-C', path, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+  const gitDir = gitQuiet(path, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   if (!gitDir) return null;
   const paths = [
     { path: join(gitDir, 'index'), basis: 'a git index write' },
@@ -349,11 +349,20 @@ function graceMsSetting(): number {
   return (value ?? 0) * MINUTE_MS;
 }
 
+function unlessTimedOut<T>(read: () => T, unknown: T): T {
+  try {
+    return read();
+  } catch (error) {
+    if (isTimeoutError(error)) return unknown;
+    throw error;
+  }
+}
+
 function porcelainOf(path: string, gitAnswered: boolean | null): string[] | null {
   if (gitAnswered === null) return null;
   if (!gitAnswered) return [];
-  const lines = dirtyPaths(path, { limit: Infinity });
-  return lines.length ? lines : null;
+  const lines = unlessTimedOut(() => dirtyPaths(path, { limit: Infinity }), null);
+  return lines?.length ? lines : null;
 }
 
 function candidateRoots(): string[] {
@@ -445,15 +454,15 @@ export async function collectWorktreeSweep({
     const idleDays = idleDaysOf(keys, now);
     const linked = !('refusal' in source) && entry !== null && source.path !== entry.path;
     const activity = linked && grace.ms > 0 ? worktreeActivityOf(path, keys) : null;
-    const gitAnswered = linked ? hasUncommittedWork(path) : null;
+    const gitAnswered = linked ? unlessTimedOut(() => hasUncommittedWork(path), null) : null;
     const head = linked ? resolveFullRef(path, 'HEAD') : null;
     const facts: WorktreeFacts = {
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
       porcelain: porcelainOf(path, gitAnswered),
-      unpushed: linked ? unpushedCommits(path) : null,
-      submodules: linked && hasPopulatedSubmodules(path),
+      unpushed: linked ? unlessTimedOut(() => unpushedCommits(path), null) : null,
+      submodules: linked ? unlessTimedOut(() => hasPopulatedSubmodules(path), null) : false,
       inUse: [],
       idleDays,
       merge: null,

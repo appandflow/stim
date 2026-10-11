@@ -86,7 +86,7 @@ public struct WorktreePage: Hashable, Sendable {
     case .building: 1
     case .warming: 2
     case .ready: 4
-    case .stopped: 5
+    case .stopped, .unknown: 5
     }
   }
 

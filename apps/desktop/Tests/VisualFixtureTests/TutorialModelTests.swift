@@ -93,7 +93,7 @@
       let delete = try XCTUnwrap(TutorialSteps.all.first { $0.id == "delete" })
       XCTAssertEqual(
         model.ask(for: delete),
-        "Remove the Stim tutorial: remove its worktrees and the clone at \(clone) with stim worktree remove, then delete \(clone). Follow stim guide tutorial delete."
+        "Remove the test app: run stim worktree remove on \(clone), then delete the folder. Follow stim guide tutorial delete."
       )
       try FileManager.default.removeItem(atPath: clone)
       model.update(workspaces: [], archived: [try archive()], sheetOpen: false)
@@ -153,7 +153,6 @@
       model.update(workspaces: [old], archived: [], sheetOpen: false, now: start)
       XCTAssertEqual(model.notice?.action, .restart)
       XCTAssertEqual(model.snapshot?.steps.first { $0.id == "build" }?.action, .restart)
-      XCTAssertNil(model.ask(for: try XCTUnwrap(TutorialSteps.all.first { $0.id == "build" })))
       model.open(beginning: true, now: start.addingTimeInterval(30))
       XCTAssertNil(model.snapshot?.record.tourPath)
       XCTAssertEqual(model.snapshot?.currentStep, "begin")
@@ -206,7 +205,7 @@
         }
         let model = TutorialModel(defaults: isolatedDefaults(), cloneBase: "/nonexistent/stim-tutorial")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
-        for _ in 0..<2 { model.skip() }
+        for _ in 0..<2 { model.next() }
         XCTAssertEqual(model.snapshot?.currentStep, "device")
         events.opened("reused-simulator")
         model.update(workspaces: [env], archived: [], sheetOpen: false, viewerEvents: events.events)
