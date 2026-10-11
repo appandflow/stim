@@ -48,7 +48,6 @@ export interface ServerUpdateOptions {
 interface Upload {
   packages: (ServerUpdatePackage & { received: number; hash: ReturnType<typeof createHash> })[];
   dir: string;
-  touched: number;
 }
 
 const refused = (code: ProtocolError['code'], message: string): { error: ProtocolError } => ({
@@ -208,7 +207,6 @@ export class ServerUpdates {
     }
     this.upload = {
       dir,
-      touched: Date.now(),
       packages: parsed.packages.map(({ name, size, sha256 }) => ({
         name,
         size,
@@ -262,7 +260,7 @@ export class ServerUpdates {
     }
     entry.hash.update(bytes);
     entry.received += bytes.length;
-    upload.touched = Date.now();
+    this.idle?.refresh();
     if (entry.received === entry.size && entry.hash.digest('hex') !== entry.sha256) {
       return this.abandon('bad-request', `${entry.name} does not match the sha256 it offered.`);
     }
@@ -285,20 +283,20 @@ export class ServerUpdates {
     if (this.upload) rmSync(this.upload.dir, { recursive: true, force: true });
     this.upload = null;
     this.running = null;
-    if (this.idle) clearInterval(this.idle);
+    if (this.idle) clearTimeout(this.idle);
     this.idle = null;
   }
 
   private watchIdle(): void {
-    this.idle = setInterval(() => {
-      if (this.upload && this.running?.state === 'uploading' && Date.now() - this.upload.touched > UPLOAD_IDLE_MS) {
-        this.abandon('bad-request', 'The package upload stopped for 10 minutes.');
-      }
-    }, 30_000);
+    this.idle = setTimeout(() => {
+      this.abandon('bad-request', 'The package upload stopped for 10 minutes.');
+    }, UPLOAD_IDLE_MS);
     this.idle.unref();
   }
 
   private launch(source: UpdateSource): { error: ProtocolError } | null {
+    if (this.idle) clearTimeout(this.idle);
+    this.idle = null;
     const running = this.running!;
     const target = describeSource(source);
     const log = this.logFile();
@@ -351,7 +349,7 @@ export class ServerUpdates {
   }
 
   close(): void {
-    if (this.idle) clearInterval(this.idle);
+    if (this.idle) clearTimeout(this.idle);
     if (this.running?.state === 'uploading' && this.upload) rmSync(this.upload.dir, { recursive: true, force: true });
   }
 }

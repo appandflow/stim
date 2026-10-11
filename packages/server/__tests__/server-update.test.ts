@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUpdateStart, ServerUpdates, type ServerUpdateOptions } from '../src/server-update.ts';
@@ -210,5 +219,55 @@ describe('server update requests', () => {
     expect(audited).toEqual([]);
     expect(drains).toEqual([]);
     expect((await instance.status()).running).toBeNull();
+  });
+
+  it('expires ten minutes after the last accepted chunk without extending the deadline for invalid chunks', async () => {
+    vi.useFakeTimers();
+    const { instance, finished, drains } = updates({ acceptsClientBuilds: () => true });
+    try {
+      const started = await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
+      expect(started).toHaveProperty('result');
+      if (!('result' in started)) return;
+      const chunk = {
+        id: started.result.id,
+        name: 'server.tgz',
+        offset: 0,
+        data: Buffer.from('ser').toString('base64'),
+      };
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(instance.chunk(by.id, chunk)).toMatchObject({ result: { state: 'uploading' } });
+      await vi.advanceTimersByTimeAsync(9 * 60_000);
+      expect(instance.chunk(by.id, chunk)).toMatchObject({ error: { code: 'bad-request' } });
+      await vi.advanceTimersByTimeAsync(60_000 - 1);
+      expect(finished).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(finished).toEqual([
+        { ok: false, message: 'The package upload stopped for 10 minutes.', target: 'packages from Laptop' },
+      ]);
+      expect((await instance.status()).running).toBeNull();
+      expect(drains).toEqual([]);
+      expect(
+        await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] }),
+      ).toHaveProperty('result');
+    } finally {
+      instance.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('closing the server cancels the upload deadline and removes its incoming files', async () => {
+    vi.useFakeTimers();
+    const { instance, finished } = updates({ acceptsClientBuilds: () => true });
+    try {
+      await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
+      instance.close();
+      await vi.advanceTimersByTimeAsync(11 * 60_000);
+      expect(finished).toEqual([]);
+      const incoming = join(dir, 'Library', 'Application Support', 'Stim', 'services', LABEL, 'incoming');
+      expect(readdirSync(incoming)).toEqual([]);
+    } finally {
+      instance.close();
+      vi.useRealTimers();
+    }
   });
 });
