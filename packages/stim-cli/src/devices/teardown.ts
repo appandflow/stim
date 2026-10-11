@@ -47,6 +47,7 @@ import {
   ownedAvdDirectory,
   type OrphanedAvdDirectory,
   resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
   deleteAvd,
@@ -146,7 +147,7 @@ export async function eraseParkedIosSim(udid: string, { label }: { label?: strin
 export async function eraseParkedAvd(avdName: string): Promise<TeardownOutcome> {
   try {
     const erased = await eraseParkedAfter('android', avdName, async (_record, eraseStarted) => {
-      if (resolveOwnedAvdSerial(avdName, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS }).serial)
+      if ((await resolveOwnedAvdSerialAsync(avdName, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS })).serial)
         throw new Error(`AVD ${avdName} is running; it was kept`);
       const result = await teardownOwnedAvd(avdName, {
         wipe: true,
