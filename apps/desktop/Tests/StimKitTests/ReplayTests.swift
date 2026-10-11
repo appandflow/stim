@@ -848,7 +848,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   }
 
   @Test(arguments: ["off", "connecting", "refused", "no-read", "wrong-home"])
-  func statsRetainCLIAvailabilityBeforeAnEligibleRPCExists(_ state: String) async throws {
+  func statsRequireAnEligibleRPCWithoutInvokingCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
     let cli = try statsCLI(in: directory)
@@ -858,13 +858,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let reader = StatsReader(cli: Task { cli }) {
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     }
-    let project = try await reader.project(workspace: directory.path)
-    let machine = try await reader.machine()
-    #expect(project.project?.ios?.runs == 3)
-    #expect(machine.offload?.machines["mini"]?.total.savedMs == -500)
-    let calls = try String(contentsOf: directory.appendingPathComponent("calls"), encoding: .utf8)
-    #expect(calls.components(separatedBy: "stats --json").count == 3)
-    #expect(calls.contains(NSHomeDirectory()))
+    let projectError = await #expect(throws: ServerError.self) { try await reader.project(workspace: directory.path) }
+    let machineError = await #expect(throws: ServerError.self) { try await reader.machine() }
+    #expect(projectError?.code == "not-connected")
+    #expect(machineError?.code == "not-connected")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("calls").path))
     #expect(!socket.sent.contains { $0["method"] == .string("stats.get") })
   }
 

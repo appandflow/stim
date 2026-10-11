@@ -5,12 +5,10 @@ grouped by project, with its Metro port, supervisor health, errors, build cache
 stats, live frames from its iOS simulators and Android emulators, and its CPU
 and memory (the physical footprint `stim status` measures).
 
-It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stim stats --json`,
+It reads Stim state only through `stim status --watch --json`, the local server's `status.subscribe` feed, `stim status --json`, `stats.get`,
 `stim logs --json`, `stim settings --json`, `stim ios|android|macos --plan --json`, `stim doctor --json`, and the `stim gc --json` dry run, and never reads or writes `$STIM_HOME`.
 Project stats and build-machine placements use fresh `stats.get` requests when the existing loopback
-server session is open, allows reads, and serves the same canonical Stim home as the CLI. Otherwise they use
-the CLI; reading stats never starts the server. An RPC failure is shown without
-retrying through the CLI. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
+server session is open, allows reads, and serves the same canonical Stim home as the CLI. An unavailable or ineligible session shows a read error; reading stats never starts the server. Cancelling a stats refresh stops waiting and ignores its late reply, keeping device
 viewing connected. The server job can continue until it finishes or reaches its existing limits (normally
 60 seconds), occupying a request slot until then. The shared connection accepts complete WebSocket messages
 up to 16 MiB, including the JSON envelope; an oversized stats response fails the read without a CLI retry.
@@ -1347,8 +1345,7 @@ load per core, cores, offloaded builds running and free disk from its offer,
 and the builds it ran for this Mac today and in total, their average time, the
 time they saved against this project's last build here (an estimate), and the
 fallbacks. Below are its latest placements. The counts and placements come from
-fresh `stats.get` requests through the matching local server session, or `stim stats --json` run in the
-home directory when that session is unavailable. The page keeps checking once a
+fresh `stats.get` requests through the matching local server session. An unavailable session shows a read error. The page keeps checking once a
 minute regardless of the selection. Pending, unreachable and failed checks stay
 visible. **Link Machine** opens **Settings > Remote Macs** for pairing and
 removal; the selector itself changes no settings. Remote selections have no

@@ -1,7 +1,6 @@
 import Foundation
 
-/// Reads fresh stats from an available read-capable server for the CLI's Stim home, otherwise through the CLI.
-/// Once a server request starts, its failures and cancellation are returned without retrying through the CLI.
+/// Reads fresh stats from the local read-capable server for the CLI's Stim home.
 /// The shared transport accepts at most 16 MiB per complete WebSocket message, including the JSON envelope;
 /// oversized replies fail the read under that existing transport limit.
 @MainActor public struct StatsReader {
@@ -19,7 +18,7 @@ import Foundation
     let cli = await cli.value
     try Task.checkCancellation()
     guard let client = readCapableServer(server(), stimHome: cli.stimHome) else {
-      return try await cli.stats(workspace: workspace)
+      throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read stats for this Stim home.")
     }
     let result = try await client.request("stats.get", ["workspace": .string(workspace)])
     return try decodeReporting(ProjectStats.self, from: result, source: .server)
@@ -28,7 +27,9 @@ import Foundation
   public func machine() async throws -> MachineStats {
     let cli = await cli.value
     try Task.checkCancellation()
-    guard let client = readCapableServer(server(), stimHome: cli.stimHome) else { return try await cli.machineStats() }
+    guard let client = readCapableServer(server(), stimHome: cli.stimHome) else {
+      throw ServerError(code: "not-connected", message: "The local stim-server is not ready to read stats for this Stim home.")
+    }
     let result = try await client.request("stats.get", [:])
     return try decodeReporting(MachineStats.self, from: result, source: .server)
   }
