@@ -343,7 +343,7 @@ until every other check run, workflow run and commit status on the head SHA has
 completed. It fails if any ended with a conclusion other than `success`,
 `neutral` or `skipped`, or a status of `failure` or `error`. A cancelled run
 that a newer run of the same workflow on the SHA replaced does not count. It
-times out after 90 minutes. After re-running a failed workflow, re-run the
+times out after 90 minutes, and a run waiting for approval counts as pending. A failed API call fails the job instead of passing it. After re-running a failed workflow, re-run the
 `merge gate` job; it reads the latest results. It also re-runs on label changes
 because `e2e-*` labels start more checks. In the merge queue (`merge_group`) the
 same job instead runs the merged-result validation.

@@ -27,22 +27,35 @@ jobs:
           REPO: ${{ github.repository }}
           SHA: ${{ github.event.pull_request.head.sha }}
           RUN_ID: ${{ github.run_id }}
+        shell: bash
         run: |
           # Waits for every other check run, workflow run and commit status on
           # the head SHA, then fails if any ended unsuccessfully.
+          api() {
+            for attempt in 1 2 3; do
+              if out=$(gh api --paginate "$@"); then
+                jq -s . <<<"$out"
+                return 0
+              fi
+              sleep 10
+            done
+            return 1
+          }
           grace=75
           last=
           while :; do
             elapsed=$SECONDS
-            checks=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
-              --jq '.check_runs[] | {id, name, status, conclusion, suite: .check_suite.id}' | jq -s .)
-            runs=$(gh api --paginate "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
-              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id}' | jq -s .)
-            statuses=$(gh api --paginate "repos/$REPO/commits/$SHA/status?per_page=100" \
-              --jq '.statuses[] | {context, state}' | jq -s .)
+            checks=$(api "repos/$REPO/commits/$SHA/check-runs?per_page=100" \
+              --jq '.check_runs[] | {id, name, status, conclusion, suite: .check_suite.id}')
+            runs=$(api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" \
+              --jq '.workflow_runs[] | {id, workflow_id, run_number, status, suite: .check_suite_id}')
+            statuses=$(api "repos/$REPO/commits/$SHA/status?per_page=100" \
+              --jq '.statuses[] | {context, state}')
             result=$(jq -n -c --argjson c "$checks" --argjson r "$runs" --argjson s "$statuses" --argjson self "$RUN_ID" '
               ($r | map(select(.id != $self))) as $runs
-              | ($c | map(select(.name != "merge gate")) | group_by(.name) | map(max_by(.id))) as $checks
+              | ($c | map(select(.name != "merge gate"))
+                    | map(. as $k | .wf = (($runs | map(select(.suite == $k.suite)) | first | .workflow_id) // $k.suite))
+                    | group_by([.wf, .name]) | map(max_by(.id))) as $checks
               | def superseded($suite):
                   ($runs | map(select(.suite == $suite)) | first) as $me
                   | $me != null and ($runs | any(.workflow_id == $me.workflow_id and .run_number > $me.run_number));
