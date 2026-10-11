@@ -4,7 +4,7 @@ import { createRequire } from 'module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
-import { gitQuiet } from '../workspace/git.ts';
+import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
@@ -22,14 +22,15 @@ import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import {
   dirtyFingerprintFiles,
-  gitCommonDir,
-  listWorktrees,
-  resolveSourceCheckout,
-  locallyKnownUpstream,
+  gitCommonDirAsync,
+  listWorktreesAsync,
+  resolveSourceCheckoutAsync,
+  locallyKnownUpstreamAsync,
   repoRoot,
+  repoRootAsync,
   type UpstreamState,
 } from '../workspace/worktree.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
+import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
@@ -139,11 +140,11 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
   }
 }
 
-export function mainCheckoutProjectRoot(projectRoot: string): string {
-  const currentRepoRoot = repoRoot(projectRoot);
+export async function mainCheckoutProjectRoot(projectRoot: string): Promise<string> {
+  const currentRepoRoot = await repoRootAsync(projectRoot);
   if (!currentRepoRoot) return projectRoot;
   try {
-    const source = resolveSourceCheckout(currentRepoRoot);
+    const source = await resolveSourceCheckoutAsync(currentRepoRoot);
     if ('refusal' in source) return projectRoot;
     const projectRel = relative(currentRepoRoot, realpathSync(projectRoot));
     if (projectRel.startsWith('..')) return projectRoot;
@@ -153,9 +154,11 @@ export function mainCheckoutProjectRoot(projectRoot: string): string {
   }
 }
 
-function brokenPodLinks(podsRoot: string): string[] {
+async function brokenPodLinks(podsRoot: string): Promise<string[]> {
   try {
-    const output = getExecutor().runFile('find', ['-L', podsRoot, '-type', 'l', '-print'], { timeoutMs: 10_000 });
+    const output = await getExecutor().runFileAsync('find', ['-L', podsRoot, '-type', 'l', '-print'], {
+      timeoutMs: 10_000,
+    });
     return output
       .split('\n')
       .map((line) => line.trim())
@@ -178,49 +181,52 @@ function hasIosWarmOutput(root: string, iosRoot: string): boolean {
   }
 }
 
-function hasLinkedWorktree(projectRoot: string): boolean {
-  const root = repoRoot(projectRoot);
+async function hasLinkedWorktree(projectRoot: string): Promise<boolean> {
+  const root = await repoRootAsync(projectRoot);
   if (!root) return false;
-  return listWorktrees(root).filter((entry) => !entry.prunable && !entry.bare).length > 1;
+  return (await listWorktreesAsync(root)).filter((entry) => !entry.prunable && !entry.bare).length > 1;
 }
 
-function headBranch(root: string): string | null {
-  const ref = gitQuiet(root, ['symbolic-ref', '--quiet', 'HEAD'])?.trim();
+async function headBranch(root: string): Promise<string | null> {
+  const ref = (await gitQuietAsync(root, ['symbolic-ref', '--quiet', 'HEAD']))?.trim();
   return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
 }
 
-function mainOperation(root: string): 'rebase' | 'merge' | null {
-  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
+async function mainOperation(root: string): Promise<'rebase' | 'merge' | null> {
+  const gitDir = (await gitQuietAsync(root, ['rev-parse', '--path-format=absolute', '--git-dir']))?.trim();
   if (!gitDir) return null;
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
   return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
-function dirtyTrackedPaths(root: string): string[] {
-  const out = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
+async function dirtyTrackedPaths(root: string): Promise<string[]> {
+  const out = await gitQuietAsync(root, ['diff', '--name-only', 'HEAD']);
   return (out ?? '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
 }
 
-function resolveDefaultBranch(root: string): string | null {
-  const settings = resolveSettings({ gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) ?? root });
+async function resolveDefaultBranch(root: string): Promise<string | null> {
+  const settings = resolveSettings({
+    gitCommonDir: await gitCommonDirAsync(root),
+    repoRoot: (await repoRootAsync(root)) ?? root,
+  });
   const worktree = settings.worktree;
   const configured =
     worktree && typeof worktree === 'object' && !Array.isArray(worktree)
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
+  const head = (await gitQuietAsync(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
 }
 
-function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding[] {
+async function seedFindings(mainRoot: string, upstream: UpstreamState | null): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const root = repoRoot(mainRoot);
+  const root = await repoRootAsync(mainRoot);
   const quotedRoot = quotedPath(root ?? mainRoot);
 
   if (upstream && upstream.behind > 0 && upstream.ahead === 0) {
@@ -235,7 +241,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
   }
   if (root === null) return findings;
 
-  const operation = mainOperation(root);
+  const operation = await mainOperation(root);
   if (operation) {
     findings.push(
       finding(
@@ -248,7 +254,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     return findings;
   }
 
-  const dirty = dirtyTrackedPaths(root);
+  const dirty = await dirtyTrackedPaths(root);
   if (dirty.length) {
     findings.push(
       finding(
@@ -260,7 +266,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     );
   }
 
-  const branch = headBranch(root);
+  const branch = await headBranch(root);
   if (branch === null) {
     findings.push(
       finding(
@@ -284,7 +290,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     );
   }
 
-  const defaultBranch = resolveDefaultBranch(root);
+  const defaultBranch = await resolveDefaultBranch(root);
   if (defaultBranch !== null && defaultBranch !== branch) {
     findings.push(
       finding(
@@ -299,7 +305,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
   return findings;
 }
 
-export function checkMainCheckout(
+export async function checkMainCheckout(
   projectRoot: string,
   {
     npmTreeValid,
@@ -320,15 +326,15 @@ export function checkMainCheckout(
     iosProjectPath?: string;
     androidLayout?: AndroidLayout;
   } = {},
-): Finding[] {
-  const mainRoot = mainCheckoutProjectRoot(projectRoot);
+): Promise<Finding[]> {
+  const mainRoot = await mainCheckoutProjectRoot(projectRoot);
   const mainAndroid = {
     ...androidLayout,
     gradleRoot: join(mainRoot, relative(projectRoot, androidLayout.gradleRoot)),
     moduleDir: join(mainRoot, relative(projectRoot, androidLayout.moduleDir)),
   };
   const findings: Finding[] = [];
-  const dependencies = dependencyState(mainRoot);
+  const dependencies = dependencyState(mainRoot, (await repoRootAsync(mainRoot)) ?? mainRoot);
 
   if (dependencies) {
     const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
@@ -343,7 +349,7 @@ export function checkMainCheckout(
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
-      const valid = npmTreeValid === undefined ? installedNpmTreeIsValid(dependencies.root) : npmTreeValid;
+      const valid = npmTreeValid === undefined ? await installedNpmTreeIsValidAsync(dependencies.root) : npmTreeValid;
       if (valid === false) {
         findings.push(
           finding(
@@ -383,7 +389,7 @@ export function checkMainCheckout(
       );
     }
 
-    const broken = brokenPods === undefined && existsSync(podsRoot) ? brokenPodLinks(podsRoot) : brokenPods || [];
+    const broken = brokenPods === undefined && existsSync(podsRoot) ? await brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
       const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
       findings.push(
@@ -417,9 +423,11 @@ export function checkMainCheckout(
     );
   }
 
-  const linked = linkedWorktrees === undefined ? hasLinkedWorktree(projectRoot) : linkedWorktrees;
+  const linked = linkedWorktrees === undefined ? await hasLinkedWorktree(projectRoot) : linkedWorktrees;
   if (linked) {
-    findings.push(...seedFindings(mainRoot, upstream === undefined ? locallyKnownUpstream(mainRoot) : upstream));
+    findings.push(
+      ...(await seedFindings(mainRoot, upstream === undefined ? await locallyKnownUpstreamAsync(mainRoot) : upstream)),
+    );
   }
 
   return findings;
@@ -1172,7 +1180,6 @@ export function reactNativeDoctorFindings({
     checkAppProject(projectRoot),
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
-    ...checkMainCheckout(projectRoot, { platform, localIos, iosProjectPath: iosProject.relative, androidLayout }),
     ...checkStorageLayout(projectRoot, {
       platform,
       host,
@@ -1444,7 +1451,7 @@ export async function detectLinkedLibraryGitMetadata(
     platform,
   }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
 ): Promise<Finding | null> {
-  const mainRoot = mainCheckoutProjectRoot(projectRoot);
+  const mainRoot = await mainCheckoutProjectRoot(projectRoot);
   if (!hasLinkedPackageWithGit(mainRoot)) return null;
   const skipped = fingerprintConfigSkipped(mainRoot);
   if (skipped) return skipped;
