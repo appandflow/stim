@@ -10,6 +10,7 @@ export default defineConfig({
     provide: {
       agentDeviceSource: process.env.STIM_AGENT_DEVICE_SOURCE ?? '',
       agentDeviceAndroidSerial: process.env.STIM_AGENT_DEVICE_ANDROID_SERIAL ?? '',
+      iosDeviceUdid: process.env.STIM_COMPAT_IOS_UDID ?? '',
     },
   },
 });

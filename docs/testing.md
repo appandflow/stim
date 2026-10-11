@@ -8,8 +8,9 @@ Vitest worker count and five-second unit timeout remain unchanged.
 `pnpm run test:compat` runs the explicit native tool compatibility stage. It
 requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security`,
 `clang`, `openssl`, Google Chrome or Chromium, and a paired, unlocked iPhone
-with Developer Mode enabled. It also requires agent-device source with daemon
-policy support (0.21.20 or later). Set `STIM_AGENT_DEVICE_SOURCE` to its source
+with Developer Mode enabled. Set `STIM_COMPAT_IOS_UDID` to the test iPhone's UDID
+so the process probe targets only that phone. It also requires agent-device source
+with daemon policy support (0.21.20 or later). Set `STIM_AGENT_DEVICE_SOURCE` to its source
 root, with its workspace dependencies installed. The hosted iOS policy probe
 uses the real upstream parser, digest and inventory filter; it starts only a
 local fixture process and does not drive a simulator. Missing source fails this
