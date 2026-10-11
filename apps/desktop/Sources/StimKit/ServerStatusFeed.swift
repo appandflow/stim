@@ -149,7 +149,7 @@ import Foundation
         repeat {
           let page = try await client.request("archived.list", before.map { ["before": .string($0)] } ?? [:])
           guard case .object(let fields) = page, case .array(let entries)? = fields["archived"] else {
-            self?.forgetArchives(generation: generation)
+            self?.forgetArchives(summary, generation: generation)
             return
           }
           archived += entries
@@ -158,7 +158,7 @@ import Foundation
         } while before != nil && !Task.isCancelled
       } catch {
         DebugLog.warning(.server, "archived.list failed: \(error.localizedDescription)")
-        self?.forgetArchives(generation: generation)
+        self?.forgetArchives(summary, generation: generation)
         return
       }
       guard let self, !Task.isCancelled, generation == self.generation else { return }
@@ -167,9 +167,10 @@ import Foundation
     }
   }
 
-  /// Lets the next archives summary read the archives again, after a read that did not finish.
-  private func forgetArchives(generation: Int) {
-    if generation == self.generation { archivedSeen = nil }
+  /// Lets the next archives summary read the archives again, after the read of `summary` did not finish, unless the
+  /// views were subscribed again or a newer read already replaced it.
+  private func forgetArchives(_ summary: JSONValue, generation: Int) {
+    if generation == self.generation, archivedSeen == summary { archivedSeen = nil }
   }
 
   private func decode() {

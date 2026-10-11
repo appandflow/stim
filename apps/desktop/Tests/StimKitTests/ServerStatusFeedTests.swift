@@ -277,6 +277,33 @@ import Testing
     #expect(await until { reads() == 2 })
   }
 
+  @Test func aSupersededArchivesReadDoesNotRestartTheNewerOne() async throws {
+    let (client, socket) = try await openClient()
+    defer { client.stop() }
+    let feed = feed(Recorder())
+    feed.use(client)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces(["/w/a"]))
+    let reads = { socket.sent.filter { $0["method"] == .string("archived.list") }.count }
+    #expect(await until { reads() == 1 })
+    func change(_ seq: Int, count: Int) -> [String: JSONValue] {
+      [
+        "event": .string("workspaces"), "subscription": .string("s1"), "seq": .number(Double(seq)),
+        "archived": .object(["count": .number(Double(count)), "bytes": .number(0), "newest": .array([])]),
+      ]
+    }
+    socket.reply(change(1, count: 1))
+    #expect(await until { reads() == 2 })
+    socket.reply([
+      "event": .string("workspaces"), "subscription": .string("s1"), "seq": .number(2),
+      "workspaces": .object(["upsert": .array([]), "remove": .array([])]),
+    ])
+    await settle()
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    #expect(reads() == 2)
+  }
+
   @Test func losingTheServerStopsTheFeedSoTheStoreFallsBackAndNoLatePayloadIsShown() async throws {
     let (client, socket) = try await openClient()
     defer { client.stop() }
