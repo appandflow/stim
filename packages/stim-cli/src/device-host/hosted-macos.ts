@@ -27,6 +27,7 @@ import {
   sha256,
   POLL_MS,
   SESSION_TIMEOUT_MS,
+  RESERVE_TIMEOUT_MS,
   PREPARE_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   type HostConnection,
@@ -101,12 +102,17 @@ export async function placeHostedMacos(
     note(`Reserving a macOS session on ${host.machine}`);
     session = hostedSession(
       host,
-      await call(host, 'device-host.reserve', {
-        workspace: root,
-        slot: 'default',
-        attempt: randomUUID(),
-        platform: 'macos',
-      }),
+      await call(
+        host,
+        'device-host.reserve',
+        {
+          workspace: root,
+          slot: 'default',
+          attempt: randomUUID(),
+          platform: 'macos',
+        },
+        RESERVE_TIMEOUT_MS,
+      ),
     );
   }
   const appSlot = session.appSlot;

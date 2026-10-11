@@ -750,7 +750,8 @@ tail before parking or deletion, including on revocation or server close; stop c
 back afterwards. If the final collection drops a backlog interval and eventually
 succeeds, a device warning record names that interval. A damaged collection checkpoint is ignored and
 rebuilt; it never blocks reading collected records. The client waits up to
-180 seconds for stop. The final collection and worker termination paths fit within
+280 seconds for stop. The final collection, parking, the stop that follows a failed
+park and worker termination paths fit within
 that wait; an in-flight handoff copy and closing Metro or view transports are
 outside those worker bounds.
 Collected records remain in the session home after parking or deletion;
