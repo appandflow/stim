@@ -1,12 +1,13 @@
 import Ajv2020 from 'ajv/dist/2020.js';
 import { protocolJsonSchema } from '../src/protocol.ts';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   authenticateDevice,
   BUILD_REQUEST_TTL_MS,
+  buildClientsReadable,
   capabilitiesFor,
   createPairingToken,
   grantDevice,
@@ -47,6 +48,16 @@ describe('build clients', () => {
     expect(grantDevice(request('nB').id, ['build'])).toBe('granted');
     expect(readDevices()).toEqual([]);
     expect(readBuildClients().map((client) => client.capabilities)).toEqual([[], ['build']]);
+  });
+
+  it('tells an unreadable build client registry apart from one with no client left', () => {
+    const { id } = request('nA');
+    expect(revokeDevice(id)).toBe(true);
+    expect(readBuildClients()).toEqual([]);
+    expect(buildClientsReadable()).toBe(true);
+    writeFileSync(join(home, 'server', 'build-clients.json'), '{"devices": [');
+    expect(readBuildClients()).toEqual([]);
+    expect(buildClientsReadable()).toBe(false);
   });
 
   it('refuses a build name that could forge the approval listing', () => {

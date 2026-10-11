@@ -1,3 +1,4 @@
+import type { DeviceAppProcess } from '@stim-cli/core/state';
 import { getExecutor, type Executor } from '../exec.ts';
 import { debugLog } from '../debug-log.ts';
 import { approvableSchemes, readBundleSchemes } from './app-schemes.ts';
@@ -258,41 +259,45 @@ export function parseLaunchedPid(text: unknown): number | null {
   return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
-export function iosAppProcess(
-  udid: string,
-  bundleId: string,
-  { exec = null }: ExecOpt = {},
-): number | null | undefined {
+export type AppProcessProbe =
+  | { state: Extract<DeviceAppProcess['state'], 'running'>; pid: number }
+  | { state: Exclude<DeviceAppProcess['state'], 'running'> };
+
+export function appProcessFromPid(pid: number | null): AppProcessProbe {
+  return pid === null ? { state: 'stopped' } : { state: 'running', pid };
+}
+
+export function iosAppProcess(udid: string, bundleId: string, { exec = null }: ExecOpt = {}): AppProcessProbe {
   const e = exec || getExecutor();
   const started = performance.now();
-  let pid: number | null | undefined;
+  let probe: AppProcessProbe = { state: 'unknown' };
   let failure: { code?: string; exit?: number } = {};
   try {
     const out = e.runFile('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 2000 });
     const label = `UIKitApplication:${bundleId}[`;
-    pid = null;
+    probe = { state: 'stopped' };
     for (const line of out.split('\n')) {
       if (!line.includes(label)) continue;
       const candidate = Number(line.trim().split(/\s+/)[0]);
       if (Number.isInteger(candidate) && candidate > 0) {
-        pid = candidate;
+        probe = { state: 'running', pid: candidate };
         break;
       }
     }
-    return pid;
+    return probe;
   } catch (error) {
     const { code, status } = (error ?? {}) as { code?: unknown; status?: unknown };
     failure = {
       ...(typeof code === 'string' ? { code } : {}),
       ...(typeof status === 'number' ? { exit: status } : {}),
     };
-    return undefined;
+    return probe;
   } finally {
     debugLog.log('ios.app-process', {
       deviceId: udid,
       bundleId,
-      state: pid === undefined ? 'unknown' : pid === null ? 'absent' : 'running',
-      ...(typeof pid === 'number' ? { appPid: pid } : {}),
+      state: probe.state === 'stopped' ? 'absent' : probe.state,
+      ...(probe.state === 'running' ? { appPid: probe.pid } : {}),
       ms: Math.round(performance.now() - started),
       ...failure,
     });
@@ -306,7 +311,8 @@ function launchedIosAppAfterNoHandle(error: unknown, udid: string, bundleId: str
     !stderr.includes(`Application launch for '${bundleId}' did not return a process handle nor launch error.`)
   )
     return null;
-  return iosAppProcess(udid, bundleId, { exec }) ?? null;
+  const probe = iosAppProcess(udid, bundleId, { exec });
+  return probe.state === 'running' ? probe.pid : null;
 }
 
 export function launchIosApp(
@@ -328,8 +334,8 @@ export function launchIosApp(
   { exec = null }: ExecOpt = {},
 ): IosLaunchResult {
   const e = exec || getExecutor();
-  const runningPid = iosAppProcess(udid, bundleId, { exec: e });
-  const stateUnknown = runningPid === undefined;
+  const running = iosAppProcess(udid, bundleId, { exec: e });
+  const stateUnknown = running.state === 'unknown';
   const launchArgs = [
     'simctl',
     'launch',
@@ -339,17 +345,17 @@ export function launchIosApp(
     bundleId,
   ];
   const restart: { restartedPid?: number } = {};
-  if (runningPid) {
+  if (running.state === 'running') {
     try {
       e.runFile('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
       return {
         failed: true,
         code: LAUNCH_ERROR,
-        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${runningPid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
+        reason: `simctl terminate ${bundleId} failed, so the running app (pid ${running.pid}) was not restarted: ${describeIosSimulatorFailure(err, e)}`,
       };
     }
-    restart.restartedPid = runningPid;
+    restart.restartedPid = running.pid;
   }
   if (metroPort !== null) {
     try {
@@ -669,7 +675,12 @@ export function amStartError(text: unknown): string | null {
 }
 
 export function openAndroidDevClientUrl(
-  { serial, url, packageName }: { serial: string; url: string; packageName?: string },
+  {
+    serial,
+    url,
+    packageName,
+    stopOnStart = false,
+  }: { serial: string; url: string; packageName?: string; stopOnStart?: boolean },
   { exec = null }: ExecOpt = {},
 ): { ok?: boolean; url?: string; failed?: boolean; reason?: string } {
   const e = exec || getExecutor();
@@ -681,6 +692,7 @@ export function openAndroidDevClientUrl(
       'shell',
       'am',
       'start',
+      ...(stopOnStart ? ['-S'] : []),
       '-a',
       'android.intent.action.VIEW',
       '-d',
@@ -703,19 +715,29 @@ function stopRunningAndroidApp(
   serial: string,
   packageName: string,
   exec: Executor,
-): { restartedPid?: number; failed?: true; code?: string; reason?: string } {
-  const pid = androidAppProcess(serial, packageName, { exec });
-  if (!pid) return {};
+): { restartedPid?: number; stopOnStart?: true; failed?: true; code?: string; reason?: string } {
+  const running = androidAppProcess(serial, packageName, { exec });
+  if (running.state === 'stopped') return {};
+  if (running.state !== 'running') return { stopOnStart: true };
   try {
     exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
   } catch (err) {
     return {
       failed: true,
       code: LAUNCH_ERROR,
-      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${pid}) was not restarted: ${describe(err)}`,
+      reason: `am force-stop ${packageName} failed on ${serial}, so the running app (pid ${running.pid}) was not restarted: ${describe(err)}`,
     };
   }
-  return { restartedPid: pid };
+  return { restartedPid: running.pid };
+}
+
+function launchAndroidWithMonkey(serial: string, packageName: string, stopOnStart: boolean, exec: Executor): void {
+  if (stopOnStart) {
+    try {
+      exec.runFile('adb', ['-s', serial, 'shell', 'am', 'force-stop', packageName], ADB_SHELL_OPTIONS);
+    } catch {}
+  }
+  exec.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
 }
 
 export function launchAndroidApp(
@@ -737,7 +759,7 @@ export function launchAndroidApp(
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
-  const restart = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
   const reversed = reverseMetroPorts(
     { serial, metroPort: bridgePort ?? metroPort, devicePorts: [metroPort] },
@@ -764,7 +786,7 @@ export function launchAndroidApp(
   let devClientNote = null;
   if (devClientScheme) {
     const url = androidDevClientUrl(devClientScheme, metroPort, physical);
-    const opened = openAndroidDevClientUrl({ serial, url }, { exec: e });
+    const opened = openAndroidDevClientUrl({ serial, url, stopOnStart }, { exec: e });
     if (opened.ok) return { ok: true, mode: 'deep-link', devClientUrl: url, ...wiring };
     devClientNote = `${opened.reason}; fell back to the launcher activity`;
   }
@@ -772,7 +794,11 @@ export function launchAndroidApp(
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
+      e.runFile(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
       return { ok: true, mode: 'am-start', component, devClientNote, ...wiring };
     } catch (err) {
       return {
@@ -784,7 +810,7 @@ export function launchAndroidApp(
   }
 
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+    launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', devClientNote, ...wiring };
   } catch (err) {
     return {
@@ -800,12 +826,16 @@ export function launchAndroidReleaseApp(
   { exec = null }: ExecOpt = {},
 ): AndroidLaunchResult {
   const e = exec || getExecutor();
-  const restart = stopRunningAndroidApp(serial, packageName, e);
+  const { stopOnStart = false, ...restart } = stopRunningAndroidApp(serial, packageName, e);
   if (restart.failed) return restart;
   const component = resolveLaunchActivity(serial, packageName, { exec: e });
   if (component) {
     try {
-      e.runFile('adb', ['-s', serial, 'shell', 'am', 'start', '-n', component], ADB_SHELL_OPTIONS);
+      e.runFile(
+        'adb',
+        ['-s', serial, 'shell', 'am', 'start', ...(stopOnStart ? ['-S'] : []), '-n', component],
+        ADB_SHELL_OPTIONS,
+      );
       return { ok: true, mode: 'am-start', component, ...restart };
     } catch (err) {
       return {
@@ -816,7 +846,7 @@ export function launchAndroidReleaseApp(
     }
   }
   try {
-    e.runFile('adb', ['-s', serial, 'shell', 'monkey', '-p', packageName, '1'], ADB_SHELL_OPTIONS);
+    launchAndroidWithMonkey(serial, packageName, stopOnStart, e);
     return { ok: true, mode: 'monkey', ...restart };
   } catch (err) {
     return {
@@ -853,19 +883,17 @@ export function parsePsPid(text: unknown, packageName: string): number | null {
   return null;
 }
 
-export function androidAppProcess(
-  serial: string,
-  packageName: string,
-  { exec = null }: ExecOpt = {},
-): number | null | undefined {
+export function androidAppProcess(serial: string, packageName: string, { exec = null }: ExecOpt = {}): AppProcessProbe {
   const e = exec || getExecutor();
   try {
     const pid = parsePidof(e.runFile('adb', ['-s', serial, 'shell', 'pidof', packageName], ADB_SHELL_OPTIONS));
-    if (pid !== null) return pid;
+    if (pid !== null) return { state: 'running', pid };
   } catch {}
   try {
-    return parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName);
+    return appProcessFromPid(
+      parsePsPid(e.runFile('adb', ['-s', serial, 'shell', 'ps', '-A'], ADB_SHELL_OPTIONS), packageName),
+    );
   } catch {
-    return undefined;
+    return { state: 'unknown' };
   }
 }

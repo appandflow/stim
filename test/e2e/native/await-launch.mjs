@@ -58,11 +58,13 @@ assert(
 );
 assert(typeof logsDir === 'string' && metroPort, 'the launch has no Metro evidence location');
 const executor = getExecutor();
+const knownPid = (observed) =>
+  observed.state === 'running' ? observed.pid : observed.state === 'stopped' ? null : undefined;
 const probe = () => {
-  if (platform !== 'ios') return androidAppProcess(deviceId, appId);
+  if (platform !== 'ios') return knownPid(androidAppProcess(deviceId, appId));
   const started = performance.now();
   let failure;
-  const observedPid = iosAppProcess(deviceId, appId, {
+  const observed = iosAppProcess(deviceId, appId, {
     exec: {
       ...executor,
       runFile(...args) {
@@ -82,9 +84,9 @@ const probe = () => {
     },
   });
   process.stderr.write(
-    `${JSON.stringify({ event: 'qa_ios_process_probe', appId, deviceId, slot, since, outcome: observedPid === undefined ? 'inspection-error' : observedPid === null ? 'not-running' : 'running', pid: observedPid ?? null, elapsedMs: Math.round(performance.now() - started), error: failure })}\n`,
+    `${JSON.stringify({ event: 'qa_ios_process_probe', appId, deviceId, slot, since, outcome: observed.state === 'unknown' ? 'inspection-error' : observed.state === 'stopped' ? 'not-running' : 'running', pid: knownPid(observed) ?? null, elapsedMs: Math.round(performance.now() - started), error: failure })}\n`,
   );
-  return observedPid;
+  return knownPid(observed);
 };
 const pid = await waitForKnownObservation(probe, { deadline: bundleDeadline });
 assert(Number.isInteger(pid) && pid > 0, 'the launch has no positively identified live app process');
