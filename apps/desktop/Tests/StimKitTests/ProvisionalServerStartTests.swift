@@ -24,6 +24,7 @@ import Testing
     let login = [
       "PATH": "\(bins.dir("a")):/usr/bin", "STIM_HOME": "/tmp/home", "ANDROID_HOME": "/sdk", "JAVA_HOME": "/jdk",
       "EDITOR": "vim", "GITHUB_TOKEN": "ghp", "STIM_DESKTOP_APP": "/Applications/Stim.app",
+      "STIM_RUN_ID": "run-1",
     ]
     let start = try #require(ProvisionalServerStart.remembering(environment: login, override: nil))
     #expect(start.executable == executable)
@@ -72,7 +73,7 @@ import Testing
     }
 
     #expect(verifies([:]))
-    #expect(verifies(["EDITOR": "nano", "SHLVL": "2"]))
+    #expect(verifies(["EDITOR": "nano", "SHLVL": "2", "STIM_RUN_ID": "run-2"]))
     #expect(!verifies(["STIM_HOME": "/tmp/profile-home"]))
     #expect(!verifies(["STIM_HOME": nil]))
     #expect(!verifies(["ANDROID_HOME": "/other-sdk"]))
