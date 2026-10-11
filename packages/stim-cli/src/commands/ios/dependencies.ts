@@ -36,7 +36,7 @@ import {
   verifyIosDeviceReleaseLaunch,
 } from '../../engine/ios-device.ts';
 import { selectFromPool } from '../../engine/device-pool.ts';
-import { acquireRunLease, releaseLeaseOnSignal, runLease } from '../../engine/device-lease-run.ts';
+import { acquireRunLease, releaseLeaseOnAbort, runLease } from '../../engine/device-lease-run.ts';
 import { gateProfileForDevice, sealAppForDevice } from '../../engine/ios-signing.ts';
 import { ensureLanReachable } from '../../engine/ios-lan.ts';
 import { hostLanCandidates } from '../../engine/lan-address.ts';
@@ -147,7 +147,7 @@ export interface IosDeps {
   acquireRunLease: typeof acquireRunLease;
   runLease: typeof runLease;
   selectFromPool: typeof selectFromPool;
-  releaseLeaseOnSignal: typeof releaseLeaseOnSignal;
+  releaseLeaseOnAbort: typeof releaseLeaseOnAbort;
   iosDeviceProcess: typeof iosDeviceProcess;
   verifyIosDeviceReleaseLaunch: typeof verifyIosDeviceReleaseLaunch;
   readBundleId: typeof readBundleId;
@@ -247,7 +247,7 @@ export const DEFAULT_DEPS: IosDeps = {
   acquireRunLease,
   runLease,
   selectFromPool,
-  releaseLeaseOnSignal,
+  releaseLeaseOnAbort,
   iosDeviceProcess,
   verifyIosDeviceReleaseLaunch,
   readBundleId,

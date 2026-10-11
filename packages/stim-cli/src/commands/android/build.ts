@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { constants, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -51,7 +52,11 @@ export interface AndroidBuildFacts {
 
 const note = (line: string) => console.error(line);
 
-export async function buildAndroidOperation(root: string, options: AndroidBuildOptions): Promise<AndroidBuildFacts> {
+export async function buildAndroidOperation(
+  context: StimContext,
+  root: string,
+  options: AndroidBuildOptions,
+): Promise<AndroidBuildFacts> {
   const selected = projectRegistry.selectAndroid(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
@@ -83,6 +88,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
       : (options.abi ?? (plan.plan.build.targetAbiOnly && !plan.plan.build.release ? hostSystemImageArch() : null));
   await ensureWorkspaceStorageSafely(root, { note });
   return withNativeBuildRun(
+    context,
     root,
     { command: 'build', platform: 'android' },
     async (claim) => {
@@ -131,6 +137,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
       try {
         const acquired = await acquireAndroidArtifact(
           {
+            context,
             root,
             buildLog,
             writer,
@@ -184,7 +191,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
             details: acquired.failure.extra,
           });
         artifact = acquired.artifact;
-        throwIfCancelled(runCancellationSignal(), 'Android build');
+        throwIfCancelled(runCancellationSignal(context), 'Android build');
         if (!artifact.apkPath)
           throw Object.assign(new Error('The Android build produced no APK.'), { code: 'STIM_BUILD_FAILED' });
         const artifacts = join(workspaceDir(root), 'artifacts');
@@ -198,7 +205,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           artifact.providerName,
         );
         if (uploaded) phase('cache', uploaded.line);
-        throwIfCancelled(runCancellationSignal(), 'Android build');
+        throwIfCancelled(runCancellationSignal(context), 'Android build');
         record.appPath = apkPath;
         record.bundleId = artifact.androidPackage;
         finishRecord('ok');
@@ -225,7 +232,7 @@ export async function buildAndroidOperation(root: string, options: AndroidBuildO
           logs: { dir: logs },
         };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted ? cancelledError('Android build', error) : error;
+        const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
         finishRecord('failed', (failure as { code?: string }).code);
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;

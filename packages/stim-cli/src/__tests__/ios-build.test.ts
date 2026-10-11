@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,6 +18,9 @@ import { getProject } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+let controller = new AbortController();
+const buildContext = () => testContext({ signal: controller.signal });
 
 let scratch: string;
 let root: string;
@@ -92,7 +96,9 @@ beforeEach(() => {
             const active = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
             if (!active) throw new Error('Expected an active build claim');
             requestNativeRunCancel(root, active.claim.claimId);
-            process.emit('SIGINT');
+            const cancelled = controller;
+            controller = new AbortController();
+            cancelled.abort('SIGINT');
           }
           if (cancelBuild || failBuild)
             throw Object.assign(new Error('Compiler interrupted'), { code: 'COMPILER_FAILED' });
@@ -144,7 +150,7 @@ afterEach(() => {
 
 test('native Release builds retain independent artifacts and cache without JS-swap or runtime setup', async () => {
   const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
-  const cold = await buildIosOperation(root, options);
+  const cold = await buildIosOperation(buildContext(), root, options);
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
   expect(cold.cacheHit).toBe(false);
   expect(readWorkspaceState(root)).not.toHaveProperty('ios');
@@ -155,18 +161,18 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   const runningLog = join(workspaceLogsDir(root), 'build-ios.ndjson');
   writeFileSync(runningLog, '{"msg":"running app build"}\n');
   projectBundleId = null;
-  const warm = await buildIosOperation(root, options);
+  const warm = await buildIosOperation(buildContext(), root, options);
   expect(warm).toMatchObject({ bundleId: 'org.example.native', cacheKey: cold.cacheKey, cacheHit: 'local' });
   expect(compilations).toBe(1);
   expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(copies.length).toBeGreaterThan(0);
   expect(copies.every((path) => !existsSync(path))).toBe(true);
   expect(readWorkspaceState(root)?.ios).toEqual(existing);
-  const differentArch = await buildIosOperation(root, { ...options, arch: 'x86_64' });
+  const differentArch = await buildIosOperation(buildContext(), root, { ...options, arch: 'x86_64' });
   expect(differentArch.cacheKey).not.toBe(cold.cacheKey);
   expect(differentArch.cacheHit).toBe(false);
   writeFileSync(join(root, 'Main.swift'), 'edited');
-  const edited = await buildIosOperation(root, options);
+  const edited = await buildIosOperation(buildContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
   expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
@@ -182,13 +188,13 @@ test.each(['failure', 'cancellation'])(
     writeWorkspaceState(root, { ios: existing });
     failBuild = mode === 'failure';
     cancelBuild = mode === 'cancellation';
-    await expect(buildIosOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
       code: cancelBuild ? 'STIM_CANCELLED' : 'COMPILER_FAILED',
     });
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
     expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
     failBuild = cancelBuild = false;
-    const recovered = await buildIosOperation(root, { remoteBuild: 'local' });
+    const recovered = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
     expect(existsSync(recovered.appPath)).toBe(true);
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
   },
@@ -198,13 +204,13 @@ test('a build whose record cannot be written still returns its retained app', as
   vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementation(() => {
     throw new Error('disk full');
   });
-  const built = await buildIosOperation(root, { remoteBuild: 'local' });
+  const built = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(join(built.appPath, 'Native'))).toBe(true);
 });
 
 test('an unusable optimizations setting is refused as a setting error before the build', async () => {
   writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { buildCache: 'yes' } }));
-  await expect(buildIosOperation(root, { remoteBuild: 'local' })).rejects.toMatchObject({
+  await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
     code: 'STIM_BAD_ARG',
     remedy: SETTING_SHAPE_REMEDY,
   });

@@ -15,6 +15,7 @@ import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccac
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from './build-facts.ts';
 import type { AndroidCasSetup } from './android-cas.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -507,7 +508,7 @@ export async function buildGradle(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(ambientContext(), () =>
       spawn(project.gradlew, args, {
         cwd: project.directory,
         stdio: ['ignore', 'pipe', 'pipe'],

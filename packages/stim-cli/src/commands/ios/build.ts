@@ -1,7 +1,7 @@
 import { constants, cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { hostSimulatorArch } from '@stim-cli/core';
+import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
@@ -61,14 +61,18 @@ export interface IosBuildFacts {
 
 const note = (line: string) => console.error(line);
 
-export async function buildIosOperation(root: string, options: IosBuildOptions): Promise<IosBuildFacts> {
+export async function buildIosOperation(
+  context: StimContext,
+  root: string,
+  options: IosBuildOptions,
+): Promise<IosBuildFacts> {
   const selected = projectRegistry.selectIos(root);
   if ('problem' in selected)
     throw Object.assign(new Error(selected.problem.message), {
       code: 'STIM_NO_PROJECT',
       remedy: selected.problem.remedy,
     });
-  const { context, settings } = resolveProjectSettings(root);
+  const { context: settingsContext, settings } = resolveProjectSettings(root);
   const projectPathError = iosProjectPathError(settings, root, () => detectIsExpo(root));
   if (projectPathError)
     throw Object.assign(new Error(projectPathError), { code: 'STIM_BAD_ARG', remedy: SETTING_SHAPE_REMEDY });
@@ -100,6 +104,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   await ensureWorkspaceStorageSafely(root, { note });
   return withNativeBuildRun(
+    context,
     root,
     { command: 'build', platform: 'ios' },
     async (claim) => {
@@ -115,7 +120,11 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
         progress,
       );
       setRemoteLogSink((entry) => writer.write(entry));
-      const projectKey = statsProjectKey({ root, commonDir: context.gitCommonDir, repoRoot: context.repoRoot });
+      const projectKey = statsProjectKey({
+        root,
+        commonDir: settingsContext.gitCommonDir,
+        repoRoot: settingsContext.repoRoot,
+      });
       const stats = createRunRecorder({
         platform: 'ios',
         write: recordRunStats,
@@ -159,6 +168,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
       try {
         const acquired = await acquireIosArtifact(
           {
+            context,
             root,
             logFile,
             configuration,
@@ -195,7 +205,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
             }),
             cache: {
               policy: cache,
-              providerConfig: resolveCacheProviderConfig(context),
+              providerConfig: resolveCacheProviderConfig(settingsContext),
               disabledByFlag: options.buildCache === false,
             },
             easBuild: null,
@@ -230,14 +240,14 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
         artifact = acquired.artifact;
         artifact.bundleId ??= readBundleId(artifact.path) ?? integration.bundleId();
-        throwIfCancelled(runCancellationSignal(), 'iOS build');
+        throwIfCancelled(runCancellationSignal(context), 'iOS build');
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });
         directory = mkdtempSync(join(artifacts, 'ios-'));
         const appPath = join(directory, basename(artifact.path));
         cpSync(artifact.path, appPath, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
         await artifact.completeUploads();
-        throwIfCancelled(runCancellationSignal(), 'iOS build');
+        throwIfCancelled(runCancellationSignal(context), 'iOS build');
         finish('ok', appPath);
         stats.record({
           failed: false,
@@ -263,7 +273,7 @@ export async function buildIosOperation(root: string, options: IosBuildOptions):
           logs: { dir: logs },
         };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted ? cancelledError('iOS build', error) : error;
+        const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
         finish('failed', undefined, (failure as { code?: string }).code);
         stats.record({ failed: true, durationMs: Date.now() - started });
         throw failure;

@@ -8,6 +8,7 @@ import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts'
 import { spawnDeclared } from './spawn-claims.ts';
 import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
+import { ambientContext } from '@stim-cli/core';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
@@ -445,7 +446,7 @@ export async function runCaptured(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(ambientContext(), () =>
       ctx.spawn(ctx.cmd, ctx.args, {
         cwd: ctx.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],

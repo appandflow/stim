@@ -51,6 +51,7 @@ import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { ambientContext } from '@stim-cli/core';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
   return Object.assign(new Error(`${machine}: ${error instanceof Error ? error.message : String(error)}`), {
@@ -109,9 +110,16 @@ export async function prepareHostedNative(
           ['preparing'],
           PREPARE_TIMEOUT_MS,
           platform,
-          runCancellationSignal(),
+          runCancellationSignal(ambientContext()),
         );
-        session = await settle(host, session, ['stopping'], SESSION_TIMEOUT_MS, platform, runCancellationSignal());
+        session = await settle(
+          host,
+          session,
+          ['stopping'],
+          SESSION_TIMEOUT_MS,
+          platform,
+          runCancellationSignal(ambientContext()),
+        );
       } catch (error) {
         if (!heldNoLonger(error)) throw error;
       }
@@ -264,7 +272,14 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     reserved(placement);
-    session = await settle(host, session, ['preparing'], PREPARE_TIMEOUT_MS, platform, runCancellationSignal());
+    session = await settle(
+      host,
+      session,
+      ['preparing'],
+      PREPARE_TIMEOUT_MS,
+      platform,
+      runCancellationSignal(ambientContext()),
+    );
     if (session.state === 'stopped') throw stoppedSession(host, session);
     if (session.state !== 'ready') throw unknownSession(host, session);
     const device = platform === 'ios' ? parseHostedDevice(session.device) : parseHostedAndroidDevice(session.device);
@@ -353,7 +368,7 @@ export async function placeHostedNative(
               if (!String(offerError).includes('native operation in progress') || Date.now() >= fallbackDeadline)
                 throw offerError;
               await cancellableSleep(Math.min(POLL_MS, Math.max(0, fallbackDeadline - Date.now())), {
-                signal: runCancellationSignal(),
+                signal: runCancellationSignal(ambientContext()),
                 what: 'hosted app offer',
               });
             }
@@ -372,7 +387,10 @@ export async function placeHostedNative(
           typeof delivery.notice === 'string' ? delivery.notice : 'App installation or launch is unknown.',
         );
       if (Date.now() > deadline) throw new Error('App installation did not finish.');
-      await cancellableSleep(POLL_MS, { signal: runCancellationSignal(), what: 'hosted app installation' });
+      await cancellableSleep(POLL_MS, {
+        signal: runCancellationSignal(ambientContext()),
+        what: 'hosted app installation',
+      });
       delivery = await call(host, 'device-host.app.attach', ids);
     }
     if (typeof delivery.notice === 'string') note(delivery.notice);

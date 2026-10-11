@@ -60,10 +60,12 @@ import {
   type AndroidSourcePreparation,
 } from '../../integrations/android-project.ts';
 import { runCancellationSignal } from '../../engine/native-run.ts';
+import type { StimContext } from '@stim-cli/core';
 
 const FALLBACK_LINES = 5;
 
 interface AndroidArtifactRequest {
+  context: StimContext;
   root: string;
   buildLog: string;
   writer: AndroidWriter;
@@ -133,6 +135,7 @@ function fail(
 
 export async function acquireAndroidArtifact(
   {
+    context,
     root,
     buildLog,
     writer,
@@ -185,7 +188,7 @@ export async function acquireAndroidArtifact(
     phase('build', `${line} -> building here`);
   };
   const { variant, cache: cachePolicy } = buildPlan;
-  const signal = runCancellationSignal() ?? new AbortController().signal;
+  const signal = runCancellationSignal(context) ?? new AbortController().signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'android' as const, key, signal });
   let useBuildCache = cachePolicy.read;
   let cacheIneligible: string | null = null;

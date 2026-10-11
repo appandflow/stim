@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
@@ -385,7 +386,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       }),
     );
     const notes: string[] = [];
-    const record = await runMacos(root, (line) => notes.push(line), 'mini');
+    const record = await runMacos(testContext(), root, (line) => notes.push(line), 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers[0]).toMatchObject({ bundleId: 'dev.fixture.app', mode: 'release' });
     expect(host.offers[0]).not.toHaveProperty('devClientScheme');
@@ -442,7 +443,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(workspaceInUse(root, { managedLocks: false, nativeRun: false })).toEqual(['its macOS app runs on mini']);
     expect(spawned.every((cmd) => cmd === 'swift')).toBe(true);
 
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers.at(-1)!.attempt).not.toBe(host.offers[0]!.attempt);
 
@@ -474,7 +475,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     'stop cleans up only its own agent connection, best effort: %s',
     async (scenario) => {
       host.grant = GRANT;
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       const config = agentRemoteConfig(root);
       const otherConfig = join(dir, 'other-config.json');
       if (scenario === 'canonical config') symlinkSync(config, otherConfig);
@@ -538,7 +539,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       join(root, '.stim.json'),
       JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: Array(33).fill('a') } }),
     );
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
+    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
     expect(host.methods).not.toContain('device-host.reserve');
   });
 
@@ -553,7 +554,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
       );
       const notes: string[] = [];
-      const record = await runMacos(root, (line) => notes.push(line), 'mini');
+      const record = await runMacos(testContext(), root, (line) => notes.push(line), 'mini');
       for (const offer of host.offers) expect(offer.arguments).toEqual(args);
       expect(record.arguments).toEqual(applied ?? []);
       expect(readMacosRecord(root)?.arguments).toEqual(applied ?? []);
@@ -595,14 +596,14 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this Mac hosting access'],
   ])('refuses %s before building and never launches locally', async (_name, change, message) => {
     change();
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow(message);
+    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow(message);
     expect(spawned).toEqual([]);
     expect(host.methods).not.toContain('device-host.reserve');
     expect(readMacosRecord(root)).toBeNull();
   });
 
   test('status reports a stopped host session without discarding the placement or changing saved state', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     host.stopSession();
     const facts = await readHostedMacosStatus(saved, { ttlMs: 0 });
@@ -614,7 +615,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('status preserves an unreachable placement as unverified with a cleanup remedy', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     await host.close();
     const started = performance.now();
@@ -627,7 +628,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('status carries an unknown host session notice and requires reconciliation', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     host.attachReply = { state: 'unknown', notice: 'The previous session owner is not attached to this server.' };
     const facts = await readHostedMacosStatus(readMacosRecord(root));
     expect(macosAppState(facts.record)).toMatchObject({ state: 'unverified', host: readMacosRecord(root)!.host });
@@ -639,7 +640,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a missing session is stopped, while other attach refusals remain unverified', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     host.attachReply = { error: { code: 'unknown-session', message: 'This client has no such hosted session.' } };
     const missing = await readHostedMacosStatus(saved, { ttlMs: 0 });
@@ -651,7 +652,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test.each(['preparing', 'stopping'])('an unsettled %s session cannot report a running app', async (state) => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     host.attachReply = { state };
     const facts = await readHostedMacosStatus(readMacosRecord(root), { ttlMs: 0 });
     expect(macosAppState(facts.record)?.state).toBe('unverified');
@@ -659,7 +660,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('concurrent and recent probes share a connection, then refresh an expired result', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const placement = readMacosRecord(root)!.host!;
     const hellos = host.methods.filter((method) => method === 'hello').length;
     expect(await Promise.all([probeHostedMacos(placement), probeHostedMacos(placement)])).toEqual([
@@ -681,7 +682,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   test.each(['hello', 'device-host.attach'])(
     'a silent %s times out, closes the connection and caches failure',
     async (method) => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.silentMethods.add(method);
       const saved = readMacosRecord(root)!;
       const started = performance.now();
@@ -703,7 +704,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     ['uploads the app to a host that predates handoffs', 'nMini', 'older', true],
     ['never offers the build to a host on another node', 'nOther', 'all', false],
   ])('%s', async (_name, nodeId, answer, asked) => {
-    const placed = await runMacos(root, () => {}, 'mini');
+    const placed = await runMacos(testContext(), root, () => {}, 'mini');
     const built = new Map(host.blobs);
     const manifestDigest = (host.offers.at(-1)!.manifest as { sha256: string }).sha256;
     const content = [...built.keys()].filter((digest) => digest !== manifestDigest);
@@ -752,17 +753,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a session the host stopped is replaced by a new reservation', async () => {
-    const first = await runMacos(root, () => {}, 'mini');
+    const first = await runMacos(testContext(), root, () => {}, 'mini');
     host.stopSession();
-    const second = await runMacos(root, () => {}, 'mini');
+    const second = await runMacos(testContext(), root, () => {}, 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(2);
     expect(second.host?.session).not.toBe(first.host?.session);
   });
 
   test('a session the host no longer holds is replaced on launch and released by stop', async () => {
-    const first = await runMacos(root, () => {}, 'mini');
+    const first = await runMacos(testContext(), root, () => {}, 'mini');
     host.forgetSession = first.host!.session;
-    const second = await runMacos(root, () => {}, 'mini');
+    const second = await runMacos(testContext(), root, () => {}, 'mini');
     expect(second.host?.session).not.toBe(first.host?.session);
     host.forgetSession = second.host!.session;
     await stopMacosApp(root);
@@ -771,25 +772,25 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
 
   test('a launch the host cannot confirm or complete is reported, and the session stays recorded', async () => {
     host.installed = { state: 'installed', launched: 'unverified' };
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     expect(macosAppState(readMacosRecord(root))?.state).toBe('unverified');
 
     host.installed = { state: 'unknown', launched: null, notice: 'the executable has no arm64 slice' };
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('no arm64 slice');
+    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow('no arm64 slice');
     const kept = readMacosRecord(root);
     expect(kept?.host?.session).toBeDefined();
     expect(macosAppState(kept)?.state).toBe('stopped');
   });
 
   test('a local run refuses while the workspace app runs on a host', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     spawned = [];
-    await expect(runMacos(root, () => {})).rejects.toThrow('runs on mini. Run stim stop first');
+    await expect(runMacos(testContext(), root, () => {})).rejects.toThrow('runs on mini. Run stim stop first');
     expect(spawned).toEqual([]);
   });
 
   test('workspace removal stops the hosted session, and keeps the workspace when the host cannot confirm', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const placed = readMacosRecord(root)!;
     await host.close();
     const kept = await reclaimProject(root, { deleteOwnedDevices: true });
@@ -832,7 +833,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     }
 
     test('copies each host record once, in pages, and picks up new ones on the next run', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logPage = 2;
       host.logs.push(clientRecord(1), clientRecord(2), clientRecord(3, 'error'));
       const first = await logs(['--json', '--source', 'client']);
@@ -847,7 +848,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('concurrent runs do not duplicate records', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1), clientRecord(2));
       const placement = readMacosRecord(root)!.host!;
       await Promise.all([syncHostedMacosLogs(root, placement), syncHostedMacosLogs(root, placement)]);
@@ -855,7 +856,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('a host that refuses costs a stderr warning, never stdout or the exit code', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logsRefused = true;
       const result = await logs(['--json', '--source', 'client']);
       expect(result.out).toEqual([]);
@@ -864,7 +865,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('follow keeps copying, warns once per outage and recovers', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1));
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const stop = followHostedMacosLogs(root, { intervalMs: 10, retryMs: 10 });
@@ -888,7 +889,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('stop copies the last records before it forgets the placement', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1), clientRecord(2, 'error'));
       await stopMacosApp(root);
       expect(host.methods.lastIndexOf('device-host.logs.query')).toBeGreaterThan(
@@ -901,7 +902,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('a host that cannot return the final logs does not block stop', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logsRefused = true;
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       try {

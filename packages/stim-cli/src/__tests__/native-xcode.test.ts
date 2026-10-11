@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import {
   cpSync,
   mkdirSync,
@@ -880,14 +881,14 @@ test('the registered native iOS provider builds Release without a device and reu
   const existing = { udid: 'existing-device', devicePlacement: { machine: 'paired-host' } };
   writeWorkspaceState(root, { ios: existing });
   const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
-  const cold = await buildIosOperation(root, options);
+  const cold = await buildIosOperation(testContext(), root, options);
   expect(cold.cacheKey).not.toBeNull();
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
-  const warm = await buildIosOperation(root, options);
+  const warm = await buildIosOperation(testContext(), root, options);
   expect(warm).toMatchObject({ cacheHit: 'local', cacheSkipped: false, cacheKey: cold.cacheKey });
   expect(compile).toHaveBeenCalledTimes(1);
   write(join(root, 'Native.swift'), 'struct EditedApp {}');
-  const edited = await buildIosOperation(root, options);
+  const edited = await buildIosOperation(testContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(compile).toHaveBeenCalledTimes(2);
   rmSync(join(home, 'derived'), { recursive: true });

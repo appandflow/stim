@@ -4,7 +4,8 @@ import type { RuntimePreparationError, RuntimePreparationResult } from '../engin
 import { writeDevicePlacement } from '../device-host/ios-state.ts';
 import type { DevicePlacement } from '@stim-cli/core/state';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
-import { workspaceId } from '@stim-cli/core';
+import { type StimContext, workspaceId } from '@stim-cli/core';
+import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
@@ -27,7 +28,6 @@ import {
 } from './ios/remote.ts';
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
-import { exitAfterFlush } from '../engine/remote-cache.ts';
 import {
   deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
@@ -210,21 +210,25 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         return;
       }
       const root = (deps.findProjectRoot ?? DEFAULT_DEPS.findProjectRoot)(process.cwd());
-      const completion = await runIosOperation(root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps);
-      if (!completion) process.exit(runCancellation() ? 130 : 1);
+      const { value: completion, interrupted } = await runProcessOperation(root ?? process.cwd(), (context) =>
+        runIosOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }, deps),
+      );
+      if (!completion) process.exit(interrupted ?? 1);
       else if (completion.uploadsAbandoned) exitAfterFlush(0);
     });
 }
 
 export function runIosOperation(
+  context: StimContext,
   root: string | null,
   opts: IosCommandOptions = {},
   deps: Partial<IosDeps> = {},
   onFailure: (error: FailArgs) => void = () => {},
 ): Promise<IosRunCompletion | null> {
-  const run = (progress?: BuildProgress) => runIos(root, opts, deps, progress, onFailure);
+  const run = (progress?: BuildProgress) => runIos(context, root, opts, deps, progress, onFailure);
   return root
     ? withNativeBuildRun(
+        context,
         root,
         { command: 'ios', platform: PLATFORM, slot: opts.slot ?? 'default' },
         async (claim) => {
@@ -248,9 +252,10 @@ export function runIosOperation(
 }
 
 function unlessCancelled(
+  context: StimContext,
   result: Awaited<ReturnType<typeof acquireIosArtifact>>,
 ): Awaited<ReturnType<typeof acquireIosArtifact>> {
-  if (!result.ok || !runCancellation()) return result;
+  if (!result.ok || !runCancellation(context)) return result;
   return {
     ok: false,
     failure: { code: 'STIM_CANCELLED', message: 'before install' },
@@ -363,6 +368,7 @@ function iosSlotDeps(d: IosDeps, slot: string): IosDeps {
 }
 
 async function runIos(
+  context: StimContext,
   projectRoot: string | null,
   opts: IosCommandOptions = {},
   overrides: Partial<IosDeps> = {},
@@ -444,7 +450,7 @@ async function runIos(
     phases: () => progress.durations(),
     deviceSetup: () => progress.deviceSetupKnown(),
   });
-  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal());
+  const deviceWaitRun = createIosDeviceWaitRun(stats, progress, runCancellationSignal(context));
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
@@ -463,7 +469,7 @@ async function runIos(
     lease,
     setup = false,
   }: FailArgs): null => {
-    ({ code, message, remedy, lines } = cancelledFailure(PLATFORM, { code, message }) ?? {
+    ({ code, message, remedy, lines } = cancelledFailure(context, PLATFORM, { code, message }) ?? {
       code,
       message,
       remedy,
@@ -1000,8 +1006,10 @@ async function runIos(
         configuration,
       });
       const acquiredArtifact = unlessCancelled(
+        context,
         await acquireIosArtifact(
           {
+            context,
             root,
             logFile,
             configuration,
@@ -1127,7 +1135,7 @@ async function runIos(
           expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
         });
         if (acquired.status === 'leased') {
-          stopLeaseSignals = d.releaseLeaseOnSignal(releaseLease);
+          stopLeaseSignals = d.releaseLeaseOnAbort(context, releaseLease);
           phase(
             'lease',
             `${acquired.kind} lease on ${physicalDevice.udid} until ${leaseExpiryText(acquired.expiresAt, d.now())}`,

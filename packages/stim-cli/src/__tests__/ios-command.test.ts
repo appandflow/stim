@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { nativeIosFixture } from './_native-ios-project.ts';
 import { writeNativeXcodeProject } from './_native-xcode-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
@@ -4285,11 +4286,11 @@ test('a runtime preparation refusal reaches the failure callback before device o
   const { deps, calls } = harness({
     runtimePlan: iosProcessRuntime(async () => ({ ok: false, error })),
   });
-  const onFailure = vi.fn<NonNullable<Parameters<typeof runIosOperation>[3]>>();
+  const onFailure = vi.fn<NonNullable<Parameters<typeof runIosOperation>[4]>>();
   const output = vi.spyOn(console, 'log').mockImplementation(() => {});
   const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
-    expect(await runIosOperation(root, { json: true }, deps as IosDeps, onFailure)).toBe(null);
+    expect(await runIosOperation(testContext(), root, { json: true }, deps as IosDeps, onFailure)).toBe(null);
     expect(onFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(error));
     expect(output).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({

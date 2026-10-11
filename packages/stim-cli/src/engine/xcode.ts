@@ -12,6 +12,7 @@ import { capDiagnostics, createXcodeDiagnosticCollector, describeDiagnostic, typ
 import { cleanLine } from '../supervisor/server-expo.ts';
 import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export interface XcodeProject {
   kind?: string;
@@ -701,7 +702,7 @@ export async function buildXcode({
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(ambientContext(), () =>
       executor.spawn('xcodebuild', args, {
         cwd: resolvedTarget.dir || root,
         // stdin is ignored: xcodebuild never prompts in this mode, and a build

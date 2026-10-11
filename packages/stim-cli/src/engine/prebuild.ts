@@ -10,6 +10,7 @@ import { spawnDeclared } from './spawn-claims.ts';
 import { detectIsExpo } from '../workspace/project.ts';
 import { expoBinPath, expoBinRefusal } from '../supervisor/server-expo.ts';
 import { readWorkspaceState, updateWorkspaceState, type WorkspaceState } from '../workspace/workspace-state.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';
 
@@ -207,7 +208,7 @@ export async function runPrebuild(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(ambientContext(), () =>
       spawn(bin, ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])], {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],

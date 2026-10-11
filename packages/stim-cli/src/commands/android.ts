@@ -5,7 +5,8 @@ import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-
 import { readHostedAndroid, writeHostedAndroid, writeDevicePlacement } from '../device-host/ios-state.ts';
 import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
-import { workspaceId } from '@stim-cli/core';
+import { type StimContext, workspaceId } from '@stim-cli/core';
+import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
@@ -44,7 +45,7 @@ import { checkEasFallback } from '../engine/eas-fallback.ts';
 import {
   waitFlagConflict,
   acquireRunLease,
-  releaseLeaseOnSignal,
+  releaseLeaseOnAbort,
   runLease,
   leaseExpiryText,
   type RunLease,
@@ -109,7 +110,7 @@ import { detectProviders } from '../engine/metro-reach.ts';
 import { selectFromPool } from '../engine/device-pool.ts';
 
 import { CCACHE_NOT_RUN } from '../engine/ccache.ts';
-import { checkEasAuth, exitAfterFlush, resolveEasCliBin, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
+import { checkEasAuth, resolveEasCliBin, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import {
   androidBuildOptions,
   androidDevClientScheme,
@@ -251,17 +252,21 @@ export function registerAndroid(program: Command): void {
         refuseNoProject({ json: Boolean(opts.json) });
         return;
       }
-      const result = await runAndroidOperation(root, { ...opts, waitConflict: waitFlagConflict(process.argv) });
-      if (!result.ok) process.exit(runCancellation() ? 130 : 1);
+      const { value: result, interrupted } = await runProcessOperation(root, (context) =>
+        runAndroidOperation(context, root, { ...opts, waitConflict: waitFlagConflict(process.argv) }),
+      );
+      if (!result.ok) process.exit(interrupted ?? 1);
       else if (result.uploadsAbandoned) exitAfterFlush(0);
     });
 }
 
 export function runAndroidOperation(
+  context: StimContext,
   root: string,
   opts: AndroidCommandOptions & { waitConflict?: boolean } = {},
 ): Promise<RunAndroidResult> {
   return withNativeBuildRun(
+    context,
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
@@ -275,6 +280,7 @@ export function runAndroidOperation(
       });
       try {
         return await runAndroid({
+          context,
           root,
           buildMachine: opts.remoteBuild,
           slot: opts.slot,
@@ -300,6 +306,7 @@ export function runAndroidOperation(
 }
 
 interface RunAndroidOptions {
+  context: StimContext;
   projectRegistry?: Pick<ProjectRegistry, 'selectAndroid'>;
   runtimePlan?: AndroidRuntimePlan;
   automaticDevicePlacement?: typeof automaticDevicePlacement;
@@ -328,7 +335,7 @@ interface RunAndroidOptions {
   acquireLease?: typeof acquireRunLease;
   makeRunLease?: typeof runLease;
   selectPool?: typeof selectFromPool;
-  onLeaseSignal?: typeof releaseLeaseOnSignal;
+  onLeaseSignal?: typeof releaseLeaseOnAbort;
   listDevices?: typeof listAdbDevices;
   deviceModel?: typeof physicalDeviceModel;
   deviceAbi?: typeof androidDeviceAbi;
@@ -414,7 +421,7 @@ function resolveRunAndroidOptions(
     acquireLease = acquireRunLease,
     makeRunLease = runLease,
     selectPool = selectFromPool,
-    onLeaseSignal = releaseLeaseOnSignal,
+    onLeaseSignal = releaseLeaseOnAbort,
     listDevices = listAdbDevices,
     deviceModel = physicalDeviceModel,
     deviceAbi = androidDeviceAbi,
@@ -593,6 +600,7 @@ function avdSetupFailure(
 }
 
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
+  const { context } = options;
   let {
     root,
     json,
@@ -743,7 +751,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       lease,
     }: FailExtra = {},
   ): RunAndroidResult => {
-    const cancellation = cancelledFailure(PLATFORM, { code, message });
+    const cancellation = cancelledFailure(context, PLATFORM, { code, message });
     if (cancellation) ({ code, message, remedy, lines } = cancellation);
     if (lastBuildStatus) {
       persistLastBuild({
@@ -841,7 +849,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     );
   const deviceSlotWait = {
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
-    signal: runCancellationSignal(),
+    signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
     displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
@@ -1195,6 +1203,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       });
     const acquiredArtifact = await acquireAndroidArtifact(
       {
+        context,
         root,
         buildLog,
         writer,
@@ -1266,7 +1275,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     ccacheActivity = artifact.ccache;
     androidPackage = artifact.androidPackage;
     record.appPath = apkPath;
-    if (runCancellation()) return fail('STIM_CANCELLED', 'before install');
+    if (runCancellation(context)) return fail('STIM_CANCELLED', 'before install');
 
     if (hostedTarget)
       return finishHostedAndroidRun({
@@ -1369,7 +1378,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         expiresAt: acquired.status === 'leased' ? acquired.expiresAt : null,
       });
       if (acquired.status === 'leased') {
-        stopLeaseSignals = onLeaseSignal(releaseLease);
+        stopLeaseSignals = onLeaseSignal(context, releaseLease);
         phase(
           'lease',
           `${acquired.kind} lease on ${device.serial} until ${leaseExpiryText(acquired.expiresAt, now())}`,

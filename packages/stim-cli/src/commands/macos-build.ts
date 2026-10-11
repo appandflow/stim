@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
@@ -31,7 +32,11 @@ export interface MacosBuildFacts {
 
 const note = (line: string) => console.error(line);
 
-export async function buildMacosOperation(root: string, options: MacosBuildOptions): Promise<MacosBuildFacts> {
+export async function buildMacosOperation(
+  context: StimContext,
+  root: string,
+  options: MacosBuildOptions,
+): Promise<MacosBuildFacts> {
   if (process.platform !== 'darwin') throw new Error('Building a macOS app requires a Mac with Swift installed.');
   root = realpathSync(root);
   const selected = projectRegistry.selectMacos(root);
@@ -48,6 +53,7 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
   const recipe = (await selected.load()).prepare(settings);
   ensureWorkspaceStorage(root);
   return withNativeBuildRun(
+    context,
     root,
     { command: 'build', platform: 'macos' },
     async (claim) => {
@@ -84,13 +90,13 @@ export async function buildMacosOperation(root: string, options: MacosBuildOptio
           record: build,
           buildMachine: placement.selected,
         });
-        throwIfCancelled(runCancellationSignal(), 'macOS build');
+        throwIfCancelled(runCancellationSignal(context), 'macOS build');
         const executable = realpathSync(join(bundle, 'Contents', 'MacOS', recipe.product));
         build.state = 'ok';
         succeeded = true;
         return { product: recipe.product, bundle, bundleId: recipe.bundleId, executable, build, logs: { dir: logs } };
       } catch (error) {
-        const failure = runCancellationSignal()?.aborted ? cancelledError('macOS build', error) : error;
+        const failure = runCancellationSignal(context)?.aborted ? cancelledError('macOS build', error) : error;
         build.state = 'failed';
         build.error = failure instanceof Error ? failure.message : String(failure);
         build.errorCode = (failure as { code?: string }).code;

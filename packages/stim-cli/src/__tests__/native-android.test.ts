@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import {
   existsSync,
   mkdirSync,
@@ -180,8 +181,8 @@ test('the registered native Android provider retains build-only APKs without cla
   const existing = { serial: 'existing-device', devicePlacement: { machine: 'paired-host' } };
   writeWorkspaceState(root, { android: existing });
   const options = { variant: 'release', abi: 'x86_64', remoteBuild: 'local' } as const;
-  const first = await buildAndroidOperation(root, options);
-  const second = await buildAndroidOperation(root, options);
+  const first = await buildAndroidOperation(testContext(), root, options);
+  const second = await buildAndroidOperation(testContext(), root, options);
   for (const result of [first, second])
     expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: null });
   expect(generation).toBe(2);
@@ -261,7 +262,7 @@ test.each([false, true])(
         };
       });
     let failure: unknown;
-    const result = await buildAndroidOperation(root, {
+    const result = await buildAndroidOperation(testContext(), root, {
       variant: 'freeRelease',
       abi: 'x86_64',
       remoteBuild: 'worker',
@@ -312,7 +313,11 @@ test('a local fallback after a failed uncached offload leaves the staging path t
       lastLines: [],
     };
   });
-  const result = await buildAndroidOperation(root, { variant: 'freeRelease', abi: 'x86_64', remoteBuild: 'auto' });
+  const result = await buildAndroidOperation(testContext(), root, {
+    variant: 'freeRelease',
+    abi: 'x86_64',
+    remoteBuild: 'auto',
+  });
   expect(result).toMatchObject({ builtOn: 'here' });
   expect(readFileSync(join(staging, 'later-offload.apk'), 'utf8')).toBe('another offload');
 });
