@@ -178,24 +178,24 @@ struct StimDesktopApp: App {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones), pairedPhones: nil)
     CoreSimulator.developerDir = CoreSimulator.selectedDeveloperDir()
     let override = UserDefaults.standard.string(forKey: AppPreferences.Key.stimExecutable)
+    let stimHome = UserDefaults.standard.string(forKey: AppPreferences.Key.stimHome)
+    let overrides = UserDefaults.standard.string(forKey: AppPreferences.Key.environmentOverrides)
     let environment = Task.detached {
-      var environment = StimHome.environment(
-        await LoginShell.environment() ?? LoginShell.fallback(ProcessInfo.processInfo.environment),
-        launch: ProcessInfo.processInfo.environment)
+      var environment = await Toolchain.environment(
+        launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
       if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
       return environment
     }
     let cli = Task.detached { await StimCLI.resolve(environment: await environment.value, override: override) }
     self.cli = cli
-    let provisionalHome = ServerAdoption.provisionalHome(
-      launch: ProcessInfo.processInfo.environment,
-      lastLoginHome: UserDefaults.standard.string(forKey: AppPreferences.Key.lastLoginStimHome))
-    ServerController.shared.configure(environment: environment, provisionalHome: provisionalHome)
+    let settingsEnvironment = Toolchain.settingsEnvironment(
+      launch: ProcessInfo.processInfo.environment, stimHome: stimHome, overrides: overrides)
+    ServerController.shared.configure(environment: environment, settingsEnvironment: settingsEnvironment)
     BuildRequestNotifier.shared.start()
     let statsReader = StatsReader(cli: cli) { ServerSession.shared.statsConnection }
     self.statsReader = statsReader
     _ = ServerSession.shared
-    let store = StatusStore(cli: cli, stimHome: provisionalHome)
+    let store = StatusStore(cli: cli, stimHome: StimHome.path(environment: settingsEnvironment))
     self.store = store
     serverStatus = ServerSession.shared.objectWillChange.sink { [weak store] _ in
       DispatchQueue.main.async {

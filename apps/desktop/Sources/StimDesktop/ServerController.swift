@@ -112,10 +112,10 @@ final class ServerController: ObservableObject {
   @Published private(set) var connectionError: String?
 
   private var environment: Task<[String: String], Never>?
-  private var loginEnvironment: [String: String]?
+  private var resolvedEnvironment: [String: String]?
   private var provisionalHome = StimHome.path(environment: [:])
-  /// The Stim home of the bundled server Desktop started before the login environment arrived.
-  private var provisionalStart: String?
+  /// The launch environment with the Settings Stim home and overrides, read once at launch like the CLI's.
+  private var settingsEnvironment = ProcessInfo.processInfo.environment
   private var process: Process?
   private var exiting: Process?
   private var output: [String] = []
@@ -190,16 +190,12 @@ final class ServerController: ObservableObject {
       servesPhones: UserDefaults.standard.bool(forKey: AppPreferences.Key.servesPhones))
   }
 
-  func configure(environment: Task<[String: String], Never>, provisionalHome: String) {
+  func configure(environment: Task<[String: String], Never>, settingsEnvironment: [String: String]) {
     self.environment = environment
-    self.provisionalHome = provisionalHome
+    self.settingsEnvironment = settingsEnvironment
+    provisionalHome = StimHome.path(environment: settingsEnvironment)
     Task {
-      let login = await environment.value
-      loginEnvironment = login
-      if ProcessInfo.processInfo.environment["STIM_HOME"]?.hasPrefix("/") != true {
-        UserDefaults.standard.set(StimHome.path(environment: login), forKey: AppPreferences.Key.lastLoginStimHome)
-      }
-      LaunchMilestones.reach("login-environment")
+      resolvedEnvironment = await environment.value
       await verifyAdoption()
     }
     start()
@@ -243,7 +239,6 @@ final class ServerController: ObservableObject {
     generation += 1
     let current = generation
     provisional = false
-    provisionalStart = nil
     state = .starting
     retriesFailure = true
     missedProbes = 0
@@ -252,7 +247,7 @@ final class ServerController: ObservableObject {
       guard current == generation else { return }
       if let probe = await StimServerCLI.health(port: port) {
         guard current == generation else { return }
-        if loginEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
+        if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
           provisional = true
           state = .running(health, owned: false)
           return
@@ -263,10 +258,8 @@ final class ServerController: ObservableObject {
         return
       }
       let cli: StimServerCLI
-      if loginEnvironment == nil, let early = earlyCLI() {
-        cli = early
-        provisionalStart = provisionalHome
-        provisional = true
+      if let bundled = bundledCLI() {
+        cli = bundled
       } else {
         cli = await self.cli()
       }
@@ -284,8 +277,6 @@ final class ServerController: ObservableObject {
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
           })
       } catch {
-        provisional = false
-        provisionalStart = nil
         failureKind = .launchFailed
         state = .failed(error.localizedDescription)
         return
@@ -307,8 +298,6 @@ final class ServerController: ObservableObject {
       guard current == generation, process != nil, action == .fail else { return }
       generation += 1
       terminate()
-      provisional = false
-      provisionalStart = nil
       failureKind = .noAnswer
       state = .failed("stim-server did not answer on port \(port) within \(Int(Self.startTimeout)) seconds.")
     }
@@ -320,17 +309,15 @@ final class ServerController: ObservableObject {
     terminate()
     state = .off
     provisional = false
-    provisionalStart = nil
   }
 
-  /// The bundled server, started with the launch environment and the provisional Stim home so it need not wait for
-  /// the login shell. The server reads the login environment for the commands it runs. Nil with an override.
-  private func earlyCLI() -> StimServerCLI? {
+  /// The bundled server, started with the launch environment and the Stim home and overrides from Settings, so it
+  /// waits for nothing. It discovers the toolchain for the commands it runs itself. Nil with an override.
+  private func bundledCLI() -> StimServerCLI? {
     guard UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable)?.isEmpty ?? true,
       let bundled = BundledServer.inApp()
     else { return nil }
-    var environment = ProcessInfo.processInfo.environment
-    if !StimHome.isDefault(provisionalHome) { environment["STIM_HOME"] = provisionalHome }
+    var environment = settingsEnvironment
     if Bundle.main.bundleURL.pathExtension == "app" { environment["STIM_DESKTOP_APP"] = Bundle.main.bundlePath }
     return StimServerCLI(environment: environment, bundled: bundled)
   }
@@ -338,27 +325,12 @@ final class ServerController: ObservableObject {
   /// Confirms or drops a provisional adoption once the login environment has arrived. A dropped server is looked
   /// for again from the start, now with the login environment's Stim home.
   private func verifyAdoption() async {
-    guard provisional, let login = loginEnvironment else { return }
-    if let started = provisionalStart {
-      let loginHome = StimHome.path(environment: login)
-      if StimHome.isSame(started, loginHome) {
-        provisional = false
-        provisionalStart = nil
-        LaunchMilestones.reach("server-home-verified")
-        return
-      }
-      DebugLog.warning(
-        .server, "stopping the stim-server Desktop started for \(started): the login environment uses \(loginHome)")
-      stop()
-      start()
-      return
-    }
-    guard case .running(let adopted, owned: false) = state else { return }
+    guard provisional, case .running(let adopted, owned: false) = state, let resolved = resolvedEnvironment else { return }
     let current = generation
     let probe = await StimServerCLI.health(port: port)
     guard current == generation, provisional else { return }
     if let health = ServerAdoption.confirmed(
-      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: login))
+      adopted: adopted, probe: probe, loginHome: StimHome.path(environment: resolved))
     {
       state = .running(health, owned: false)
       provisional = false
@@ -601,7 +573,6 @@ final class ServerController: ObservableObject {
     guard generation == self.generation else { return }
     process = nil
     provisional = false
-    provisionalStart = nil
     let detail = output.filter { !$0.isEmpty }.joined(separator: "\n")
     retriesFailure = !detail.contains("Unknown option '--loopback-only'")
     if !retriesFailure {

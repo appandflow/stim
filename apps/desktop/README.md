@@ -1033,16 +1033,11 @@ Macs cannot reach it; Desktop never removes or edits the route. Turning the Phon
 server Desktop started in loopback-only mode, which disconnects paired phones until
 they are served again. The bundled server runs unless you choose another `stim-server` in
 **Settings > Advanced**, such as a checkout's build; a build without the bundle, such as a
-`stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. On a
-launch where no server answers, Desktop starts the bundled server at once, before the
-login shell returns, with the launch environment and the Stim home it expects: the
-launch's `STIM_HOME`, else the one the login shell reported on the last launch, else
-`~/.stim`. It passes `STIM_HOME` only for a home other than `~/.stim`, since an explicit
-`STIM_HOME` turns on the scoped-home defaults. The server reads the login shell's environment itself for the commands it
-runs, and answers once it has. Until Desktop's own login shell confirms that home, Desktop
-treats the server like a provisionally adopted one: it reads status but holds pairing,
-device and control writes. When the login shell names another home, Desktop stops that
-server and starts it again with the new home. The bundled server keeps V8's compile cache for its own
+`stim macos` copy or `swift run`, finds `stim-server` on the login shell's `PATH`. When
+no server answers, Desktop starts the bundled server at once with the launch environment,
+the Stim home and the environment overrides from **Settings > Advanced > Environment**
+(see [Environment](#environment)); the server discovers the toolchain for the commands it
+runs itself. The bundled server keeps V8's compile cache for its own
 scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
 `NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
 runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
@@ -1065,15 +1060,13 @@ adopted as not started by the app, whatever **Serve to phones** says, so build a
 device-host requests from other Macs reach the Allow / Deny dialog. If Desktop's own
 server fails and a LaunchAgent server comes up, the next retry (every 30 seconds or
 more) adopts it. A server with another Stim home is not adopted: the sidebar footer
-shows the mismatch and Desktop keeps retrying. Before the login shell's environment arrives,
-Desktop adopts a ready server provisionally when the launch `STIM_HOME`, else the home the login
-shell reported on the last launch (not saved from a launch that set `STIM_HOME`), else `~/.stim`,
-would adopt it, so the sidebar shows its status feed
-right away. A provisional adoption only reads: Desktop connects with a stored token, and does not
-pair, grant, save or delete a token, run `stim-server` commands or send control requests. When the
-login environment arrives, Desktop checks the server again and keeps it only when it still serves
-the same home and version and that home matches the login shell's; otherwise it drops the server
-and looks for one again. Turning **Serve to phones** off restarts a
+shows the mismatch and Desktop keeps retrying. Before its environment is ready, Desktop
+adopts a ready server provisionally when the Stim home it runs with would adopt it, so the
+sidebar shows its status feed right away. A provisional adoption only reads: Desktop
+connects with a stored token, and does not pair, grant, save or delete a token, run
+`stim-server` commands or send control requests. Once the environment is ready, Desktop
+checks the server again and keeps it only when it still serves the same home and version;
+otherwise it drops the server and looks for one again. Turning **Serve to phones** off restarts a
 server the app started in loopback-only mode and never touches one it did not start;
 turning it on after a failed start tries again.
 
@@ -1541,13 +1534,28 @@ next minute, its card replaces that one. Another link to the same workspace
 replaces its card. With the main window closed, the link reopens it.
 
 - macOS 14 or later and Xcode 27, selected with `xcode-select` or `DEVELOPER_DIR`. Stim Desktop falls back to `/Applications/Xcode.app` when the selected developer directory has no simulator support.
-- `stim` on the login shell's `PATH`, `STIM_BIN` set to its path, or the override in Settings. The cleanup
-  preview needs a `stim` with `gc --json`. At launch the app reads the
-  environment of `zsh -lic` once and runs every `stim` command with it, so
-  commands see the same `PATH` and variables such as `ANDROID_HOME` as a
-  terminal. A non-empty launch `STIM_HOME` overrides the login shell's value for
-  the CLI and servers Desktop starts; **Settings > App > Stim CLI** shows the
-  resolved home, and the sidebar shows non-default homes.
+- `stim` on the `PATH` described below, `STIM_BIN` set to its path, or the override in Settings. The cleanup
+  preview needs a `stim` with `gc --json`.
+
+  <a id="environment"></a>Stim Desktop runs no login shell. At launch it runs Stim's
+  toolchain discovery, the one stim-server and `stim doctor`'s **Toolchain** section
+  use, once with the bundled Node (about 50 ms), and runs every `stim` command with the
+  result: the launch environment with the default Node of nvm, fnm, Volta, mise or asdf,
+  Homebrew, `~/.local/bin`, pnpm's and bun's global directories and the Android SDK
+  tools appended to `PATH`, `ANDROID_HOME` when `~/Library/Android/sdk` exists, and
+  `JAVA_HOME` set to a Homebrew `openjdk`, else Android Studio's runtime, when no JDK is
+  installed under `/Library/Java/JavaVirtualMachines`. A shell profile's variables do not reach it:
+  **Settings > Advanced > Environment** holds the Stim home, which replaces a profile's
+  `STIM_HOME`, and `KEY=VALUE` lines, such as `STIM_*` settings or
+  `NODE_USE_SYSTEM_CA=0`, that Desktop adds to the environment of every `stim` command
+  and of the server it starts; both apply when Desktop restarts. The first launch of
+  this version moves a non-default Stim home that the previous version saw in the login
+  shell into that setting. A launch `STIM_HOME` wins over the setting, and Desktop never
+  exports `~/.stim`, because an explicit `STIM_HOME` turns on the scoped-home defaults.
+  A build without the bundled server, such as a `stim macos` copy or `swift run`, reads
+  `zsh -lic` once instead and logs that it did; the `login-environment` launch milestone
+  marks it, where a bundled build reaches `toolchain-environment`.
+  **Settings > App > Stim CLI** shows the resolved home, and the sidebar shows non-default homes.
   It adds `STIM_DESKTOP_APP`, set to the app's bundle path, which
   tells `stim` that Stim Desktop is installed without a Launch Services lookup.
   It runs `stim` and `stim-server` as their JavaScript file under the Node that
@@ -1587,7 +1595,7 @@ it against `npm prefix -g`, `pnpm root -g` and `bun pm bin -g`, and runs
 linked checkout or a project-local copy, gets no Run button and a note, since
 the app cannot tell what installed it. **Install stim** uses the manager picked
 in the setup guide's tabs; the banner uses the default, pnpm or bun when its
-global bin directory is on the login shell's `PATH`, else npm. A pnpm whose
+global bin directory is on Stim Desktop's `PATH`, else npm. A pnpm whose
 global bin directory is not on the `PATH` is not offered, because pnpm refuses
 global installs then. `stim-server` ships inside the app; with an override in
 **Settings > Advanced**, that one is still installed and updated with npm.
@@ -1604,8 +1612,8 @@ background, because replacing `stim` while agents run commands would break them,
 and a `stim` that no package manager owns, such as a linked checkout, is never
 offered an update. A newly found `stim` at another path asks for a
 restart, because the app resolves `stim` once at launch. While phones are
-served and an override is set, `stim-server --version` gets the same check, installing
-`@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
+served, `stim-server --version` gets the same check; the bundled server always passes
+it, and an outdated override is offered `@stim-cli/server@latest`. Once `stim` is recent enough, the banner offers once
 to set `iosSimulatorApp` and `androidEmulatorApp` to `stim-desktop` with
 `stim settings set … --scope machine`. It skips a key that is already set or
 that the installed `stim` does not list. **Not Now** hides the offer for good.
@@ -1667,7 +1675,7 @@ button, or **Continue** once the step is done, and never skips a step; Escape is
 Later**.
 
 1. **Welcome**.
-2. **Install the CLI**: `node` from the login shell, run in the home folder,
+2. **Install the CLI**: `node` from Stim Desktop's `PATH`, run in the home folder,
    must report 22.12.0 or later; an older one is shown with its path. Without it, the step offers `brew install node` when
    `brew` is on the `PATH`, else a link to nodejs.org. Then it
    shows tabs for npm, pnpm and bun, only for the managers on the `PATH`
@@ -1964,7 +1972,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 
 ## Layout
 
-- `Sources/StimKit`: models for the CLI's JSON, the login shell environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.
+- `Sources/StimKit`: models for the CLI's JSON, the toolchain environment, the CLI and `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the autopilot schedule, pressure plan and log, and the crash report scrubber. Unit-tested.
 - `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
 - `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.

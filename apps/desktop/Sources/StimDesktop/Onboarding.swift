@@ -25,7 +25,7 @@ final class Onboarding: ObservableObject {
     var nodePath: String?
     var brewPath: String?
     var skillPath: String?
-    /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
+    /// `HOME` in Stim Desktop's environment, where the setup commands run and the skills CLI installs.
     var home: String
     var androidSDK: String?
     var javaHome: String?

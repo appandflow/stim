@@ -239,7 +239,7 @@ struct AppPreferencesView: View {
         }
         stimVersionRow
         HStack {
-          TextField("stim on the login shell's PATH", text: $stimExecutable)
+          TextField("stim from Stim Desktop's PATH", text: $stimExecutable)
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
         Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")

@@ -33,8 +33,8 @@ brew install --cask appandflow/tap/stim
 ```
 
 - macOS 14 or later, on Apple silicon or Intel.
-- The `stim` CLI, on your login shell's `PATH` or set in **Stim > Settings >
-  App**. See [Install Stim](./getting-started.md#install-stim).
+- The `stim` CLI, installed globally with npm, pnpm, bun or Homebrew, or set in
+  **Stim > Settings > App**. See [Install Stim](./getting-started.md#install-stim).
 - Xcode 27 for live simulator screens.
 
 Hosted iOS simulators and Android emulators started with
@@ -57,9 +57,15 @@ When a device is not on this Mac, its tile, workspace page, viewer toolbar and
 sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
-Desktop uses the non-empty launch `STIM_HOME`, then the login shell's value, then
-`~/.stim`; **Settings > App > Stim CLI** shows the home, and private-home copies
-refuse servers for another home.
+Desktop runs no login shell. It finds Node, the `stim` CLI, Homebrew, the
+Android SDK and Java the way `stim doctor`'s **Toolchain** section reports them,
+so a variable set only in a shell profile does not reach it. Set the Stim home,
+and variables such as `STIM_*` settings as `KEY=VALUE` lines, in **Settings >
+Advanced > Environment**; they apply when Desktop restarts and are stored in
+plain text in Desktop's preferences, so keep secrets out of them. Desktop uses a
+non-empty launch `STIM_HOME`, then that setting, then `~/.stim`. The Stim CLI
+section of **Settings > App** shows the home, and private-home copies refuse
+servers for another home.
 
 The app updates itself. Release builds report crashes, app hangs of 2 seconds or
 more and a few handled failures to Sentry, with file paths, host names,

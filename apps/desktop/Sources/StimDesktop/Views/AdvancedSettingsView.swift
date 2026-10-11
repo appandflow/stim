@@ -8,6 +8,8 @@ struct AdvancedSettingsView: View {
   var settings: MachineSettingsStore
   let stimHome: String
   @AppStorage(AppPreferences.Key.stimServerExecutable) private var executable = ""
+  @AppStorage(AppPreferences.Key.stimHome) private var homeSetting = ""
+  @AppStorage(AppPreferences.Key.environmentOverrides) private var overrides = ""
 
   var body: some View {
     Form {
@@ -38,12 +40,28 @@ struct AdvancedSettingsView: View {
       }
       RecordingSection(settings: settings)
       Section {
+        TextField("Stim home", text: $homeSetting, prompt: Text("~/.stim"))
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("Environment")
+          TextEditor(text: $overrides)
+            .font(.stim(.callout, mono: true))
+            .frame(minHeight: 72)
+        }
+      } header: {
+        Text("Environment")
+      } footer: {
+        Text(
+          "Stim Desktop runs no login shell: Stim finds Node, Homebrew, the Android SDK and Java itself. Set the Stim home here instead of STIM_HOME, and add other variables, such as STIM_* settings, as KEY=VALUE lines. They are stored in plain text, so keep secrets out. Changes apply when Stim Desktop restarts."
+        )
+        .foregroundStyle(Palette.tertiary)
+      }
+      Section {
         ServerStatusRows(server: server, stimHome: stimHome)
         HStack {
-          TextField("stim-server executable", text: $executable, prompt: Text("stim-server on the login shell's PATH"))
+          TextField("stim-server executable", text: $executable, prompt: Text("the stim-server bundled with Stim Desktop"))
           Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
         }
-        .help("Overrides PATH the next time the server starts.")
+        .help("Overrides the bundled stim-server the next time the server starts.")
       } header: {
         Text("stim-server")
       } footer: {

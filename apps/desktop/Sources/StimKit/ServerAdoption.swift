@@ -1,23 +1,12 @@
 import Foundation
 
-/// How far Desktop trusts the stim-server it found running on its port. Before the login shell's environment
-/// arrives, Desktop adopts a server provisionally with the Stim home that environment reported on the last launch,
-/// so the sidebar can show the server's status feed. A provisional adoption allows reads only: no pairing, no saved
+/// How far Desktop trusts the stim-server it found running on its port. Before its environment is ready, Desktop
+/// adopts a server provisionally for the Stim home it runs with, so the sidebar can show the server's status feed. A provisional adoption allows reads only: no pairing, no saved
 /// or deleted token, no `stim-server` command and no control request until the login environment confirms it.
 public enum ServerAdoption: Equatable, Sendable {
   case none
   case provisional(home: String)
   case verified(home: String)
-
-  /// The Stim home to decide a provisional adoption with: the launch environment's `STIM_HOME`, which overrides the
-  /// login shell's, then the home the login shell reported on the last launch, then `~/.stim`.
-  public static func provisionalHome(
-    launch: [String: String], lastLoginHome: String?, home: String = NSHomeDirectory()
-  ) -> String {
-    if let path = launch["STIM_HOME"], path.hasPrefix("/") { return path }
-    if let lastLoginHome, lastLoginHome.hasPrefix("/") { return lastLoginHome }
-    return "\(home)/.stim"
-  }
 
   /// The ready server `probe` reports, when Desktop may adopt it provisionally for `provisionalHome`. A server that is
   /// not ready or serves another home waits for the login environment instead of failing on a possibly stale home.

@@ -42,7 +42,7 @@ public enum PullRequestCleanup {
 
   /// Why a check found no pull requests because `gh` could not answer, or nil when it answered for a repository.
   public static func problem(hasGitHubCLI: Bool, repositories: Int, answered: Int) -> String? {
-    if !hasGitHubCLI { return "gh is not on the login shell's PATH, so no worktree is removed for its pull request." }
+    if !hasGitHubCLI { return "gh is not on Stim Desktop's PATH, so no worktree is removed for its pull request." }
     if repositories > 0, answered == 0 {
       return "gh answered for no repository: it is signed out, offline, or no repository is on GitHub."
     }
@@ -123,7 +123,7 @@ public enum PullRequestCleanup {
   }
 }
 
-/// `gh` from the login shell's `PATH`.
+/// `gh` from Stim Desktop's `PATH`.
 public struct GitHubCLI: Sendable {
   public let executable: String?
   let environment: [String: String]

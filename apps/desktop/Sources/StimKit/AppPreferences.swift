@@ -43,8 +43,12 @@ public enum AppPreferences {
     public static let stimServerExecutable = "stimServerExecutable"
     /// The loopback port Stim Desktop runs or looks for stim-server on; unset means 7787. Set only with `defaults write`.
     public static let stimServerPort = "stimServerPort"
-    /// The Stim home the login shell's environment resolved on the last launch, for `ServerAdoption.provisionalHome`.
-    public static let lastLoginStimHome = "lastLoginStimHome"
+    /// The Stim home before Settings held one; `migrate` moves it into `stimHome` once.
+    static let lastLoginStimHome = "lastLoginStimHome"
+    /// The Stim home Desktop runs Stim with. Empty or unset means `~/.stim`; a launch `STIM_HOME` wins.
+    public static let stimHome = "stimHome"
+    /// `KEY=VALUE` lines Desktop adds to the environment of every Stim command and of stim-server.
+    public static let environmentOverrides = "environmentOverrides"
     public static let showsInspector = "showsInspector"
     public static let tutorialFloats = "tutorial.floats"
     public static let tutorialFloatPinned = "tutorial.floatPinned"
@@ -104,6 +108,12 @@ public enum AppPreferences {
   /// over to the sidebar status selection.
   public static func migrate(_ defaults: UserDefaults) {
     removeLegacyRunDestinations(defaults)
+    if let home = defaults.string(forKey: Key.lastLoginStimHome) {
+      if defaults.string(forKey: Key.stimHome) == nil, home.hasPrefix("/"), !StimHome.isDefault(home) {
+        defaults.set(home, forKey: Key.stimHome)
+      }
+      defaults.removeObject(forKey: Key.lastLoginStimHome)
+    }
     if let showsIdle = defaults.object(forKey: Key.showsIdleWorkspaces) as? Bool {
       if !showsIdle, defaults.string(forKey: Key.sidebarStatus) == nil {
         defaults.set(StatusFilter.live.rawValue, forKey: Key.sidebarStatus)

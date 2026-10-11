@@ -253,11 +253,13 @@ export function podEnvForRuby(
     env = process.env,
     home = homedir(),
     exists = existsSync,
+    read = readOrNull,
     loginEnv = readLoginRubyEnv,
   }: {
     env?: NodeJS.ProcessEnv;
     home?: string;
     exists?: (p: string) => boolean;
+    read?: (p: string) => string | null;
     loginEnv?: () => LoginRubyEnv | null;
   } = {},
 ): NodeJS.ProcessEnv {
@@ -289,6 +291,15 @@ export function podEnvForRuby(
     return out;
   }
   if (env.GEM_HOME) return out;
+  const fallback = defaultRuby(home, exists, read);
+  if (fallback) {
+    out.PATH = prependPath(fallback.bins, out.PATH);
+    if (fallback.gems) {
+      out.GEM_HOME = fallback.gems.home;
+      out.GEM_PATH = fallback.gems.path;
+    }
+    return out;
+  }
   const login = loginEnv();
   if (!login) return out;
   const rubyPath = rubyPathEntries(login, out.PATH, exists);
@@ -296,6 +307,32 @@ export function podEnvForRuby(
   if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
   if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
+}
+
+/**
+ * The Ruby a new login shell makes the default, read from the version manager's files: rvm's `default` alias in
+ * `~/.rvm/config/alias`, or rbenv's global `~/.rbenv/version`.
+ */
+function defaultRuby(
+  home: string,
+  exists: (p: string) => boolean,
+  read: (p: string) => string | null,
+): { bins: string[]; gems?: { home: string; path: string } } | null {
+  const rvm = join(home, '.rvm');
+  const alias = /^default=(\S+)$/m.exec(read(join(rvm, 'config', 'alias')) ?? '')?.[1];
+  if (alias && exists(join(rvm, 'rubies', alias, 'bin'))) {
+    const gems = join(rvm, 'gems', alias);
+    const global = `${gems}@global`;
+    return {
+      bins: [join(gems, 'bin'), join(global, 'bin'), join(rvm, 'rubies', alias, 'bin')].filter(exists),
+      gems: { home: gems, path: [gems, global].join(delimiter) },
+    };
+  }
+  const rbenv = read(join(home, '.rbenv', 'version'))?.trim();
+  if (rbenv && exists(join(home, '.rbenv', 'versions', rbenv, 'bin'))) {
+    return { bins: [join(home, '.rbenv', 'versions', rbenv, 'bin')] };
+  }
+  return null;
 }
 
 export async function podEnvForRubyAsync(version: string | null): Promise<NodeJS.ProcessEnv> {

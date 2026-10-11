@@ -278,12 +278,12 @@ full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
 is installed, using the same UTF-8 locale defaults as `pod install`. Without
-an installed project Ruby, it uses the `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries of each
+an installed project Ruby, it uses rvm's or rbenv's default Ruby, and without
+one of those the `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries of each
 machine's login shell, so Desktop, terminal and agent callers agree; `pod install`
 (including the Bundler run) runs in the same environment. A caller that already
 sets `GEM_HOME` keeps it, and if the login shell cannot be read the caller's
-environment is used. stim-server already runs in a login-shell environment, so
-this fallback is usually redundant on the worker.
+environment is used.
 
 ## Use the Desktop wizard
 

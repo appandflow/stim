@@ -155,7 +155,7 @@ struct OnboardingBanner: View {
     switch compatibility {
     case .missing:
       return
-        "No \(name) on the login shell's PATH. Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
+        "Stim Desktop found no \(name). Installing runs \(manager.rawValue) \(manager == .npm ? "install" : "add") --global and needs Node.js 22.12 or later."
     case .outdated(let found?):
       return "\(abbreviatingHome(path ?? name)) reports \(found)."
     case .outdated(nil):

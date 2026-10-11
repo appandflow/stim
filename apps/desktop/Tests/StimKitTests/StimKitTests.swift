@@ -534,6 +534,24 @@ import Testing
     #expect((defaults.persistentDomain(forName: name)! as NSDictionary) == expected)
   }
 
+  @Test func movesTheLastLoginShellStimHomeIntoTheSettingOnce() throws {
+    let cases: [(last: String, existing: String?, expected: String?)] = [
+      ("/Volumes/Work/stim", nil, "/Volumes/Work/stim"),
+      ("/Volumes/Work/stim", "/kept", "/kept"),
+      (NSHomeDirectory() + "/.stim", nil, nil),
+    ]
+    for (last, existing, expected) in cases {
+      let name = "stim-test-home-\(UUID().uuidString)"
+      let defaults = try #require(UserDefaults(suiteName: name))
+      defer { defaults.removePersistentDomain(forName: name) }
+      defaults.set(last, forKey: "lastLoginStimHome")
+      if let existing { defaults.set(existing, forKey: AppPreferences.Key.stimHome) }
+      AppPreferences.migrate(defaults)
+      #expect(defaults.string(forKey: AppPreferences.Key.stimHome) == expected)
+      #expect(defaults.object(forKey: "lastLoginStimHome") == nil)
+    }
+  }
+
   @Test func migratesSavedSidebarChoicesWithoutAddingUnsavedCheckboxDefaults() throws {
     let cases: [(saved: [String: Any], expected: Set<StatusFilter>?)] = [
       ([:], nil),

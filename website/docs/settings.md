@@ -457,7 +457,7 @@ in that order:
   project's `Gemfile.lock` pins CocoaPods: both Macs then run that version
   through Bundler, so the machine needs only Bundler on its stim-server `PATH`
   and installs the pinned gems itself on the first build. The comparison uses
-  `.ruby-version` when installed, otherwise the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
+  `.ruby-version` when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the login shell's `GEM_HOME`, `GEM_PATH` and Ruby-related `PATH` entries (unless the caller already sets `GEM_HOME`), and the same UTF-8 locale defaults as `pod install`, which runs in the same environment, including the Bundler run.
 - For macOS, its Xcode and macOS SDK must match. The worker needs network
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS
@@ -532,7 +532,7 @@ To keep stim-server running on the remote Mac across logins, run
 that starts at login and restarts the server if it exits, and `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
-install, that stim-server's login-shell environment would otherwise replace.
+install, that stim-server's toolchain discovery does not find.
 The service runs under the Stim Host app, which install builds in
 `~/Applications` with Xcode Command Line Tools. `stim-server service status`
 reports the process, its health, the route, Stim Host's permissions and

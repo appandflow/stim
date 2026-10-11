@@ -168,6 +168,11 @@ public struct BundledServer: Equatable, Sendable {
     self.script = script
   }
 
+  /// The directory holding `bin/node` and `node_modules`.
+  public var root: String {
+    ((node as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent
+  }
+
   /// The runtime inside `bundle`, or nil in a build that does not carry one, such as `swift run` or `stim macos`.
   public static func inApp(_ bundle: Bundle = .main) -> BundledServer? {
     guard let root = bundle.resourceURL?.appendingPathComponent("stim-server") else { return nil }

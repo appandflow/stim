@@ -177,6 +177,24 @@ describe('podEnv (#43, #44)', () => {
     expect(none.GEM_HOME).toBeUndefined();
   });
 
+  test("uses rvm's default Ruby without reading the login shell when the project pins none", () => {
+    const rvm = join('/home/u', '.rvm');
+    const gems = join(rvm, 'gems', 'ruby-3.4.8');
+    const ruby = join(rvm, 'rubies', 'ruby-3.4.8', 'bin');
+    const env = podEnv('/nonexistent', {
+      env: { PATH: '/usr/bin' },
+      home: '/home/u',
+      exists: (p) => p === ruby || p === join(gems, 'bin'),
+      read: (p) => (p === join(rvm, 'config', 'alias') ? 'default=ruby-3.4.8\n' : null),
+      loginEnv: () => {
+        throw new Error('login shell must not be read when rvm names a default Ruby');
+      },
+    });
+    expect(env.PATH).toBe([join(gems, 'bin'), ruby, '/usr/bin'].join(delimiter));
+    expect(env.GEM_HOME).toBe(gems);
+    expect(env.GEM_PATH).toBe([gems, `${gems}@global`].join(delimiter));
+  });
+
   describe.skipIf(process.platform === 'win32')('login-shell Ruby, read only on darwin', () => {
     test('takes the Ruby environment from the login shell when no project Ruby is installed', () => {
       const login = { PATH: '/gems/bin:/login/node:/ruby/bin:/usr/bin', GEM_HOME: '/gems', GEM_PATH: '/gems:/more' };

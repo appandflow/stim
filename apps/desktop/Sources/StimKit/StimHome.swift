@@ -15,13 +15,6 @@ public enum StimHome {
     canonical(path) == canonical("\(home)/.stim")
   }
 
-  public static func environment(_ shell: [String: String], launch: [String: String]) -> [String: String] {
-    guard let path = absolute(launch["STIM_HOME"]) else { return shell }
-    var environment = shell
-    environment["STIM_HOME"] = path
-    return environment
-  }
-
   public static func adopts(serverHome: String, resolved: String, home: String = NSHomeDirectory()) -> Bool {
     isDefault(resolved, home: home) || canonical(serverHome) == canonical(resolved)
   }
