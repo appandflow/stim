@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../../packages/stim-cli/src/exec.ts';
 import { cloneIgnoredEntries } from '../../packages/stim-cli/src/workspace/worktree.ts';
-import { checkStorageLayout } from '../../packages/stim-cli/src/diagnostics/doctor-storage.ts';
+import {
+  checkStorageLayout,
+  checkWorktreeStorageLayout,
+} from '../../packages/stim-cli/src/diagnostics/doctor-storage.ts';
 
 test(
   'warm copies directly on the destination APFS volume despite a temporary override and clone fallback',
   { skip: process.platform !== 'darwin' },
-  () => {
+  async () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-volumes-e2e-')));
     const image = join(base, 'test.sparseimage');
     const volume = join(base, 'volume');
@@ -89,7 +92,7 @@ test(
       );
       const crossVolume = join(base, 'linked-other-volume');
       git(['worktree', 'add', '-qb', 'linked-other-volume', crossVolume]);
-      const findings = checkStorageLayout(crossVolume, { platform: 'android' });
+      const findings = await checkWorktreeStorageLayout({ root: crossVolume, repoRoot: crossVolume, options: {} });
       const warmFinding = findings.find((finding) => finding.title === 'Worktree copy crosses filesystems');
       assert.ok(warmFinding);
       assert.match(warmFinding.detail, /cannot share file blocks across volumes/);

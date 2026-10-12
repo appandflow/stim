@@ -10,6 +10,7 @@ import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import { projectSettingsContext, type SettingsObject } from '../workspace/settings.ts';
 import { readMachineSettings } from '../diagnostics/doctor-config.ts';
+import { checkWorktreeStorageLayout } from '../diagnostics/doctor-storage.ts';
 import { iosRuntimeMatches, listIosRuntimesAsync, pickDefaultIosCreation } from '../devices/ios.ts';
 import { offloadCheck, simulatorRuntime } from '../offload/client.ts';
 import { resolveDeviceType, resolveRuntime } from './ios/support.ts';
@@ -336,6 +337,7 @@ export default function doctorCommand(
         },
         doctors.map((doctor) => doctor.inspect),
       );
+      findings.unshift(...(await checkWorktreeStorageLayout(context)));
       if (selected.problem)
         findings.unshift({
           level: 'cost',
