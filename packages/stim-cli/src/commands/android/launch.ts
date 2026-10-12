@@ -267,7 +267,7 @@ async function verifyAndroidMetroRun({
   const timeoutMs = freshEmulator ? 60000 : VERIFY_TIMEOUT_MS;
   if (metroCheck && freshEmulator)
     phase('verify', `waiting up to 60s for bundle load (${device.created ? 'new' : 'adopted'} emulator)`);
-  const siblings = metroCheck ? siblingPlatformSlots(root, 'android', slot) : [];
+  const siblings = metroCheck ? await siblingPlatformSlots(root, 'android', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
     ? await verifyLaunched({
         timeoutMs,

@@ -584,13 +584,13 @@ test('the stop command reports a hosted stop without sending the host UDID to lo
   expect(readHostedIos(root)).toEqual({});
 });
 
-test('hosted sibling slots share Metro evidence even without local collectors or registry devices', () => {
+test('hosted sibling slots share Metro evidence even without local collectors or registry devices', async () => {
   writeHostedIos(root, 'default', placement());
   writeHostedIos(root, 'tablet', { ...placement(), session: '34567890-1234-1234-1234-123456789abc' });
   expect(launchSlotScope(root)).toBe('default');
-  expect(siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
-  expect(siblingPlatformSlots(root, 'ios', 'tablet')).toEqual(['default']);
-  expect(siblingPlatformSlots(root, 'android')).toEqual([]);
+  expect(await siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+  expect(await siblingPlatformSlots(root, 'ios', 'tablet')).toEqual(['default']);
+  expect(await siblingPlatformSlots(root, 'android')).toEqual([]);
 });
 
 test('a hosting handshake refusal cannot expose the credential', async () => {
