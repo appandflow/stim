@@ -73,13 +73,13 @@ export function nativeTransferManifest(
   return selected.toSorted((a, b) => a.path.localeCompare(b.path));
 }
 
-export function verifyNativeTransfer(
+export async function verifyNativeTransfer(
   root: string,
   files: readonly NativeTransferFile[],
   digest: string,
   ignoredDirectoryMarkers: readonly string[] = [],
-): boolean {
-  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: root }], {
+): Promise<boolean> {
+  const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: root }], {
     excluded: [join(root, '.git')],
     ignoredDirectoryMarkers,
     parameters: null,

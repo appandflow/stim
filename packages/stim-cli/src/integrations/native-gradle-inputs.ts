@@ -205,13 +205,13 @@ export function validateGradleManifest(
   }
 }
 
-export function verifyGradleTransfer(
+export async function verifyGradleTransfer(
   repository: string,
   project: string,
   declaration: GradleOffloadInputs,
   files: readonly NativeTransferFile[],
   digest: string,
-): boolean {
+): Promise<boolean> {
   validateGradleManifest(project, declaration, files);
   const excluded = [...declaration.outputs, ...gradleStateDirectories(project)];
   for (const path of excluded) {
@@ -225,7 +225,7 @@ export function verifyGradleTransfer(
       .slice(0, -1)
       .map((_, index) => join(repository, ...path.split('/').slice(0, index + 1))),
   );
-  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repository }], {
+  const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: repository }], {
     excluded: [join(repository, '.git'), ...excluded.map((path) => join(repository, path))],
     ignoredDirectoryMarkers: markers.filter((path) => !files.some((file) => join(repository, file.path) === path)),
     parameters: null,

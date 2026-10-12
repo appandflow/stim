@@ -336,8 +336,9 @@ export async function nativeXcodeInputSnapshot(
     }
     if (reasons.size) return { cacheIneligible: [...reasons].join('; ') };
     for (const [name, path] of dependencyRoots) inputs.push({ name, path: realpathSync(path) });
-    const snapshot = fingerprintNativeInputs(inputs, {
+    const snapshot = await fingerprintNativeInputs(inputs, {
       excluded,
+      signal,
       ignoredDirectoryMarkers: nativeXcodeMetadataDirectories(selection),
       parameters: {
         recipe: 'native-xcode-v1',
@@ -360,6 +361,7 @@ export async function nativeXcodeInputSnapshot(
       return { cacheIneligible: 'C-family or Metal sources need a verified compiler include dependency graph' };
     return snapshot;
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       cacheIneligible:
         error instanceof NativeInputError

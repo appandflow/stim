@@ -722,7 +722,7 @@ describe('native Xcode worker selection', () => {
     machines.push(machine);
     writeFileSync(join(repo, '.gitignore'), 'private.key\n');
     writeFileSync(join(repo, 'private.key'), 'not authorized for transport');
-    const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+    const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: repo }], {
       excluded: [join(repo, '.git')],
       parameters: null,
     });
@@ -759,7 +759,7 @@ describe('native Xcode worker selection', () => {
 });
 
 test('native results with a different transfer digest are refused before artifact fetch', async () => {
-  const snapshot = fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+  const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: repo }], {
     excluded: [join(repo, '.git')],
     parameters: null,
   });
