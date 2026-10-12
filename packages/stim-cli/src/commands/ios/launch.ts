@@ -262,7 +262,7 @@ async function verifyIosMetroRun({
     return running.state === 'unknown' ? null : running.state === 'running';
   };
 
-  const siblings = metroCheck ? siblingPlatformSlots(root, 'ios', slot) : [];
+  const siblings = metroCheck ? await siblingPlatformSlots(root, 'ios', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
     ? await d.verifyLaunch({
         requireBundleResponse: true,

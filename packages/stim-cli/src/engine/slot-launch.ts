@@ -2,8 +2,8 @@ import { deviceShellArg } from './app-install.ts';
 import { fileLeaseIo } from './device-lease.ts';
 import { getProject } from '../workspace/config.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
-import { getAvdNameForSerial, listAdbDevices } from '../devices/android.ts';
-import { listAllIosSims } from '../devices/ios.ts';
+import { getAvdNameForSerialAsync, listAdbDevicesAsync } from '../devices/android.ts';
+import { listAllIosSimsAsync } from '../devices/ios.ts';
 import { hostedNativeRecords, type DeviceRecord } from '@stim-cli/core/state';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -24,43 +24,40 @@ export function launchSlotScope(root: string, slot = 'default'): string | undefi
 
 const DEVICE_LISTING_TIMEOUT_MS = 5000;
 
-function ownedDeviceRunning(platform: 'ios' | 'android'): (device: DeviceRecord) => boolean {
-  let listing: ((device: DeviceRecord) => boolean) | null = null;
-  const list = (): ((device: DeviceRecord) => boolean) => {
+function ownedDeviceRunning(platform: 'ios' | 'android'): (device: DeviceRecord) => Promise<boolean> {
+  let listing: Promise<(device: DeviceRecord) => boolean> | null = null;
+  const list = async (): Promise<(device: DeviceRecord) => boolean> => {
     if (platform === 'android') {
-      const { emulators, unhealthy } = listAdbDevices({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
+      const { emulators, unhealthy } = await listAdbDevicesAsync({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
       const names: string[] = [];
       for (const entry of [...emulators, ...unhealthy.filter((candidate) => candidate.kind === 'emulator')]) {
-        const name = getAvdNameForSerial(entry.serial, { timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
+        const name = await getAvdNameForSerialAsync(entry.serial, { timeoutMs: DEVICE_LISTING_TIMEOUT_MS });
         if (name === null) return () => true;
         names.push(name);
       }
       return (device) => typeof device.avdName === 'string' && names.includes(device.avdName);
     }
     const booted = new Set(
-      listAllIosSims({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS })
+      (await listAllIosSimsAsync({ timeoutMs: DEVICE_LISTING_TIMEOUT_MS }))
         .filter((sim) => sim.state === 'Booted')
         .map((sim) => sim.udid),
     );
     return (device) => typeof device.deviceUdid === 'string' && booted.has(device.deviceUdid);
   };
-  return (device) => {
-    try {
-      listing ??= list();
-      return listing(device);
-    } catch {
-      listing = () => true;
-      return true;
-    }
+  return async (device) => {
+    listing ??= list().catch(() => () => true);
+    return (await listing)(device);
   };
 }
 
-export function siblingPlatformSlots(
+export async function siblingPlatformSlots(
   root: string,
   platform: 'ios' | 'android',
   slot = 'default',
-  { deviceRunning = ownedDeviceRunning(platform) }: { deviceRunning?: (device: DeviceRecord) => boolean } = {},
-): string[] {
+  {
+    deviceRunning = ownedDeviceRunning(platform),
+  }: { deviceRunning?: (device: DeviceRecord) => boolean | Promise<boolean> } = {},
+): Promise<string[]> {
   const slots = new Set<string>();
   const state = readWorkspaceState(root);
   for (const hosted of Object.keys(hostedNativeRecords(state, platform))) slots.add(hosted);
@@ -70,7 +67,7 @@ export function siblingPlatformSlots(
   }
   for (const { slot: other, platforms } of projectDeviceSlots(getProject(root))) {
     const device = platforms[platform];
-    if (other !== slot && !slots.has(other) && device && deviceRunning(device)) slots.add(other);
+    if (other !== slot && !slots.has(other) && device && (await deviceRunning(device))) slots.add(other);
   }
   slots.delete(slot);
   return [...slots].toSorted();

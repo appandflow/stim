@@ -90,7 +90,7 @@ const probe = async () => {
 };
 const pid = await waitForKnownObservation(probe, { deadline: bundleDeadline });
 assert(Number.isInteger(pid) && pid > 0, 'the launch has no positively identified live app process');
-const platformShared = siblingPlatformSlots(root, platform, slot).length > 0;
+const platformShared = (await siblingPlatformSlots(root, platform, slot)).length > 0;
 if (expectUnattributed) {
   assert(
     platform === 'android' && slot !== 'default' && platformShared,

@@ -120,7 +120,7 @@ export async function finishHostedAndroidRun({
         metroPort,
         mode: workspaceDevServerMode(root, isExpo),
         slot: launchSlotScope(root, slot),
-        platformShared: siblingPlatformSlots(root, 'android', slot).length > 0,
+        platformShared: (await siblingPlatformSlots(root, 'android', slot)).length > 0,
       });
       if (evidence.fatal)
         return fail(
