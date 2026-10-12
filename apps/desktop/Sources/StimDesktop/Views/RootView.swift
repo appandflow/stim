@@ -105,6 +105,13 @@ struct RootView: View {
   }
 
   var body: some View {
+    content
+      .onReceive(ServerSession.shared.$state) { _ in
+        Task { showSharedWorkspaceLink() }
+      }
+  }
+
+  private var content: some View {
     NavigationSplitView(columnVisibility: $columnVisibility) {
       Sidebar(
         store: store, autopilot: autopilot, onboarding: onboarding, actions: actions, selection: attributed(.click("sidebar")),
@@ -304,9 +311,6 @@ struct RootView: View {
     .onReceive(openRequests.$workspaceLink) { link in
       guard link != nil else { return }
       Task { takeWorkspaceLink() }
-    }
-    .onReceive(ServerSession.shared.$state) { _ in
-      Task { showSharedWorkspaceLink() }
     }
     .onReceive(store.$payload) { payload in
       updateTutorial(payload)
