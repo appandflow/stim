@@ -60,6 +60,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
  * `native-xcode-toolchain` accepts native Xcode discovery without unrelated platform or Ruby probes.
+ * `build-artifact-cache` offers and fetches exact completed native Xcode archives without a build job.
  * `native-gradle-build` accepts declared Gradle transfer inputs with no reusable artifact identity.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -87,6 +88,7 @@ export const FEATURES = [
   'hosted-ios-process',
   'native-xcode-build',
   'native-xcode-toolchain',
+  'build-artifact-cache',
   'native-gradle-build',
   'hosted-android-data',
   'hosted-android-process',
@@ -146,6 +148,7 @@ export const METHODS = [
   'build.start',
   'build.cancel',
   'build.artifact',
+  'build.cached-artifact',
   'build.attach',
   'device-host.offer',
   'device-host.reserve',
@@ -195,6 +198,7 @@ export const BUILD_METHODS = [
   'build.start',
   'build.cancel',
   'build.artifact',
+  'build.cached-artifact',
   'build.attach',
 ] as const;
 
@@ -877,6 +881,19 @@ export interface BuildOfferParams {
   /** The project's normalized .ruby-version; absent uses the worker's default Ruby. */
   rubyVersion?: string;
   native?: 'xcode' | 'gradle';
+  artifact?: BuildArtifactIdentity;
+}
+
+/** A native Xcode identity whose key includes its complete inputs, target and toolchain. */
+export interface BuildArtifactIdentity {
+  fingerprint: string;
+  cacheKey: string;
+}
+
+export interface CachedBuildArtifact extends BuildArtifactIdentity {
+  name: string;
+  size: number;
+  sha256: string;
 }
 
 /** The toolchain a build must match exactly on both Macs. */
@@ -920,6 +937,7 @@ export interface BuildOfferResult {
   toolchain: BuildToolchain;
   capacity: BuildCapacity;
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
+  artifact?: CachedBuildArtifact | null;
 }
 
 /** One file of the client's checkout. A `link` blob holds the symlink's target. */
@@ -1445,6 +1463,10 @@ export interface Methods {
   'build.start': { params: BuildStartParams; result: BuildJobParams };
   'build.cancel': { params: BuildJobParams; result: Record<string, never> };
   'build.artifact': { params: BuildJobParams; result: BuildArtifactResult };
+  'build.cached-artifact': {
+    params: { repo: string; artifact: BuildArtifactIdentity };
+    result: CachedBuildArtifact | null;
+  };
   'build.attach': { params: BuildJobParams; result: BuildAttachResult };
 }
 

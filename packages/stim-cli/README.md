@@ -44,6 +44,13 @@ Stim builds or restores the app, installs it, launches it, and checks launch
 readiness. Plain output streams progress and reports the complete result. Use
 `--json` when a script needs structured data.
 
+For native Xcode simulator builds, a local and configured-provider miss can
+reuse an exact completed artifact from an enabled paired build worker. Reuse
+checks the full source, toolchain, SDK, architecture and target cache key and
+verifies the downloaded archive. It needs no compilation slot. An explicit
+local build and remote build mode off skip peer lookup; other project types
+keep their existing cache paths. See `stim guide settings` for placement.
+
 ## Native Android build workers
 
 Native Gradle apps can use an approved build worker after declaring that

@@ -256,7 +256,7 @@ import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 const print = (value) => process.stdout.write(JSON.stringify(value) + '\\n');
-if (process.argv[2] === 'offer') {
+if (process.argv[2].startsWith('offer')) {
   print({ stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27.0', simulatorSdk: '27.0', macosSdk: '27.0', cocoapods: '1.16.2', runtimes: ['iOS-27-0'] });
 } else {
   const job = JSON.parse(readFileSync(0, 'utf8'));
@@ -288,7 +288,7 @@ if (process.argv[2] === 'offer') {
     }
     if (job.platform === 'android') writeFileSync(join(job.area, 'out', job.job, 'App.apk'), 'APK bytes');
     const sha256 = createHash('sha256').update(archive).digest('hex');
-    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
+    print({ type: 'result', ok: true, artifact: { name: job.platform === 'android' ? 'App.apk' : 'App.app', size: archive.length, sha256 }, fingerprint: job.expectedFingerprint, sourceDigest: job.native?.sourceDigest, compilationCache: { status: 'reported', hits: 3, cacheableTasks: 4, hitRatePercent: 75 }, timings: { buildMs: 5 } });
   }
 }
 `;
@@ -939,6 +939,7 @@ describe('pairing', () => {
           'hosted-ios-process',
           'native-xcode-build',
           'native-xcode-toolchain',
+          'build-artifact-cache',
           'native-gradle-build',
           'hosted-android-data',
           'hosted-android-process',
@@ -948,7 +949,8 @@ describe('pairing', () => {
         actions: [],
       },
     });
-    const deviceToken = 'result' in reply && 'deviceToken' in reply.result ? reply.result.deviceToken! : '';
+    const deviceToken =
+      'result' in reply && reply.result !== null && 'deviceToken' in reply.result ? reply.result.deviceToken! : '';
     const stored = readFileSync(join(root, 'home', 'server', 'devices.json'), 'utf8');
     expect(stored).not.toContain(deviceToken);
     expect(readFileSync(join(root, 'home', 'server', 'pairing.json'), 'utf8')).not.toContain(token);
@@ -957,7 +959,7 @@ describe('pairing', () => {
     const again = await connect(port);
     const hello = await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
     expect(hello).toMatchObject({ result: { device: { name: 'Test phone' } } });
-    expect('result' in hello && 'deviceToken' in hello.result).toBe(false);
+    expect('result' in hello && hello.result !== null && 'deviceToken' in hello.result).toBe(false);
   });
 
   it('refuses a pairing token that was already spent', async () => {
@@ -1725,7 +1727,66 @@ describe('offloaded builds', () => {
 
       const viewer = await authed(port);
       expect(await viewer.request('build.offer', { repo: 'app-1' })).toMatchObject({ error: { code: 'forbidden' } });
+      expect(
+        await viewer.request('build.cached-artifact', {
+          repo: 'app-1',
+          artifact: { fingerprint: 'f00d', cacheKey: 'complete-key' },
+        }),
+      ).toHaveProperty('error.code', 'forbidden');
       expect(await viewer.request('device-host.offer', { platform: 'ios' })).toHaveProperty('error.code', 'forbidden');
+    },
+  );
+
+  test.skipIf(!fakeTailscale)(
+    'a reconnected approved client fetches an exact completed archive without another build',
+    async () => {
+      const port = await start();
+      const { client, id, deviceToken } = await buildClient(port);
+      const identity = { fingerprint: 'f00d', cacheKey: 'source-sdk27-arm64-target' };
+      expect(await client.request('build.sync', { repo: 'app-1', files: [], done: true })).toHaveProperty(
+        'result.missing',
+        [],
+      );
+      const started = await client.request('build.start', {
+        ...START,
+        project: '',
+        native: {
+          provider: 'xcode',
+          sourceDigest: sha(''),
+          cacheKey: identity.cacheKey,
+          arch: 'arm64',
+          parameters: { sdk: '27.0' },
+        },
+        optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: true },
+      });
+      expect(started).toHaveProperty('result.job');
+      await progress(client);
+      client.socket.close();
+      await client.closed;
+      const area = join(root, 'home', 'build-worker', id, 'repos', 'app-1');
+      rmSync(join(area, 'out'), { recursive: true, force: true });
+      const again = await connect(port, '100.64.0.2');
+      await again.request('hello', { protocol: 1, client: CLIENT, auth: { deviceToken } });
+      expect(await again.request('build.offer', { repo: 'app-1', native: 'xcode', artifact: identity })).toHaveProperty(
+        'result.artifact',
+        {
+          ...identity,
+          name: 'App.app',
+          size: 17,
+          sha256: sha('app archive bytes'),
+        },
+      );
+      again.socket.send(
+        JSON.stringify({ id: 99, method: 'build.cached-artifact', params: { repo: 'app-1', artifact: identity } }),
+      );
+      const frame = await again.next();
+      if (!('binary' in frame) || !Buffer.isBuffer(frame.binary)) throw new Error('Expected an archive frame');
+      expect(frame.binary.subarray(32).toString()).toBe('app archive bytes');
+      expect(await again.next()).toMatchObject({
+        id: 99,
+        result: { ...identity, size: 17, sha256: sha('app archive bytes') },
+      });
+      expect(readAudit().filter((entry) => entry.action === 'build')).toHaveLength(1);
     },
   );
 

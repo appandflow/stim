@@ -440,6 +440,7 @@ export async function acquireIosArtifact(
   }
 
   interface Candidate {
+    cacheOnly: boolean;
     mode: OffloadMode;
     here: MachineCapacity;
     code: string;
@@ -476,6 +477,15 @@ export async function acquireIosArtifact(
     });
     if (!placement.offload) {
       hereReason = placement.reason;
+      if (
+        placement.code === 'this-mac-free' &&
+        runtime &&
+        useBuildCache &&
+        cachePolicy.remote &&
+        recipe.offload?.request(runtime).native?.provider === 'xcode'
+      ) {
+        return { cacheOnly: true, mode, here, code: placement.code, reason: placement.reason, runtime, machines };
+      }
       logWriter().write(
         buildPlacementRecord({
           platform: PLATFORM,
@@ -486,23 +496,42 @@ export async function acquireIosArtifact(
       if (mode !== 'off') phase('build', `placement: here (${placement.reason})`);
       return null;
     }
-    return { mode, here, code: placement.code, reason: placement.reason, runtime: runtime!, machines };
+    return {
+      cacheOnly: false,
+      mode,
+      here,
+      code: placement.code,
+      reason: placement.reason,
+      runtime: runtime!,
+      machines,
+    };
   }
 
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
+    const offload = recipe.offload;
+    if (!offload) return null;
     let asked: PlacementCandidate[] = [];
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: recipe.offload!.target(candidate.runtime),
+      target: offload.target(candidate.runtime),
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
       machines: candidate.machines,
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
+      cacheOnly: candidate.cacheOnly,
+      ...(useBuildCache &&
+      cachePolicy.remote &&
+      storeHash &&
+      storeKey &&
+      offload.request(candidate.runtime).native?.provider === 'xcode'
+        ? { artifact: { fingerprint: storeHash, cacheKey: storeKey } }
+        : {}),
     });
     if (typeof choice === 'string') {
+      if (candidate.cacheOnly) return null;
       const only = candidate.machines.length === 1 ? candidate.machines[0]!.machine : null;
       if (only && choice.startsWith(`${only}: `)) fallbackMachine = only;
       fallBack(choice, choice, { code: 'no-remote-mac-took-it', candidates: asked });
@@ -577,6 +606,7 @@ export async function acquireIosArtifact(
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (!outcome.ok || !prepared) {
       const why = reason ?? 'the stored app is not installable';
+      if (candidate.cacheOnly) return false;
       fallbackMachine = choice.machine;
       fallBack(`${choice.machine}: ${why}`, `offload failed: ${why}`, {
         code: 'offload-failed',
@@ -587,6 +617,7 @@ export async function acquireIosArtifact(
     }
     const { timings } = outcome;
     appPath = prepared;
+    if (outcome.cacheHit) cacheHit = 'remote';
     builtOn = outcome.machine;
     offloadedTo = outcome.machine;
     handoff = outcome.handoff ?? null;
@@ -598,7 +629,7 @@ export async function acquireIosArtifact(
     });
     phase(
       'build',
-      `built on ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
+      `${outcome.cacheHit ? 'reused artifact from' : 'built on'} ${outcome.machine} in ${formatDuration(timings.totalMs)}: offer ${formatDuration(timings.offerMs)}, ` +
         `sync ${formatDuration(timings.syncMs)}, build ${formatDuration(timings.workerMs)}, fetch ${formatDuration(timings.fetchMs)}`,
     );
     compilationCache = outcome.compilationCache;
@@ -607,7 +638,7 @@ export async function acquireIosArtifact(
       src: 'build',
       level: 'info',
       event: 'offload_done',
-      msg: `built on ${outcome.machine}`,
+      msg: `${outcome.cacheHit ? 'reused artifact from' : 'built on'} ${outcome.machine}`,
       timings,
     });
     return true;
@@ -671,7 +702,7 @@ export async function acquireIosArtifact(
   async function compileHere(offload: Candidate | null, { rekeyedBy }: IosSourcePreparation): Promise<string> {
     if (!offload) explainMiss(rekeyedBy);
     step('compile');
-    if (offload) {
+    if (offload && !offload.cacheOnly) {
       stats.setPlacement({
         decision: 'fell-back',
         slotWaitMs,

@@ -1235,6 +1235,19 @@ connected since stim-server started keeps its directory when revoked.
   simulator-runtime facts. Unused report fields are null. This report has its own
   cache, ignores Ruby selection, and is reused for native Xcode build admission.
   Clients use the complete report on older native-build-capable hosts.
+  With `build-artifact-cache`, a native Xcode offer can also send
+  `artifact: { fingerprint, cacheKey }`. Its `artifact` result is null on a miss,
+  or `{ fingerprint, cacheKey, name, size, sha256 }` for a completed archive in
+  this client's repository area. The key includes source, toolchain, SDK,
+  architecture and target options. These are exact lookups, not a full inventory.
+- `build.cached-artifact` takes `repo` and `artifact: { fingerprint, cacheKey }`.
+  It requires the existing build approval. It verifies and streams the cached
+  archive with the same digest-prefixed binary frames as `build.artifact`, and
+  returns its descriptor or null if missing or corrupt. It starts no build and
+  takes no build slot, even when new builds are declined. Completed native Xcode
+  worker archives survive job-output cleanup in their client's repository cache;
+  removing that client's worker area removes the cache too. Other clients and
+  repositories cannot look up those entries.
 - `build.sync` takes `repo`, `files` and `done`. `files` is one page of the
   manifest, each `{ "path", "kind": "file"|"exec"|"link", "size", "sha256" }`,
   a link's blob being its target. Pages accumulate until `done`; the next

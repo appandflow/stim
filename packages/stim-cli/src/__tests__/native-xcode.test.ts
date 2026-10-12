@@ -1,7 +1,8 @@
-import type { ChildProcess } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { testContext } from './_context.ts';
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,6 +14,8 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as xcode from '../engine/xcode.ts';
+import * as offload from '../offload/client.ts';
+import * as sharedState from '@stim-cli/core/state';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { projectRegistry } from '../integrations/projects.ts';
@@ -1086,3 +1089,96 @@ test.each(['identity', 'validate', 'plan'] as const)(
     expect(probes).toBe(1);
   },
 );
+
+test('an idle native iOS build checks peers before taking a compile slot, then stores and reports the reused artifact', async () => {
+  writeNativeXcodeProject(root);
+  execFileSync('git', ['init', '-q', root]);
+  vi.stubEnv('STIM_BUILD_CACHE', join(home, 'cache'));
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ projects: {}, concurrency: { maxBuilds: 1 } }));
+  setExecutor(
+    makeExecutor({
+      runFile(file, args = [], options) {
+        if (file === 'git') return execFileSync(file, args, { encoding: 'utf8', cwd: options.cwd ?? root });
+        if (file === 'cp') {
+          cpSync(args.at(-2)!, args.at(-1)!, { recursive: true });
+          return '';
+        }
+        if (args.includes('simctl'))
+          return JSON.stringify({
+            runtimes: [
+              { identifier: 'iOS-27-0', version: '27.0', name: 'iOS 27.0', platform: 'iOS', isAvailable: true },
+            ],
+          });
+        return 'Xcode 26.0 build 17A';
+      },
+    }),
+  );
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(sharedState, 'machineCapacity').mockReturnValue({
+    cpus: 10,
+    loadPerCore: 0.1,
+    builds: 0,
+    maxBuilds: 1,
+    maxLoadPerCore: 2,
+  });
+  vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
+    mode: 'auto',
+    localEnabled: true,
+    machines: [
+      {
+        machine: 'mini',
+        nodeId: 'nMini',
+        dnsName: 'mini.tail.ts.net',
+        deviceId: 'builder',
+        deviceToken: 'fixture',
+        state: 'approved',
+        requestedAt: '2026-10-12T00:00:00.000Z',
+      },
+    ],
+  });
+  const compile = vi.spyOn(xcode, 'buildXcode').mockRejectedValue(new Error('Must reuse without compiling'));
+  const choose = vi.spyOn(offload, 'chooseBuildMachine').mockImplementation(async (options) => {
+    expect(options.cacheOnly).toBe(true);
+    expect(options.artifact?.fingerprint).toBeTruthy();
+    expect(options.artifact?.cacheKey).toBeTruthy();
+    return { machine: 'mini', offer: { capacity: {} }, cacheOnly: true } as offload.OffloadChoice;
+  });
+  vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
+  vi.spyOn(offload, 'offloadBuild').mockImplementation(async ({ expectedFingerprint, request, stagingDir }) => {
+    expect(existsSync(join(home, 'build-slots'))).toBe(false);
+    expect(request.platform).toBe('ios');
+    if (request.platform !== 'ios') throw new Error('wrong platform');
+    expect(request.native?.snapshot.hash).toBe(expectedFingerprint);
+    const artifactPath = join(stagingDir, 'Native.app');
+    write(join(artifactPath, 'Native'), 'peer executable');
+    write(
+      join(artifactPath, 'Info.plist'),
+      '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.Native</string></dict></plist>',
+    );
+    return {
+      ok: true,
+      machine: 'mini',
+      cacheHit: true,
+      artifactPath,
+      compilationCache: xcode.COMPILATION_CACHE_NOT_RUN,
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 1,
+        syncMs: 0,
+        workerMs: 0,
+        fetchMs: 1,
+        totalMs: 2,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 15,
+      },
+    };
+  });
+  const cold = await buildIosOperation(testContext(), root, { remoteBuild: 'auto' });
+  expect(cold).toMatchObject({ cacheHit: 'remote', builtOn: 'mini', cacheSkipped: false });
+  expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe('peer executable');
+  const warm = await buildIosOperation(testContext(), root, { remoteBuild: 'auto' });
+  expect(warm).toMatchObject({ cacheHit: 'local', cacheKey: cold.cacheKey });
+  expect(compile).not.toHaveBeenCalled();
+  expect(choose).toHaveBeenCalledTimes(1);
+});

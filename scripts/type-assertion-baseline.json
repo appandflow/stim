@@ -95,18 +95,18 @@
       "nonNull": 137
     },
     "test": {
-      "as": 273,
+      "as": 275,
       "nonNull": 374
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 839,
-      "nonNull": 336
+      "as": 838,
+      "nonNull": 335
     },
     "test": {
-      "as": 542,
-      "nonNull": 793
+      "as": 543,
+      "nonNull": 794
     }
   }
 }

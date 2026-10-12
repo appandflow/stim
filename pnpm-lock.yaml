@@ -425,6 +425,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@stim-cli/cache':
+        specifier: workspace:^
+        version: link:../cache
       '@stim-cli/core':
         specifier: workspace:^
         version: link:../core
@@ -17795,6 +17798,10 @@ snapshots:
   '@types/react-dom@19.2.7(@types/react@19.2.18)':
     dependencies:
       '@types/react': 19.2.18
+
+  '@types/react-dom@19.2.7(@types/react@19.3.0)':
+    dependencies:
+      '@types/react': 19.3.0
 
   '@types/react-reconciler@0.33.0(@types/react@19.3.0)':
     dependencies:

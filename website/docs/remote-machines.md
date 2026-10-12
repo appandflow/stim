@@ -38,6 +38,17 @@ for automatic selection. A named worker ignores that mode and local capacity;
 it refuses with `STIM_OFFLOAD_REFUSED` instead of trying another worker or
 building locally. For a configured, paired worker, a cache hit needs no
 compilation and contacts no worker.
+For native Xcode simulator builds, a local and configured-provider cache miss
+also checks enabled paired workers for an exact completed artifact. A hit skips
+source upload and compilation, even if the worker's build slots are full or this
+Mac is idle. The fingerprint and full cache key must match; the key includes
+Xcode, SDK, architecture and target options. Missing or corrupt archives follow
+the normal build placement rules. `remote.buildMode: off` and
+`--remote-build local` keep this flow local. Workers that lack the
+`build-artifact-cache` feature continue to use normal build placement.
+This first peer lookup covers native Xcode worker artifacts; React Native,
+Android, SwiftPM, compiler and dependency caches still use their existing paths.
+
 `--no-build-cache` skips artifact lookup and still stores the fresh build;
 it can be used to test a named worker.
 

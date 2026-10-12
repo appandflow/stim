@@ -117,6 +117,8 @@ export interface FileCacheStoreInput {
 export interface FileCacheCapability {
   resolve(input: FileCacheResolveInput): Promise<string | null>;
   store(input: FileCacheStoreInput): Promise<void>;
+  /** Checks presence without downloading; the bytes still need verification when fetched. */
+  stat?(input: Pick<FileCacheResolveInput, 'key' | 'signal'>): Promise<{ size: number } | null>;
 }
 
 export interface CacheProvider {

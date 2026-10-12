@@ -14,7 +14,7 @@ import {
   statfsSync,
   statSync,
 } from 'node:fs';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { totalmem } from 'node:os';
 import { basename, dirname, join, resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -42,11 +42,13 @@ import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listProcesses } from './processes.ts';
+import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
 import {
   BUILD_REPO_PATTERN,
   BUILD_RUBY_VERSION_PATTERN,
   type BuildAndroidOptions,
   type BuildArtifactResult,
+  type CachedBuildArtifact,
   type BuildAttachResult,
   type BuildCapacity,
   type BuildFile,
@@ -346,6 +348,12 @@ export class BuildHost {
     }
     if (params.native !== undefined && params.native !== 'xcode' && params.native !== 'gradle')
       return refusal('bad-request', 'build.offer supports native Xcode or Gradle toolchains.');
+    if (params.artifact !== undefined && (params.native !== 'xcode' || !validArtifactIdentity(params.artifact)))
+      return refusal('bad-request', 'An artifact lookup needs a complete native Xcode identity.');
+    const artifact =
+      params.artifact === undefined
+        ? undefined
+        : await this.cache(client, params.repo).lookup(params.artifact, new AbortController().signal);
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
     if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
     const root = this.root();
@@ -367,8 +375,13 @@ export class BuildHost {
           dependencies: typeof params.lockfile === 'string' && lockfile === params.lockfile,
           build: nonEmptyDir(join(area, 'home', 'workspaces')) || nonEmptyDir(join(area, 'macos')),
         },
+        ...(artifact !== undefined ? { artifact } : {}),
       },
     };
+  }
+
+  cache(client: string, repo: string): BuildArtifactCache {
+    return new BuildArtifactCache(join(this.clientDir(client), 'repos', repo, 'artifact-cache'));
   }
 
   running(): number {
@@ -561,7 +574,9 @@ export class BuildHost {
     };
     let killTimer: NodeJS.Timeout | null = null;
     let finished = false;
+    const caching = new AbortController();
     const cancel = () => {
+      caching.abort();
       if (killTimer || finished) return;
       signalGroup('SIGTERM');
       killTimer = setTimeout(() => signalGroup('SIGKILL'), this.limits.killGraceMs);
@@ -637,7 +652,7 @@ export class BuildHost {
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         entry.outcome = outcome;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
-        const settle = () => {
+        const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
             setTimeout(settle, GROUP_POLL_MS).unref();
             return;
@@ -645,6 +660,36 @@ export class BuildHost {
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           releaseClaims();
+          if (
+            entry.outcome?.ok &&
+            isJsonObject(job.native) &&
+            job.native.provider === 'xcode' &&
+            typeof job.native.cacheKey === 'string' &&
+            isJsonObject(job.native.parameters) &&
+            typeof job.expectedFingerprint === 'string' &&
+            entry.outcome.fingerprint === job.expectedFingerprint &&
+            entry.outcome.sourceDigest === job.native.sourceDigest
+          ) {
+            try {
+              await this.cache(client, repo).store(
+                { cacheKey: job.native.cacheKey, fingerprint: job.expectedFingerprint },
+                job.native.parameters,
+                entry.archive,
+                entry.outcome.artifact,
+                caching.signal,
+              );
+            } catch (error) {
+              entry.send({
+                event: 'build.progress',
+                job: id,
+                record: {
+                  src: 'build',
+                  level: 'debug',
+                  msg: `Peer cache: ${error instanceof Error ? error.message : String(error)}`,
+                },
+              });
+            }
+          }
           entry.settled = true;
           this.jobs.delete(entry);
           if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
@@ -826,6 +871,7 @@ export class BuildSession {
   private incoming: { sha256: string; size: number; received: number; hash: Hash; tmp: string } | null = null;
   private readonly jobs = new Map<string, Job>();
   private closed = false;
+  private readonly transfers = new AbortController();
   private readonly host: BuildHost;
   private readonly client: string;
   private readonly socket: BuildSocket;
@@ -1105,11 +1151,44 @@ export class BuildSession {
       return refusal('build-refused', 'The artifact is gone; build again.');
     }
     if (size !== outcome.artifact.size) return refusal('build-refused', 'The artifact changed after the build.');
-    const header = Buffer.from(outcome.artifact.sha256, 'hex');
-    const fd = openSync(job.archive, 'r');
+    const streamed = await this.streamArtifact(job.archive, outcome.artifact);
+    if (streamed) return streamed;
+    const handoff = this.host.retain(job, outcome.artifact);
+    this.jobs.delete(job.id);
+    this.host.forget(job);
+    return { result: { ...outcome.artifact, ...(handoff ? { handoff } : {}) } };
+  }
+
+  async cachedArtifact(params: unknown): Promise<{ result: CachedBuildArtifact | null } | Refusal> {
+    if (!isJsonObject(params) || !validRepo(params.repo) || !validArtifactIdentity(params.artifact))
+      return refusal('bad-request', 'A cached artifact needs its repository and complete identity.');
+    if (this.closed) return refusal('build-refused', 'The connection closed.');
+    const area = join(this.host.clientDir(this.client), 'repos', params.repo);
+    mkdirSync(area, { recursive: true, mode: 0o700 });
+    const temporary = await mkdtemp(join(area, '.artifact-fetch-'));
+    try {
+      const cached = await this.host
+        .cache(this.client, params.repo)
+        .fetch(params.artifact, temporary, this.transfers.signal);
+      if (!cached) return { result: null };
+      const streamed = await this.streamArtifact(cached.path, cached.artifact);
+      return streamed ?? { result: cached.artifact };
+    } catch (error) {
+      return refusal(
+        'build-refused',
+        `The cached artifact could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
+
+  private async streamArtifact(archive: string, artifact: BuildArtifactResult): Promise<Refusal | null> {
+    const header = Buffer.from(artifact.sha256, 'hex');
+    const fd = openSync(archive, 'r');
     try {
       const buffer = Buffer.alloc(ARTIFACT_CHUNK);
-      for (let offset = 0; offset < size;) {
+      for (let offset = 0; offset < artifact.size;) {
         if (this.socket.readyState !== this.socket.OPEN) return refusal('build-refused', 'The connection closed.');
         const read = readSync(fd, buffer, 0, ARTIFACT_CHUNK, offset);
         if (read <= 0) break;
@@ -1122,14 +1201,12 @@ export class BuildSession {
     } finally {
       closeSync(fd);
     }
-    const handoff = this.host.retain(job, outcome.artifact);
-    this.jobs.delete(job.id);
-    this.host.forget(job);
-    return { result: { ...outcome.artifact, ...(handoff ? { handoff } : {}) } };
+    return null;
   }
 
   close(dropped: boolean): void {
     this.closed = true;
+    this.transfers.abort();
     this.host.ended(this);
     for (const job of this.jobs.values()) {
       if (dropped) this.host.detach(job);

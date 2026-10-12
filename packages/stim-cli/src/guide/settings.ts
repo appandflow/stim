@@ -896,6 +896,13 @@ build matches this Mac and CPU matches the target simulator, with enough disk, t
 preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
+After a local and configured-provider miss, native Xcode simulator builds can
+reuse an exact completed archive from an enabled paired worker. Its full key
+includes source, Xcode, SDK, architecture and target options. A hit skips sync
+and compilation even while the worker is busy or this Mac has room. Missing or
+corrupt archives follow normal placement. Off mode and an explicit local build
+do not query peer caches. Older workers continue normal placement. This peer
+lookup covers native Xcode worker artifacts, not compiler or dependency caches.
 For iOS the machine's Xcode and simulator SDK must match, and it needs an
 iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
 the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
