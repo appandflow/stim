@@ -320,7 +320,8 @@ export async function nativeXcodeInputSnapshot(
     ]) {
       if (env[name]) reasons.add(`Environment ${name} supplies native inputs outside the resolved project`);
     }
-    if (env.XCODE_XCCONFIG_FILE) xcconfig(resolve(env.XCODE_XCCONFIG_FILE), selection.targetProject);
+    if (env.XCODE_XCCONFIG_FILE)
+      xcconfig(resolve(selection.container.dir, env.XCODE_XCCONFIG_FILE), selection.targetProject);
     for (const [name, value] of Object.entries(environment)) {
       if (
         /(?:FLAGS|OTHER_.*FLAGS)$/.test(name) &&

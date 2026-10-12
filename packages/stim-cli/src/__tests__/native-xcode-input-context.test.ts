@@ -130,3 +130,19 @@ test('each Git input scan uses its caller excludes without inheriting another op
   expect(afterAlpha).toEqual(beforeAlpha);
   expect(afterBeta).not.toEqual(beforeBeta);
 });
+
+test('relative override configs resolve from the build directory while preserving the host cwd', async () => {
+  const cwd = process.cwd();
+  const config = join(root, 'Override.xcconfig');
+  const included = join(scratch, 'Included.xcconfig');
+  writeFileSync(config, '#include "../Included.xcconfig"\n');
+  writeFileSync(included, 'SWIFT_VERSION = 5.0\n');
+  const env = { XCODE_XCCONFIG_FILE: 'Override.xcconfig' };
+  const before = await snapshot(env);
+  expect(before).toHaveProperty('hash');
+  writeFileSync(included, 'SWIFT_VERSION = 6.0\n');
+  const after = await snapshot(env);
+  expect(after).toHaveProperty('hash');
+  expect(after).not.toEqual(before);
+  expect(process.cwd()).toBe(cwd);
+});
