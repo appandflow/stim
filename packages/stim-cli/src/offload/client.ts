@@ -684,6 +684,8 @@ interface OfferingMachine {
  * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
+  mode: OffloadMode;
+  here: MachineCapacity;
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
@@ -835,6 +837,8 @@ export async function chooseBuildMachine({
   });
   return {
     ...first!,
+    mode,
+    here,
     target,
     offerMs: Date.now() - started,
     identity,
@@ -1197,10 +1201,17 @@ export async function offloadBuild(
         ...(native ? { native: native.provider } : {}),
       });
       if ('failure' in probe) return fail(probe.failure);
-      const problems = offerProblems(probe.offer, choice.target);
-      if (problems.length) {
+      const placement = pickOffer({
+        mode: choice.mode,
+        here: choice.here,
+        target: choice.target,
+        selected: choice.automatic ? 'auto' : choice.machine,
+        localEnabled: !choice.automatic || automaticMachineEnabled('build', 'local'),
+        offers: [{ machine: choice.machine, offer: probe.offer }],
+      });
+      if (placement.order.length === 0) {
         probe.connection.close();
-        return fail(problems.map((each) => each.reason).join('; '));
+        return fail(placement.reasons.join('; '));
       }
       Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null } });
     }

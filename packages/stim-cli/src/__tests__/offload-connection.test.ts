@@ -1037,3 +1037,72 @@ test('exact completed artifacts rank ahead of warm idle builders, but another ta
   ).toEqual([]);
   expect(pickOffer({ ...base, artifact: identity, selected: 'idle' }).order).toEqual([0]);
 });
+
+test.each(['auto', 'force', 'named'] as const)(
+  'a vanished artifact reapplies %s placement before compiling on the same peer',
+  async (selection) => {
+    const archive = Buffer.from('cached bytes');
+    const identity = { fingerprint: 'native', cacheKey: 'native-sdk27-arm64-target' };
+    const cachedOffer = {
+      ...offer(4),
+      artifact: {
+        ...identity,
+        name: 'Sample.app',
+        size: archive.length,
+        sha256: createHash('sha256').update(archive).digest('hex'),
+      },
+    };
+    const machine = await fakeMachine(
+      'mini',
+      cachedOffer,
+      { result: { job: 'new-build' } },
+      {
+        hello: () => ({
+          result: {
+            capabilities: ['build'],
+            features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
+          },
+        }),
+        cachedFetch: 'miss',
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: selection === 'force' ? 'force' : 'auto',
+      selected: selection === 'named' ? 'mini' : 'auto',
+      here: { ...HERE, builds: 0, loadPerCore: 3 },
+      machines: [credential('mini')],
+      artifact: identity,
+      note: () => {},
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: identity.fingerprint,
+      request: {
+        platform: 'ios',
+        native: {
+          provider: 'xcode',
+          snapshot: { hash: identity.fingerprint, entries: [], parameters: {} },
+          cacheKey: identity.cacheKey,
+          arch: 'arm64',
+        },
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: 'Sample',
+        isExpo: false,
+        optimizations: null,
+      },
+      stagingDir: join(repo, 'staging'),
+      onEnter: () => {},
+      onPhase: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(result.ok).toBe(false);
+    expect(machine.methods.includes('build.start')).toBe(selection !== 'auto');
+    expect(machine.methods.filter((method) => method === 'build.offer')).toHaveLength(2);
+  },
+);
