@@ -740,6 +740,7 @@ test('waitForAndroidEmulatorShutdown waits for the owned AVD process lock to dis
       calls.push(`shutdown:${timeoutMs}`);
     },
     {
+      now: () => 0,
       listProcesses: () => [],
       resolveDirectory: () => '/avds/stim-app.avd',
       readProcessId: () => 123,
