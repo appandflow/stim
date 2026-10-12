@@ -1,12 +1,62 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { DoctorPlatform, Finding } from './doctor.ts';
+import type { DoctorContext, DoctorPlatform, Finding } from './doctor.ts';
 
 import { sharedBuildCache, workspaceDerivedData } from '../workspace/paths.ts';
 import { filesystemDevice, temporaryRoot } from '../temporary.ts';
-import { repoRoot, resolveSourceCheckout } from '../workspace/worktree.ts';
+import { resolveSourceCheckoutAsync } from '../workspace/worktree.ts';
 import { apkOutputsDir } from '../integrations/react-native-build.ts';
 import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
+
+const temporaryFix =
+  'Unset STIM_TMPDIR / machine tempDir to select same-volume staging automatically, ' +
+  'or point the override at a writable directory on the relevant volume outside Git working trees.';
+
+function crossFilesystem(
+  operation: string,
+  paths: string[],
+  fix: string,
+  device: typeof filesystemDevice,
+): Finding | null {
+  if (new Set(paths.map(device)).size < 2) return null;
+  return {
+    level: 'cost',
+    title: `${operation} crosses filesystems`,
+    detail:
+      `${paths.join(' -> ')}. These copies cannot share file blocks across volumes and can consume the full ` +
+      'artifact size in space and I/O. cp -c can silently perform a full copy without an error.',
+    fix,
+  };
+}
+
+function storageFailure(error: unknown): Finding {
+  return {
+    level: 'cost',
+    title: 'Could not resolve temporary storage',
+    detail: String((error as Error).message),
+    fix: temporaryFix,
+  };
+}
+
+export async function checkWorktreeStorageLayout(
+  { root, repoRoot, options }: Pick<DoctorContext, 'root' | 'repoRoot' | 'options'>,
+  { device = filesystemDevice }: { device?: typeof filesystemDevice } = {},
+): Promise<Finding[]> {
+  if (options.machineSettings?.corrupt) return [];
+  try {
+    const target = repoRoot ?? root;
+    const source = await resolveSourceCheckoutAsync(target);
+    const finding = crossFilesystem(
+      'Worktree copy',
+      ['path' in source ? source.path : target, target],
+      'Keep the source checkout and linked worktree on the same volume to share file blocks when warming.',
+      device,
+    );
+    return finding ? [finding] : [];
+  } catch (error) {
+    return [storageFailure(error)];
+  }
+}
 
 export function checkStorageLayout(
   projectRoot: string,
@@ -29,30 +79,13 @@ export function checkStorageLayout(
   } = {},
 ): Finding[] {
   const findings: Finding[] = [];
-  const temporaryFix =
-    'Unset STIM_TMPDIR / machine tempDir to select same-volume staging automatically, ' +
-    'or point the override at a writable directory on the relevant volume outside Git working trees.';
   const check = (operation: string, paths: string[], fix: string) => {
-    if (new Set(paths.map(device)).size < 2) return;
-    findings.push({
-      level: 'cost',
-      title: `${operation} crosses filesystems`,
-      detail:
-        `${paths.join(' -> ')}. These copies cannot share file blocks across volumes and can consume the full ` +
-        'artifact size in space and I/O. cp -c can silently perform a full copy without an error.',
-      fix,
-    });
+    const finding = crossFilesystem(operation, paths, fix, device);
+    if (finding) findings.push(finding);
   };
   try {
     const cache = sharedBuildCache();
     if (scope !== 'native') {
-      const target = repoRoot(projectRoot) ?? projectRoot;
-      const source = resolveSourceCheckout(target);
-      check(
-        'Worktree copy',
-        ['path' in source ? source.path : target, target],
-        'Keep the source checkout and linked worktree on the same volume to share file blocks when warming.',
-      );
       check('Cached app/APK staging', [cache, stagingRoot(join(cache, 'artifact.app'))], temporaryFix);
     }
     const cacheFix =
@@ -71,12 +104,7 @@ export function checkStorageLayout(
       check('Android build-cache storage', [apkOutputsDir(androidLayout), cache], cacheFix);
     }
   } catch (error) {
-    findings.push({
-      level: 'cost',
-      title: 'Could not resolve temporary storage',
-      detail: String((error as Error).message),
-      fix: temporaryFix,
-    });
+    findings.push(storageFailure(error));
   }
   return findings;
 }
