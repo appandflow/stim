@@ -2,7 +2,7 @@ import type { ChildProcess } from 'node:child_process';
 import { sep } from 'node:path';
 import { gitAsync } from './git.ts';
 
-function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, string>; omitEnv: string[] } {
+export function childEnvironment(env: NodeJS.ProcessEnv): { env: Record<string, string>; omitEnv: string[] } {
   return {
     env: Object.fromEntries(
       Object.entries(env).flatMap(([name, value]) => (value === undefined ? [] : [[name, value]])),

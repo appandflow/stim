@@ -151,6 +151,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       },
       context.operation?.env ?? process.env,
       repoRoot(root) ?? root,
+      context.operation?.signal,
     );
   };
   return {
@@ -162,7 +163,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         ineligible = `Xcode toolchain identity is unavailable: ${(error as Error).message}`;
         return { cacheIneligible: ineligible };
       }
-      const value = read();
+      const value = await read();
       if ('cacheIneligible' in value) {
         ineligible = value.cacheIneligible;
         return value;
@@ -227,7 +228,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       }
     },
     async reconcile() {
-      const current = snapshot && !mutations.length ? snapshot : read();
+      const current = snapshot && !mutations.length ? snapshot : await read();
       if ('cacheIneligible' in current) {
         ineligible = current.cacheIneligible;
         snapshot = null;
@@ -242,7 +243,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       if (!snapshot) return null;
       try {
         tools = await toolchain(context.target.sdk, context.operation);
-        const after = read();
+        const after = await read();
         return !('cacheIneligible' in after) && after.hash === snapshot.hash ? identity(snapshot) : null;
       } catch {
         context.operation?.signal.throwIfAborted();
@@ -367,7 +368,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         };
       },
       unchanged: async () => {
-        const current = read();
+        const current = await read();
         return snapshot !== null && !('cacheIneligible' in current) && current.hash === snapshot.hash;
       },
     },
@@ -409,7 +410,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
       hostArch: process.arch === 'arm64' ? 'arm64' : 'x86_64',
       configuration,
     });
-    const snapshot = nativeXcodeInputSnapshot(
+    const snapshot = await nativeXcodeInputSnapshot(
       root,
       selection,
       {
@@ -420,6 +421,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
       },
       operation?.env ?? process.env,
       context.repoRoot ?? root,
+      operation?.signal,
     );
     if ('cacheIneligible' in snapshot)
       throw new NativeXcodeError(

@@ -119,12 +119,12 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('native transfer tolerates only declared Xcode directory markers, never untransferred contents', () => {
+test('native transfer tolerates only declared Xcode directory markers, never untransferred contents', async () => {
   const project = writeNativeXcodeProject(root);
   const workspace = join(project, 'project.xcworkspace');
   mkdirSync(workspace);
   const selection = selectNativeXcodeProject(root);
-  const inputs = nativeXcodeInputSnapshot(
+  const inputs = await nativeXcodeInputSnapshot(
     root,
     selection,
     {

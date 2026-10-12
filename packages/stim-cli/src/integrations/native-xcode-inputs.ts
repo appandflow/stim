@@ -5,7 +5,8 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { fingerprintNativeInputs, NativeInputError, type NativeInputSnapshot } from './native-inputs.ts';
 import { pbxReferences, pbxString, type NativeXcodeModel, type NativeXcodeSelection } from './native-xcode-project.ts';
 import { workspaceDir, workspaceDerivedData } from '../workspace/paths.ts';
-import { gitQuiet } from '../workspace/git.ts';
+import { gitQuietAsync } from '../workspace/git.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 
 export function nativeXcodePackages(root: string): string {
   return join(workspaceDir(root), 'xcode-packages');
@@ -79,13 +80,18 @@ function fold(path: string): string {
   return path.normalize('NFC').toLowerCase();
 }
 
-function gitVisibility(sourceRoot: string) {
+async function gitVisibility(sourceRoot: string, env: NodeJS.ProcessEnv, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (!existsSync(join(sourceRoot, '.git'))) return null;
-  const listing = gitQuiet(sourceRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+  const childEnv = childEnvironment(env);
+  const listing = await gitQuietAsync(sourceRoot, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    env: childEnv.env,
     untrimmed: true,
-    omitEnv: ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'],
+    omitEnv: [...childEnv.omitEnv, 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR'],
     timeoutMs: 120_000,
+    onSpawn: killOnAbort(signal),
   });
+  signal?.throwIfAborted();
   if (listing === null) return null;
   const listed = new Set<string>();
   const whole = new Set<string>();
@@ -108,16 +114,17 @@ function gitVisibility(sourceRoot: string) {
   return { admit, include };
 }
 
-export function nativeXcodeInputSnapshot(
+export async function nativeXcodeInputSnapshot(
   root: string,
   selection: NativeXcodeSelection,
   parameters: { sdk: string; architecture: string | null; toolchain: Record<string, string>; optimizations: unknown },
   env: NodeJS.ProcessEnv,
   sourceRoot: string = root,
-): NativeInputSnapshot | { cacheIneligible: string } {
+  signal?: AbortSignal,
+): Promise<NativeInputSnapshot | { cacheIneligible: string }> {
   if (selection.platform === 'unknown')
     return { cacheIneligible: 'The selected application platform cannot be resolved from its project configuration' };
-  const visibility = gitVisibility(sourceRoot);
+  const visibility = await gitVisibility(sourceRoot, env, signal);
   const inputs: { name: string; path: string; optional?: boolean; admit?: (path: string) => boolean }[] = [
     { name: 'repository', path: sourceRoot, ...(visibility ? { admit: visibility.admit } : {}) },
   ];
