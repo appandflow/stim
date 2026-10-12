@@ -84,11 +84,11 @@ Each result is a separate copy kept in the workspace until `stim worktree remove
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
-`build`, `run` and `diagnostics` each use a separate bundled worker so their
+`build` and `run` each use a separate bundled worker so their
 home, cancellation and process state cannot change the importing process.
-`stop()` runs in the importing process, and so do `settings()` and `stats()`,
+`stop()` and `diagnostics()` run in the importing process, and so do `settings()` and `stats()`,
 which read the `stim settings --json` and `stim stats --json` payloads. All
-three use the client's own home and leave the caller's cwd, environment,
+use the client's own home and leave the caller's cwd, environment,
 output and signal handlers as they were. The CLI and workers call
 the same native lifecycle operations. Progress is silent unless `onProgress`
 is provided; its `message` is an output chunk. Operations accept `signal`.

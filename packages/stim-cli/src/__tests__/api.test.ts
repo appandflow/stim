@@ -53,6 +53,9 @@ test('concurrent clients read only their own home without changing caller proces
   const interrupts = process.listeners('SIGINT');
   const stdout = vi.spyOn(console, 'log');
   const stderr = vi.spyOn(console, 'error');
+  const spawn = vi.spyOn(getExecutor(), 'spawn').mockImplementation(() => {
+    throw new Error('Diagnostics must work without permission to spawn a child');
+  });
   try {
     const results = await Promise.all(
       [first, second].map(({ root, home }) => createStim({ projectRoot: root, home }).diagnostics()),
@@ -71,7 +74,24 @@ test('concurrent clients read only their own home without changing caller proces
   } finally {
     stdout.mockRestore();
     stderr.mockRestore();
+    spawn.mockRestore();
   }
+});
+
+test('diagnostics preserves local tail, error filtering and missing log directory results', async () => {
+  const { root, home, directory } = fixture('diagnostics');
+  const records = [
+    { ts: 1, src: 'build', level: 'info', msg: 'first' },
+    { ts: 2, src: 'build', level: 'error', msg: 'failure' },
+    { ts: 3, src: 'build', level: 'info', msg: 'last' },
+  ];
+  writeFileSync(join(directory, 'build.ndjson'), records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+  const stim = createStim({ projectRoot: root, home });
+  expect(await stim.diagnostics({ tail: 1 })).toEqual({ directory, records: [records[2]] });
+  expect(await stim.diagnostics({ errors: true })).toEqual({ directory, records: [records[1]] });
+  expect(await stim.diagnostics({ tail: 0 })).toEqual({ directory, records: [] });
+  rmSync(directory, { recursive: true });
+  expect(await stim.diagnostics()).toEqual({ directory, records: [] });
 });
 
 test('a run refusal preserves its error and diagnostics and permits independent cleanup', async () => {
@@ -138,6 +158,7 @@ test('an already aborted request does not start work and invalid paths fail befo
     code: 'STIM_CANCELLED',
   });
   await expect(stim.diagnostics({ tail: -1 })).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
+  await expect(stim.diagnostics({ signal: controller.signal })).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
   expect(() => createStim({ projectRoot: root, home: './relative' })).toThrow('home must be an absolute path');
   expect(() => createStim({ projectRoot: join(root, 'missing') })).toThrowError(
     expect.objectContaining({

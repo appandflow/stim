@@ -45,8 +45,8 @@ configuration. The client's home is fixed at creation.
 Progress events contain `stream` (`stdout` or `stderr`) and `message`, an output
 chunk which can contain partial lines. Without a callback the API stays silent.
 
-`build`, `run` and `diagnostics` each run in a separate bundled worker and
-invoke the same lifecycle operations as the CLI. `stop` and reads such as
+`build` and `run` each run in a separate bundled worker and
+invoke the same lifecycle operations as the CLI. `stop`, `diagnostics` and reads such as
 `settings`, `stats` and `logs` run in the importing process against the client's home
 and project, so clients for different homes can share a process. None parses Commander arguments. The
 importing process keeps its working directory, environment, output and signal

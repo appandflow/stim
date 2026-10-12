@@ -22,8 +22,8 @@ env object (default process.env) that Stim reads its settings overrides from
 and passes to its workers, and onProgress({ stream, message }). message is an
 output chunk. Without onProgress, operations write nothing to the caller's
 stdout or stderr. The home is fixed when the client is created: home, else
-STIM_HOME from env, else the default home. build, run and diagnostics each use
-a bundled worker that calls the same lifecycle operations as the CLI. stop and
+STIM_HOME from env, else the default home. build and run each use
+a bundled worker that calls the same lifecycle operations as the CLI. stop, diagnostics and
 reads such as settings, stats and logs run in the calling process against the client's
 home and project. None parses CLI arguments or changes the caller's
 cwd/environment.
