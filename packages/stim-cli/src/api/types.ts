@@ -134,7 +134,7 @@ export interface StimClient {
   run(options: StimRunOptions): Promise<StimRunResult>;
   /** Stops this workspace, including resources created before a failed run. Use a fresh signal for cleanup. */
   stop(options?: StimStopOptions): Promise<StimStopResult>;
-  /** Reads the existing local timeline; available even when run failed before creating any logs. */
+  /** Reads the existing local timeline in process; available even when run failed before creating any logs. */
   diagnostics(options?: StimDiagnosticsOptions): Promise<StimDiagnostics>;
   /**
    * Every setting with its effective value, origin and per-layer values for this project, as `stim settings --json`
@@ -164,9 +164,6 @@ type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 
 export type WorkerRequest =
   | { operation: 'run'; options: WithoutSignal<StimRunOptions> }
-  | { operation: 'build'; options: WithoutSignal<StimBuildOptions> }
-  | { operation: 'diagnostics'; options: Omit<StimDiagnosticsOptions, 'signal'> };
+  | { operation: 'build'; options: WithoutSignal<StimBuildOptions> };
 
-export type WorkerResponse =
-  | { ok: true; result: StimRunResult | StimBuildResult | StimDiagnostics }
-  | { ok: false; error: StimFailure };
+export type WorkerResponse = { ok: true; result: StimRunResult | StimBuildResult } | { ok: false; error: StimFailure };

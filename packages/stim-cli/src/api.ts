@@ -4,7 +4,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
-import { findProjectRoot, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
+import { findProjectRoot, openLogDir, RUN_ID_ENV, validRunId } from '@stim-cli/core/state';
 import { stopWorkspaceNow } from './commands/stop.ts';
 import { readWorkspaceLogs, followWorkspaceLogs } from './engine/logs.ts';
 import { readProjectStats } from './engine/stats-report.ts';
@@ -61,7 +61,7 @@ export class StimError extends Error {
 /**
  * Creates a client without starting processes or changing the caller's cwd, environment, or signal handlers.
  * The Stim home is fixed when the client is created: `home`, else STIM_HOME from `env`, else the default home.
- * build, run and diagnostics each run in a separate Stim worker. stop and reads such as settings and stats run in the
+ * build and run each run in a separate Stim worker. stop, diagnostics and other reads run in the
  * calling process against the client's home and project, so clients for different homes can share a process.
  * Resources remain workspace-owned until stop() is called.
  */
@@ -161,9 +161,19 @@ export function createStim(options: StimOptions): StimClient {
       if (request.tail !== undefined && (!Number.isSafeInteger(request.tail) || request.tail < 0)) {
         return Promise.reject(new StimError({ code: 'STIM_BAD_ARG', message: 'tail must be a non-negative integer.' }));
       }
-      return invoke(context, { operation: 'diagnostics', options: request }, signal) as ReturnType<
-        StimClient['diagnostics']
-      >;
+      return read(begin(signal), async (operation) => {
+        const directory = workspaceLogsDir(operation.projectRoot);
+        if (request.tail === 0) return { directory, records: [] };
+        const view = await openLogDir(directory, { signal: operation.signal });
+        try {
+          return {
+            directory,
+            records: await view.query({ tail: request.tail ?? 200, errorsOnly: request.errors ?? false }),
+          };
+        } finally {
+          await view.close();
+        }
+      });
     },
   };
 }

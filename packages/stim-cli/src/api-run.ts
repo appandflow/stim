@@ -1,5 +1,4 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
-import { queryJsonLogs } from '@stim-cli/core/state';
 import { processOperation, type ProcessOperation } from './cli-operation.ts';
 import { buildAndroidOperation } from './commands/android/build.ts';
 import { runAndroidOperation } from './commands/android.ts';
@@ -22,16 +21,6 @@ async function dispatch(
   try {
     refuseRelativeStimPaths();
     directory = workspaceLogsDir(root);
-    if (request.operation === 'diagnostics') {
-      const { tail = 200, errors = false } = request.options;
-      return {
-        ok: true,
-        result: {
-          directory,
-          records: tail === 0 ? [] : queryJsonLogs({ dir: directory, tail, errorsOnly: errors }),
-        },
-      };
-    }
     if (request.operation === 'build') {
       switch (request.options.platform) {
         case 'ios':
