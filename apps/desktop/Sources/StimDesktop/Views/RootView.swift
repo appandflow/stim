@@ -75,6 +75,7 @@ struct RootView: View {
   private let notices = NoticeCenter.shared
   @AppStorage(AppPreferences.Key.dismissedStimUpdate) private var dismissedStimUpdate = ""
   @State private var pendingLink: PendingWorkspaceLink?
+  @State private var pendingSharedLink: PendingSharedWorkspaceLink?
   @Environment(\.openWindow) private var openWindow
   @Environment(\.openSettings) private var openSettings
   @AppStorage("settingsTab") private var settingsTab = "app"
@@ -303,6 +304,9 @@ struct RootView: View {
     .onReceive(openRequests.$workspaceLink) { link in
       guard link != nil else { return }
       Task { takeWorkspaceLink() }
+    }
+    .onReceive(ServerSession.shared.$state) { _ in
+      Task { showSharedWorkspaceLink(in: store.payload) }
     }
     .onReceive(store.$payload) { payload in
       updateTutorial(payload)
@@ -808,6 +812,21 @@ struct RootView: View {
   private func takeWorkspaceLink() {
     guard let link = openRequests.workspaceLink else { return }
     openRequests.workspaceLink = nil
+    pendingSharedLink = nil
+    if case .shared(let request) = link {
+      pendingLink = nil
+      let pending = PendingSharedWorkspaceLink(request: request)
+      pendingSharedLink = pending
+      showSharedWorkspaceLink(in: store.payload)
+      Task {
+        try? await Task.sleep(for: .seconds(10))
+        guard pendingSharedLink?.id == pending.id else { return }
+        pendingSharedLink = nil
+        showWorkspaceNotFound(
+          "The server is unavailable or no longer lists this workspace. Connect to the Mac and try the link again.")
+      }
+      return
+    }
     guard case .workspace(let request) = link else {
       showWorkspaceNotFound("The link does not name a workspace.")
       return
@@ -821,6 +840,7 @@ struct RootView: View {
   /// since `stim status --watch` can lag the command that printed the link. A link without `archive=` opens the
   /// path's newest archive only after that wait, so a re-created worktree is not shadowed by its old archive.
   private func showWorkspaceLink(in payload: StatusPayload?, arrived: [String]) {
+    showSharedWorkspaceLink(in: payload)
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
       if let archive = payload.archive(for: pending.request, waited: pending.waited) {
@@ -863,6 +883,25 @@ struct RootView: View {
           if let deviceID { focusedDeviceID = deviceID }
         },
         sticky: true, key: "workspace-link:\(path)", workspacePath: path))
+  }
+
+  private func showSharedWorkspaceLink(in payload: StatusPayload?) {
+    guard let pending = pendingSharedLink, let payload, case .open(let hello) = ServerSession.shared.state else { return }
+    guard let homeId = hello.server.id else {
+      pendingSharedLink = nil
+      showWorkspaceNotFound("Update Stim and its local server to open shared workspace links.")
+      return
+    }
+    guard homeId.lowercased() == pending.request.machine else {
+      pendingSharedLink = nil
+      showWorkspaceNotFound(
+        "This workspace belongs to another Mac or Stim home. Open it in Stim on that Mac or on a paired phone.")
+      return
+    }
+    guard let request = payload.request(for: pending.request, homeId: homeId) else { return }
+    pendingSharedLink = nil
+    navigate(.environment(request.path), .request("shared workspace link"))
+    if let device = payload.target(of: request)?.device { focusedDeviceID = device.id }
   }
 
   private func showWorkspaceNotFound(_ body: String, key: String? = nil) {
@@ -1016,6 +1055,11 @@ private struct PendingWorkspaceLink {
   let request: WorkspaceOpenRequest
   var expiring = false
   var waited = false
+}
+
+private struct PendingSharedWorkspaceLink {
+  let id = UUID()
+  let request: SharedWorkspaceOpenRequest
 }
 
 private struct NotificationBell: View {

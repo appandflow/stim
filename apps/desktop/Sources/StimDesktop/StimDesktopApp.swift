@@ -73,6 +73,20 @@ final class StimApplication: NSApplication {
 final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationSource: DispatchSourceSignal?
 
+  func application(
+    _ application: NSApplication, continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([NSUserActivityRestoring]) -> Void
+  ) -> Bool {
+    guard userActivity.activityType == NSUserActivityTypeBrowsingWeb, let url = userActivity.webpageURL,
+      let link = workspaceLink(fromOpenURL: url)
+    else { return false }
+    MainActor.assumeIsolated {
+      OpenRequests.shared.workspaceLink = link
+      MainWindow.show()
+    }
+    return true
+  }
+
   func application(_ application: NSApplication, open urls: [URL]) {
     if let link = urls.lazy.compactMap(workspaceLink(fromOpenURL:)).last {
       MainActor.assumeIsolated {

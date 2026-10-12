@@ -26,6 +26,7 @@ const config: ExpoConfig = {
       RCTUseAssetCatalog: true,
     },
     appleTeamId: 'R7E8P23K3N',
+    associatedDomains: ['applinks:stim.appandflow.com'],
   },
   android: {
     package: id,

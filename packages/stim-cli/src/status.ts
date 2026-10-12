@@ -1,4 +1,5 @@
 import { basename, sep } from 'path';
+import { workspaceId } from '@stim-cli/core';
 import { isInsideProject } from './metro.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
@@ -287,6 +288,7 @@ export function environmentState(
 
   return {
     path: project.__path,
+    workspaceId: workspaceId(project.__path),
     ...(slots.length ? { slots } : {}),
     live,
     memoryMb,

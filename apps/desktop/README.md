@@ -1517,8 +1517,18 @@ released. Agent and build notifications keep appearing as cards at the top right
 
 ## Workspace links
 
+Shared links use `https://stim.appandflow.com/open?v=1&machine=<home-id>&workspace=<workspace-id>`.
+The optional `platform` and `slot` select a device. The authenticated local server's
+home ID must match, and status must list the workspace ID before Desktop navigates
+to its trusted path. A foreign home, unsupported server or stale workspace shows a
+message instead. Opening a link never starts a build or device control. The website
+provides a small fallback page; iOS resolves the same IDs through its existing pairings.
+Universal links require signed native builds and the hosted Apple association file.
+
+Legacy local links remain supported:
+
 `stim-desktop://workspace?path=<workspace>[&platform=<ios|android|web>][&slot=<name>][&archive=<id>]`,
-which `stim worktree warm`, `start`, `ios`, `android` and `web` print, shows a
+shows a
 card for a live workspace with **Open**; the app navigates to it only when Open is
 clicked. The optional `archive` ID opens that archive at once if it belongs to that
 path and no live workspace matches; an ID that does not belong to that path does not

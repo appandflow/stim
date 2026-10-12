@@ -315,7 +315,7 @@ export interface HelloResult {
    * The Mac's name, this package's version, the version of the `stim` it runs, and the home directory of the
    * user it runs as, so clients can show paths under it as `~/...`. A pending approval result has no `home`.
    */
-  server: { name: string; version: string; stim: string; home?: string };
+  server: { name: string; version: string; stim: string; home?: string; id?: string };
   capabilities: Capability[];
   features: Feature[];
   /** The actions this device may run: every one of {@link ACTIONS} with `control`, none without. */

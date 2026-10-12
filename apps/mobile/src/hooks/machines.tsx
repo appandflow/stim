@@ -10,7 +10,7 @@ import { usePolledRequest } from '@/hooks/polled-request';
 import { StimConnection } from '@/lib/connection';
 import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
-import { listMacs, macToken, type PairedMac } from '@/lib/macs';
+import { listMacs, macToken, rememberServerIdentity, type PairedMac } from '@/lib/macs';
 import { StatusCache } from '@/lib/status-cache';
 import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/lib/status-views';
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
@@ -161,6 +161,7 @@ export interface MacConnection extends MachineLink {
 }
 
 export type PairedConnection = MachineLink & {
+  statusSource?: Extract<MachineLink['state'], { kind: 'open' }>;
   mac: PairedMac;
   status: StatusPayload | null;
   usage: MachineUsage | null;
@@ -190,6 +191,8 @@ function MacLink({ mac }: { mac: PairedMac }) {
         onState: (state) => {
           if (cancelled) return;
           const isOpen = state.kind === 'open';
+          views.delete(mac.id);
+          if (state.kind === 'open' && state.server.id) rememberServerIdentity(mac.id, state.server.id).catch(() => {});
           setOpen(isOpen);
           machines.patchLink(
             mac.id,
@@ -270,6 +273,7 @@ export function useMacs(): { macs: PairedMac[] | null; reload: () => void; conne
         mac,
         ...(links[mac.id] ?? IDLE_LINK),
         status: snapshots[mac.id]?.status ?? null,
+        statusSource: snapshots[mac.id]?.source,
         cachedSeenAt: snapshots[mac.id]?.cachedSeenAt ?? null,
         usage: usage[mac.id] ?? null,
       })),

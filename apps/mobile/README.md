@@ -1763,3 +1763,20 @@ with `stim ios --configuration Release`. Stim puts the current JS into the
 cached build, so this works without Metro. Then read `stim logs --errors`. A
 Release build ignores `.env.local`, so it starts with no paired machine unless
 you pair it.
+
+## Shared workspace links
+
+HTTPS links at `https://stim.appandflow.com/open` identify a persistent Stim home
+and its registered workspace. Stim resolves those IDs only through an already-paired,
+approved Mac and a current snapshot from that home. Pairing IDs can differ between
+phone installations. Offline, unpaired, old-server and stale destinations show a
+message; a link contains no server endpoint, path or credentials. Opening one only
+navigates, including to the requested platform and device slot. Control still requires
+the viewer's explicit control action.
+
+iOS universal links need a new native build with Associated Domains enabled for
+`com.appandflow.stim`, its updated provisioning profile, and the website's
+`/.well-known/apple-app-site-association` file. An OTA update cannot enable native
+association. The production association does not claim the development app. Android
+verified links remain separate work. The website fallback can open the existing
+custom scheme when the OS does not open the app.

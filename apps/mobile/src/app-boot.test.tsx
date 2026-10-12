@@ -3,6 +3,7 @@ import 'react-native-gesture-handler/jestSetup';
 
 import { act, renderRouter, screen } from 'expo-router/testing-library';
 import { AppState } from 'react-native';
+import { router } from 'expo-router';
 
 import '@/design/unistyles';
 
@@ -121,6 +122,10 @@ class FakeSocket {
   static sent: string[] = [];
   static features = ['status-views'];
   static fullStatus: object = statusFixture.payload;
+  static viewStatus = statusFixture.payload;
+  static homeId: string | undefined;
+  static holdWorkspaces = false;
+  static latest: FakeSocket | null = null;
   onopen: (() => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
@@ -129,6 +134,7 @@ class FakeSocket {
   feed: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
+    FakeSocket.latest = this;
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.();
@@ -145,6 +151,7 @@ class FakeSocket {
         result: {
           protocol: 1,
           server: {
+            id: FakeSocket.homeId,
             name: 'Mock Mac',
             version: '0.0.0-mock',
             stim: statusFixture.stimVersion,
@@ -163,10 +170,11 @@ class FakeSocket {
         1000,
       );
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
-      const views = statusViews(statusFixture.payload as Parameters<typeof statusViews>[0]);
+      const views = statusViews(FakeSocket.viewStatus as Parameters<typeof statusViews>[0]);
       const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
       reply({ id, result: { subscription } });
       const { workspaces, worktrees, archived, machine } = views;
+      if (method === 'workspaces.subscribe' && FakeSocket.holdWorkspaces) return;
       reply(
         method === 'workspaces.subscribe'
           ? { event: 'workspaces', subscription, seq: 0, snapshot: { workspaces, worktrees, archived } }
@@ -303,6 +311,9 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 afterEach(() => {
   FakeSocket.features = ['status-views'];
   FakeSocket.fullStatus = statusFixture.payload;
+  FakeSocket.viewStatus = statusFixture.payload;
+  FakeSocket.homeId = undefined;
+  FakeSocket.holdWorkspaces = false;
 });
 
 it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
@@ -330,4 +341,50 @@ it('follows the full status feed of a Mac whose server does not serve the status
   expect(FakeSocket.sent).not.toContain('workspaces.subscribe');
   await act(() => jest.advanceTimersByTimeAsync(1000));
   expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
+}, 60_000);
+
+it('does not resolve a shared link from previous workspace views after reconnect', async () => {
+  jest.restoreAllMocks();
+  mockStores.clear();
+  FakeSocket.homeId = '871c7262-f6bc-469a-b822-15da928350ee';
+  const workspace = '0123456789abcdef';
+  const [first, ...rest] = statusFixture.payload.environments;
+  if (!first) throw new Error('the captured status lists a workspace');
+  const identified = { ...first, workspaceId: workspace };
+  FakeSocket.viewStatus = { ...statusFixture.payload, environments: [identified, ...rest] };
+  Object.assign(globalThis, { WebSocket: FakeSocket });
+  seedPreviousInstall();
+  const activate = launchInactive();
+  const result = renderRouter('./src/app', { initialUrl: '/' });
+  await result;
+  await act(async () => {
+    activate();
+    await jest.advanceTimersByTimeAsync(2000);
+  });
+  const previous = FakeSocket.latest;
+  if (!previous) throw new Error('the paired Mac connected');
+  FakeSocket.holdWorkspaces = true;
+  FakeSocket.viewStatus = { ...statusFixture.payload, environments: [] };
+  await act(async () => {
+    previous.close();
+    previous.onclose?.({ code: 1006, reason: 'reconnect' });
+    await jest.advanceTimersByTimeAsync(5000);
+    router.push(`/open?v=1&machine=${FakeSocket.homeId}&workspace=${workspace}`);
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  expect(result.getPathname()).toBe('/open');
+  const current = FakeSocket.latest;
+  if (!current || current === previous) throw new Error('the paired Mac reconnected');
+  await act(async () => {
+    current.onmessage?.({
+      data: JSON.stringify({
+        event: 'workspaces',
+        subscription: 's1',
+        seq: 0,
+        snapshot: { workspaces: [], worktrees: [], archived: null },
+      }),
+    });
+    await jest.advanceTimersByTimeAsync(1000);
+  });
+  expect(result.getPathname()).toBe('/open');
 }, 60_000);

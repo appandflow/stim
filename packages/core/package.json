@@ -61,6 +61,11 @@
       "types": "./dist/toolchain.d.mts",
       "module-sync": "./dist/toolchain.mjs",
       "default": "./dist/toolchain.mjs"
+    },
+    "./workspace-link": {
+      "types": "./dist/workspace-link.d.mts",
+      "module-sync": "./dist/workspace-link.mjs",
+      "default": "./dist/workspace-link.mjs"
     }
   },
   "scripts": {

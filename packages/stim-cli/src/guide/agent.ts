@@ -109,7 +109,7 @@ other apps or other workspaces' devices.
   stim ios                             # or: stim android, or: stim web
 
 When Stim Desktop is installed, worktree warm, start, ios, android and web
-print "Open in Stim Desktop: <link>" on stderr (links.desktop in JSON). The
+print "Open in Stim: <link>" on stderr (links.desktop in JSON). The
 first time one prints it in a workspace, tell the user once: "You can watch
 this workspace in Stim Desktop: <link>". Do not repeat it after later
 commands. When no command prints it, do not mention Stim Desktop.

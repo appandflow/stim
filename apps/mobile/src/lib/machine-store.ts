@@ -27,6 +27,8 @@ export interface MachineLink {
 }
 
 export interface MachineSnapshot {
+  /** The authenticated open state that delivered this snapshot, replaced on reconnect. */
+  source?: Extract<ConnectionState, { kind: 'open' }>;
   status: StatusPayload;
   /** The machine's name when the snapshot was cached, for the rows shown before the pairings load. */
   name: string;
@@ -170,9 +172,14 @@ export function createMachineStore({
       const state = store.getState();
       const prev = state.snapshots[id];
       const status = shareStatus(prev?.status ?? null, payload);
-      if (prev && prev.status === status && prev.cachedSeenAt === null) return;
       const name = state.macs?.find((mac) => mac.id === id)?.name ?? prev?.name ?? '';
-      const snapshots = { ...state.snapshots, [id]: { status, name, cachedSeenAt: null } };
+      const link = state.links[id];
+      const source = link?.state.kind === 'open' ? link.state : undefined;
+      if (prev && prev.status === status && prev.cachedSeenAt === null && prev.source === source) return;
+      const snapshots = {
+        ...state.snapshots,
+        [id]: { status, name, cachedSeenAt: null, ...(source ? { source } : {}) },
+      };
       store.setState({
         snapshots,
         ...(prev?.status === status ? {} : homeItemsOf({ ...state, snapshots })),

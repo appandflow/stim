@@ -436,7 +436,7 @@ export function pair(
   deviceName: string,
   client: { name: string; version: string },
   createSocket: SocketFactory = (url) => new WebSocket(url),
-): Promise<{ deviceToken: string; serverName: string }> {
+): Promise<{ deviceToken: string; serverName: string; serverId?: string }> {
   return new Promise((resolve, reject) => {
     const socket = createSocket(endpoint);
     let done = false;
@@ -478,7 +478,11 @@ export function pair(
         }
         const result = parsed.result;
         if (!result.deviceToken) return fail('no-device-token', new Error(t`The server did not issue a device token.`));
-        resolve({ deviceToken: result.deviceToken, serverName: result.server.name });
+        resolve({
+          deviceToken: result.deviceToken,
+          serverName: result.server.name,
+          ...(result.server.id ? { serverId: result.server.id } : {}),
+        });
       });
     };
     socket.onclose = () => finish(() => fail('closed', unreachable()));

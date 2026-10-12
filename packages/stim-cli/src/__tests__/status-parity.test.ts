@@ -177,6 +177,7 @@ function normalize(output: string): string {
     .replaceAll(`"pid":${process.pid}`, '"pid":"<test-pid>"')
     .replaceAll(`pid ${process.pid}`, 'pid <test-pid>')
     .replace(/--[0-9a-f]{16}\b/g, '--<path-hash>')
+    .replace(/"workspaceId":"[0-9a-f]{16}"/g, '"workspaceId":"<path-hash>"')
     .replace(/^Archived: (\d+ workspaces), .*$/m, 'Archived: $1, <bytes>');
 }
 

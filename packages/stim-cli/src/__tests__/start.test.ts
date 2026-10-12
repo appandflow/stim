@@ -1,6 +1,8 @@
 import * as portProbes from '../ports.ts';
 import * as listeningPorts from '../listening-ports.ts';
 import assert from 'node:assert';
+import { workspaceId } from '@stim-cli/core';
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { captureProcessToken } from '../process-identity.ts';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import type { SpawnOptions } from 'node:child_process';
@@ -133,7 +135,7 @@ interface MetroExecutorMock {
   listening: boolean;
   run(): string;
   runFile(): string;
-  runFileAsync(): Promise<string>;
+  runFileAsync(file: string, args?: readonly string[]): Promise<string>;
   runQuiet(cmd: string): string;
   runFileQuiet(file: string, args?: readonly string[]): string;
   spawn(cmd: string, args: readonly string[], opts: SpawnOptions): ChildStub;
@@ -678,6 +680,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     async () => {
       const { server, port } = await metroListener();
       const exec = metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } });
+      exec.runFileAsync = async (file: string) => (file === 'osascript' ? '/Applications/Stim.app' : '');
       exec.runFileQuiet = (file: string, args: readonly string[] = []) =>
         file === 'osascript'
           ? '/Applications/Stim.app'
@@ -694,9 +697,10 @@ describe('action: already running', { timeout: 30_000 }, () => {
         server.close();
       }
 
-      expect(JSON.parse(result.logs[0] ?? '').links).toEqual({
-        desktop: `stim-desktop://workspace?path=${realpathSync(root)}`,
-      });
+      const link = JSON.parse(result.logs[0] ?? '').links?.desktop;
+      expect(link).toContain('https://stim.appandflow.com/open?');
+      expect(link).not.toContain(realpathSync(root));
+      expect(parseWorkspaceLink(link ?? '')?.workspace).toBe(workspaceId(realpathSync(root)));
     },
   );
 
@@ -705,7 +709,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     setExecutor(metroExecutor({ listeners: { [port]: DEAD_LISTENER_PID } }));
     upsertProject(root, { metroPort: port });
     const link = 'stim-desktop://workspace?path=/w';
-    vi.mocked(workspaceLinks).mockReturnValue({ desktop: link });
+    vi.mocked(workspaceLinks).mockResolvedValue({ desktop: link });
 
     let json;
     let plain;
@@ -721,7 +725,7 @@ describe('action: already running', { timeout: 30_000 }, () => {
     expect(JSON.parse(json.logs[0] ?? '').links).toEqual({ desktop: link });
     expect(json.errs.join('\n')).not.toContain(link);
     expect(plain.logs.join('\n')).not.toContain(link);
-    expect(plain.errs.join('\n')).toContain(`Open in Stim Desktop: ${link}`);
+    expect(plain.errs.join('\n')).toContain(`Open in Stim: ${link}`);
   });
 
   test('start --remote refuses an external Expo server that has no public URL', async () => {

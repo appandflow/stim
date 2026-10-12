@@ -1161,7 +1161,7 @@ export async function finishIosRun({
     recordRun,
     reclaimed,
     devServer,
-    links: workspaceLinks(root, { platform: 'ios', slot }),
+    links: await workspaceLinks(root, { platform: 'ios', slot }),
   });
   return { facts, uploadsAbandoned };
 }

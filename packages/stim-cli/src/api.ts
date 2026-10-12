@@ -12,6 +12,7 @@ import { getExecutor } from './exec.ts';
 import { spawnEntry } from './spawn-entry.ts';
 import { refuseRelativeStimPaths } from './workspace/config.ts';
 import { workspaceLogsDir } from './workspace/paths.ts';
+import { ensureHomeIdentity } from './workspace/home-identity.ts';
 import { readSettingsContext, readSettingsPayload, SettingsRefusal } from './workspace/settings-payload.ts';
 import type {
   StimBuildOptions,
@@ -110,6 +111,8 @@ export function createStim(options: StimOptions): StimClient {
   };
   return {
     projectRoot,
+    identity: ({ signal }: StimReadOptions = {}) =>
+      read(begin(signal), (operation) => ensureHomeIdentity(operation.signal)),
     settings: ({ signal }: StimReadOptions = {}) =>
       read(begin(signal), async (operation) =>
         readSettingsPayload(
