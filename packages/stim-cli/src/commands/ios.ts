@@ -1016,6 +1016,7 @@ async function runIos(
             buildMachine,
             physical,
             recipe: integration.artifact({
+              operation: context,
               root,
               logFile,
               configuration,

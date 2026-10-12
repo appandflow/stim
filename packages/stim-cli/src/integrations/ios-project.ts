@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability } from '@stim-cli/cache';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
@@ -48,6 +49,7 @@ export interface IosArtifactRecipe {
 }
 
 export interface IosArtifactContext {
+  operation?: StimContext;
   root: string;
   logFile: string;
   configuration: string | null;
@@ -82,7 +84,11 @@ export interface IosArtifactContext {
 }
 
 export interface IosProject {
-  plan?(options: IosCommandOptions, resolved: ResolvedProjectSettings): Promise<ProjectPlanResult>;
+  plan?(
+    options: IosCommandOptions,
+    resolved: ResolvedProjectSettings,
+    operation?: StimContext,
+  ): Promise<ProjectPlanResult>;
   isExpo: boolean;
   bundleId(): string | null;
   schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;

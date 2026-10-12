@@ -1,3 +1,4 @@
+import type { ChildProcess } from 'node:child_process';
 import { testContext } from './_context.ts';
 import {
   cpSync,
@@ -22,7 +23,7 @@ import { IosRecipeRefusal, type IosArtifactContext } from '../integrations/ios-p
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { resolveOptimizations } from '../optimizations.ts';
-import { writeNativeXcodeProject } from './_native-xcode-project.ts';
+import { nativeXcodeIdentityContext, writeNativeXcodeProject } from './_native-xcode-project.ts';
 
 function unresolvedSettings(root: string) {
   return { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} };
@@ -982,3 +983,74 @@ test('an ignored native input keeps placement here instead of failing during the
   expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
   expect(recipe.offload!.context()).toEqual({ runtime: 'iOS-26-0', unsupported: null });
 });
+
+test('native toolchain overrides contribute independently to each operation artifact key', async () => {
+  writeNativeXcodeProject(root);
+  setExecutor(makeExecutor({ runFileAsync: async () => 'Tool identity' }));
+  vi.stubEnv('DEVELOPER_DIR', '/host/xcode');
+  vi.stubEnv('TOOLCHAINS', 'host');
+  const identity = (developer: string, toolchains: string) =>
+    nativeXcodeIosProject(root)
+      .artifact(
+        nativeXcodeIdentityContext(
+          root,
+          testContext({ env: { ...process.env, DEVELOPER_DIR: developer, TOOLCHAINS: toolchains }, cwd: root }),
+        ),
+      )
+      .identity();
+  const [first, developer, toolchains] = await Promise.all([
+    identity('/client/xcode', 'client'),
+    identity('/other/xcode', 'client'),
+    identity('/client/xcode', 'other'),
+  ]);
+  expect(first).toHaveProperty('key');
+  expect(developer).not.toEqual(first);
+  expect(toolchains).not.toEqual(first);
+  expect(process.env.DEVELOPER_DIR).toBe('/host/xcode');
+  expect(process.env.TOOLCHAINS).toBe('host');
+});
+
+test.each(['identity', 'validate', 'plan'] as const)(
+  'cancelling native %s stops its pending tool and preserves the cancellation reason',
+  async (method) => {
+    writeNativeXcodeProject(root);
+    const controller = new AbortController();
+    const reason = new Error('cancel native toolchain probe');
+    const executor = getExecutor();
+    const recipe = nativeXcodeIosProject(root).artifact(
+      nativeXcodeIdentityContext(root, testContext({ signal: controller.signal, cwd: root })),
+    );
+    if (method === 'validate') {
+      setExecutor(makeExecutor({ runFileAsync: async () => 'Tool identity' }));
+      await recipe.identity();
+    }
+    let child: ChildProcess | undefined;
+    let probes = 0;
+    setExecutor(
+      makeExecutor({
+        runFileAsync: (_file, _args, options) => {
+          probes++;
+          return executor.runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], {
+            ...options,
+            onSpawn(spawned) {
+              child = spawned;
+              options.onSpawn?.(spawned);
+              setTimeout(() => controller.abort(reason), 10);
+            },
+          });
+        },
+      }),
+    );
+    const operation =
+      method === 'plan'
+        ? nativeXcodeIosProject(root).plan!(
+            {},
+            unresolvedSettings(root),
+            testContext({ signal: controller.signal, cwd: root }),
+          )
+        : recipe[method]();
+    await expect(operation).rejects.toBe(reason);
+    expect(child?.signalCode).toBe('SIGKILL');
+    expect(probes).toBe(1);
+  },
+);

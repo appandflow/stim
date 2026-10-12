@@ -1,3 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
+import type { IosArtifactContext } from '../integrations/ios-project.ts';
+import { resolveOptimizations } from '../optimizations.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -36,4 +39,35 @@ rootObject = PROJECT;
 <Scheme version="1.7"><LaunchAction buildConfiguration="Debug"><BuildableProductRunnable><BuildableReference BlueprintIdentifier="APP" ReferencedContainer="container:${name}.xcodeproj" /></BuildableProductRunnable></LaunchAction></Scheme>\n`,
   );
   return project;
+}
+
+const unused = () => {
+  throw new Error('Identity must not prepare or compile');
+};
+
+export function nativeXcodeIdentityContext(root: string, operation: StimContext): IosArtifactContext {
+  return {
+    root,
+    operation,
+    logFile: join(root, 'build.ndjson'),
+    configuration: 'Debug',
+    target: {
+      udid: null,
+      destination: null,
+      sdk: 'iphonesimulator',
+      arch: null,
+      keyArch: null,
+      offloadRuntime: () => null,
+      offloadRefusal: null,
+    },
+    device: null,
+    optimizations: resolveOptimizations({}, {}).ios,
+    cache: { read: true, write: true, remote: true },
+    phase: unused,
+    note: unused,
+    logWriter: unused,
+    estimates: unused,
+    step: unused,
+    setPodsMs: unused,
+  };
 }
