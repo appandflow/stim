@@ -175,6 +175,7 @@ export async function buildIosOperation(
             buildMachine,
             physical: false,
             recipe: integration.artifact({
+              operation: context,
               root,
               logFile,
               configuration,
