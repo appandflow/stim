@@ -16,7 +16,7 @@ export interface ExecOptions {
   input?: string;
   /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
   onSpawn?: (child: ChildProcess) => void;
-  /** `runFile` only: return stdout as written, without trimming surrounding whitespace. */
+  /** `runFile` and `runFileAsync`: return stdout as written, without trimming surrounding whitespace. */
   untrimmed?: boolean;
   /**
    * `runFile` and `runFileAsync`: reject nonempty stderr even when the command exits successfully.
@@ -160,7 +160,7 @@ const defaultExecutor: Executor = {
   runFileAsync(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, input, rejectStderr, onSpawn, detachedSilent, redact },
+    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, onSpawn, detachedSilent, redact },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
@@ -220,7 +220,7 @@ const defaultExecutor: Executor = {
             redactError(Object.assign(new Error(`Command failed: ${command}${err ? `\n${err}` : ''}`), result), redact),
           );
         } else {
-          resolve(detachedSilent ? '' : out.trim());
+          resolve(detachedSilent ? '' : untrimmed ? out : out.trim());
         }
       });
     });

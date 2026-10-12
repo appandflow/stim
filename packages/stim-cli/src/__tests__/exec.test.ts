@@ -111,12 +111,16 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
-test('async file commands write the given input to the child stdin', async () => {
+test('file commands write the given input to stdin and preserve raw stdout when requested', async () => {
   resetExecutor();
   const echo = ['-e', 'process.stdin.pipe(process.stdout)'];
-  expect(await getExecutor().runFileAsync(process.execPath, echo, { input: '<plist/>', timeoutMs: 60_000 })).toBe(
-    '<plist/>',
+  const input = ' \t<plist/> \n';
+  const executor = getExecutor();
+  expect(await executor.runFileAsync(process.execPath, echo, { input, timeoutMs: 60_000 })).toBe('<plist/>');
+  expect(await executor.runFileAsync(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(
+    input,
   );
+  expect(executor.runFile(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(input);
 });
 
 test('file commands can reject stderr on a successful exit without changing the default', async () => {
