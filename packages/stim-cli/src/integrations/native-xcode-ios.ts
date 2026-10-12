@@ -2,6 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
 import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { nativeTransferRefusal } from '../offload/client.ts';
+import { runCancellationSignal } from '../engine/native-run.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
@@ -324,7 +325,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
     untrackedLine: () => null,
     legacyCache: null,
     offload: {
-      context: () => {
+      context: async () => {
         const runtime = context.target.sdk === 'iphonesimulator' ? context.target.offloadRuntime() : null;
         return {
           runtime,
@@ -338,7 +339,11 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
                   ? 'no simulator runtime is available for worker selection'
                   : !snapshot
                     ? 'the native inputs have no verified identity'
-                    : nativeTransferRefusal(repoRoot(root) ?? root, snapshot)),
+                    : await nativeTransferRefusal(
+                        repoRoot(root) ?? root,
+                        snapshot,
+                        runCancellationSignal(context.operation) ?? context.operation?.signal,
+                      )),
         };
       },
       target: async (runtime) => ({

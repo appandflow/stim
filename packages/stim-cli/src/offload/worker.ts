@@ -191,7 +191,7 @@ interface MirrorRecord {
   [path: string]: { sha256: string; kind: ManifestEntry['kind']; mtimeMs: number; size: number };
 }
 
-function materialize(job: WorkerJob, src: string): { written: number; removed: number } {
+async function materialize(job: WorkerJob, src: string): Promise<{ written: number; removed: number }> {
   const recordFile = join(job.area, 'mirror.json');
   let previous: MirrorRecord = {};
   try {
@@ -215,7 +215,7 @@ function materialize(job: WorkerJob, src: string): { written: number; removed: n
       const allowed = [...declaration.outputs, ...gradleStateDirectories(job.project)];
       if (receipt.project === job.project && Array.isArray(receipt.directories))
         retained = allowed.filter((path) => (receipt.directories as unknown[]).includes(path));
-      retained = nativeGradleOutputs(
+      retained = await nativeGradleOutputs(
         src,
         { complete: true, ignored: [], outputs: retained },
         retained.map((path) => join(src, path)),
@@ -450,7 +450,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
           'utf8',
         ),
       ) as { buildDirectories?: unknown };
-      const outputs = nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
+      const outputs = await nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
       if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
         throw new Error('The native source changed while the worker compiled it.');
       const directories = [

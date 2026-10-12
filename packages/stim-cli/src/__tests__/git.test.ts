@@ -61,3 +61,57 @@ test.skipIf(process.platform === 'win32')(
     expect(elapsed).toBeLessThan(5000);
   },
 );
+
+test.skipIf(process.platform === 'win32')(
+  'aborting an active git rejects with the caller reason and frees its slot',
+  async () => {
+    blockGit();
+    const controller = new AbortController();
+    const reason = new Error('cancel source listing');
+    const started = Date.now();
+    const pending = gitAsync(dir, ['status'], { timeoutMs: 10_000, signal: controller.signal });
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    expect(Date.now() - started).toBeLessThan(5000);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'aborting a queued git never starts it and does not consume a slot',
+  async () => {
+    blockGit();
+    const running = Array.from({ length: 6 }, () => new AbortController());
+    const pending = running.map((controller) =>
+      gitAsync(dir, ['status'], { timeoutMs: 10_000, signal: controller.signal }),
+    );
+    const queued = new AbortController();
+    const reason = new Error('cancel queued listing');
+    let spawned = false;
+    const seventh = gitAsync(dir, ['status'], {
+      timeoutMs: 10_000,
+      signal: queued.signal,
+      onSpawn: () => {
+        spawned = true;
+      },
+    });
+    try {
+      queued.abort(reason);
+      await expect(seventh).rejects.toBe(reason);
+      expect(spawned).toBe(false);
+    } finally {
+      for (const controller of running) controller.abort();
+      await Promise.allSettled(pending);
+    }
+    const next = new AbortController();
+    const eighth = gitAsync(dir, ['status'], {
+      timeoutMs: 10_000,
+      signal: next.signal,
+      onSpawn: () => {
+        spawned = true;
+      },
+    });
+    next.abort(reason);
+    await expect(eighth).rejects.toBe(reason);
+    expect(spawned).toBe(true);
+  },
+);

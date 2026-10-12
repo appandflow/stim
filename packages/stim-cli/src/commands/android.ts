@@ -1208,6 +1208,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         buildLog,
         writer,
         recipe: integration.artifact({
+          operation: context,
           root,
           buildLog,
           writer,

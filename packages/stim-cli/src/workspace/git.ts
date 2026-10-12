@@ -6,9 +6,15 @@ const GIT_CONCURRENCY = 6;
 interface GitOptions extends Partial<ExecOptions> {
   /** The call changes the repository, so git may take its optional locks. Read-only calls run with `--no-optional-locks`. */
   write?: boolean;
+  /** `gitAsync` only: aborts queued or active commands. */
+  signal?: AbortSignal;
 }
 
-function gitCall(cwd: string, args: readonly string[], { write, timeoutMs = GIT_TIMEOUT_MS, ...opts }: GitOptions) {
+function gitCall(
+  cwd: string,
+  args: readonly string[],
+  { write, signal: _signal, timeoutMs = GIT_TIMEOUT_MS, ...opts }: GitOptions,
+) {
   return {
     args: [...(write ? [] : ['--no-optional-locks']), '-C', cwd, ...args],
     opts: { ...opts, timeoutMs },
@@ -32,15 +38,49 @@ let running = 0;
 
 /** `git` without blocking the event loop, at most six at a time; the budget starts when the call leaves the queue. */
 export async function gitAsync(cwd: string, args: readonly string[], opts: GitOptions = {}): Promise<string> {
+  const { signal } = opts;
+  signal?.throwIfAborted();
   if (running < GIT_CONCURRENCY) running++;
-  else await new Promise<void>((proceed) => queue.push(proceed));
+  else
+    await new Promise<void>((resolve, reject) => {
+      const proceed = () => {
+        signal?.removeEventListener('abort', cancel);
+        resolve();
+      };
+      const cancel = () => {
+        const index = queue.indexOf(proceed);
+        if (index !== -1) queue.splice(index, 1);
+        reject(signal?.reason);
+      };
+      queue.push(proceed);
+      signal?.addEventListener('abort', cancel, { once: true });
+      if (signal?.aborted) cancel();
+    });
+  let cancel: (() => void) | undefined;
   try {
+    signal?.throwIfAborted();
     const call = gitCall(cwd, args, opts);
-    return await getExecutor().runFileAsync('git', call.args, call.opts);
+    return await getExecutor().runFileAsync('git', call.args, {
+      ...call.opts,
+      ...(signal
+        ? {
+            onSpawn: (child) => {
+              call.opts.onSpawn?.(child);
+              cancel = () => {
+                child.kill('SIGTERM');
+              };
+              signal.addEventListener('abort', cancel, { once: true });
+              if (signal.aborted) cancel();
+            },
+          }
+        : {}),
+    });
   } finally {
+    if (cancel) signal?.removeEventListener('abort', cancel);
     const next = queue.shift();
     if (next) next();
     else running--;
+    signal?.throwIfAborted();
   }
 }
 

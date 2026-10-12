@@ -1,10 +1,15 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from 'node:fs';
+import { access, lstat, readFile, readlink, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { git } from '../workspace/git.ts';
+import { gitAsync } from '../workspace/git.ts';
 import { fingerprintNativeInputs } from './native-inputs.ts';
 import { manifestDigest } from '../offload/manifest.ts';
-import { nativeTransferManifest, sourceManifest, type NativeTransferFile } from '../offload/native-source.ts';
+import {
+  nativeFileDigest,
+  nativeTransferManifest,
+  sourceManifest,
+  type NativeTransferFile,
+} from '../offload/native-source.ts';
 
 import type { GradleOffloadInputs } from '@stim-cli/core/protocol';
 export type { GradleOffloadInputs } from '@stim-cli/core/protocol';
@@ -62,50 +67,75 @@ export function gradleStateDirectories(project: string): string[] {
   return ['.gradle', '.kotlin'].map((name) => (project ? `${project}/${name}` : name));
 }
 
-function requireRealParents(repository: string, path: string): void {
+async function statIfPresent(path: string) {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+async function requireRealParents(repository: string, path: string, signal?: AbortSignal): Promise<void> {
   const parts = path.split('/');
   for (let index = 1; index < parts.length; index++) {
+    signal?.throwIfAborted();
     const parent = join(repository, ...parts.slice(0, index));
-    const stat = lstatSync(parent, { throwIfNoEntry: false });
+    const stat = await statIfPresent(parent);
     if (stat && !stat.isDirectory()) throw new Error(`Native input ${path} has a non-directory parent.`);
   }
 }
 
-export function nativeGradleTransfer(root: string, value: unknown): GradleTransfer {
+export async function nativeGradleTransfer(
+  root: string,
+  value: unknown,
+  signal?: AbortSignal,
+): Promise<GradleTransfer> {
+  signal?.throwIfAborted();
   const declaration = gradleOffloadInputs(value);
-  const repository = realpathSync(git(root, ['rev-parse', '--show-toplevel']));
-  const project = relative(repository, realpathSync(root)).split(sep).join('/');
+  const repository = await realpath(await gitAsync(root, ['rev-parse', '--show-toplevel'], { signal }));
+  const project = relative(repository, await realpath(root))
+    .split(sep)
+    .join('/');
   if (project && !containedPath(project)) throw new Error('The native Gradle project leaves its repository.');
-  if (lstatSync(join(repository, project, 'buildSrc'), { throwIfNoEntry: false })?.isDirectory())
+  if ((await statIfPresent(join(repository, project, 'buildSrc')))?.isDirectory())
     throw new Error(
       'Native Gradle offload does not support buildSrc: AGP does not report its build directories, so the worker cannot keep them.',
     );
   const state = gradleStateDirectories(project);
-  const files = new Map(sourceManifest(repository, true).map((file) => [file.path, file]));
+  const files = new Map((await sourceManifest(repository, true, signal)).map((file) => [file.path, file]));
   for (const path of declaration.ignored) {
-    requireRealParents(repository, path);
+    await requireRealParents(repository, path, signal);
     const absolute = join(repository, path);
-    const stat = lstatSync(absolute);
+    const stat = await lstat(absolute);
     if (!stat.isFile() && !stat.isSymbolicLink())
       throw new Error(`Ignored native input ${path} must be an exact file or link, not a directory.`);
-    const content = stat.isSymbolicLink() ? Buffer.from(readlinkSync(absolute)) : readFileSync(absolute);
-    files.set(path, {
-      path,
-      kind: stat.isSymbolicLink() ? 'link' : stat.mode & 0o111 ? 'exec' : 'file',
-      size: content.length,
-      sha256: createHash('sha256').update(content).digest('hex'),
-    });
+    if (stat.isSymbolicLink()) {
+      const content = Buffer.from(await readlink(absolute));
+      files.set(path, {
+        path,
+        kind: 'link',
+        size: content.length,
+        sha256: createHash('sha256').update(content).digest('hex'),
+      });
+    } else {
+      files.set(path, {
+        path,
+        kind: stat.mode & 0o111 ? 'exec' : 'file',
+        ...(await nativeFileDigest(absolute, signal)),
+      });
+    }
   }
   for (const file of files.values()) {
     if (!containedPath(file.path)) throw new Error(`Native input ${file.path} is not a contained relative path.`);
-    requireRealParents(repository, file.path);
+    await requireRealParents(repository, file.path, signal);
     if (state.some((path) => below(file.path, path)))
       throw new Error('Gradle project state cannot be transferred as source.');
     if (declaration.outputs.some((output) => below(file.path, output) || below(output, file.path)))
       throw new Error(`Native input ${file.path} overlaps a declared generated output.`);
     if (file.path.split('/').at(-1) === 'local.properties') {
       if (file.kind === 'link') throw new Error(`Native input ${file.path} is a machine-local properties link.`);
-      const content = readFileSync(join(repository, file.path), 'utf8');
+      const content = await readFile(join(repository, file.path), { encoding: 'utf8', signal });
       if (
         content
           .split(/\r?\n/)
@@ -119,16 +149,16 @@ export function nativeGradleTransfer(root: string, value: unknown): GradleTransf
   for (const file of files.values()) {
     if (file.kind === 'link') {
       const absolute = join(repository, file.path);
-      const target = readlinkSync(absolute);
-      const resolved = realpathSync(resolve(dirname(absolute), target));
+      const target = await readlink(absolute);
+      const resolved = await realpath(resolve(dirname(absolute), target));
       const destination = relative(repository, resolved).split(sep).join('/');
       if (isAbsolute(target) || !containedPath(destination) || !files.has(destination))
         throw new Error(`Native input ${file.path} links to a target outside the declared source inventory.`);
     }
   }
   for (const output of declaration.outputs) {
-    requireRealParents(repository, output);
-    const stat = lstatSync(join(repository, output), { throwIfNoEntry: false });
+    await requireRealParents(repository, output, signal);
+    const stat = await statIfPresent(join(repository, output));
     if (stat && !stat.isDirectory()) throw new Error(`Generated output ${output} is not a real directory.`);
     if (state.some((path) => below(output, path) || below(path, output)))
       throw new Error(`Generated output ${output} overlaps Gradle project state.`);
@@ -145,27 +175,39 @@ export function nativeGradleTransfer(root: string, value: unknown): GradleTransf
   return { repository, project, declaration, files: selected, digest: manifestDigest(selected) };
 }
 
-function canonicalParent(path: string): string {
+async function canonicalParent(path: string): Promise<string> {
   const missing: string[] = [];
-  while (!existsSync(path) && dirname(path) !== path) {
+  while (
+    !(await access(path).then(
+      () => true,
+      () => false,
+    )) &&
+    dirname(path) !== path
+  ) {
     missing.unshift(basename(path));
     path = dirname(path);
   }
-  return join(realpathSync(path), ...missing);
+  return join(await realpath(path), ...missing);
 }
 
-export function nativeGradleOutputs(repository: string, declaration: GradleOffloadInputs, reported: unknown): string[] {
+export async function nativeGradleOutputs(
+  repository: string,
+  declaration: GradleOffloadInputs,
+  reported: unknown,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  signal?.throwIfAborted();
   if (!Array.isArray(reported) || !reported.every((path) => typeof path === 'string' && isAbsolute(path)))
     throw new Error('AGP did not report the configured native Gradle build directories.');
-  const real = realpathSync(repository);
+  const real = await realpath(repository);
   const reportedPaths = new Set<string>();
   for (const absolute of reported) {
     const resolved = resolve(absolute);
-    const canonical = join(canonicalParent(dirname(resolved)), basename(resolved));
+    const canonical = join(await canonicalParent(dirname(resolved)), basename(resolved));
     const path = relative(real, canonical).split(sep).join('/');
     if (!containedPath(path)) throw new Error('A Gradle build directory leaves the transferred repository.');
-    requireRealParents(repository, path);
-    const stat = lstatSync(join(repository, path), { throwIfNoEntry: false });
+    await requireRealParents(repository, path, signal);
+    const stat = await statIfPresent(join(repository, path));
     if (stat && !stat.isDirectory()) throw new Error(`Gradle build directory ${path} is not a real directory.`);
     reportedPaths.add(path);
   }
@@ -174,14 +216,17 @@ export function nativeGradleOutputs(repository: string, declaration: GradleOfflo
   }
   for (const path of reportedPaths) {
     if (
-      lstatSync(join(repository, path), { throwIfNoEntry: false })?.isDirectory() &&
+      (await statIfPresent(join(repository, path)))?.isDirectory() &&
       !declaration.outputs.some((output) => below(path, output))
     )
       throw new Error(`Gradle build directory ${path} is not declared; add it to android.offloadInputs.outputs.`);
   }
-  return declaration.outputs.filter((path) =>
-    lstatSync(join(repository, path), { throwIfNoEntry: false })?.isDirectory(),
-  );
+  const outputs: string[] = [];
+  for (const path of declaration.outputs) {
+    signal?.throwIfAborted();
+    if ((await statIfPresent(join(repository, path)))?.isDirectory()) outputs.push(path);
+  }
+  return outputs;
 }
 
 export function validateGradleManifest(
@@ -211,12 +256,14 @@ export async function verifyGradleTransfer(
   declaration: GradleOffloadInputs,
   files: readonly NativeTransferFile[],
   digest: string,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   validateGradleManifest(project, declaration, files);
   const excluded = [...declaration.outputs, ...gradleStateDirectories(project)];
   for (const path of excluded) {
-    requireRealParents(repository, path);
-    const stat = lstatSync(join(repository, path), { throwIfNoEntry: false });
+    await requireRealParents(repository, path, signal);
+    const stat = await statIfPresent(join(repository, path));
     if (stat && !stat.isDirectory()) throw new Error(`Worker output ${path} is not a real directory.`);
   }
   const markers = excluded.flatMap((path) =>
@@ -229,6 +276,7 @@ export async function verifyGradleTransfer(
     excluded: [join(repository, '.git'), ...excluded.map((path) => join(repository, path))],
     ignoredDirectoryMarkers: markers.filter((path) => !files.some((file) => join(repository, file.path) === path)),
     parameters: null,
+    signal,
   });
   const known = new Set(files.map((file) => file.path));
   for (const entry of snapshot.entries) {
@@ -240,5 +288,5 @@ export async function verifyGradleTransfer(
         `Native Gradle directory ${parts.slice(0, index + 1).join('/')} is outside the source transfer and not a declared output reported by AGP; such directories, for example, included builds or externalNativeBuild staging, are not supported for remote builds.`,
       );
   }
-  return manifestDigest(nativeTransferManifest(repository, snapshot, files)) === digest;
+  return manifestDigest(await nativeTransferManifest(repository, snapshot, files, signal)) === digest;
 }

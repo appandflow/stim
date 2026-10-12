@@ -41,7 +41,9 @@ export interface IosArtifactRecipe {
     runOptions: { configuration?: string; arch?: string } | null;
   } | null;
   offload: {
-    context(): { runtime: string | null; unsupported: string | null };
+    context():
+      | { runtime: string | null; unsupported: string | null }
+      | Promise<{ runtime: string | null; unsupported: string | null }>;
     target(
       runtime: string,
     ): Parameters<typeof chooseBuildMachine>[0]['target'] | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
