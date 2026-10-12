@@ -112,7 +112,7 @@ export async function buildMacosBundle({
       if (placement.offload) {
         const chosen = await chooseBuildMachine({
           projectRoot: root,
-          target: recipe.offload.target(),
+          target: await recipe.offload.target(),
           mode,
           here,
           machines,

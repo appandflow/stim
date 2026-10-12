@@ -21,7 +21,7 @@ import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { recordPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { iosToolchain } from '../offload/toolchain.ts';
+import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
@@ -510,10 +510,10 @@ function reactNativeIosArtifact(
                 : null);
         return { runtime, unsupported };
       },
-      target: (runtime) => ({
+      target: async (runtime) => ({
         platform: 'ios',
         local: {
-          ...iosToolchain(root),
+          ...(await iosToolchainAsync(root)),
           ...(target.hostedArchitecture ? { arch: target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64' } : {}),
         },
         runtime,

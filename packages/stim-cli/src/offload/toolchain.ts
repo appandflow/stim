@@ -59,10 +59,6 @@ function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
 }
 
-export function iosToolchain(root: string, native?: 'xcode'): IosToolchain {
-  return iosToolchainForRuby(native ? null : readRubyVersion(root), native);
-}
-
 async function quietAsync(file: string, args: string[]): Promise<string | null> {
   try {
     return await getExecutor().runFileAsync(file, args, { timeoutMs: 20_000 });
@@ -71,12 +67,12 @@ async function quietAsync(file: string, args: string[]): Promise<string | null> 
   }
 }
 
-export async function iosToolchainAsync(root: string): Promise<IosToolchain> {
-  const rubyVersion = readRubyVersion(root);
+export async function iosToolchainAsync(root: string, native?: 'xcode'): Promise<IosToolchain> {
+  const rubyVersion = native ? null : readRubyVersion(root);
   const [xcode, simulatorSdk, cocoapods] = await Promise.all([
     quietAsync('xcodebuild', ['-version']),
     quietAsync('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
-    cocoapodsVersionAsync(rubyVersion),
+    native ? null : cocoapodsVersionAsync(rubyVersion),
   ]);
   return assembleIosToolchain(xcode, simulatorSdk, cocoapods);
 }
@@ -141,12 +137,26 @@ export interface MacosToolchain {
 }
 
 export function macosToolchain(): MacosToolchain {
-  const xcode = quiet('xcodebuild', ['-version']);
+  return assembleMacosToolchain(
+    quiet('xcodebuild', ['-version']),
+    quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version']),
+  );
+}
+
+export async function macosToolchainAsync(): Promise<MacosToolchain> {
+  const [xcode, macosSdk] = await Promise.all([
+    quietAsync('xcodebuild', ['-version']),
+    quietAsync('xcrun', ['--sdk', 'macosx', '--show-sdk-version']),
+  ]);
+  return assembleMacosToolchain(xcode, macosSdk);
+}
+
+function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): MacosToolchain {
   return {
     stimBuild: stimBuildDigest(distDir),
     arch: process.arch,
     xcode: xcode ? xcode.trim().replace(/\n/g, ' / ') : null,
-    macosSdk: quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null,
+    macosSdk: macosSdk?.trim() ?? null,
   };
 }
 
@@ -182,6 +192,24 @@ function localJdk(env: NodeJS.ProcessEnv = process.env): string | null {
 
 export function androidToolchain(): AndroidToolchain {
   return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk: localJdk() };
+}
+
+export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env): Promise<AndroidToolchain> {
+  let jdk: string | null = null;
+  if (env.JAVA_HOME) jdk = releaseMajor(env.JAVA_HOME);
+  else {
+    const java = getExecutor().findExecutable('java');
+    if (java) {
+      try {
+        jdk = releaseMajor(dirname(dirname(realpathSync(java))));
+      } catch {}
+    }
+    if (!jdk) {
+      const home = (await quietAsync('/usr/libexec/java_home', []))?.trim();
+      if (home) jdk = releaseMajor(home);
+    }
+  }
+  return { stimBuild: stimBuildDigest(distDir), arch: process.arch, jdk };
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */

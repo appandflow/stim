@@ -42,7 +42,9 @@ export interface IosArtifactRecipe {
   } | null;
   offload: {
     context(): { runtime: string | null; unsupported: string | null };
-    target(runtime: string): Parameters<typeof chooseBuildMachine>[0]['target'];
+    target(
+      runtime: string,
+    ): Parameters<typeof chooseBuildMachine>[0]['target'] | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
     unchanged(): Promise<boolean>;
   } | null;

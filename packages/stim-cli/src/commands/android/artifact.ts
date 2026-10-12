@@ -491,9 +491,9 @@ export async function acquireAndroidArtifact(
   /** Asks the paired machines once the post-mutation key is known; null builds here. */
   async function chooseMachine(candidate: Candidate): Promise<OffloadChoice | null> {
     let asked: PlacementCandidate[] = [];
-    let target: ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>;
+    let target: Awaited<ReturnType<NonNullable<AndroidArtifactRecipe['offload']>['target']>>;
     try {
-      target = recipe.offload!.target();
+      target = await recipe.offload!.target();
     } catch (error) {
       fallBack((error as Error).message);
       return null;
