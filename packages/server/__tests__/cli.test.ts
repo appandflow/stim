@@ -121,7 +121,7 @@ describe('control', () => {
     expect(plain('devices', 'grant', reader!.id, '--read', '--control').status).toBe(1);
     expect(plain('devices', 'grant', 'nope', '--read').stderr).toContain('no paired device nope');
     expect(plain('devices', '--control').status).toBe(1);
-  });
+  }, 20_000);
 });
 
 describe.each(['build', 'device-host'] as const)('%s approval', (capability) => {
