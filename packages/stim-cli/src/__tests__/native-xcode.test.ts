@@ -51,12 +51,17 @@ function write(path: string, source: string) {
 }
 
 function fingerprint() {
-  return nativeXcodeInputSnapshot(root, selectNativeXcodeProject(root), {
-    sdk: 'iphonesimulator',
-    architecture: 'arm64',
-    toolchain: { xcode: 'Xcode 26.0 build 17A', sdk: '26.0' },
-    optimizations: resolveOptimizations({}, {}).ios,
-  });
+  return nativeXcodeInputSnapshot(
+    root,
+    selectNativeXcodeProject(root),
+    {
+      sdk: 'iphonesimulator',
+      architecture: 'arm64',
+      toolchain: { xcode: 'Xcode 26.0 build 17A', sdk: '26.0' },
+      optimizations: resolveOptimizations({}, {}).ios,
+    },
+    process.env,
+  );
 }
 
 test.each(['xcshareddata', 'xcshareddata/swiftpm', 'xcshareddata/swiftpm/configuration'])(
@@ -598,12 +603,17 @@ test('a referenced source outside the application participates in native identit
   const pbx = join(project, 'project.pbxproj');
   writeFileSync(pbx, readFileSync(pbx, 'utf8').replace('path = Native.swift;', 'path = ../External.swift;'));
   const snapshot = () =>
-    nativeXcodeInputSnapshot(app, selectNativeXcodeProject(app), {
-      sdk: 'iphonesimulator',
-      architecture: 'arm64',
-      toolchain: {},
-      optimizations: {},
-    });
+    nativeXcodeInputSnapshot(
+      app,
+      selectNativeXcodeProject(app),
+      {
+        sdk: 'iphonesimulator',
+        architecture: 'arm64',
+        toolchain: {},
+        optimizations: {},
+      },
+      process.env,
+    );
   const before = snapshot();
   expect(before).not.toHaveProperty('cacheIneligible');
   writeFileSync(external, 'struct ExternalChanged {}');
@@ -625,6 +635,7 @@ test('repository inputs outside the application and unresolved C-family include 
         toolchain: {},
         optimizations: {},
       },
+      process.env,
       root,
     );
   const before = snapshot();
@@ -697,12 +708,17 @@ test('relocation, shell location and task metadata preserve warm identities whil
   const relocated = join(realpathSync(home), 'relocated');
   cpSync(root, relocated, { recursive: true });
   expect(
-    nativeXcodeInputSnapshot(relocated, selectNativeXcodeProject(relocated), {
-      sdk: 'iphonesimulator',
-      architecture: 'arm64',
-      toolchain: { xcode: 'Xcode 26.0 build 17A', sdk: '26.0' },
-      optimizations: resolveOptimizations({}, {}).ios,
-    }),
+    nativeXcodeInputSnapshot(
+      relocated,
+      selectNativeXcodeProject(relocated),
+      {
+        sdk: 'iphonesimulator',
+        architecture: 'arm64',
+        toolchain: { xcode: 'Xcode 26.0 build 17A', sdk: '26.0' },
+        optimizations: resolveOptimizations({}, {}).ios,
+      },
+      process.env,
+    ),
   ).toEqual(before);
   vi.stubEnv('CFLAGS', '-DNATIVE_FEATURE=1');
   expect(fingerprint()).not.toEqual(before);
@@ -989,25 +1005,32 @@ test('native toolchain overrides contribute independently to each operation arti
   setExecutor(makeExecutor({ runFileAsync: async () => 'Tool identity' }));
   vi.stubEnv('DEVELOPER_DIR', '/host/xcode');
   vi.stubEnv('TOOLCHAINS', 'host');
-  const identity = (developer: string, toolchains: string) =>
+  vi.stubEnv('CFLAGS', '-DHOST');
+  const identity = (developer: string, toolchains: string, flags = '-DCLIENT') =>
     nativeXcodeIosProject(root)
       .artifact(
         nativeXcodeIdentityContext(
           root,
-          testContext({ env: { ...process.env, DEVELOPER_DIR: developer, TOOLCHAINS: toolchains }, cwd: root }),
+          testContext({
+            env: { ...process.env, DEVELOPER_DIR: developer, TOOLCHAINS: toolchains, CFLAGS: flags },
+            cwd: root,
+          }),
         ),
       )
       .identity();
-  const [first, developer, toolchains] = await Promise.all([
+  const [first, developer, toolchains, flags] = await Promise.all([
     identity('/client/xcode', 'client'),
     identity('/other/xcode', 'client'),
     identity('/client/xcode', 'other'),
+    identity('/client/xcode', 'client', '-DOTHER'),
   ]);
   expect(first).toHaveProperty('key');
   expect(developer).not.toEqual(first);
   expect(toolchains).not.toEqual(first);
+  expect(flags).not.toEqual(first);
   expect(process.env.DEVELOPER_DIR).toBe('/host/xcode');
   expect(process.env.TOOLCHAINS).toBe('host');
+  expect(process.env.CFLAGS).toBe('-DHOST');
 });
 
 test.each(['identity', 'validate', 'plan'] as const)(

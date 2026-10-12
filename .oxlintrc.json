@@ -210,7 +210,6 @@
         "packages/stim-cli/src/engine/prebuild.ts",
         "packages/stim-cli/src/engine/remote-cache.ts",
         "packages/stim-cli/src/engine/xcode.ts",
-        "packages/stim-cli/src/integrations/native-xcode-inputs.ts",
         "packages/stim-cli/src/integrations/native-xcode-ios.ts",
         "packages/stim-cli/src/offload/client.ts",
         "packages/stim-cli/src/offload/toolchain.ts",

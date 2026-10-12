@@ -124,12 +124,17 @@ test('native transfer tolerates only declared Xcode directory markers, never unt
   const workspace = join(project, 'project.xcworkspace');
   mkdirSync(workspace);
   const selection = selectNativeXcodeProject(root);
-  const inputs = nativeXcodeInputSnapshot(root, selection, {
-    sdk: 'iphonesimulator',
-    architecture: 'arm64',
-    toolchain: { xcode: 'fixture' },
-    optimizations: {},
-  });
+  const inputs = nativeXcodeInputSnapshot(
+    root,
+    selection,
+    {
+      sdk: 'iphonesimulator',
+      architecture: 'arm64',
+      toolchain: { xcode: 'fixture' },
+      optimizations: {},
+    },
+    process.env,
+  );
   if ('cacheIneligible' in inputs) throw new Error(inputs.cacheIneligible);
   const visible = inputs.entries
     .filter((entry) => entry.kind === 'file:0')

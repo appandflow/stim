@@ -112,6 +112,7 @@ export function nativeXcodeInputSnapshot(
   root: string,
   selection: NativeXcodeSelection,
   parameters: { sdk: string; architecture: string | null; toolchain: Record<string, string>; optimizations: unknown },
+  env: NodeJS.ProcessEnv,
   sourceRoot: string = root,
 ): NativeInputSnapshot | { cacheIneligible: string } {
   if (selection.platform === 'unknown')
@@ -123,7 +124,7 @@ export function nativeXcodeInputSnapshot(
   const excluded = [join(sourceRoot, '.git'), join(root, '.git'), workspaceDerivedData(root)];
   const reasons = new Set<string>();
   const environment: Record<string, string> = {};
-  for (const [name, value] of Object.entries(process.env).toSorted(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, value] of Object.entries(env).toSorted(([a], [b]) => a.localeCompare(b))) {
     if (
       value !== undefined &&
       /^(?:DEVELOPER_DIR|TOOLCHAINS|SDKROOT|CFLAGS|CPPFLAGS|CXXFLAGS|OBJCFLAGS|LDFLAGS|ARCHS|ONLY_ACTIVE_ARCH|SOURCE_DATE_EPOCH|ZERO_AR_DATE|IPHONEOS_DEPLOYMENT_TARGET|MACOSX_DEPLOYMENT_TARGET|DEVELOPMENT_TEAM|XCODE_.*|SWIFT_.*|CLANG_.*|GCC_.*|OTHER_.*FLAGS|CODE_SIGN.*|PROVISIONING_.*)$/.test(
@@ -155,10 +156,10 @@ export function nativeXcodeInputSnapshot(
     const result = value.replace(/\$\(([^)]+)\)|\$\{([^}]+)\}/g, (_match, parenthesized: string, braced: string) => {
       const name = parenthesized ?? braced;
       if (known[name] !== undefined) return known[name];
-      const env = process.env[name];
-      if (env !== undefined) {
-        environment[name] = env;
-        return env;
+      const supplied = env[name];
+      if (supplied !== undefined) {
+        environment[name] = supplied;
+        return supplied;
       }
       missing = true;
       return '';
@@ -310,9 +311,9 @@ export function nativeXcodeInputSnapshot(
       'CLANG_CONFIG_FILE_USER_DIR',
       'CLANG_CONFIG_FILE_SYSTEM_DIR',
     ]) {
-      if (process.env[name]) reasons.add(`Environment ${name} supplies native inputs outside the resolved project`);
+      if (env[name]) reasons.add(`Environment ${name} supplies native inputs outside the resolved project`);
     }
-    if (process.env.XCODE_XCCONFIG_FILE) xcconfig(resolve(process.env.XCODE_XCCONFIG_FILE), selection.targetProject);
+    if (env.XCODE_XCCONFIG_FILE) xcconfig(resolve(env.XCODE_XCCONFIG_FILE), selection.targetProject);
     for (const [name, value] of Object.entries(environment)) {
       if (
         /(?:FLAGS|OTHER_.*FLAGS)$/.test(name) &&

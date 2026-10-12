@@ -149,6 +149,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         toolchain: tools,
         optimizations: context.optimizations,
       },
+      context.operation?.env ?? process.env,
       repoRoot(root) ?? root,
     );
   };
@@ -417,6 +418,7 @@ async function planNativeXcode(root: string, options: IosCommandOptions, operati
         toolchain: await toolchain('iphonesimulator', operation),
         optimizations: optimizations.ios,
       },
+      operation?.env ?? process.env,
       context.repoRoot ?? root,
     );
     if ('cacheIneligible' in snapshot)
