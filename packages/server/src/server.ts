@@ -2468,7 +2468,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 ? buildSession.cancel(params)
                 : method === 'build.attach'
                   ? buildSession.attach(params)
-                  : await buildSession.artifact(params);
+                  : method === 'build.cached-artifact'
+                    ? await buildSession.cachedArtifact(params)
+                    : await buildSession.artifact(params);
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

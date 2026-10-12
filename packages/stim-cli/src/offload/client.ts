@@ -7,6 +7,7 @@ import {
   openSync,
   readFileSync,
   readlinkSync,
+  readdirSync,
   realpathSync,
   rmSync,
   writeSync,
@@ -27,8 +28,8 @@ import {
   type OffloadMode,
 } from '@stim-cli/core/state';
 import type { CcacheActivity, CompilationCacheActivity } from '../engine/build-facts.ts';
-import { CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
-import { COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
+import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE } from '../engine/ccache.ts';
+import { COMPILATION_CACHE_NOT_RUN, COMPILATION_CACHE_UNAVAILABLE } from '../engine/xcode.ts';
 import { debugLog } from '../debug-log.ts';
 import { reportRemoteFailure } from '../remote-log.ts';
 import { getExecutor } from '../exec.ts';
@@ -52,6 +53,7 @@ import { namedBuildMachine, OffloadRefusal } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import { toolchainMismatches, type BuildTarget, type OffloadProblem, type WorkerToolchain } from './toolchain.ts';
 import { ambientContext } from '@stim-cli/core';
+import type { BuildArtifactIdentity, CachedBuildArtifact } from '@stim-cli/core/protocol';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const OFFER_TIMEOUT_MS = 20_000;
@@ -175,6 +177,24 @@ export interface BuildOffer {
     declined?: string | null;
   };
   warm: { checkout: boolean; dependencies: boolean; build: boolean };
+  artifact?: CachedBuildArtifact | null;
+}
+
+function matchingArtifact(offer: BuildOffer, identity?: BuildArtifactIdentity): CachedBuildArtifact | null {
+  const cached = offer.artifact;
+  return identity &&
+    cached &&
+    cached.cacheKey === identity.cacheKey &&
+    cached.fingerprint === identity.fingerprint &&
+    typeof cached.name === 'string' &&
+    basename(cached.name) === cached.name &&
+    cached.name.endsWith('.app') &&
+    Number.isSafeInteger(cached.size) &&
+    cached.size > 0 &&
+    typeof cached.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/.test(cached.sha256)
+    ? cached
+    : null;
 }
 
 const gb = (bytes: number) => (bytes / 1024 ** 3).toFixed(1);
@@ -212,6 +232,8 @@ export function pickOffer({
   target,
   localEnabled = true,
   selected = 'auto',
+  artifact,
+  cacheOnly = false,
 }: {
   mode: OffloadMode;
   here: MachineCapacity;
@@ -219,6 +241,8 @@ export function pickOffer({
   localEnabled?: boolean;
   offers: Array<{ machine: string; offer: BuildOffer | null; failure?: string }>;
   target: BuildTarget;
+  artifact?: BuildArtifactIdentity;
+  cacheOnly?: boolean;
 }): { order: number[]; reasons: string[]; candidates: PlacementCandidate[] } {
   const slotsFull = here.maxBuilds > 0 && here.builds >= here.maxBuilds;
   const reasons: string[] = [];
@@ -231,6 +255,12 @@ export function pickOffer({
   offers.forEach(({ machine, offer, failure }, index) => {
     if (namedBuildMachine(selected) && machine !== selected) return;
     if (!offer) return skip(machine, 'unreachable', failure ?? 'no offer');
+    if (matchingArtifact(offer, artifact)) {
+      ranked.push({ index, score: Number.POSITIVE_INFINITY, load: 0 });
+      candidates.push({ machine, code: 'artifact-hit', msg: 'has the exact completed artifact' });
+      return;
+    }
+    if (cacheOnly) return skip(machine, 'artifact-miss', 'no matching completed artifact');
     const problems = offerProblems(offer, target);
     if (problems.length) {
       return skip(
@@ -632,6 +662,7 @@ export type OffloadOutcome =
       machine: string;
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
+      cacheHit?: boolean;
       androidPackage?: string;
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
@@ -653,11 +684,14 @@ interface OfferingMachine {
  * refuses `build.start`, `offloadBuild` moves this choice to the next one in place.
  */
 export interface OffloadChoice extends OfferingMachine {
+  mode: OffloadMode;
+  here: MachineCapacity;
   target: BuildTarget;
   offerMs: number;
   identity: RepoIdentity;
   runnersUp: OfferingMachine[];
   automatic?: boolean;
+  cacheOnly?: boolean;
 }
 
 /** Closes every connection the choice still holds. */
@@ -686,7 +720,11 @@ type MachineProbe =
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
 async function probeMachine(
   credential: BuildMachineCredential,
-  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & { rubyVersion?: string; native?: 'xcode' | 'gradle' },
+  identity: Pick<RepoIdentity, 'repo' | 'lockfile'> & {
+    rubyVersion?: string;
+    native?: 'xcode' | 'gradle';
+    artifact?: BuildArtifactIdentity;
+  },
   { connectMs = CONNECT_TIMEOUT_MS, offerMs = OFFER_TIMEOUT_MS }: { connectMs?: number; offerMs?: number } = {},
 ): Promise<MachineProbe> {
   const target = await pinnedEndpoint(credential);
@@ -707,6 +745,9 @@ async function probeMachine(
       repo: identity.repo,
       ...(identity.lockfile ? { lockfile: identity.lockfile } : {}),
       ...(native ? { native } : identity.rubyVersion ? { rubyVersion: identity.rubyVersion } : {}),
+      ...(native === 'xcode' && identity.artifact && connection.supports('build-artifact-cache')
+        ? { artifact: identity.artifact }
+        : {}),
     },
     offerMs,
   );
@@ -731,6 +772,8 @@ export async function chooseBuildMachine({
   machines = pairedMachines(),
   selected = 'auto',
   onCandidates,
+  artifact,
+  cacheOnly = false,
 }: {
   projectRoot: string;
   target: BuildTarget;
@@ -740,6 +783,8 @@ export async function chooseBuildMachine({
   machines?: BuildMachineCredential[];
   selected?: string;
   onCandidates?: (candidates: PlacementCandidate[]) => void;
+  artifact?: BuildArtifactIdentity;
+  cacheOnly?: boolean;
 }): Promise<OffloadChoice | string> {
   const started = Date.now();
   let identity: RepoIdentity;
@@ -757,6 +802,7 @@ export async function chooseBuildMachine({
         ...identity,
         rubyVersion,
         ...(target.platform !== 'macos' ? { native: target.native } : {}),
+        ...(artifact ? { artifact } : {}),
       }),
     ),
   );
@@ -766,6 +812,8 @@ export async function chooseBuildMachine({
     mode,
     here,
     target,
+    artifact,
+    cacheOnly,
     offers: asked.map((each) => ({
       machine: each.credential.machine,
       offer: 'offer' in each ? each.offer : null,
@@ -789,11 +837,14 @@ export async function chooseBuildMachine({
   });
   return {
     ...first!,
+    mode,
+    here,
     target,
     offerMs: Date.now() - started,
     identity,
     runnersUp: rest,
     automatic: selected === 'auto',
+    cacheOnly,
   };
 }
 
@@ -972,31 +1023,146 @@ function stagedArtifactEscapes(stagingDir: string, artifactPath: string, hasCont
   return inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside);
 }
 
+async function fetchArtifact({
+  connection,
+  method,
+  params,
+  artifact,
+  request,
+  stagingDir,
+  machine,
+  cacheHit,
+  checkCancelled,
+}: {
+  connection: BuildConnection;
+  method: string;
+  params: unknown;
+  artifact: { name: string; size?: unknown; sha256: string };
+  request: BuildRequest;
+  stagingDir: string;
+  machine: string;
+  cacheHit: boolean;
+  checkCancelled: () => void;
+}): Promise<
+  { artifactPath: string; digest: string; received: number; declared: { handoff?: unknown } } | { failure: string }
+> {
+  const name = artifact.name;
+  const archive = join(stagingDir, 'app.tgz');
+  const fd = openSync(archive, 'w');
+  const hash = createHash('sha256');
+  let received = 0;
+  let badFrame = false;
+  connection.onBinary((frame) => {
+    if (frame.length < DIGEST_BYTES || frame.subarray(0, DIGEST_BYTES).toString('hex') !== artifact.sha256) {
+      badFrame = true;
+      return;
+    }
+    const data = frame.subarray(DIGEST_BYTES);
+    if (cacheHit && received + data.length > Number(artifact.size)) {
+      badFrame = true;
+      return;
+    }
+    try {
+      writeSync(fd, data);
+    } catch {
+      badFrame = true;
+      return;
+    }
+    hash.update(data);
+    received += data.length;
+  });
+  const fetched = await connection.request(method, params, 15 * 60_000);
+  connection.onBinary(null);
+  closeSync(fd);
+  checkCancelled();
+  const fetchFailure = replyError(fetched);
+  if (fetchFailure || !('result' in fetched) || fetched.result === null) {
+    const reason = `fetch: ${fetchFailure ?? 'the cached artifact was removed'}`;
+    return { failure: reason };
+  }
+  const digest = hash.digest('hex');
+  const declared = fetched.result as { size?: unknown; sha256?: unknown; handoff?: unknown };
+  if (badFrame) {
+    const reason = 'fetch: an artifact frame had another digest or could not be written here';
+    return { failure: reason };
+  }
+  if (digest !== artifact.sha256 || declared.sha256 !== digest || declared.size !== received) {
+    const reason = `fetch: the artifact's sha256 ${digest.slice(0, 12)} does not match ${String(artifact.sha256).slice(0, 12)}`;
+    return { failure: reason };
+  }
+  if (cacheHit) {
+    const members = (await getExecutor().runFileAsync('tar', ['-tf', archive], { timeoutMs: 600_000 }))
+      .split('\n')
+      .filter(Boolean);
+    if (
+      members.some((member) => {
+        const clean = member.replace(/^\.\//, '');
+        return !(clean === name || clean.startsWith(`${name}/`)) || clean.split('/').includes('..');
+      })
+    )
+      return { failure: 'fetch: the archive contains paths outside its app' };
+  }
+  await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
+  checkCancelled();
+  rmSync(archive, { force: true });
+  const artifactPath = join(stagingDir, name);
+  if (stagedArtifactEscapes(stagingDir, artifactPath, request.platform === 'macos')) {
+    return {
+      failure: `fetch: ${machine} returned ${name} as or through a symbolic link or outside the staging directory`,
+    };
+  }
+  if (cacheHit) {
+    const pending = [artifactPath];
+    const root = realpathSync(artifactPath);
+    for (const path of pending) {
+      const stat = lstatSync(path);
+      if (stat.isDirectory()) pending.push(...readdirSync(path).map((entry) => join(path, entry)));
+      else if (stat.isSymbolicLink()) {
+        const inside = relative(root, realpathSync(path));
+        if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+          return { failure: 'fetch: an app link resolves outside its bundle' };
+      }
+    }
+  }
+  if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
+    return { failure: `fetch: ${name} has no Info.plist` };
+  }
+  if (request.platform === 'android' && !(lstatSync(artifactPath, { throwIfNoEntry: false })?.isFile() ?? false)) {
+    return { failure: `fetch: ${name} is not a file` };
+  }
+  if (request.platform === 'macos') {
+    for (const segments of [
+      ['Contents', 'Info.plist'],
+      ['Contents', 'MacOS', request.product],
+    ]) {
+      if (!lstatSync(join(artifactPath, ...segments), { throwIfNoEntry: false })?.isFile())
+        return { failure: `fetch: ${name} has no regular ${segments.join('/')}` };
+    }
+  }
+  return { artifactPath, digest, received, declared };
+}
+
 /**
  * Builds on the chosen machine and brings the `.app` or `.apk` back into `stagingDir`, verified against the
  * sha256 the machine reports. The caller re-fingerprints and stores it.
  */
-export async function offloadBuild({
-  choice,
-  expectedFingerprint,
-  request,
-  stagingDir,
-  onPhase,
-  onEnter,
-  onRecord,
-  note,
-}: {
-  choice: OffloadChoice;
-  stagingDir: string;
-  onPhase: (phase: string, msg: string) => void;
-  onEnter: (phase: string) => void;
-  onRecord: (record: Record<string, unknown>) => void;
-  /** One line about where the build goes, such as the next machine after a refusal. */
-  note: (line: string) => void;
-} & (
-  | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
-  | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
-)): Promise<OffloadOutcome> {
+export async function offloadBuild(
+  input: {
+    choice: OffloadChoice;
+    stagingDir: string;
+    onPhase: (phase: string, msg: string) => void;
+    onEnter: (phase: string) => void;
+    onRecord: (record: Record<string, unknown>) => void;
+    /** One line about where the build goes, such as the next machine after a refusal. */
+    note: (line: string) => void;
+  } & (
+    | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
+    | { request: Exclude<BuildRequest, { platform: 'macos' }>; expectedFingerprint: string | null }
+  ),
+): Promise<OffloadOutcome> {
+  const { choice, expectedFingerprint, request, stagingDir, onPhase, onEnter, onRecord, note } = input;
+  let cacheHit = false;
+  let keepStaging = false;
   const { identity } = choice;
   const native = request.platform !== 'macos' ? request.native : undefined;
   let sourceDigest: string | null = null;
@@ -1020,12 +1186,49 @@ export async function offloadBuild({
     closeOffload(choice);
   };
   signal?.addEventListener('abort', cancel, { once: true });
+  const retryCachedMiss = async (reason: string): Promise<OffloadOutcome> => {
+    checkCancelled();
+    note(`cache: ${choice.machine}: ${reason}`);
+    const next = choice.runnersUp.shift();
+    if (next) {
+      choice.connection.close();
+      Object.assign(choice, next);
+    } else {
+      if (choice.cacheOnly) return fail(reason);
+      choice.connection.close();
+      const probe = await probeMachine(choice.credential, {
+        ...identity,
+        ...(native ? { native: native.provider } : {}),
+      });
+      if ('failure' in probe) return fail(probe.failure);
+      const placement = pickOffer({
+        mode: choice.mode,
+        here: choice.here,
+        target: choice.target,
+        selected: choice.automatic ? 'auto' : choice.machine,
+        localEnabled: !choice.automatic || automaticMachineEnabled('build', 'local'),
+        offers: [{ machine: choice.machine, offer: probe.offer }],
+      });
+      if (placement.order.length === 0) {
+        probe.connection.close();
+        return fail(placement.reasons.join('; '));
+      }
+      Object.assign(choice, probe, { offer: { ...probe.offer, artifact: null } });
+    }
+    const retried = await offloadBuild(input);
+    keepStaging = retried.ok;
+    return retried;
+  };
   try {
     checkCancelled();
     if (!validArtifactIdentity(request, expectedFingerprint))
       return fail('The build request has an invalid reusable artifact identity.');
     if (native?.provider === 'xcode' && native.snapshot.hash !== expectedFingerprint)
       return fail('The native source snapshot does not match the requested artifact identity.');
+    const cachedIdentity =
+      native?.provider === 'xcode' && typeof expectedFingerprint === 'string'
+        ? { fingerprint: expectedFingerprint, cacheKey: native.cacheKey }
+        : undefined;
     let job: string | null = null;
     let early: ProgressEvent[] = [];
     let resuming = false;
@@ -1081,6 +1284,16 @@ export async function offloadBuild({
         if (moveOn(reason)) continue;
         return fail(reason);
       }
+      const cached =
+        native?.provider === 'xcode' && choice.connection.supports('build-artifact-cache')
+          ? matchingArtifact(choice.offer, cachedIdentity)
+          : null;
+      if (cached) {
+        cacheHit = true;
+        settle({ ok: true, artifact: cached, fingerprint: expectedFingerprint });
+        break;
+      }
+      if (choice.cacheOnly) return fail('The exact artifact is no longer available.');
       const synced = await syncSource(choice.connection, identity, onEnter, nativeTransferInput(native));
       checkCancelled();
       if ('failure' in synced) {
@@ -1145,7 +1358,7 @@ export async function offloadBuild({
       const refused = `start: ${replyError(reply)}`;
       if (reply.error.code === 'bad-request' || !moveOn(refused)) return fail(refused);
     }
-    for (const each of choice.runnersUp.splice(0)) each.connection.close();
+    if (!cacheHit) for (const each of choice.runnersUp.splice(0)) each.connection.close();
     choice.connection.watch();
     for (const event of early.splice(0)) handle(event);
     const timer = setTimeout(
@@ -1157,9 +1370,9 @@ export async function offloadBuild({
     checkCancelled();
     const { connection, machine } = choice;
     connection.onProgress(null);
-    const workerMs = Date.now() - workerStarted;
+    const workerMs = cacheHit ? 0 : Date.now() - workerStarted;
     if (result.ok !== true) return fail(`${String(result.code ?? 'failed')}: ${String(result.message ?? '')}`);
-    if (native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
+    if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
       return fail('The worker returned no verified native APK package.');
@@ -1174,75 +1387,35 @@ export async function offloadBuild({
     const fetchStarted = Date.now();
     rmSync(stagingDir, { recursive: true, force: true });
     mkdirSync(stagingDir, { recursive: true });
-    const archive = join(stagingDir, 'app.tgz');
-    const fd = openSync(archive, 'w');
-    const hash = createHash('sha256');
-    let received = 0;
-    let badFrame = false;
-    connection.onBinary((frame) => {
-      if (frame.length < DIGEST_BYTES || frame.subarray(0, DIGEST_BYTES).toString('hex') !== artifact.sha256) {
-        badFrame = true;
-        return;
-      }
-      const data = frame.subarray(DIGEST_BYTES);
-      try {
-        writeSync(fd, data);
-      } catch {
-        badFrame = true;
-        return;
-      }
-      hash.update(data);
-      received += data.length;
+    const downloaded = await fetchArtifact({
+      connection,
+      artifact: { name, size: artifact.size, sha256: artifact.sha256 },
+      request,
+      stagingDir,
+      machine,
+      cacheHit,
+      checkCancelled,
+      method: cacheHit ? 'build.cached-artifact' : 'build.artifact',
+      params:
+        cacheHit && native?.provider === 'xcode'
+          ? { repo: identity.repo, artifact: { fingerprint: expectedFingerprint, cacheKey: native.cacheKey } }
+          : { job },
     });
-    const fetched = await connection.request('build.artifact', { job }, 15 * 60_000);
-    connection.onBinary(null);
-    closeSync(fd);
-    checkCancelled();
-    const fetchFailure = replyError(fetched);
-    if (fetchFailure || !('result' in fetched)) return fail(`fetch: ${fetchFailure ?? 'no reply'}`);
-    const digest = hash.digest('hex');
-    const declared = fetched.result as { size?: unknown; sha256?: unknown; handoff?: unknown };
-    if (badFrame) return fail('fetch: an artifact frame had another digest or could not be written here');
-    if (digest !== artifact.sha256 || declared.sha256 !== digest || declared.size !== received) {
-      return fail(
-        `fetch: the artifact's sha256 ${digest.slice(0, 12)} does not match ${String(artifact.sha256).slice(0, 12)}`,
-      );
-    }
-    await getExecutor().runFileAsync('tar', ['-xf', archive, '-C', stagingDir], { timeoutMs: 600_000 });
-    checkCancelled();
-    rmSync(archive, { force: true });
-    const artifactPath = join(stagingDir, name);
-    if (stagedArtifactEscapes(stagingDir, artifactPath, request.platform === 'macos')) {
-      return fail(`fetch: ${machine} returned ${name} as or through a symbolic link or outside the staging directory`);
-    }
-    if (request.platform === 'ios' && !existsSync(join(artifactPath, 'Info.plist'))) {
-      return fail(`fetch: ${name} has no Info.plist`);
-    }
-    if (request.platform === 'android' && !(lstatSync(artifactPath, { throwIfNoEntry: false })?.isFile() ?? false)) {
-      return fail(`fetch: ${name} is not a file`);
-    }
-    if (request.platform === 'macos') {
-      for (const segments of [
-        ['Contents', 'Info.plist'],
-        ['Contents', 'MacOS', request.product],
-      ]) {
-        if (!lstatSync(join(artifactPath, ...segments), { throwIfNoEntry: false })?.isFile())
-          return fail(`fetch: ${name} has no regular ${segments.join('/')}`);
-      }
-    }
+    if ('failure' in downloaded) return cacheHit ? await retryCachedMiss(downloaded.failure) : fail(downloaded.failure);
+    const { artifactPath, digest, received, declared } = downloaded;
     const fetchMs = Date.now() - fetchStarted;
-    connection.close();
+    closeOffload(choice);
+    keepStaging = true;
     return {
       ok: true,
+      ...(cacheHit ? { cacheHit: true } : {}),
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { nodeId: choice.credential.nodeId, token: declared.handoff, sha256: digest } }
         : {}),
-      compilationCache:
-        request.platform === 'ios' ? compilationActivity(result.compilationCache) : COMPILATION_CACHE_UNAVAILABLE,
+      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
-      ccache: request.platform === 'android' ? ccacheActivity(result.compilationCache) : CCACHE_UNAVAILABLE,
       timings: {
         offerMs: choice.offerMs,
         syncMs,
@@ -1255,12 +1428,25 @@ export async function offloadBuild({
       },
     };
   } catch (error) {
-    closeOffload(choice);
     checkCancelled();
-    return fail((error as Error).message.split('\n')[0] ?? String(error));
+    const reason = (error as Error).message.split('\n')[0] ?? String(error);
+    return cacheHit ? await retryCachedMiss(reason) : fail(reason);
   } finally {
     signal?.removeEventListener('abort', cancel);
+    if (!keepStaging) rmSync(stagingDir, { recursive: true, force: true });
   }
+}
+
+function offloadCacheActivity(
+  platform: BuildRequest['platform'],
+  activity: unknown,
+  cacheHit: boolean,
+): Pick<Extract<OffloadOutcome, { ok: true }>, 'compilationCache' | 'ccache'> {
+  if (cacheHit) return { compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
+  return {
+    compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
+    ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,
+  };
 }
 
 function packageName(projectRoot: string): string | null {

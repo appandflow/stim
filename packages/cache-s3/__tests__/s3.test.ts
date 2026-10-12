@@ -243,3 +243,13 @@ test('aborting during archive extraction discards the artifact and settles', asy
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(await readdir(dir)).toEqual([]);
 });
+
+test('presence checks report size without downloading and missing objects remain misses', async () => {
+  const files = createS3FileCache(options);
+  await files.store({ key: 'present', sourcePath: await source('bytes'), overwrite: false, signal: signal() });
+  expect(await files.stat({ key: 'present', signal: signal() })).toEqual({ size: 5 });
+  expect(await files.stat({ key: 'missing', signal: signal() })).toBeNull();
+  await expect(files.stat({ key: 'present', signal: AbortSignal.abort(new Error('cancelled')) })).rejects.toThrow(
+    'cancelled',
+  );
+});

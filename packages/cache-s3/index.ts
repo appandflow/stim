@@ -1,4 +1,10 @@
-import { GetObjectCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3';
+import {
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig,
+} from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -39,7 +45,9 @@ function status(error: unknown): number | undefined {
 }
 
 /** Stores opaque files; each cache adapter owns its key and serialization. Credentials use the AWS SDK chain. */
-export function createS3FileCache(options: S3FileCacheOptions): FileCacheCapability {
+export function createS3FileCache(
+  options: S3FileCacheOptions,
+): FileCacheCapability & Required<Pick<FileCacheCapability, 'stat'>> {
   if (!options.bucket) throw new Error('The S3 cache needs a bucket.');
   const config: S3ClientConfig = {
     ...(options.endpoint !== undefined ? { endpoint: options.endpoint } : {}),
@@ -54,6 +62,18 @@ export function createS3FileCache(options: S3FileCacheOptions): FileCacheCapabil
   const prefix = (options.prefix ?? 'stim/v1').replace(/^\/+|\/+$/g, '');
   const objectKey = (key: string) => `${prefix}/${key}`;
   return {
+    async stat({ key, signal }) {
+      signal.throwIfAborted();
+      try {
+        const object = await client.send(new HeadObjectCommand({ Bucket: options.bucket, Key: objectKey(key) }), {
+          abortSignal: signal,
+        });
+        return typeof object.ContentLength === 'number' ? { size: object.ContentLength } : null;
+      } catch (error) {
+        if (status(error) === 404) return null;
+        throw error;
+      }
+    },
     async resolve({ key, destinationDir, signal }) {
       signal.throwIfAborted();
       let object;

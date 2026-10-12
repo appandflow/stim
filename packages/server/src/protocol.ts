@@ -47,6 +47,15 @@ const protocolError: JsonSchema = {
 };
 
 const buildRepo: JsonSchema = { type: 'string', pattern: BUILD_REPO_PATTERN };
+const buildArtifactIdentity: JsonSchema = {
+  type: 'object',
+  required: ['fingerprint', 'cacheKey'],
+  additionalProperties: false,
+  properties: {
+    fingerprint: { type: 'string', minLength: 1, maxLength: 256 },
+    cacheKey: { type: 'string', minLength: 1, maxLength: 1024 },
+  },
+};
 
 const workspaceRef: JsonSchema = {
   type: 'object',
@@ -1481,6 +1490,7 @@ export function protocolJsonSchema(): JsonSchema {
               lockfile: sha256,
               rubyVersion: { type: 'string', pattern: BUILD_RUBY_VERSION_PATTERN },
               native: { enum: ['xcode', 'gradle'] },
+              artifact: buildArtifactIdentity,
             },
           }),
           request('build.sync', {
@@ -1602,6 +1612,12 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('build.cancel', buildJob),
           request('build.artifact', buildJob),
+          request('build.cached-artifact', {
+            type: 'object',
+            required: ['repo', 'artifact'],
+            additionalProperties: false,
+            properties: { repo: buildRepo, artifact: buildArtifactIdentity },
+          }),
           request('build.attach', buildJob),
           request('server.update.status'),
           request('device-host.sessions'),

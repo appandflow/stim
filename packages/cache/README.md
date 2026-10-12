@@ -68,7 +68,11 @@ The optional `files` capability stores opaque complete files with
 `resolve({ key, destinationDir, signal })`. A hit returns a path inside
 `destinationDir`; a miss returns `null` and leaves it empty. The CLI consumes
 the `metro` and `builds` adapters; a files-only provider is available to cache
-adapters that use this interface directly.
+adapters that use this interface directly. An optional
+`stat({ key, signal })` returns `{ size }` or `null` without downloading;
+consumers still verify downloaded bytes. `createFilesystemFileCache(directory)`
+implements the same contract in an owned local directory without dependencies.
+It publishes atomically and materializes downloads in the requested scratch directory.
 
 `metro.get` returns the stored value or `null`.
 

@@ -2,13 +2,22 @@ import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
-import { chooseBuildMachine, closeOffload, offloadBuild, type BuildOffer } from '../offload/client.ts';
+import { chooseBuildMachine, closeOffload, offloadBuild, pickOffer, type BuildOffer } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
@@ -75,6 +84,7 @@ async function fakeMachine(
     attach = { result: { outcome: null } },
     artifact = null,
     pause = null,
+    cachedFetch = 'hit',
   }: {
     drop?: boolean;
     closeAfterStart?: number | null;
@@ -83,6 +93,7 @@ async function fakeMachine(
     hello?: () => object;
     artifact?: { archive: Buffer; digest: string; fingerprint?: string; sourceDigest?: string } | null;
     pause?: string | null;
+    cachedFetch?: 'hit' | 'miss' | 'corrupt';
   } = {},
 ): Promise<FakeMachine> {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
@@ -135,6 +146,16 @@ async function fakeMachine(
             }),
           ),
         );
+      if (method === 'build.cached-artifact') {
+        if (!artifact || cachedFetch === 'miss') return reply({ result: null });
+        const bytes = cachedFetch === 'corrupt' ? Buffer.alloc(artifact.archive.length) : artifact.archive;
+        const cachedDigest = artifact.digest;
+        deliver(method, () => {
+          socket.send(Buffer.concat([Buffer.from(cachedDigest, 'hex'), bytes]));
+          socket.send(JSON.stringify({ id, result: { ...offer.artifact } }));
+        });
+        return;
+      }
       if (method === 'build.artifact' && artifact) {
         socket.send(Buffer.concat([Buffer.from(artifact.digest, 'hex'), artifact.archive]));
         return reply({ result: { size: artifact.archive.length, sha256: artifact.digest } });
@@ -864,3 +885,224 @@ describe('native Gradle worker transfer', () => {
     },
   );
 });
+
+describe('exact peer artifacts', () => {
+  it.each(['hit', 'miss', 'corrupt', 'escaping-link', 'extra-file'] as const)(
+    'reuses verified bytes without syncing or compiling; %s',
+    async (cachedFetch) => {
+      const app = join(repo, 'archive-source', 'Sample.app');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'Info.plist'), 'verified plist');
+      if (cachedFetch === 'escaping-link') symlinkSync(repo, join(app, 'Outside'));
+      if (cachedFetch === 'extra-file') writeFileSync(join(repo, 'archive-source', 'Other'), 'outside');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', [
+        '-czf',
+        archivePath,
+        '-C',
+        join(repo, 'archive-source'),
+        'Sample.app',
+        ...(cachedFetch === 'extra-file' ? ['Other'] : []),
+      ]);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const identity = { fingerprint: 'native-source', cacheKey: 'native-source-sdk27-arm64-target' };
+      const cachedOffer = {
+        ...offer(3),
+        toolchain: { ...TOOLCHAIN, simulatorSdk: '28.0' },
+        capacity: { ...offer(3).capacity, declined: 'all slots busy' },
+        artifact: { ...identity, name: 'Sample.app', size: archive.length, sha256: digest },
+      };
+      const machine = await fakeMachine(
+        'cached',
+        cachedOffer,
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: {
+              capabilities: ['build'],
+              features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
+            },
+          }),
+          artifact: { archive, digest },
+          cachedFetch: cachedFetch === 'escaping-link' || cachedFetch === 'extra-file' ? 'hit' : cachedFetch,
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: { ...TARGET, native: 'xcode' },
+        mode: 'auto',
+        here: { ...HERE, builds: 0 },
+        machines: [credential('cached')],
+        artifact: identity,
+        cacheOnly: true,
+        note: () => {},
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      const stagingDir = join(repo, 'staging');
+      const outcome = await offloadBuild({
+        choice,
+        expectedFingerprint: identity.fingerprint,
+        request: {
+          platform: 'ios',
+          native: {
+            provider: 'xcode',
+            snapshot: { hash: identity.fingerprint, entries: [], parameters: {} },
+            cacheKey: identity.cacheKey,
+            arch: 'arm64',
+          },
+          runtime: 'iOS-27-0',
+          configuration: 'Debug',
+          scheme: 'Sample',
+          isExpo: false,
+          optimizations: null,
+        },
+        stagingDir,
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(outcome.ok).toBe(cachedFetch === 'hit');
+      const observed = outcome.ok
+        ? {
+            cacheHit: outcome.cacheHit,
+            timings: {
+              syncMs: outcome.timings.syncMs,
+              uploadedBytes: outcome.timings.uploadedBytes,
+              workerMs: outcome.timings.workerMs,
+            },
+            plist: readFileSync(join(outcome.artifactPath, 'Info.plist'), 'utf8'),
+          }
+        : { stagingRemoved: !existsSync(stagingDir) };
+      expect(observed).toEqual(
+        cachedFetch === 'hit'
+          ? { cacheHit: true, timings: { syncMs: 0, uploadedBytes: 0, workerMs: 0 }, plist: 'verified plist' }
+          : { stagingRemoved: true },
+      );
+      expect(machine.methods).toEqual(['hello', 'build.offer', 'build.cached-artifact']);
+      const lookup = machine.requests.find((entry) => entry.method === 'build.offer');
+      expect(lookup?.params.artifact).toEqual(identity);
+    },
+  );
+
+  it('old workers receive no new parameters and are skipped for cache-only lookups', async () => {
+    const machine = await fakeMachine(
+      'old',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: 'auto',
+      here: HERE,
+      machines: [credential('old')],
+      artifact: { fingerprint: 'native', cacheKey: 'other-sdk' },
+      cacheOnly: true,
+      note: () => {},
+    });
+    expect(typeof choice).toBe('string');
+    const lookup = machine.requests.find((entry) => entry.method === 'build.offer');
+    expect(lookup?.params).toEqual(expect.not.objectContaining({ artifact: expect.anything() }));
+    expect(machine.methods).not.toContain('build.start');
+  });
+});
+
+test('exact completed artifacts rank ahead of warm idle builders, but another target or SDK remains a miss', () => {
+  const identity = { fingerprint: 'native', cacheKey: 'sdk27-arm64-targetA' };
+  const cached = {
+    ...offer(3),
+    capacity: { ...offer(3).capacity, declined: 'busy' },
+    artifact: { ...identity, name: 'Sample.app', size: 10, sha256: 'a'.repeat(64) },
+  };
+  const base = {
+    mode: 'force' as const,
+    here: HERE,
+    target: TARGET,
+    offers: [
+      { machine: 'idle', offer: offer(0.1) },
+      { machine: 'cached', offer: cached },
+    ],
+  };
+  expect(pickOffer({ ...base, artifact: identity }).order).toEqual([1, 0]);
+  expect(pickOffer({ ...base, artifact: { ...identity, cacheKey: 'sdk28-arm64-targetA' } }).order).toEqual([0]);
+  expect(
+    pickOffer({ ...base, artifact: { ...identity, cacheKey: 'sdk27-arm64-targetB' }, cacheOnly: true }).order,
+  ).toEqual([]);
+  expect(pickOffer({ ...base, artifact: identity, selected: 'idle' }).order).toEqual([0]);
+});
+
+test.each(['auto', 'force', 'named'] as const)(
+  'a vanished artifact reapplies %s placement before compiling on the same peer',
+  async (selection) => {
+    const archive = Buffer.from('cached bytes');
+    const identity = { fingerprint: 'native', cacheKey: 'native-sdk27-arm64-target' };
+    const cachedOffer = {
+      ...offer(4),
+      artifact: {
+        ...identity,
+        name: 'Sample.app',
+        size: archive.length,
+        sha256: createHash('sha256').update(archive).digest('hex'),
+      },
+    };
+    const machine = await fakeMachine(
+      'mini',
+      cachedOffer,
+      { result: { job: 'new-build' } },
+      {
+        hello: () => ({
+          result: {
+            capabilities: ['build'],
+            features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
+          },
+        }),
+        cachedFetch: 'miss',
+      },
+    );
+    machines.push(machine);
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      mode: selection === 'force' ? 'force' : 'auto',
+      selected: selection === 'named' ? 'mini' : 'auto',
+      here: { ...HERE, builds: 0, loadPerCore: 3 },
+      machines: [credential('mini')],
+      artifact: identity,
+      note: () => {},
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: identity.fingerprint,
+      request: {
+        platform: 'ios',
+        native: {
+          provider: 'xcode',
+          snapshot: { hash: identity.fingerprint, entries: [], parameters: {} },
+          cacheKey: identity.cacheKey,
+          arch: 'arm64',
+        },
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: 'Sample',
+        isExpo: false,
+        optimizations: null,
+      },
+      stagingDir: join(repo, 'staging'),
+      onEnter: () => {},
+      onPhase: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(result.ok).toBe(false);
+    expect(machine.methods.includes('build.start')).toBe(selection !== 'auto');
+    expect(machine.methods.filter((method) => method === 'build.offer')).toHaveLength(2);
+  },
+);
