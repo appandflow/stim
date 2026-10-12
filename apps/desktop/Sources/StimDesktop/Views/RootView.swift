@@ -306,7 +306,7 @@ struct RootView: View {
       Task { takeWorkspaceLink() }
     }
     .onReceive(ServerSession.shared.$state) { _ in
-      Task { showSharedWorkspaceLink(in: store.payload) }
+      Task { showSharedWorkspaceLink() }
     }
     .onReceive(store.$payload) { payload in
       updateTutorial(payload)
@@ -817,7 +817,7 @@ struct RootView: View {
       pendingLink = nil
       let pending = PendingSharedWorkspaceLink(request: request)
       pendingSharedLink = pending
-      showSharedWorkspaceLink(in: store.payload)
+      showSharedWorkspaceLink()
       Task {
         try? await Task.sleep(for: .seconds(10))
         guard pendingSharedLink?.id == pending.id else { return }
@@ -840,7 +840,7 @@ struct RootView: View {
   /// since `stim status --watch` can lag the command that printed the link. A link without `archive=` opens the
   /// path's newest archive only after that wait, so a re-created worktree is not shadowed by its old archive.
   private func showWorkspaceLink(in payload: StatusPayload?, arrived: [String]) {
-    showSharedWorkspaceLink(in: payload)
+    showSharedWorkspaceLink()
     guard let pending = pendingLink, let payload else { return }
     guard let target = payload.target(of: pending.request) else {
       if let archive = payload.archive(for: pending.request, waited: pending.waited) {
@@ -885,8 +885,8 @@ struct RootView: View {
         sticky: true, key: "workspace-link:\(path)", workspacePath: path))
   }
 
-  private func showSharedWorkspaceLink(in payload: StatusPayload?) {
-    guard let pending = pendingSharedLink, let payload, case .open(let hello) = ServerSession.shared.state else { return }
+  private func showSharedWorkspaceLink() {
+    guard let pending = pendingSharedLink, case .open(let hello) = ServerSession.shared.state else { return }
     guard let homeId = hello.server.id else {
       pendingSharedLink = nil
       showWorkspaceNotFound("Update Stim and its local server to open shared workspace links.")
@@ -898,10 +898,10 @@ struct RootView: View {
         "This workspace belongs to another Mac or Stim home. Open it in Stim on that Mac or on a paired phone.")
       return
     }
-    guard let request = payload.request(for: pending.request, homeId: homeId) else { return }
+    guard let target = store.target(for: pending.request, connection: ServerSession.shared.feedConnection) else { return }
     pendingSharedLink = nil
-    navigate(.environment(request.path), .request("shared workspace link"))
-    if let device = payload.target(of: request)?.device { focusedDeviceID = device.id }
+    navigate(.environment(target.workspace.path), .request("shared workspace link"))
+    if let device = target.device { focusedDeviceID = device.id }
   }
 
   private func showWorkspaceNotFound(_ body: String, key: String? = nil) {

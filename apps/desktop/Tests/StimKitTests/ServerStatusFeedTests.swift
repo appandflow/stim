@@ -44,7 +44,9 @@ import Testing
     await settle()
   }
 
-  private func openClient(retries: Box<[@MainActor () -> Void]> = Box([])) async throws -> (ServerClient, FakeTransport) {
+  private func openClient(retries: Box<[@MainActor () -> Void]> = Box([]), transports: Box<[FakeTransport]> = Box([]))
+    async throws -> (ServerClient, FakeTransport)
+  {
     var transport: FakeTransport?
     let client = ServerClient(
       endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "Stim Desktop", clientVersion: "1",
@@ -52,6 +54,7 @@ import Testing
       transport: { _, onEvent in
         let next = FakeTransport(onEvent: onEvent)
         transport = next
+        transports.value.append(next)
         return next
       },
       scheduler: { _, work in
@@ -80,7 +83,7 @@ import Testing
 
   private func feed(_ recorder: Recorder) -> ServerStatusFeed {
     ServerStatusFeed(
-      onPayload: { result in
+      onPayload: { result, _, _ in
         if case .success(let payload) = result { recorder.payloads.append(payload) }
       },
       onDelivering: { recorder.delivering.append($0) })
@@ -182,6 +185,33 @@ import Testing
     socket.reply(workspaces(["/w/c"], subscription: "s3"))
     #expect(await until { recorder.paths.last == ["/w/c"] })
     #expect(recorder.delivering == [true])
+  }
+
+  @Test func reconnectWaitsForNewWorkspacesBeforeCombiningMachineViews() async throws {
+    let transports = Box<[FakeTransport]>([])
+    let (client, first) = try await openClient(transports: transports)
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    await settle()
+    await subscribe(first)
+    first.reply(workspaces(["/removed"]))
+    #expect(await until { recorder.paths.last == ["/removed"] })
+    let count = recorder.payloads.count
+
+    client.stop()
+    client.start()
+    #expect(await until { transports.value.count == 2 })
+    let second = try #require(transports.value.last)
+    second.answer("hello", hello)
+    await settle()
+    await subscribe(second)
+    second.reply(machine(live: 0))
+    await settle()
+    #expect(recorder.payloads.count == count)
+    second.reply(workspaces([]))
+    #expect(await until { recorder.paths.last == [] })
   }
 
   @Test func theShownWorkspaceCarriesItsFullEnvironment() async throws {

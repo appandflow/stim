@@ -93,7 +93,8 @@ public typealias ServerScheduler = @MainActor (TimeInterval, @escaping @MainActo
   private var retry = ServerClient.minimumRetry
   private var cancelReconnect: (() -> Void)?
   private var stopped = true
-  private var generation = 0
+  /// Changes whenever the active transport is replaced or dropped, including reconnects to the same server.
+  public private(set) var generation = 0
 
   /// `auth` runs before each connection, so it can pair again after the stored device token was refused.
   public init(

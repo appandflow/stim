@@ -1,4 +1,5 @@
 import { createStore } from 'zustand/vanilla';
+import { validHomeId } from '@stim-cli/core/workspace-link';
 
 import type { ConnectionState, StimConnection } from '@/lib/connection';
 import {
@@ -157,7 +158,16 @@ export function createMachineStore({
     },
     patchLink(id: string, patch: Partial<MachineLink>) {
       const before = store.getState().links[id];
-      store.setState((state) => ({ links: { ...state.links, [id]: { ...(state.links[id] ?? IDLE_LINK), ...patch } } }));
+      const serverId = patch.state?.kind === 'open' ? patch.state.server.id : undefined;
+      store.setState((state) => ({
+        links: { ...state.links, [id]: { ...(state.links[id] ?? IDLE_LINK), ...patch } },
+        ...(validHomeId(serverId)
+          ? {
+              macs:
+                state.macs?.map((mac) => (mac.id === id ? { ...mac, serverId: serverId.toLowerCase() } : mac)) ?? null,
+            }
+          : {}),
+      }));
       if (before?.state.kind === 'open' && patch.state && patch.state.kind !== 'open') write(id);
     },
     removeLink(id: string) {

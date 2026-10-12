@@ -368,7 +368,13 @@ it('does not resolve a shared link from previous workspace views after reconnect
   await act(async () => {
     previous.close();
     previous.onclose?.({ code: 1006, reason: 'reconnect' });
-    await jest.advanceTimersByTimeAsync(5000);
+    router.push(`/open?v=1&machine=${FakeSocket.homeId}&workspace=${workspace}`);
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(screen.getByText('Reconnect')).toBeTruthy();
+  await act(async () => {
+    router.replace('/');
+    await jest.advanceTimersByTimeAsync(4900);
     router.push(`/open?v=1&machine=${FakeSocket.homeId}&workspace=${workspace}`);
     await jest.advanceTimersByTimeAsync(1000);
   });
