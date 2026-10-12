@@ -25,7 +25,7 @@ import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { planPrebuild, recordPrebuild, runPrebuild, staleNativeDirRefusal } from '../engine/prebuild.ts';
 import { loadProjectProvider } from '../engine/remote-cache.ts';
-import { androidRequirements, androidToolchain } from '../offload/toolchain.ts';
+import { androidRequirements, androidToolchainAsync } from '../offload/toolchain.ts';
 import { detectAndroidPackage, detectAppIds } from '../workspace/app-id.ts';
 import { detectIsExpo } from '../workspace/project-files.ts';
 import {
@@ -356,7 +356,11 @@ function reactNativeAndroidArtifact(
           : !buildPlan.cache.write
             ? 'the build cache is off'
             : null,
-      target: () => ({ platform: 'android', local: androidToolchain(), requires: androidRequirements(root) }),
+      target: async () => ({
+        platform: 'android',
+        local: await androidToolchainAsync(),
+        requires: androidRequirements(root),
+      }),
       request: {
         platform: 'android',
         isExpo,

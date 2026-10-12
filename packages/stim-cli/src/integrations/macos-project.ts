@@ -10,7 +10,9 @@ export interface MacosArtifactRecipe {
   stage(bin: string, bundle: string, bundleId: string, displayName?: string): void;
   validateFetched(bundle: string, bundleId: string, displayName?: string): void;
   offload: {
-    target(): Parameters<typeof chooseBuildMachine>[0]['target'];
+    target():
+      | Parameters<typeof chooseBuildMachine>[0]['target']
+      | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request(bundleId: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'macos' }>;
   };
 }

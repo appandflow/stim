@@ -1,6 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import { existsSync } from 'node:fs';
-import { iosToolchain } from '../offload/toolchain.ts';
+import { iosToolchainAsync } from '../offload/toolchain.ts';
 import { nativeTransferRefusal } from '../offload/client.ts';
 import { join } from 'node:path';
 import { getExecutor } from '../exec.ts';
@@ -341,11 +341,11 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
                     : nativeTransferRefusal(repoRoot(root) ?? root, snapshot)),
         };
       },
-      target: (runtime) => ({
+      target: async (runtime) => ({
         platform: 'ios',
         native: 'xcode',
         local: {
-          ...iosToolchain(root, 'xcode'),
+          ...(await iosToolchainAsync(root, 'xcode')),
           ...(context.target.hostedArchitecture
             ? {
                 arch: context.target.hostedArchitecture === 'x86_64' ? 'x64' : 'arm64',

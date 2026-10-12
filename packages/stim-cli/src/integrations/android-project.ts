@@ -45,7 +45,9 @@ export interface AndroidArtifactRecipe {
   offload: {
     supportsUncachedArtifacts?: boolean;
     unsupported: string | null;
-    target(): Parameters<typeof chooseBuildMachine>[0]['target'];
+    target():
+      | Parameters<typeof chooseBuildMachine>[0]['target']
+      | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
     request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;
     unchanged(): Promise<boolean>;
   } | null;

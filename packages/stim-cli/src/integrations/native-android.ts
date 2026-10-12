@@ -8,7 +8,7 @@ import { androidProcessRuntime } from '../commands/android/launch.ts';
 import { buildGradle, androidSdkRefusal, type GradlePreflightFailure, type LocateApkResult } from '../engine/gradle.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { androidToolchain } from '../offload/toolchain.ts';
+import { androidToolchainAsync } from '../offload/toolchain.ts';
 import { settingValueAt } from '../workspace/settings.ts';
 import { gradleOffloadInputs, nativeGradleTransfer, type GradleTransfer } from './native-gradle-inputs.ts';
 import type { AndroidProject } from './android-project.ts';
@@ -161,12 +161,12 @@ export function nativeAndroidProject(root: string): AndroidProject {
               return (error as Error).message;
             }
           },
-          target: () => {
+          target: async () => {
             transfer = nativeGradleTransfer(root, inputs);
             return {
               platform: 'android',
               native: 'gradle',
-              local: androidToolchain(),
+              local: await androidToolchainAsync(),
               requires: { ndk: null, buildTools: null, compileSdk: null },
             };
           },

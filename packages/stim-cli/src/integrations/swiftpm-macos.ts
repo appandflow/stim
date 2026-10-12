@@ -5,7 +5,7 @@ import { getExecutor } from '../exec.ts';
 import { logLines } from '../macos/run.ts';
 import { resolveBundleExtras, setBundleName, stageBundle, validateInfoPlist } from '../macos/stage.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import { macosToolchain } from '../offload/toolchain.ts';
+import { macosToolchainAsync } from '../offload/toolchain.ts';
 import { repoRoot } from '../workspace/worktree.ts';
 import type { MacosProject } from './macos-project.ts';
 import { ambientContext } from '@stim-cli/core';
@@ -70,7 +70,7 @@ export function swiftpmMacosProject(root: string): MacosProject {
           getExecutor().runFile('codesign', ['--verify', '--strict', bundle], { timeoutMs: 'unbounded' });
         },
         offload: {
-          target: () => ({ platform: 'macos', local: macosToolchain() }),
+          target: async () => ({ platform: 'macos', local: await macosToolchainAsync() }),
           request: (id) => ({
             platform: 'macos',
             product,

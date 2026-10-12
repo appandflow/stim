@@ -514,7 +514,7 @@ export async function acquireIosArtifact(
     let asked: PlacementCandidate[] = [];
     const choice = await chooseBuildMachine({
       projectRoot: root,
-      target: offload.target(candidate.runtime),
+      target: await offload.target(candidate.runtime),
       mode: candidate.mode,
       here: candidate.here,
       note: (line) => note(chalk.dim(phaseLine('build', `offload: ${line}`))),
