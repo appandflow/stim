@@ -286,10 +286,10 @@ describe.skipIf(process.platform === 'win32')('POSIX signals and process groups;
         await vi.waitFor(
           () => {
             if (!existsSync(marker)) throw new Error(`Fixture has not started: ${output.join('')}`);
+            fixture = JSON.parse(readFileSync(marker, 'utf8'));
           },
           { timeout: 3000 },
         );
-        fixture = JSON.parse(readFileSync(marker, 'utf8'));
         for (const pid of [fixture!.leader, fixture!.descendant]) {
           const captured = captureProcessIdentity(pid);
           expect(captured.ok).toBe(true);
