@@ -435,7 +435,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const selected = projectRegistry.selectAndroid(root);
     if ('problem' in selected || selected.id !== 'native-android')
       return failed('provider-mismatch', 'The transferred project did not select the native Android integration.');
-    if (!verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest))
+    if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
       return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
     compiled = await compileNativeAndroid(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
@@ -451,7 +451,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         ),
       ) as { buildDirectories?: unknown };
       const outputs = nativeGradleOutputs(src, job.native.inputs, model.buildDirectories);
-      if (!verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest))
+      if (!(await verifyGradleTransfer(src, job.project, job.native.inputs, job.manifest, job.native.sourceDigest)))
         throw new Error('The native source changed while the worker compiled it.');
       const directories = [
         ...outputs,
@@ -479,7 +479,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       metadataDirectories = nativeXcodeMetadataDirectories(
         selectNativeXcodeProject(root, job.scheme ?? undefined, job.configuration ?? undefined),
       );
-      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
+      if (!(await verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories)))
         return failed('source-mismatch', 'The materialized native inputs do not match the source transfer.');
     } catch (error) {
       return failed('source-mismatch', (error as Error).message);
@@ -492,7 +492,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await compileNativeIos(job, root, log, time);
     if (!compiled.ok) return failed(compiled.code, compiled.message);
     try {
-      if (!verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories))
+      if (!(await verifyNativeTransfer(src, job.manifest, job.native.sourceDigest, metadataDirectories)))
         throw new Error('The native source changed while the worker compiled it.');
     } catch (error) {
       if (compiled.temporary) rmSync(compiled.temporary, { recursive: true, force: true });

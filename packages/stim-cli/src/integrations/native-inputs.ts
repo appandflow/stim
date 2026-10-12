@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { lstat, readdir, readlink, realpath } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { manifestDigest } from '../offload/manifest.ts';
 
@@ -24,14 +25,20 @@ export interface NativeInputSnapshot {
 
 export class NativeInputError extends Error {}
 
-export function fingerprintNativeInputs(
+export async function fingerprintNativeInputs(
   inputs: readonly NativeInput[],
   {
     excluded = [],
     ignoredDirectoryMarkers = [],
     parameters,
-  }: { excluded?: readonly string[]; ignoredDirectoryMarkers?: readonly string[]; parameters: unknown },
-): NativeInputSnapshot {
+    signal,
+  }: {
+    excluded?: readonly string[];
+    ignoredDirectoryMarkers?: readonly string[];
+    parameters: unknown;
+    signal?: AbortSignal;
+  },
+): Promise<NativeInputSnapshot> {
   const exclusions = excluded.map((path) => resolve(path));
   const directoryMarkers = new Set(ignoredDirectoryMarkers.map((path) => resolve(path)));
   const entries: NativeInputEntry[] = [];
@@ -42,16 +49,17 @@ export function fingerprintNativeInputs(
   const record = (path: string, kind: string, content: string | Buffer = '') => {
     entries.push({ path, kind, sha256: createHash('sha256').update(content).digest('hex') });
   };
-  const walk = (
+  const walk = async (
     absolute: string,
     logical: string,
     ancestors: ReadonlySet<string>,
     optional = false,
     relative: string | null = null,
-  ) => {
+  ): Promise<void> => {
+    signal?.throwIfAborted();
     let stat;
     try {
-      stat = lstatSync(absolute);
+      stat = await lstat(absolute);
     } catch (error) {
       if (optional && (error as NodeJS.ErrnoException).code === 'ENOENT') {
         record(logical, 'absent');
@@ -60,25 +68,27 @@ export function fingerprintNativeInputs(
       throw error;
     }
     if (stat.isSymbolicLink()) {
-      const target = readlinkSync(absolute);
+      const target = await readlink(absolute);
       const resolved = resolve(dirname(absolute), target);
       if (isExcluded(resolved)) throw new NativeInputError(`Native input ${logical} links into an excluded output.`);
       if (ancestors.has(absolute)) throw new NativeInputError(`Native input ${logical} contains a link cycle.`);
       record(logical, 'link', target);
-      walk(resolved, `${logical}/@target`, new Set([...ancestors, absolute]));
+      await walk(resolved, `${logical}/@target`, new Set([...ancestors, absolute]));
     } else if (stat.isDirectory()) {
-      const canonical = realpathSync(absolute);
+      const canonical = await realpath(absolute);
       if (ancestors.has(canonical)) throw new NativeInputError(`Native input ${logical} contains a directory cycle.`);
       if (!directoryMarkers.has(absolute)) record(logical, 'directory');
       const next = new Set([...ancestors, canonical]);
-      for (const name of readdirSync(absolute).toSorted()) {
+      for (const name of (await readdir(absolute)).toSorted()) {
         const child = join(absolute, name);
         const childRelative = relative === null ? null : relative ? `${relative}/${name}` : name;
         if (isExcluded(child) || (childRelative !== null && admit && !admit(childRelative))) continue;
-        walk(child, `${logical}/${name}`, next, false, childRelative);
+        await walk(child, `${logical}/${name}`, next, false, childRelative);
       }
     } else if (stat.isFile()) {
-      record(logical, `file:${stat.mode & 0o111}`, readFileSync(absolute));
+      const digest = createHash('sha256');
+      for await (const chunk of createReadStream(absolute, { signal })) digest.update(chunk);
+      entries.push({ path: logical, kind: `file:${stat.mode & 0o111}`, sha256: digest.digest('hex') });
     } else {
       throw new NativeInputError(`Native input ${logical} is not a file, directory or symbolic link.`);
     }
@@ -90,12 +100,14 @@ export function fingerprintNativeInputs(
       const path = resolve(input.path);
       if (isExcluded(path)) throw new NativeInputError(`Native input ${input.name} is also an excluded output.`);
       admit = input.admit;
-      walk(path, input.name, new Set(), input.optional, '');
+      await walk(path, input.name, new Set(), input.optional, '');
     }
   } catch (error) {
+    signal?.throwIfAborted();
     if (error instanceof NativeInputError) throw error;
     throw new NativeInputError(`Could not read native build inputs: ${(error as Error).message}`, { cause: error });
   }
+  signal?.throwIfAborted();
   const sorted = entries.toSorted((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const hash = createHash('sha256')
     .update('stim-native-inputs-v1\0')

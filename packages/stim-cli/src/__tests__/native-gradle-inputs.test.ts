@@ -148,18 +148,18 @@ test('only declared real output directories reported by AGP become reusable work
   );
 });
 
-test('a build directory Gradle creates outside reported outputs is named after the build', () => {
+test('a build directory Gradle creates outside reported outputs is named after the build', async () => {
   write('build-logic/settings.gradle.kts', 'source');
   visible.push('build-logic/settings.gradle.kts');
   const transfer = nativeGradleTransfer(root, declaration);
   rmSync(join(root, 'private-unlisted.txt'));
   write('build-logic/build/classes/Plugin.class', 'compiled');
-  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow(
+  await expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).rejects.toThrow(
     'directory build-logic/build is outside the source transfer',
   );
   rmSync(join(root, 'build-logic/build'), { recursive: true });
   mkdirSync(join(root, 'app/.cxx'));
-  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow(
+  await expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).rejects.toThrow(
     'directory app/.cxx is outside the source transfer',
   );
 });
@@ -208,19 +208,19 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('worker verification excludes only declared outputs and project state, detects source edits and unexpected ignored bytes', () => {
+test('worker verification excludes only declared outputs and project state, detects source edits and unexpected ignored bytes', async () => {
   const transfer = nativeGradleTransfer(root, declaration);
   rmSync(join(root, 'private-unlisted.txt'));
-  expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toBe(true);
+  expect(await verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toBe(true);
   write('.gradle/cache', 'worker state');
   write('.kotlin/cache', 'compiler state');
   write('app/build/result.apk', 'worker result');
-  expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toBe(true);
+  expect(await verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toBe(true);
   write('private-unlisted.txt', 'unexpected');
-  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow(
+  await expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).rejects.toThrow(
     'ignored or absent',
   );
   rmSync(join(root, 'private-unlisted.txt'));
   write('app/src/main/Main.kt', 'modified by build');
-  expect(() => verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).toThrow('changed');
+  await expect(verifyGradleTransfer(root, '', declaration, transfer.files, transfer.digest)).rejects.toThrow('changed');
 });
