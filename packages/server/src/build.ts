@@ -201,7 +201,7 @@ function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; cli
     home: `${gradleUserHome(join(root, client)).toLowerCase()}\\`,
   }));
   const daemons: Array<{ pid: number; client: string }> = [];
-  for (const line of ps.split('\n')) {
+  for (const line of ps.split(/\r?\n/)) {
     const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
     if (!pid || !command?.includes(GRADLE_DAEMON)) continue;
     const client =
@@ -741,7 +741,7 @@ export class BuildHost {
           }
           entry.settled = true;
           this.jobs.delete(entry);
-          if (entry.outcome!.ok === false && entry.outcome!.code === 'cancelled') void this.sweepDaemons(client);
+          if (killTimer) void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
             client,
