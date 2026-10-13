@@ -31,6 +31,16 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(ticket.isoExpires, ISO8601DateFormatter().string(from: now.addingTimeInterval(1800)))
   }
 
+  func testTicketNeverStartsWithADashThatParseArgsWouldReadAsAnOption() {
+    var draws = 0
+    let ticket = SetupTicket.generate(now: now) { bytes in
+      draws += 1
+      bytes = [UInt8](repeating: draws == 1 ? 0xF8 : 0, count: 32)
+    }
+    XCTAssertEqual(draws, 2)
+    XCTAssertEqual(ticket.value.first, "A")
+  }
+
   func testPreviewAndCommandFollowChosenCapabilitiesAndExistingApprovals() {
     let known = SetupKnown(serverVersion: "1.16.0", clientName: "Laptop")
     let builds = previewLines(capabilities: [.build], known: known)
