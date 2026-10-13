@@ -14,6 +14,7 @@ it('keeps native task time, pilot scope, and verified proof separate from readin
   }
   expect(html).toContain('Native iOS');
   expect(html).toContain('Native macOS');
-  expect(html).not.toContain('android-stim.png');
+  expect(html).toContain('Native Android');
+  expect(html).toContain('Near parity');
   expect(html).toContain('returned tier unverified');
 });
