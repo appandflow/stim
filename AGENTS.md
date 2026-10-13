@@ -329,7 +329,8 @@ outside it moves to its own issue and pull request.
   `~/.local/share/stim/services/<label>/versions/` on Linux, keeping the
   running and the previous version, and repoint only the service's server
   script; a failed health check switches back. A Linux worker takes Android
-  builds only; setup there approves `build` and refuses `device-host`. A client approved for `build` or
+  builds only; setup there approves `build` and refuses `device-host`, and off macOS
+  stim-server refuses device-host requests and grants. A client approved for `build` or
   `device-host` can run the same update on this machine over the tailnet, and no
   other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its

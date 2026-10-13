@@ -154,7 +154,13 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(plain('devices').stdout).toContain(`${id}  Laptop  pending ${capability}  from laptop (u)`);
     expect(plain('devices', 'grant', id, '--control').stderr).toContain(`takes only --${capability}`);
     expect(plain('devices', 'grant', id, `--${capability}`, '--read').status).toBe(1);
-    expect(plain('devices', 'grant', id, `--${capability}`).status).toBe(0);
+    const grants = capability === 'build' || process.platform === 'darwin';
+    const granted = plain('devices', 'grant', id, `--${capability}`);
+    expect({ status: granted.status, refused: granted.stderr.includes('Hosting simulators needs a Mac') }).toEqual({
+      status: grants ? 0 : 1,
+      refused: !grants,
+    });
+    if (!grants) return;
     const { devices } = run('devices', '--json') as { devices: Record<string, unknown>[] };
     expect(devices).toEqual([
       expect.objectContaining({ id, capabilities: [capability], requestedCapability: capability }),

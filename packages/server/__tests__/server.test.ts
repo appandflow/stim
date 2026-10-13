@@ -326,6 +326,7 @@ async function start(
   overrides: {
     host?: ServerOptions['host'];
     loopbackOnly?: boolean;
+    hostsDevices?: boolean;
     exit?: boolean;
     whoisDelayMs?: number;
     authTimeoutMs?: number;
@@ -365,6 +366,7 @@ async function start(
   chmodSync(tailscale, 0o755);
   server = await startServer({
     host: overrides.host,
+    hostsDevices: overrides.hostsDevices ?? true,
     hosts: ['127.0.0.1'],
     port: 0,
     stimCli,
@@ -1653,6 +1655,26 @@ describe('offloaded builds', () => {
       if (message.outcome) return events;
     }
   }
+
+  test.skipIf(!fakeTailscale)(
+    'a machine that cannot host refuses device-host requests and still takes build requests',
+    async () => {
+      const port = await start({ hostsDevices: false });
+      const asking = await connect(port, '100.64.0.3');
+      expect(
+        await asking.request('hello', {
+          protocol: 1,
+          client: CLIENT,
+          auth: { request: 'device-host', deviceName: 'Host client' },
+        }),
+      ).toMatchObject({ error: { code: 'forbidden', message: expect.stringContaining('needs a Mac') } });
+      expect(readDeviceHostClients()).toEqual([]);
+      const { client } = await buildClient(port);
+      expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+        result: { capacity: { max: 1 } },
+      });
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'mirrors a content-addressed manifest, builds it and returns the artifact with its digest',

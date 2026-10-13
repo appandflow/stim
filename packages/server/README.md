@@ -120,7 +120,8 @@ Argument and preflight refusals change nothing. Preflight requires macOS or
 Linux, Node 22.12+, running Tailscale, the client node on this tailnet, and
 this user's GUI login session on macOS or systemd user manager on Linux. On
 Linux, setup takes `--build` only and refuses `--device-host`, because hosting
-needs a Mac; see [On Linux](#on-linux).
+needs a Mac; see [On Linux](#on-linux). Off macOS, stim-server also refuses a
+device-host request at hello and `stim-server devices grant <id> --device-host`.
 
 Running setup on the worker is the worker-side approval. It pre-approves at
 most one request per chosen capability, from this node, carrying this ticket,
