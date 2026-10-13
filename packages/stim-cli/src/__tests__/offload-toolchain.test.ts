@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { podEnv } from '../engine/deps.ts';
+import { podEnvForRubyAsync, readRubyVersion } from '../engine/deps.ts';
 import {
   androidToolchainAsync,
   iosToolchainAsync,
@@ -82,7 +82,7 @@ test.skipIf(process.platform !== 'darwin')(
     writeFileSync(join(root, '.ruby-version'), '3.2.0\n');
     const probed = (await iosToolchainAsync(root)).cocoapods;
     const built = execFileSync(join(root, 'bin', 'pod'), ['--version'], {
-      env: podEnv(root),
+      env: await podEnvForRubyAsync(readRubyVersion(root)),
       encoding: 'utf-8',
     }).trim();
     expect(probed).toBe('1.17.0');

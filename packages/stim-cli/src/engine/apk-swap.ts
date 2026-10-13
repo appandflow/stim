@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
@@ -225,6 +226,7 @@ export type ApkSwapResult = {
 };
 
 export async function swapApkBundle({
+  context,
   root,
   isExpo,
   cachedApkPath,
@@ -245,6 +247,7 @@ export async function swapApkBundle({
   onHeartbeat = (line: string) => console.error(line),
   platform = process.platform,
 }: {
+  context?: StimContext;
   root: string;
   isExpo: boolean;
   cachedApkPath: string;
@@ -324,7 +327,7 @@ export async function swapApkBundle({
     child = spawn(command.file, command.args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env: { ...(context?.env ?? process.env), FORCE_COLOR: '0' },
     });
   } catch (err) {
     return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(err)}`);
@@ -404,7 +407,7 @@ export async function swapApkBundle({
   const diff = compareAssetManifests(fresh, storedAssets);
   if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
-  const jar = jarPath();
+  const jar = jarPath({ javaHome: (context?.env ?? process.env).JAVA_HOME ?? '' });
   const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
   try {
     await e.runFileAsync(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {

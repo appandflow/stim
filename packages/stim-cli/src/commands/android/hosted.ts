@@ -150,6 +150,7 @@ export async function finishHostedAndroidRun({
     await artifact.providerUpload;
     const facts = reportAndroidResult({
       ...report,
+      out,
       ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),
       root,
       slot,

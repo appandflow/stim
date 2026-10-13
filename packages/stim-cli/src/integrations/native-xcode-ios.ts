@@ -185,6 +185,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
         beforePrepare();
         context.step('pods');
         const result = await runPodInstall(root, context.logWriter(), {
+          onHeartbeat: context.note,
           directory: root,
           estimateMs: context.estimates().podsMs,
         });

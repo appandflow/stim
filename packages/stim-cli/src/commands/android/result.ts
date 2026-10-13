@@ -244,6 +244,7 @@ export interface ReportAndroidResultArgs {
   durationMs: number;
   writer: AndroidWriter;
   emit: (line: string) => void;
+  out: (line: string) => void;
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
@@ -277,6 +278,7 @@ export function reportAndroidResult({
   durationMs,
   writer,
   emit,
+  out,
   lease,
   recordRun,
   reclaimed = [],
@@ -361,7 +363,7 @@ export function reportAndroidResult({
         ...(!host ? [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)] : []),
       ].join('\n'),
     );
-    if (links) console.error(chalk.dim(workspaceLinkLine(links)));
+    if (links) out(chalk.dim(workspaceLinkLine(links)));
   }
   return facts;
 }

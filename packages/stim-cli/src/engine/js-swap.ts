@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -246,6 +247,7 @@ export type JsSwapResult = {
 };
 
 export async function swapJsBundle({
+  context,
   root,
   iosDir,
   isExpo,
@@ -260,6 +262,7 @@ export async function swapJsBundle({
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
 }: {
+  context?: StimContext;
   root: string;
   iosDir: string;
   isExpo: boolean;
@@ -345,7 +348,7 @@ export async function swapJsBundle({
     child = spawn(command.file, command.args, {
       cwd: root,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
+      env: { ...(context?.env ?? process.env), FORCE_COLOR: '0' },
     });
   } catch (err) {
     return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(err)}`);

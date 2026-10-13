@@ -231,7 +231,6 @@
         "packages/stim-cli/src/archive.ts",
         "packages/stim-cli/src/command-output.ts",
         "packages/stim-cli/src/commands/android.ts",
-        "packages/stim-cli/src/commands/android/result.ts",
         "packages/stim-cli/src/commands/macos.ts",
         "packages/stim-cli/src/commands/start.ts",
         "packages/stim-cli/src/commands/stop.ts",

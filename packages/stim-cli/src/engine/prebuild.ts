@@ -212,7 +212,7 @@ export async function runPrebuild(
       spawn(bin, ['prebuild', '-p', platform, '--no-install', ...(clean ? ['--clean'] : [])], {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, FORCE_COLOR: '0', CI: '1' },
+        env: { ...(ambientContext()?.env ?? process.env), FORCE_COLOR: '0', CI: '1' },
       }),
     );
   } catch (err) {

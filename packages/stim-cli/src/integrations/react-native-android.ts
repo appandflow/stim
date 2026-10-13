@@ -156,6 +156,8 @@ function reactNativeAndroidArtifact(
       return null;
     }
     const swap = await swapApk({
+      context: operation,
+      onHeartbeat: out,
       root,
       isExpo,
       cachedApkPath: cachedPath,

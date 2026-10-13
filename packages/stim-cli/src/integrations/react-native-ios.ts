@@ -238,6 +238,8 @@ function reactNativeIosArtifact(
       if (!release) return cachedPath;
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
+        context: operation,
+        onHeartbeat: note,
         root,
         iosDir: iosProject.dir,
         isExpo,
@@ -369,6 +371,7 @@ function reactNativeIosArtifact(
       if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
+          onHeartbeat: note,
           estimateMs: estimates().podsMs,
           directory: iosProject.dir,
         });

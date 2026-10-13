@@ -1025,6 +1025,7 @@ export async function finishAndroidRun({
     durationMs: now() - started,
     writer,
     emit,
+    out,
     lease: physical ? leaseFacts : undefined,
     recordRun,
     reclaimed,
