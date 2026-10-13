@@ -445,8 +445,8 @@ builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
-every paired machine what it can build. Stim picks one whose Stim build and
-CPU architecture matches the target simulator, with at least 10 GB free, that does
+every paired machine what it can build. Stim picks one whose Stim build
+matches and, for iOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
 least loaded. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
@@ -462,7 +462,8 @@ in that order:
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS
   artifacts are not cached. See [macOS development](./macos.md).
-- For Android, its JDK major version must match (the vendor may differ), and
+- For Android, its CPU architecture may differ, so an x86_64 Linux machine
+  running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
   project's React Native version names in `gradle/libs.versions.toml`. Gradle
   and the Android Gradle plugin come from the synced project. It builds with
@@ -518,7 +519,7 @@ For Android builds, start stim-server on the remote Mac with `JAVA_HOME`
 pointing at a JDK of the same major version as the clients (otherwise it
 uses the macOS default JDK, which `java_home` may not find, for example with
 Homebrew's `openjdk@17`) and `ANDROID_HOME` at its Android SDK (default
-`~/Library/Android/sdk`). After an Android build, the client's Gradle daemon
+`~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
 stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
 15 seconds. A new value applies from the next daemon. The daemon never holds

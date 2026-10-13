@@ -279,12 +279,15 @@ Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
 For iOS builds, Xcode and the simulator SDK must match, and the worker needs
-an iPhone simulator on the target runtime. CPU architecture and the Stim build
-must match the build target. Project-selected CocoaPods versions must match unless the
+an iPhone simulator on the target runtime. The Stim build must match, and so
+must the CPU architecture for iOS and macOS builds. Project-selected CocoaPods versions must match unless the
 project's `Gemfile.lock` pins it; then both Macs use Bundler and the pinned
 version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
-compile SDK. See [machine settings](./settings.md#machine-settings) for the
+compile SDK. An Android worker can have another CPU architecture, and it can
+be an x86_64 Linux machine running stim-server: there, start `stim-server`
+yourself and approve the request with `stim-server devices grant <id> --build`,
+since `setup` and `service` are macOS-only. See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
