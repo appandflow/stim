@@ -9,6 +9,7 @@ import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../ex
 import { checkEasAuth, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import { makeWriter } from './_factories.ts';
 import { operationState } from '../engine/operation-state.ts';
+import { processOperation } from '../cli-operation.ts';
 
 let root: string;
 
@@ -314,7 +315,7 @@ test.each(['SIGINT', 'SIGTERM'])(
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(await pending).toEqual({ failed: 'EAS cache upload cancelled' });
       expect(owningChild.signalCode).toBe('SIGKILL');
-      expect(operationState(a.ctx)).toMatchObject({ handled: true, draining: true });
+      expect(operationState(a.ctx)).toMatchObject({ handled: true, draining: reason !== 'SIGTERM' });
       expect(operationState(a.ctx).exitCleanups.size).toBe(0);
     } finally {
       a.controller.abort('fixture cleanup');
@@ -324,6 +325,47 @@ test.each(['SIGINT', 'SIGTERM'])(
     }
   },
 );
+
+test('SIGTERM during a background EAS upload retains immediate CLI termination', async () => {
+  const fixture = context('terminate', { CACHE_TEST_BLOCK: 'upload' });
+  const operation = processOperation(root);
+  operation.context.env = fixture.ctx.env;
+  operation.context.output = fixture.ctx.output;
+  operationState(operation.context).runSignal = new AbortController().signal;
+  const loaded = await loadProjectProvider(root);
+  const children = captureChildren();
+  const pending = withAmbientContext(operation.context, () =>
+    uploadRemote({
+      context: operation.context,
+      provider: loaded.provider,
+      projectRoot: root,
+      platform: 'ios',
+      fingerprintHash: 'local',
+      buildPath: join(root, 'fixture.app'),
+      timeoutMs: 15000,
+    }),
+  );
+  const terminated = new Error('fixture process terminated');
+  const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
+    throw terminated;
+  });
+  try {
+    const deadline = Date.now() + 5000;
+    while (!children.some((child) => child.spawnargs.includes('upload')) && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    const owningChild = children.find((child) => child.spawnargs.includes('upload'));
+    assert(owningChild);
+    expect(() => operation.cancel('SIGTERM')).toThrow(terminated);
+    expect(exit).toHaveBeenCalledWith(143);
+    expect(await pending).toEqual({ failed: 'EAS cache upload cancelled' });
+    expect(owningChild.signalCode).toBe('SIGKILL');
+  } finally {
+    exit.mockRestore();
+    operation.dispose();
+    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await pending.catch(() => {});
+  }
+});
 
 test('authentication is coalesced within an operation and cannot reuse another operation’s actor', async () => {
   const a = context('actor-a').ctx;

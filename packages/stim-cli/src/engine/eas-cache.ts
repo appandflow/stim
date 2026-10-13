@@ -5,7 +5,7 @@ import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { runCancellationSignal } from './native-run.ts';
-import { operationState } from './operation-state.ts';
+import { isTermination, operationState } from './operation-state.ts';
 
 interface EasCacheOptions {
   file: string;
@@ -87,7 +87,7 @@ export async function easCache(
         onSpawn: (child) => {
           cancel = () => {
             state.handled = true;
-            state.draining = true;
+            if (!isTermination(context?.signal.reason)) state.draining = true;
             child.kill('SIGKILL');
           };
           state.exitCleanups.add(cancel);
