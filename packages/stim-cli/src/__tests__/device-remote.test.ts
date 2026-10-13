@@ -772,10 +772,11 @@ process.stdout.write(JSON.stringify(result));
 });
 
 describe('session creation', () => {
-  test('publishes the fixed ownership claim before workspace state, which keeps the preview URL', async () => {
+  test('awaits registration and publishes the fixed ownership claim before workspace state', async () => {
     const ledgerRoot = join(tmpHome, 'machine-eas');
     let claimVisibleDuringStateWrite = false;
     let statePatch: Record<string, unknown> | null = null;
+    let registered = false;
 
     const result = await ensureRemoteBootOwned({
       root,
@@ -783,7 +784,14 @@ describe('session creation', () => {
       sessionName: 'stim-wt',
       startedAt: '2026-08-28T00:00:00.000Z',
       deviceType: 'iPhone 17 Pro',
-      boot: async () => ({ ok: true, udid: 'drs_claimed' }),
+      register: async () => {
+        await Promise.resolve();
+        registered = true;
+      },
+      boot: async () => {
+        expect(registered).toBe(true);
+        return { ok: true, udid: 'drs_claimed' };
+      },
       createdSessionId: () => 'drs_claimed',
       abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_claimed' }),
       webPreviewUrl: () => 'https://preview.example/drs_claimed',

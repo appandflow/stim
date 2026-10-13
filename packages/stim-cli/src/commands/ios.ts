@@ -703,8 +703,9 @@ async function runIos(
       buildCache: opts.buildCache,
     });
     if (isEasBuildFailure(easBuild)) return fail(easBuild);
-    const registerProject = () => d.upsertProject(root, { bundleId: integration.bundleId() ?? undefined, isExpo });
-    if (remoteBackend !== 'eas') registerProject();
+    const registerProject = async () =>
+      d.upsertProject(root, { bundleId: (await integration.bundleId()) ?? undefined, isExpo });
+    if (remoteBackend !== 'eas') await registerProject();
     const proj = d.getProject(root);
 
     const limits = d.getConcurrencyLimits();

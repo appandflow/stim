@@ -25,7 +25,7 @@ const TIMED_OUT = Symbol('timed-out');
 
 type ProjectConfig = Record<string, unknown>;
 
-type ExecFileFn = (file: string, args: string[], opts: { timeoutMs: number }) => string;
+type ExecFileFn = (file: string, args: string[], opts: { timeoutMs: number }) => string | Promise<string>;
 
 interface ReadProjectConfigResult {
   config?: ProjectConfig | null;
@@ -179,10 +179,10 @@ export function cacheLevel(value: unknown): 'local' | 'remote' | false {
   return value === 'local' || value === 'remote' ? value : false;
 }
 
-export function readProjectConfig(
+export async function readProjectConfig(
   root: string,
   { run = null, timeoutMs = CONFIG_TIMEOUT_MS }: { run?: ExecFileFn | null; timeoutMs?: number } = {},
-): ReadProjectConfigResult {
+): Promise<ReadProjectConfigResult> {
   const dynamic = dynamicConfigFile(root);
   if (!dynamic) {
     const file = join(root, 'app.json');
@@ -203,10 +203,10 @@ export function readProjectConfig(
         '(no expo/package.json to read a bin from, and no node_modules/.bin/expo here or in any parent)',
     };
   }
-  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFile(file, args, opts));
+  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFileAsync(file, args, opts));
   let stdout;
   try {
-    stdout = exec(bin, ['config', '--json', root], { timeoutMs });
+    stdout = await exec(bin, ['config', '--json', root], { timeoutMs });
   } catch (err) {
     return { unavailable: `\`expo config --json\` failed: ${firstLine(err)}` };
   }
@@ -254,7 +254,7 @@ export async function loadProjectProvider(
 ): Promise<LoadProjectProviderResult> {
   if (!isExpo) return { none: true };
 
-  const read = readProjectConfig(projectRoot, { run, timeoutMs });
+  const read = await readProjectConfig(projectRoot, { run, timeoutMs });
   if (read.unavailable) return { unavailable: read.unavailable };
 
   const normalized = normalizeProvider(providerFromConfig(read.config));
@@ -387,7 +387,7 @@ interface CheckEasAuthOptions {
   cache?: Map<string, EasAuthResult> | null;
 }
 
-type ExecFileSyncError = NodeJS.ErrnoException & {
+type ExecFileError = NodeJS.ErrnoException & {
   signal?: string | null;
   killed?: boolean;
   stdout?: unknown;
@@ -395,22 +395,22 @@ type ExecFileSyncError = NodeJS.ErrnoException & {
   status?: number | null;
 };
 
-export function checkEasAuth({
+export async function checkEasAuth({
   projectRoot,
   owner = null,
   run = null,
   resolveBin = null,
   timeoutMs = WHOAMI_TIMEOUT_MS,
   cache = easAuthCache,
-}: CheckEasAuthOptions): EasAuthResult {
+}: CheckEasAuthOptions): Promise<EasAuthResult> {
   const key = `${projectRoot}::${owner || ''}`;
   if (cache?.has(key)) return cache.get(key)!;
-  const answer = probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
+  const answer = await probeEasAuth({ projectRoot, owner, run, resolveBin, timeoutMs });
   cache?.set(key, answer);
   return answer;
 }
 
-function probeEasAuth({
+async function probeEasAuth({
   projectRoot,
   owner,
   run,
@@ -422,7 +422,7 @@ function probeEasAuth({
   run?: ExecFileFn | null;
   resolveBin?: ((root: string) => { file: string; source: 'project' | 'path' } | null) | null;
   timeoutMs: number;
-}): EasAuthResult {
+}): Promise<EasAuthResult> {
   const bin = (resolveBin || resolveEasCliBin)(projectRoot);
   if (!bin) {
     return {
@@ -433,12 +433,12 @@ function probeEasAuth({
     };
   }
 
-  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFile(file, args, opts));
+  const exec: ExecFileFn = run || ((file, args, opts) => getExecutor().runFileAsync(file, args, opts));
   let result: { stdout: string; stderr?: string; exitCode: number };
   try {
-    result = { stdout: String(exec(bin.file, ['whoami'], { timeoutMs }) ?? ''), exitCode: 0 };
+    result = { stdout: String((await exec(bin.file, ['whoami'], { timeoutMs })) ?? ''), exitCode: 0 };
   } catch (e) {
-    const err = e as ExecFileSyncError;
+    const err = e as ExecFileError;
     if (err?.code === 'ETIMEDOUT' || err?.signal === 'SIGTERM' || err?.killed) {
       return { unknown: `eas whoami timed out after ${timeoutMs}ms` };
     }

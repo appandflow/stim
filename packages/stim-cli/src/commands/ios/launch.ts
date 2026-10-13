@@ -523,7 +523,7 @@ async function installsOverWifi(
 }
 
 interface FinishIosRunArgs {
-  projectBundleId(): string | null;
+  projectBundleId(): string | null | Promise<string | null>;
   runtime: IosRuntimePlan;
   runtimePreparation: MobileRuntimePreparation;
   devicePlacement?: ReportIosResultArgs['devicePlacement'];
@@ -610,14 +610,14 @@ function installMayBeProven(adopting: boolean, parkedCacheKey: string | undefine
   return !adopting || !parkedCacheKey || parkedCacheKey === storeKey;
 }
 
-function resolveRunBundleId(
+async function resolveRunBundleId(
   d: IosDeps,
-  projectBundleId: () => string | null,
+  projectBundleId: () => string | null | Promise<string | null>,
   appPath: string | null,
   bundleId: string | null,
-): string | null {
+): Promise<string | null> {
   if (!appPath || bundleId) return bundleId;
-  return d.readBundleId(appPath) || projectBundleId();
+  return d.readBundleId(appPath) || (await projectBundleId());
 }
 
 function readRunExecutable(d: IosDeps, appPath: string | null, note: (line: string) => void): string | null {
@@ -765,7 +765,7 @@ export async function finishIosRun({
     return null;
   };
 
-  bundleId = resolveRunBundleId(d, projectBundleId, appPath, bundleId);
+  bundleId = await resolveRunBundleId(d, projectBundleId, appPath, bundleId);
   if (appPath && !bundleId) {
     return fail({
       code: 'STIM_INSTALL_FAILED',

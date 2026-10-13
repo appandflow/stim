@@ -326,23 +326,23 @@ describe('detectPlatforms without running project code', () => {
   });
 });
 
-test('detectBundleId reads ios.bundleIdentifier from app.json', () => {
-  expect(detectBundleId(EXPO_PROJ)).toBe('com.example.sample');
+test('detectBundleId reads ios.bundleIdentifier from app.json', async () => {
+  expect(await detectBundleId(EXPO_PROJ)).toBe('com.example.sample');
 });
 
-test('detectBundleId falls back to pbxproj when app config has no bundle id', () => {
-  expect(detectBundleId(BARE_PROJ)).toBe('me.sample');
+test('detectBundleId falls back to pbxproj when app config has no bundle id', async () => {
+  expect(await detectBundleId(BARE_PROJ)).toBe('me.sample');
 });
 
-test('detectAndroidPackage reads android.package from app.json', () => {
-  expect(detectAndroidPackage(EXPO_PROJ)).toBe('com.example.sample');
+test('detectAndroidPackage reads android.package from app.json', async () => {
+  expect(await detectAndroidPackage(EXPO_PROJ)).toBe('com.example.sample');
 });
 
-test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', () => {
-  expect(detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
+test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', async () => {
+  expect(await detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
 });
 
-test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.module names', () => {
+test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.module names', async () => {
   const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-gradle-root-')));
   try {
     getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
@@ -358,31 +358,34 @@ test('detectAndroidPackage reads a Kotlin DSL namespace from the module android.
       join(app, '.stim.json'),
       JSON.stringify({ android: { gradleRoot: '../..', module: ':packages:tester:android:app' } }),
     );
-    expect(detectAndroidPackage(app)).toBe('com.facebook.react.uiapp');
+    expect(await detectAndroidPackage(app)).toBe('com.facebook.react.uiapp');
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
 });
 
-test('an Android id that is not a dotted package name is not detected, and the problem is reported', () => {
+test('an Android id that is not a dotted package name is not detected, and the problem is reported', async () => {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bad-package-')));
   try {
     mkdirSync(join(root, 'android', 'app'), { recursive: true });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
     const gradle = join(root, 'android', 'app', 'build.gradle');
     writeFileSync(gradle, 'android {\n  defaultConfig {\n    applicationId "com.x;reboot"\n  }\n}\n');
-    const bad = detectAppIds(root);
+    const bad = await detectAppIds(root);
     expect(bad.androidPackage).toBeNull();
     expect(bad.androidPackageProblem).toMatch(/Invalid Android package "com\.x;reboot" in .*build\.gradle/);
     writeFileSync(
       gradle,
       'android {\n  namespace "${ns}"\n  defaultConfig {\n    applicationId "com.example_1.app"\n  }\n}\n',
     );
-    expect(detectAppIds(root).androidPackage).toBe('com.example_1.app');
+    expect((await detectAppIds(root)).androidPackage).toBe('com.example_1.app');
     writeFileSync(gradle, 'android {\n  namespace "com.example_1.app"\n}\n');
-    expect(detectAppIds(root)).toMatchObject({ androidPackage: 'com.example_1.app', androidPackageProblem: null });
+    expect(await detectAppIds(root)).toMatchObject({
+      androidPackage: 'com.example_1.app',
+      androidPackageProblem: null,
+    });
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: "com.x'; reboot; '" } } }));
-    expect(detectAppIds(root).androidPackageProblem).toMatch(/in the Expo config android\.package/);
+    expect((await detectAppIds(root)).androidPackageProblem).toMatch(/in the Expo config android\.package/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -423,22 +426,22 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
       else process.env.APP_VARIANT = previousVariant;
     });
 
-    test("ids come from evaluating the config in Stim's environment, not from matching its text", () => {
+    test("ids come from evaluating the config in Stim's environment, not from matching its text", async () => {
       delete process.env.APP_VARIANT;
-      expect(detectBundleId(root)).toBe('com.example.app');
-      expect(detectAndroidPackage(root)).toBe('com.example.app');
+      expect(await detectBundleId(root)).toBe('com.example.app');
+      expect(await detectAndroidPackage(root)).toBe('com.example.app');
       process.env.APP_VARIANT = 'development';
-      expect(detectBundleId(root)).toBe('com.example.app.dev');
-      expect(detectAndroidPackage(root)).toBe('com.example.app.dev');
+      expect(await detectBundleId(root)).toBe('com.example.app.dev');
+      expect(await detectAndroidPackage(root)).toBe('com.example.app.dev');
     });
 
-    test('a config that fails to evaluate falls back to the literal ids in its text', () => {
+    test('a config that fails to evaluate falls back to the literal ids in its text', async () => {
       process.env.APP_VARIANT = 'bogus';
-      expect(detectBundleId(root)).toBe('com.example.literal');
-      expect(detectAndroidPackage(root)).toBe('com.example.literal');
+      expect(await detectBundleId(root)).toBe('com.example.literal');
+      expect(await detectAndroidPackage(root)).toBe('com.example.literal');
     });
 
-    test('a config that fails to evaluate still takes the ids app.json declares', () => {
+    test('a config that fails to evaluate still takes the ids app.json declares', async () => {
       process.env.APP_VARIANT = 'bogus';
       writeFileSync(
         join(root, 'app.json'),
@@ -446,7 +449,7 @@ process.stdout.write(JSON.stringify({ name: 'app', ios: { bundleIdentifier: id }
           expo: { ios: { bundleIdentifier: 'com.example.json' }, android: { package: 'com.example.json' } },
         }),
       );
-      expect(detectAppIds(root)).toEqual({
+      expect(await detectAppIds(root)).toEqual({
         bundleId: 'com.example.json',
         androidPackage: 'com.example.json',
         androidPackageProblem: null,

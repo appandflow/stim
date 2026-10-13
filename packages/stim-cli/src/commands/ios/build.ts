@@ -240,7 +240,7 @@ export async function buildIosOperation(
         if (!acquired.ok)
           throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
         artifact = acquired.artifact;
-        artifact.bundleId ??= readBundleId(artifact.path) ?? integration.bundleId();
+        artifact.bundleId ??= readBundleId(artifact.path) ?? (await integration.bundleId());
         throwIfCancelled(runCancellationSignal(context), 'iOS build');
         const artifacts = join(workspaceDir(root), 'artifacts');
         mkdirSync(artifacts, { recursive: true });

@@ -403,7 +403,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.loadProvider.push([projectRoot, opts]);
       return { none: true as const };
     },
-    easAuth: (args: EasAuthArgs = {}) => {
+    easAuth: async (args: EasAuthArgs = {}) => {
       calls.easAuth.push(args);
       return { ok: true as const, account: 'janic' };
     },
@@ -2789,7 +2789,7 @@ describe('the remote cache', () => {
   test('a logged-out EAS session skips the remote tier and says so, once', async () => {
     const h = harness({
       loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-      easAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+      easAuth: async () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
       resolveRemoteBuild: never('the provider'),
       uploadRemoteBuild: never('the provider'),
     });
@@ -2823,7 +2823,7 @@ describe('the remote cache', () => {
   test('a session that could not be established changes nothing', async () => {
     const h = harness({
       loadProvider: async () => provider(),
-      easAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+      easAuth: async () => ({ unknown: 'eas whoami timed out after 15000ms' }),
     });
     await h.run();
     expect(h.calls.resolveRemoteBuild.length).toBe(1);
@@ -2833,7 +2833,7 @@ describe('the remote cache', () => {
   test('a session on the wrong account warns, naming both, and still consults the cache', async () => {
     const h = harness({
       loadProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-      easAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
+      easAuth: async () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
     });
     await h.run();
     expect(h.calls.resolveRemoteBuild.length).toBe(1);
@@ -2845,7 +2845,7 @@ describe('the remote cache', () => {
   test('a provider failure that reads as auth gets the auth note, not the generic one', async () => {
     const h = harness({
       loadProvider: async () => provider(),
-      easAuth: () => ({ unknown: 'offline' }),
+      easAuth: async () => ({ unknown: 'offline' }),
       resolveRemoteBuild: async () => ({ failed: 'Error: Not logged in' }),
     });
     await h.run();

@@ -270,7 +270,7 @@ function reactNativeAndroidArtifact(
         identity: identity(),
         rekeyedBy,
         cacheRefusal: editedConfig.length ? 'prebuild changed config inputs, so the APK cannot be cached' : null,
-        ...(prebuildRan ? { androidPackage: detectAndroidPackage(root, layout.moduleDir) } : {}),
+        ...(prebuildRan ? { androidPackage: await detectAndroidPackage(root, layout.moduleDir) } : {}),
       };
     },
     async validate() {
