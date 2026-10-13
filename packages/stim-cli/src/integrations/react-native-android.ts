@@ -11,6 +11,7 @@ import {
   refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
+  type BuildStore,
   storedAssetManifest,
   untrackedMissLine,
   untrackedNativeFiles,
@@ -51,7 +52,7 @@ export interface ReactNativeAndroidDependencies {
   fingerprint?: typeof fingerprintProject;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
-  storeCached?: typeof storeBuild;
+  storeCached?: BuildStore;
   storedAssets?: typeof storedAssetManifest;
   captureAssets?: typeof captureAssetManifest;
   loadProvider?: typeof loadProjectProvider;
@@ -96,7 +97,19 @@ export function reactNativeAndroidProject(
 }
 
 function reactNativeAndroidArtifact(
-  { root, buildLog, writer, settings, buildPlan, target, phase, out, step, estimates }: AndroidArtifactContext,
+  {
+    operation,
+    root,
+    buildLog,
+    writer,
+    settings,
+    buildPlan,
+    target,
+    phase,
+    out,
+    step,
+    estimates,
+  }: AndroidArtifactContext,
   isExpo: boolean,
   layout: AndroidLayout,
   context: ResolvedProjectSettings['context'],
@@ -213,6 +226,7 @@ function reactNativeAndroidArtifact(
     },
     cache: (compiled = false) =>
       filesystemBuildCapability({
+        context: operation,
         resolve: resolveCached,
         store: storeCached,
         sources,

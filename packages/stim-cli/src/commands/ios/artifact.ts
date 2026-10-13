@@ -1,3 +1,4 @@
+import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
@@ -8,7 +9,12 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
+import {
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  providerUploadOutcome,
+  runBuildCacheWork,
+} from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -124,7 +130,7 @@ export interface PreparedIosArtifact {
   failureFields: BuildFailureFields;
   /** Returns true when an abandoned provider requires command termination after cleanup. */
   completeUploads(): Promise<boolean>;
-  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  /** Waits for cache uploads that read temporary copies before removing them; repeated calls are safe. */
   release(): void | Promise<void>;
 }
 
@@ -154,7 +160,7 @@ export async function acquireIosArtifact(
 ): Promise<IosArtifactResult> {
   const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const cachePolicy = cache.policy;
-  const signal = runCancellationSignal(context) ?? new AbortController().signal;
+  const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
   let useBuildCache = cachePolicy.read;
   let cacheIneligible: string | null = null;
@@ -242,15 +248,18 @@ export async function acquireIosArtifact(
     storeHash = fingerprint;
     storeKey = cacheKey;
 
-    const found = await resolveTieredBuild({
-      local: recipe.cache(),
-      loadProvider,
-      target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
-      destinationDir: providerDownloadPath(workspaceDir(root)),
-      ensureDestination: prepareProviderDownloadDir,
-      skipRead: !useBuildCache,
-      warn: cacheWarn,
-    });
+    const found = await runBuildCacheWork(context, signal, () =>
+      resolveTieredBuild({
+        local: recipe.cache(),
+        loadProvider,
+        target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
+        destinationDir: providerDownloadPath(workspaceDir(root)),
+        ensureDestination: prepareProviderDownloadDir,
+        skipRead: !useBuildCache,
+        warn: cacheWarn,
+        signal,
+      }),
+    );
     const cached = found?.tier === 'local' ? found.path : null;
     cacheHit = cached ? 'local' : false;
     phase(
@@ -301,6 +310,7 @@ export async function acquireIosArtifact(
             (await recipe.cache().store({ ...cacheTarget(cacheKey), sourcePath: hit.appPath, overwrite: false })) ??
             null;
         } catch (e) {
+          throwIfCancelled(signal, 'build cache backfill');
           note(
             chalk.yellow(phaseLine('cache', `remote hit could not be stored locally: ${(e as Error)?.message || e}`)),
           );
@@ -603,6 +613,7 @@ export async function acquireIosArtifact(
     try {
       rmSync(stagingDir, { recursive: true, force: true });
     } catch {}
+    throwIfCancelled(signal, 'offloaded build cache copy');
     step('compile');
     const prepared = stored ? await installableCachedApp(stored) : null;
     if (!outcome.ok || !prepared) {
@@ -748,18 +759,25 @@ export async function acquireIosArtifact(
 
   async function storeArtifact(artifactPath: string): Promise<void> {
     if (storeKey && cachePolicy.write) {
+      const key = storeKey;
       try {
-        const stored = await storeTieredBuild({
-          local: recipe.cache(),
-          loadProvider,
-          target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-          sourcePath: artifactPath,
-          overwrite: !useBuildCache || swapFellBack,
-          warn: cacheWarn,
-        });
-        providerUpload = stored.providerUpload;
+        const stored = await runBuildCacheWork(context, signal, () =>
+          storeTieredBuild({
+            local: recipe.cache(),
+            loadProvider,
+            target: { projectRoot: root, platform: PLATFORM, key },
+            sourcePath: artifactPath,
+            overwrite: !useBuildCache || swapFellBack,
+            warn: cacheWarn,
+            signal,
+          }),
+        );
+        const pending = stored.providerUpload;
+        providerUpload = pending ? runBuildCacheWork(context, signal, () => pending) : null;
+        void providerUpload?.catch(() => {});
         providerName = stored.providerName ?? providerName;
       } catch (e) {
+        throwIfCancelled(signal, 'build cache storage');
         note(chalk.yellow(`Could not store the build in the shared cache: ${(e as Error)?.message || e}`));
       }
     }
@@ -844,6 +862,9 @@ export async function acquireIosArtifact(
           },
         };
       },
+      settleFailed: async () => {
+        await Promise.allSettled([uploadPending, providerUpload]);
+      },
       refuse: (error) => {
         if (error instanceof OffloadRefusal)
           return {
@@ -854,7 +875,13 @@ export async function acquireIosArtifact(
           };
         if (error instanceof ArtifactRefusal)
           return { ...error.failure, build: { ...buildFailure, ...error.failure.build } };
-        return cancelledFailure(context, PLATFORM, { code: 'STIM_CANCELLED', message: 'during app preparation' });
+        const cancelled = cancelledFailure(context, PLATFORM, {
+          code: 'STIM_CANCELLED',
+          message: 'during app preparation',
+        });
+        return cancelled
+          ? { ...cancelled, build: { ...buildFailure, buildMachine, ...(builtOn ? { builtOn } : {}) } }
+          : null;
       },
       releaseFailed: (subject, e) => note(chalk.dim(`Could not release ${subject}: ${(e as Error)?.message || e}`)),
       temporaryReleaseFailed: () => {},
@@ -900,7 +927,10 @@ export async function acquireIosArtifact(
     },
     release: async () => {
       try {
-        if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+        await Promise.allSettled([
+          providerUpload,
+          remote?.provider && 'easCli' in remote.provider ? uploadPending : null,
+        ]);
       } finally {
         acquired.release();
       }

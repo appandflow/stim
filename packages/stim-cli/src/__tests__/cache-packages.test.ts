@@ -47,7 +47,7 @@ test.each(['ios', 'android'])(
       writeFileSync(binary, 'CLI bytes');
       const cliKey = buildCacheKey(platform, 'cli', runOptions);
       const sources = [{ type: 'file' as const, filePath: 'native-input', reasons: [], hash: 'hash' }];
-      const cliArtifact = storeBuild(platform, cliKey, build, { sources });
+      const cliArtifact = await storeBuild(platform, cliKey, build, { sources });
       const cliEntry = join(process.env.STIM_BUILD_CACHE, platform, cliKey);
       const old = new Date(0);
       utimesSync(cliEntry, old, old);
@@ -58,14 +58,14 @@ test.each(['ios', 'android'])(
       expect(await provider.uploadBuildCache({ platform, fingerprintHash: 'cli', buildPath: build, runOptions })).toBe(
         cliArtifact,
       );
-      expect(storeBuild(platform, providerKey, build)).toBe(providerArtifact);
+      expect(await storeBuild(platform, providerKey, build)).toBe(providerArtifact);
       expect(readFileSync(providerBinary, 'utf8')).toBe('provider bytes');
       assert(cliArtifact);
       const cliBinary = platform === 'ios' ? join(cliArtifact, 'binary') : cliArtifact;
       expect(readFileSync(cliBinary, 'utf8')).toBe('CLI bytes');
       expect(storedSources(platform, cliKey)).toEqual(sources);
 
-      storeBuild(platform, cliKey, build, { overwrite: true });
+      await storeBuild(platform, cliKey, build, { overwrite: true });
       expect(await provider.resolveBuildCache({ platform, fingerprintHash: 'cli', runOptions })).toBe(cliArtifact);
       expect(readFileSync(cliBinary, 'utf8')).toBe('replacement bytes');
       expect(storedSources(platform, cliKey)).toBeNull();

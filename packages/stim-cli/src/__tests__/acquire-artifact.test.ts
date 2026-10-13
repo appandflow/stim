@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { acquireArtifact, type ArtifactAdapter, type ArtifactRequest } from '../engine/acquire-artifact.ts';
@@ -101,7 +102,7 @@ function fixture(compile: (stage: (name: string) => string) => Promise<string>) 
     releaseFailed: () => {},
     temporaryReleaseFailed: () => {},
   };
-  return { held, taken, run: () => acquireArtifact(adapter, request) };
+  return { held, taken, adapter, run: () => acquireArtifact(adapter, request) };
 }
 
 describe('acquireArtifact', () => {
@@ -153,4 +154,39 @@ test('a cleanup that throws is reported and retried on the next release', () => 
   scope.release();
   expect(attempts).toBe(2);
   expect(reported).toHaveLength(1);
+});
+
+test('failed acquisition keeps temporary bytes until pending cache readers settle', async () => {
+  let allowRead = () => {};
+  let notifyWaiting = () => {};
+  const mayRead = new Promise<void>((resolve) => {
+    allowRead = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    notifyWaiting = resolve;
+  });
+  let readBytes: Promise<string> | undefined;
+  const fixtureRun = fixture(async (stage) => {
+    const path = join(stage('upload-source'), 'value');
+    writeFileSync(path, 'built app');
+    readBytes = mayRead.then(() => readFile(path, 'utf8'));
+    throw new Refusal('cancelled');
+  });
+  fixtureRun.adapter.settleFailed = async () => {
+    notifyWaiting();
+    await readBytes;
+  };
+  const pending = fixtureRun.run();
+  try {
+    await waiting;
+    expect(fixtureRun.held).toEqual({ lock: false, slot: false, offload: false });
+    expect(existsSync(join(scratch, 'upload-source'))).toBe(true);
+    allowRead();
+    expect(await pending).toEqual({ ok: false, failure: 'cancelled' });
+    expect(await readBytes).toBe('built app');
+    expect(existsSync(join(scratch, 'upload-source'))).toBe(false);
+  } finally {
+    allowRead();
+    await pending;
+  }
 });

@@ -175,6 +175,7 @@ export async function finishHostedAndroidRun({
       (error as Error & { code?: string }).code ?? 'STIM_HOSTING_REFUSED',
       (error as Error).message,
       `Retry stim android --remote ${target.host.machine}, or run stim stop to reconcile the recorded placement.`,
+      { lastBuildStatus: true },
     );
   }
 }

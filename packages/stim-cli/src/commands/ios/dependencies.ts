@@ -8,7 +8,13 @@ import { readHostedIos, writeHostedIos } from '../../device-host/ios-state.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
-import { fingerprintProject, resolveBuild, storeBuild, untrackedNativeFiles } from '../../cache/build-cache.ts';
+import {
+  fingerprintProject,
+  resolveBuild,
+  storeBuild,
+  type BuildStore,
+  untrackedNativeFiles,
+} from '../../cache/build-cache.ts';
 import { getConcurrencyLimits, getProject, recordIosSchemeApprovals, upsertProject } from '../../workspace/config.ts';
 import { clearOtherUserApps, installIosApp, launchIosApp } from '../../engine/app-install.ts';
 import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts';
@@ -118,7 +124,7 @@ export interface IosDeps {
   fingerprintProject: typeof fingerprintProject;
   untrackedNativeFiles: typeof untrackedNativeFiles;
   resolveBuild: typeof resolveBuild;
-  storeBuild: typeof storeBuild;
+  storeBuild: BuildStore;
   resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
   loadCacheProvider: typeof loadCacheProvider;
   acquireBuildLock: typeof acquireBuildLock;

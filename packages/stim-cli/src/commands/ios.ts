@@ -965,6 +965,16 @@ async function runIos(
     }
 
     let artifact: PreparedIosArtifact | null = null;
+    const reportRunFailure = (error: unknown): null => {
+      const cancelled = cancelledFailure(context, PLATFORM, {
+        code: 'STIM_CANCELLED',
+        message: 'while finishing the run',
+      });
+      if (cancelled) return fail({ ...cancelled, build: artifact?.failureFields });
+      recordRun({ failed: true, durationMs: elapsed() });
+      throw error;
+    };
+
     try {
       const boot = (): Promise<IosBootLike> =>
         physicalDevice
@@ -1208,8 +1218,7 @@ async function runIos(
         releaseLease();
       }
     } catch (error) {
-      recordRun({ failed: true, durationMs: elapsed() });
-      throw error;
+      return reportRunFailure(error);
     } finally {
       await artifact?.release();
     }

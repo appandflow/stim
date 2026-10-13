@@ -332,7 +332,12 @@ function harness(overrides: LooseDeps = {}) {
       return null;
     },
     storeBuild: (platform, key, path, options) => {
-      record('storeBuild', { platform, key, path, options });
+      record('storeBuild', {
+        platform,
+        key,
+        path,
+        options: typeof options === 'string' ? options : { overwrite: options?.overwrite, sources: options?.sources },
+      });
       return path;
     },
     loadProjectProvider: async (projectRoot, opts) => {
@@ -8683,7 +8688,7 @@ describe('strict remote Mac selection', () => {
     expect(build).not.toHaveBeenCalled();
   });
 
-  test.each(['stored', 'store failure', 'checkout changed'])(
+  test.each(['stored', 'store failure', 'checkout changed', 'cancelled'])(
     'a strict fetched artifact is %s without a local compile',
     async (scenario) => {
       reserve();
@@ -8696,6 +8701,7 @@ describe('strict remote Mac selection', () => {
       vi.spyOn(offloadClient, 'offloadBuild').mockImplementation(async ({ onEnter }) => {
         onEnter('compile');
         built = true;
+        mkdirSync(join(workspaceDir(root), 'offload', 'ios'), { recursive: true });
         return {
           ok: true,
           machine: 'mini',
@@ -8718,6 +8724,13 @@ describe('strict remote Mac selection', () => {
       const slot = vi.fn<() => never>();
       const store = vi.fn<(_platform: string, _key: string, path: string) => string>((_platform, _key, path) => {
         if (scenario === 'store failure') throw new Error('disk full');
+        if (scenario === 'cancelled') {
+          const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+          assert(claim);
+          requestNativeRunCancel(root, claim.claimId);
+          process.emit('SIGINT');
+          throw new Error('copy stopped');
+        }
         return path;
       });
       const fingerprint = async () => ({
@@ -8728,12 +8741,23 @@ describe('strict remote Mac selection', () => {
         { remoteBuild: 'mini', json: true },
         { fingerprintProject: fingerprint, storeBuild: store, buildIos: compile, acquireBuildSlot: slot },
       );
-      expect(result.exitCode).toBe(scenario === 'stored' ? null : 1);
+      expect(result.exitCode).toBe(scenario === 'stored' ? null : scenario === 'cancelled' ? 130 : 1);
       expect(result.stderr).toContain(
-        scenario === 'stored' ? 'built on mini' : scenario === 'store failure' ? 'disk full' : 'checkout here changed',
+        scenario === 'stored'
+          ? 'built on mini'
+          : scenario === 'cancelled'
+            ? 'cancelled'
+            : scenario === 'store failure'
+              ? 'disk full'
+              : 'checkout here changed',
       );
       expect(compile).not.toHaveBeenCalled();
       expect(slot).not.toHaveBeenCalled();
+      expect(result.logs).toHaveLength(1);
+      expect(parseFirst(result.logs).code).toBe(
+        scenario === 'stored' ? undefined : scenario === 'cancelled' ? 'STIM_CANCELLED' : 'STIM_OFFLOAD_REFUSED',
+      );
+      expect(existsSync(join(workspaceDir(root), 'offload', 'ios'))).toBe(false);
       const report = readLastBuilds(readWorkspaceState(root)).ios;
       expect(report).toMatchObject({
         buildMachine: 'mini',
@@ -9408,4 +9432,83 @@ describe('registered iOS project recipes', () => {
     });
     expect(result.calls.order).toEqual([]);
   });
+});
+
+test.each(['local build', 'EAS hit'])(
+  'cancellation during %s cache storage emits one iOS refusal and installs nothing',
+  async (source) => {
+    reserve();
+    const result = await run(
+      { json: true },
+      {
+        ...(source === 'EAS hit'
+          ? {
+              detectIsExpo: () => true,
+              loadProjectProvider: async () => ({ provider: { plugin: {}, options: {} }, name: 'eas' }),
+              resolveRemote: async () => ({ appPath: join(root, 'downloaded', 'Fixture.app') }),
+            }
+          : {}),
+        storeBuild: async () => {
+          const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+          assert(claim);
+          requestNativeRunCancel(root, claim.claimId);
+          process.emit('SIGINT');
+          throw new Error('copy stopped');
+        },
+      },
+    );
+    expect(result.exitCode).toBe(130);
+    expect(result.logs).toHaveLength(1);
+    expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(result.calls.order).not.toContain('installIosApp');
+    expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
+  },
+);
+
+test('provider upload cancellation after launch emits one iOS refusal and records failure', async () => {
+  reserve();
+  let uploadAborted = false;
+  let uploadClosed = false;
+  let exitedBeforeUploadClosed = false;
+  const result = await run(
+    { json: true },
+    {
+      resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProvider: async () => ({
+        name: 'fixture-cache',
+        provider: {
+          builds: {
+            resolve: () => null,
+            store: ({ signal }: { signal: AbortSignal }) =>
+              new Promise((_resolve, reject) => {
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    uploadAborted = true;
+                    setImmediate(() => {
+                      uploadClosed = true;
+                      reject(signal.reason);
+                    });
+                  },
+                  { once: true },
+                );
+              }),
+          },
+        },
+      }),
+      launchIosApp: async () => {
+        process.emit('SIGINT');
+        return { pid: DEVICE_PID };
+      },
+    },
+    () => {
+      exitedBeforeUploadClosed ||= !uploadClosed;
+    },
+  );
+  expect(exitedBeforeUploadClosed).toBe(false);
+  expect(uploadAborted).toBe(true);
+  expect(result.exitCode).toBe(130);
+  expect(result.logs).toHaveLength(1);
+  expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_CANCELLED' });
 });

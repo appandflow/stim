@@ -18,6 +18,7 @@ export {
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
+export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
 export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro-bridge.ts';
 

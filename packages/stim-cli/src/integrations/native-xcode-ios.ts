@@ -172,7 +172,11 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       snapshot = value;
       return identity(value);
     },
-    cache: () => filesystemBuildCapability({ sources: snapshot ? nativeXcodeSources(snapshot) : null }),
+    cache: () =>
+      filesystemBuildCapability({
+        context: context.operation,
+        sources: snapshot ? nativeXcodeSources(snapshot) : null,
+      }),
     async prepare(beforePrepare) {
       const pods = readPodState(root, root);
       const state = podsAreStale(pods.lockText, pods.manifestText);
