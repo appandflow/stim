@@ -1516,16 +1516,36 @@ export function simulatorRuntime(udid: string): string | null {
   return null;
 }
 
+/**
+ * Every reason a machine's offer would not take this app's builds, judged for each of `targets`. A target the machine
+ * cannot build at all, such as iOS on Linux, is left out while it can build another of them. With several targets, a
+ * reason only one platform has names it.
+ */
+export function machineProblems(offer: BuildOffer, targets: BuildTarget[]): OffloadProblem[] {
+  const judged = targets.map((target) => ({ target, found: offerProblems(offer, target) }));
+  const buildable = judged.filter(({ found }) => !found.some((problem) => problem.code === 'platform'));
+  const problems: OffloadProblem[] = [];
+  for (const { target, found } of buildable.length ? buildable : judged) {
+    for (const problem of found) {
+      const labeled =
+        targets.length > 1 && !SHARED_PROBLEMS.has(problem.code)
+          ? { ...problem, reason: `${PLATFORM_LABEL[target.platform]}: ${problem.reason}` }
+          : problem;
+      if (!problems.some((each) => each.code === labeled.code && each.reason === labeled.reason))
+        problems.push(labeled);
+    }
+  }
+  return problems;
+}
+
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
 const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'disk', 'busy']);
 
 /**
- * Doctor's offload check for `projectRoot`: one bounded offer per machine, judged for each build `targets` returns
- * by `offerProblems` exactly as placement judges it. No build runs. With several targets, a problem that only
- * one platform has names it. A target the
- * machine cannot build at all, such as iOS on Linux, is left out while it can build another of them.
+ * Doctor's offload check for `projectRoot`: one bounded offer per machine, judged by `machineProblems` for the builds
+ * `targets` returns. No build runs.
  */
 export function offloadCheck(
   projectRoot: string,
@@ -1555,22 +1575,6 @@ export function offloadCheck(
     if ('failure' in probe) return { capacity: null, problems: [{ code: 'unreachable', reason: probe.failure }] };
     probe.connection.close();
     resolved ??= targets();
-    const resolvedTargets = await resolved;
-    const judged = resolvedTargets.map((target) => ({ target, found: offerProblems(probe.offer, target) }));
-    const buildable = judged.filter(({ found }) => !found.some((problem) => problem.code === 'platform'));
-    const counted = buildable.length ? buildable : judged;
-    const problems: OffloadProblem[] = [];
-    for (const { target, found } of counted) {
-      for (const problem of found) {
-        const labeled =
-          counted.length > 1 && !SHARED_PROBLEMS.has(problem.code)
-            ? { ...problem, reason: `${PLATFORM_LABEL[target.platform]}: ${problem.reason}` }
-            : problem;
-        if (!problems.some((each) => each.code === labeled.code && each.reason === labeled.reason)) {
-          problems.push(labeled);
-        }
-      }
-    }
-    return { capacity: probe.offer.capacity, problems };
+    return { capacity: probe.offer.capacity, problems: machineProblems(probe.offer, await resolved) };
   };
 }

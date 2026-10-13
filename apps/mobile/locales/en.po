@@ -2141,6 +2141,10 @@ msgstr "Invalid search: {message}"
 msgid "iOS {version}"
 msgstr "iOS {version}"
 
+#: src/lib/build-machines.ts
+msgid "iOS and macOS builds need a Mac"
+msgstr "iOS and macOS builds need a Mac"
+
 #: src/lib/workspaces.ts
 #: src/lib/workspaces.ts
 msgid "iOS device"
@@ -2761,6 +2765,10 @@ msgstr "None"
 #: src/lib/build-machines.ts
 msgid "Not a git checkout"
 msgstr "Not a git checkout"
+
+#: src/lib/build-machines.ts
+msgid "Not a Mac"
+msgstr "Not a Mac"
 
 #: src/lib/build-machines.ts
 msgid "Not a tailnet name"

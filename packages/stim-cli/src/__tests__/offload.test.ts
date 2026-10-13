@@ -19,6 +19,7 @@ import {
   BuildConnection,
   chooseBuildMachine,
   offloadBuild,
+  machineProblems,
   offerProblems,
   offloadPlacement,
   pickOffer,
@@ -420,6 +421,19 @@ describe('a worker that is not a Mac', () => {
 
   it('still takes Android builds', () => {
     expect(toolchainMismatches(ANDROID, linux)).toEqual([]);
+  });
+
+  it('is judged for doctor on the platforms it can build, naming the platform of each reason', () => {
+    const offerFrom = (toolchain: Partial<BuildOffer['toolchain']>, capacityOver = {}) =>
+      offer({ toolchain: { ...linux, ...toolchain }, capacity: capacity(capacityOver) });
+    expect(machineProblems(offerFrom({}), [IOS, ANDROID])).toEqual([]);
+    expect(machineProblems(offerFrom({ jdk: '21' }), [IOS, ANDROID])).toEqual([
+      { code: 'jdk', reason: expect.stringMatching(/^Android: JDK 21 there/) },
+    ]);
+    expect(machineProblems(offerFrom({}), [IOS]).map((problem) => problem.code)).toEqual(['platform']);
+    expect(
+      machineProblems(offerFrom({}, { declined: 'all slots busy' }), [IOS, ANDROID]).filter((p) => p.code === 'busy'),
+    ).toHaveLength(1);
   });
 
   it('judges a stim-server that reports no OS by its tools, as before', () => {

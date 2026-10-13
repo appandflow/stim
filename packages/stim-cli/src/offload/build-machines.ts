@@ -160,7 +160,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
     case 'platform':
-      return `iOS and macOS builds need a Mac. ${entry} can still take this app's Android builds.`;
+      return `iOS and macOS builds need a Mac; ${entry} can take Android builds only.`;
     case 'busy':
       return `Builds stay on this machine until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
   }

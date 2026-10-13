@@ -913,7 +913,7 @@ export function protocolJsonSchema(): JsonSchema {
           statsError: { type: 'string' },
           buildMachines: {
             type: ['array', 'null'],
-            description: '`remoteMachines` from `stim doctor --json --platform ios`.',
+            description: '`remoteMachines` from `stim doctor --json`.',
             items: { type: 'object' },
           },
           buildMachinesError: { type: 'string' },
