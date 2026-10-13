@@ -184,12 +184,17 @@ Branch on the code, never on the message.`,
   after their mangled absolute source path, so each carries the project root
   twice unless CMake shortens it, and CMake only shortens a name that then
   fits the object path limit Stim's Gradle shim sets. The message names the
-  longest known object (measured on the e2e fixture, for the ABI being
-  built) and the longest root it leaves room for. Refused BEFORE Gradle runs
-  -- a cache hit still installs -- because the build would otherwise fail
-  deep inside ninja ("mkdir ... No such file or directory" or "Filename
-  longer than 260 characters"). Map the project to a drive letter (\`subst
-  X: <root>\`, then run Stim from X:\\) or move it under a shorter root.
+  longest known object for the ABI being built and the longest root it
+  leaves room for. A project with react-native-gesture-handler 3, whose
+  shared shadow nodes have the longest known object path, fits a root of at
+  most 24 characters for an x86_64 Debug build and 21 for arm64-v8a; other
+  projects fit 51 and 48. Refused BEFORE Gradle
+  runs -- a cache hit still installs -- because the build would otherwise
+  fail deep inside ninja ("mkdir ... No such file or directory" or
+  "Filename longer than 260 characters"). Move or clone the project under a
+  short real path such as C:\\src\\<name> and run Stim there. A subst drive
+  does not help: Node's realpath and Expo autolinking resolve it back to the
+  long path, and Gradle then sees two roots.
   A custom Gradle buildStagingDirectory can be shorter than the default; this
   preflight does not inspect that configured path and may refuse it too.
   \`doctor --platform android\` reports the same root as a finding for the

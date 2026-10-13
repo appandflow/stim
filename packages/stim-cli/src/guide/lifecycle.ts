@@ -1598,7 +1598,8 @@ then compiles through the cache the selection leaves -- ccache, or none when
 compilerCache is none. It never refuses. See
 https://stim.appandflow.com/docs/android-cas for setup, evidence, and limits.
 Compiler/PCH modes have separate generated directories under each module's
-.cxx/stim-<profile> (or custom staging root). Switching modes in Stim selects
+.cxx/stim-<profile> (.cxx/<first 4 profile characters> on Windows, or custom
+staging root). Switching modes in Stim selects
 the matching directory; direct Gradle builds keep their own configuration.
 Generated CAS directories still depend on Stim's environment and adapter paths.
 

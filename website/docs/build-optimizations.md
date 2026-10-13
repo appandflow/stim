@@ -161,7 +161,9 @@ Legacy Expo cache providers cannot distinguish these custom compiler profiles
 and are skipped for them; providers using Stim's cache-key contract remain usable.
 
 Android compiler and PCH profiles also use separate generated CMake directories
-under each module's `.cxx/stim-<profile>` or its custom staging root. Switching
+under each module's `.cxx/stim-<profile>` (`.cxx/<first 4 profile characters>`
+on Windows, where every character counts against `MAX_PATH`) or its custom
+staging root. Switching
 profiles keeps previous output for reuse. These directories can accumulate;
 there is no profile-pruning command. Remove obsolete generated profiles only
 after all native builds have stopped, or let worktree removal reclaim them.

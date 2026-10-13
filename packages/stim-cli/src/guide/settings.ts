@@ -1201,7 +1201,9 @@ PCH mode matches; disable artifact caching too to force native compilation. Lega
 cannot key these compiler profiles, so Stim skips that tier for custom profiles
 and Android CAS. Providers implementing the Stim key contract remain usable.
 Android compiler/PCH profiles also get separate CMake staging directories under
-<module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
+<module>/.cxx/stim-<profile> (<module>/.cxx/<first 4 profile characters> on
+Windows, where every character counts against MAX_PATH), or under the project's
+custom staging root. Switching
 backends in Stim selects the matching directory without deleting previous builds.
 These directories accumulate across profile changes and shim upgrades. Stim
 does not prune them; remove an obsolete generated profile only with all native
