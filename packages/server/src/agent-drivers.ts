@@ -22,7 +22,8 @@ function registered(name: unknown): name is keyof typeof DRIVERS {
 
 /**
  * Creates the driver `hosting.agentDriver` names, with its state and claim under `area`. Resolves null for
- * `none` and rejects with `AgentDriverUnavailable` when the named driver cannot load.
+ * `none` and rejects with `AgentDriverUnavailable` when the named driver cannot load. A load failure's reason,
+ * which can name host paths, goes to stderr; the rejection carries a generic notice for the client.
  */
 export async function configuredAgentDriver(
   name: unknown,
@@ -41,10 +42,12 @@ export async function configuredAgentDriver(
     claimRoot: join(area, `${name}.claims`),
     ...(device ? { device } : {}),
   });
-  if ('unavailable' in loaded)
+  if ('unavailable' in loaded) {
+    process.stderr.write(`The ${name} agent driver could not load: ${loaded.unavailable}\n`);
     throw new AgentDriverUnavailable(
-      `The ${name} agent driver could not load on the hosting Mac: ${loaded.unavailable}`,
+      `The ${name} agent driver could not load on the hosting Mac. Check its stim-server log.`,
     );
+  }
   return loaded.driver;
 }
 
@@ -63,8 +66,17 @@ export async function stoppingAgentDriver(
   return configuredAgentDriver(ran ?? name, env, area, device);
 }
 
-/** The action readers of every first-party driver that loads; a driver that does not load contributes none. */
-export async function agentActionReaders(): Promise<AgentDriverActions[]> {
+let actionReaders: Promise<AgentDriverActions[]> | undefined;
+
+/**
+ * The action readers of every first-party driver that loads, imported on the first call and shared by later
+ * ones. Never rejects; a driver that does not load contributes none.
+ */
+export function agentActionReaders(): Promise<AgentDriverActions[]> {
+  return (actionReaders ??= loadActionReaders());
+}
+
+async function loadActionReaders(): Promise<AgentDriverActions[]> {
   const readers: AgentDriverActions[] = [];
   for (const name of NAMES) {
     const loaded = await loadAgentDriverModule(name, DRIVERS[name]);

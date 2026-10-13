@@ -792,7 +792,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
-  const agentActions = await agentActionReaders();
   const agentDrivers = new HostedAgentHost({
     resolve: () => configuredAgentDriver(loadConfig()?.hosting?.agentDriver, options.env, serverDir()),
     resolveDevice: (app, stopping) =>
@@ -1536,7 +1535,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         statusRead<'maintenance.get'>(id, (payload) => ({ result: { maintenance: payload.maintenance ?? null } })),
     };
 
-    function subscribeLogs(id: RequestId, params: unknown): void {
+    function subscribeLogs(id: RequestId, params: unknown): void | Promise<void> {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
@@ -1568,9 +1567,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       if (parsed.filter.archive !== undefined) {
         subscriptions.set(subscription, () => batcher.stop());
-        for (const record of archivedLogs(cwd, parsed.filter, agentActions)) batcher.push(record);
-        batcher.finish();
-        return;
+        return agentActionReaders().then((actions) => {
+          for (const record of archivedLogs(cwd, parsed.filter, actions)) batcher.push(record);
+          return batcher.finish();
+        });
       }
       const abort = new AbortController();
       let stop: (() => void) | undefined;
@@ -1984,14 +1984,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       archiveReads = task.catch(() => socket.close(1011, 'internal error'));
     }
 
-    function queryLogs(id: RequestId, params: unknown): void {
+    function queryLogs(id: RequestId, params: unknown): void | Promise<void> {
       const parsed = parseLogFilter(params);
       if ('error' in parsed) return error(id, 'bad-request', parsed.error);
       const cwd = readDir(id, parsed.filter);
       if (!cwd) return;
       if (parsed.filter.archive !== undefined) {
-        send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter, agentActions) } });
-        return;
+        return agentActionReaders().then((actions) =>
+          send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter, actions) } }),
+        );
       }
       inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
         records: await createStim({ projectRoot: cwd, env: options.env }).logs({
@@ -2236,7 +2237,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, { id, result });
     }
 
-    function replayRange(id: RequestId, params: unknown): void {
+    function replayRange(id: RequestId, params: unknown): void | Promise<void> {
       const target = isJsonObject(params) ? params : {};
       const { platform, slot } = target;
       const targetError = readTargetError(target);
@@ -2270,19 +2271,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
       if (archive !== undefined) {
-        const timeline = archivedTimeline(cwd, agentActions);
-        const records = [
-          ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
-          ...queryJsonLogs({
-            records: timeline,
-            sources: ['metro', 'client', 'build', 'device'],
-            minLevel: 'error',
-            tail: 5000,
-          }),
-        ];
-        const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
-        send(socket, { id, result: { ...state, markers } });
-        return;
+        return agentActionReaders().then((actions) => {
+          const timeline = archivedTimeline(cwd, actions);
+          const records = [
+            ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
+            ...queryJsonLogs({
+              records: timeline,
+              sources: ['metro', 'client', 'build', 'device'],
+              minLevel: 'error',
+              tail: 5000,
+            }),
+          ];
+          const markers = timelineMarkers(records, platform as RecordingPlatform, slotName, spans[0]!.start);
+          return send(socket, { id, result: { ...state, markers } });
+        });
       }
       const since = `${Math.ceil((Date.now() - spans[0]!.start) / 60_000) + 1}m`;
       void Promise.all([

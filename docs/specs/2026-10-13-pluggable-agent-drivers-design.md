@@ -89,8 +89,10 @@ any session agent-device ran in. A session no registered driver ran in stops
 without a driver even when the setting names an unknown one.
 
 A driver that is named but fails to load leaves the app with
-`{ "driver": "none" }` and a notice naming the reason. A setting naming no
-registered driver gets the same.
+`{ "driver": "none" }` and a generic notice. The load reason, which can name
+paths and the user name on the hosting Mac, goes to stim-server's stderr only.
+A setting naming no registered driver also leaves the app with `none`, with a
+notice naming the setting's value.
 
 ## Payloads
 
@@ -129,6 +131,32 @@ fit the confinement half, and it is not shipped:
   new descriptor, and a descriptor cannot cover simulators Stim does not know
   about.
 - It has no backend for native macOS apps.
+
+Argent's only after-the-fact record of what its tools did is the tool-server
+event log (software-mansion/argent#367, unchanged through 0.28.0). Stim does
+not read it, for `stim logs --source agent` or for hosted archives:
+
+- It is off by default. The `tool-server-event-log` flag turns it on only from
+  `~/.argent/flags.json` or the project's `.argent/flags.json`, read when the
+  tool-server starts; no environment variable enables it, so Stim would have to
+  write Argent's configuration. `ARGENT_EVENT_LOG` only moves the file from
+  `~/.argent/tool-server-events.jsonl`.
+- The tool-server truncates the file each time it starts, so earlier actions
+  are gone after a restart.
+- Its `tool.invoked`, `tool.completed` and `tool.failed` records carry `time`,
+  `toolId`, `toolInvocationId`, the tool's display message in `msg`, `durationMs`
+  and, on failure, `failureSignal`, but no device, platform or caller. One
+  tool-server serves every device and workspace on the Mac, so a record cannot
+  be attributed to a workspace's device or slot.
+- The record shape is not documented beyond "lifecycle events", and the file
+  carries no schema version besides Bunyan's `v: 0`.
+
+With those, an agent action maps as `time` to `ts`, the matching
+`tool.invoked` time to `startedAt`, `toolId` to `command`, the completion or
+failure `msg` to `msg`, and `tool.failed` to a failed action. A reader needs
+Argent to record the device id and platform on each tool record, carry a schema
+version, keep earlier records across restarts or write one file per
+tool-server run, and accept the flag from the environment.
 
 An Argent driver needs a tool-server mode that serves one device and leaves
 other simulators untouched, and preferably a daemon policy like
