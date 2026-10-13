@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import {
   commandWithReportedStatus,
   shellCommandSegments,
+  stimCommandSegments,
   sameLiteralShellCommand,
   topLevelShellCommand,
 } from './agent-benchmark/run-guards.mjs';
@@ -141,7 +142,10 @@ function launchCommand(command, arm, platform) {
   command = shellCommand(command);
   if (/(?:^|\s)["']?(?:--help|--version|-h|-v)["']?(?=\s|$|[;&|])/.test(command)) return false;
   if (arm === 'stim')
-    return shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment));
+    return (
+      stimCommandSegments(command, `stim ${platform}`).length > 0 ||
+      shellCommandSegments(command).some((segment) => new RegExp(`^stim\\s+${platform}(?:\\s|$)`).test(segment))
+    );
   if (platform === 'android') {
     return (
       /(?:\bexpo|expo\/bin\/cli|node_modules\/\.bin\/expo)\s+run:android\b/.test(command) ||
@@ -157,7 +161,10 @@ function launchCommand(command, arm, platform) {
 function errorCaptureCommand(command, arm, platform) {
   command = shellCommand(command);
   if (arm === 'stim')
-    return shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment));
+    return (
+      stimCommandSegments(command, 'stim logs --errors').length > 0 ||
+      shellCommandSegments(command).some((segment) => /^stim\s+logs\s+--errors(?:\s|$)/.test(segment))
+    );
   const explicitLogFile =
     /\b(?:tail|rg|grep|sed|cat)\b[\s\S]*(?:\.log\b|(?:^|[\s'"])(?:\.?\/)?(?:tmp|logs?|\.expo\/dev\/logs)\/)/.test(
       command,
@@ -378,9 +385,15 @@ function allowedBeforeErrorCapture(command, arm, platform, setup = {}) {
     return true;
   }
   if (arm === 'stim') {
-    return new RegExp(
-      `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
-    ).test(value);
+    return (
+      new RegExp(
+        `^stim\\s+(?:guide|doctor|worktree\\s+(?:warm|create)|start|${platform}|logs\\s+--errors)(?:\\s|$)`,
+      ).test(value) ||
+      (shellCommandSegments(value).length === 1 &&
+        ['guide', 'doctor', 'worktree warm', 'worktree create', 'start', platform, 'logs --errors'].some(
+          (suffix) => stimCommandSegments(value, `stim ${suffix}`).length === 1,
+        ))
+    );
   }
   if (platform === 'android') {
     if (

@@ -357,7 +357,7 @@ logs. Existing control runs without this integration can remain: record
 comparison. This measures integrated Stim against the standard toolchain,
 not identical startup logging. Do not imply that retained controls were rerun.
 
-Platform timing and cache checks recognize literal `env STIM_TMPDIR=/path`
+Platform timing, cache checks, and crash diagnosis recognize literal `env STIM_TMPDIR=/path`
 or `env TMPDIR=/path` prefixes, including quoted paths. They do not infer values
 from shell expansion or accept environment overrides that change executable
 resolution or Stim ownership state.
