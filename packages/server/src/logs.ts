@@ -1,7 +1,7 @@
 import { join } from 'node:path';
+import type { AgentDriverActions } from '@stim-cli/agent-driver';
 import {
   compileGrep,
-  createAgentActionReader,
   isJsonObject,
   queryJsonLogs,
   readLogTimeline,
@@ -63,16 +63,16 @@ export function readTargetError(params: JsonObject): string | null {
   return typeof params.workspace === 'string' ? null : 'params.workspace is required.';
 }
 
-export function archivedTimeline(dir: string): NdjsonRecord[] {
+export function archivedTimeline(dir: string, actions: readonly AgentDriverActions[]): NdjsonRecord[] {
   return sortByTs([
     ...readLogTimeline(join(dir, 'logs')),
-    ...createAgentActionReader({ sessionsDirs: [join(dir, 'agent-device', 'sessions')] })(),
+    ...actions.flatMap((reader) => reader.read({ workspaceDir: dir })),
   ]);
 }
 
-export function archivedLogs(dir: string, filter: LogFilter): JsonObject[] {
+export function archivedLogs(dir: string, filter: LogFilter, actions: readonly AgentDriverActions[]): JsonObject[] {
   return queryJsonLogs({
-    records: archivedTimeline(dir),
+    records: archivedTimeline(dir, actions),
     sources: filter.sources,
     minLevel: filter.level,
     slot: filter.slot,

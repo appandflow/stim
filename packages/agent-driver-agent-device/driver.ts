@@ -4,6 +4,7 @@ import {
   accessSync,
   chmodSync,
   constants,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -29,7 +30,7 @@ import {
   waitForProcessExit,
   type ProcessRecord,
 } from '@stim-cli/core/process-identity';
-import { isJsonObject, type HostedAgentGrant, type HostedAgentLease } from '@stim-cli/core/state';
+import { isJsonObject, type HostedAgentIssuedGrant, type HostedAgentLease } from '@stim-cli/core/state';
 import {
   AGENT_ROUTE_PREFIX,
   AgentDriverUnavailable,
@@ -38,9 +39,15 @@ import {
   type HostedAgentApp,
   type HostedAgentDevice,
   type HostedAgentDriver,
-} from './agent-driver.ts';
-import { adbPath } from './frame-helper.ts';
+} from '@stim-cli/agent-driver';
 import { listProcesses } from './processes.ts';
+
+function adbPath(env: NodeJS.ProcessEnv): string {
+  for (const sdk of [env.ANDROID_HOME, env.ANDROID_SDK_ROOT, join(env.HOME ?? homedir(), 'Library/Android/sdk')]) {
+    if (sdk && existsSync(join(sdk, 'platform-tools/adb'))) return join(sdk, 'platform-tools/adb');
+  }
+  return 'adb';
+}
 
 const UNSCOPED =
   'Agent control is unavailable: the agent-device on the hosting Mac has no macos-app lease to limit a client to one app, and Stim never hands a client the hosting Mac desktop.';
@@ -656,7 +663,7 @@ export class AgentDeviceDriver implements HostedAgentDriver {
    * Grants one device's automatic instance lease or allocates and renews a macos-app lease over
    * agent-device's host-only admin route. Forwarded requests are pinned to the grant's scope.
    */
-  async issue(app: HostedAgentApp): Promise<HostedAgentGrant> {
+  async issue(app: HostedAgentApp): Promise<HostedAgentIssuedGrant> {
     const running = this.running;
     if (!running) throw new Error('The agent-device daemon is not running.');
     if (this.options.device) {

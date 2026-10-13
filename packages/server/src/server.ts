@@ -46,7 +46,7 @@ import {
 } from '@stim-cli/core/state';
 import { createRequestLog, type RequestLog, type RequestTracker } from './request-log.ts';
 import { actionArgs, actionOutcome, appendAudit, loadAudit, parseAction, type AuditRecord } from './actions.ts';
-import { AgentDeviceDriver } from './agent-device-driver.ts';
+import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
 import { HostedViews } from './hosted-view.ts';
@@ -792,24 +792,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const controllers = new Map<WebSocket, Controller>();
   const controlLimits: ControlLimits = { ...CONTROL_LIMITS, ...options.controlLimits };
   const adbEmulators = options.env[ADB_EMULATORS_SWITCH] === '1';
+  const agentActions = await agentActionReaders();
   const agentDrivers = new HostedAgentHost({
-    resolve: () =>
-      loadConfig()?.hosting?.agentDriver === 'agent-device'
-        ? new AgentDeviceDriver({
-            env: options.env,
-            stateDir: join(serverDir(), 'agent-device'),
-            claimRoot: join(serverDir(), 'agent-device.claims'),
-          })
-        : null,
+    resolve: () => configuredAgentDriver(loadConfig()?.hosting?.agentDriver, options.env, serverDir()),
     resolveDevice: (app, stopping) =>
-      stopping || loadConfig()?.hosting?.agentDriver === 'agent-device'
-        ? new AgentDeviceDriver({
-            env: options.env,
-            stateDir: join(deviceHostArea(app.session), 'agent-device'),
-            claimRoot: join(deviceHostArea(app.session), 'agent-device.claims'),
-            device: app,
-          })
-        : null,
+      (stopping ? stoppingAgentDriver : configuredAgentDriver)(
+        loadConfig()?.hosting?.agentDriver,
+        options.env,
+        deviceHostArea(app.session),
+        app,
+      ),
     nodeOf: (client) => {
       const identity = readDeviceHostClients().find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
@@ -1576,7 +1568,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
       if (parsed.filter.archive !== undefined) {
         subscriptions.set(subscription, () => batcher.stop());
-        for (const record of archivedLogs(cwd, parsed.filter)) batcher.push(record);
+        for (const record of archivedLogs(cwd, parsed.filter, agentActions)) batcher.push(record);
         batcher.finish();
         return;
       }
@@ -1998,7 +1990,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const cwd = readDir(id, parsed.filter);
       if (!cwd) return;
       if (parsed.filter.archive !== undefined) {
-        send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter) } });
+        send(socket, { id, result: { records: archivedLogs(cwd, parsed.filter, agentActions) } });
         return;
       }
       inProcessRead<'logs.query'>(id, 'stim logs', async (signal) => ({
@@ -2278,7 +2270,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
       if (!spans.length) return send(socket, { id, result: { ...state, markers: [] } });
       if (archive !== undefined) {
-        const timeline = archivedTimeline(cwd);
+        const timeline = archivedTimeline(cwd, agentActions);
         const records = [
           ...queryJsonLogs({ records: timeline, sources: ['agent'], tail: 5000 }),
           ...queryJsonLogs({

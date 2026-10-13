@@ -73,6 +73,8 @@ export const pathRules = [
   { path: 'packages/metro', rows: ['caches', 'logs'] },
   { path: 'packages/expo-build-cache', rows: ['caches'] },
   { path: 'packages/server', rows: ['loop'] },
+  { path: 'packages/agent-driver', rows: ['loop'] },
+  { path: 'packages/agent-driver-agent-device', rows: ['loop'] },
   { path: 'packages/transport', rows: ['loop'] },
   { path: 'packages/transport-tailscale', rows: ['loop'] },
   { path: 'packages/server/README.md', exempt: 'documentation' },

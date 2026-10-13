@@ -372,6 +372,21 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
 
+  packages/agent-driver:
+    dependencies:
+      '@stim-cli/core':
+        specifier: workspace:^
+        version: link:../core
+
+  packages/agent-driver-agent-device:
+    dependencies:
+      '@stim-cli/agent-driver':
+        specifier: workspace:^
+        version: link:../agent-driver
+      '@stim-cli/core':
+        specifier: workspace:^
+        version: link:../core
+
   packages/cache: {}
 
   packages/cache-s3:
@@ -425,6 +440,12 @@ importers:
 
   packages/server:
     dependencies:
+      '@stim-cli/agent-driver':
+        specifier: workspace:^
+        version: link:../agent-driver
+      '@stim-cli/agent-driver-agent-device':
+        specifier: workspace:^
+        version: link:../agent-driver-agent-device
       '@stim-cli/cache':
         specifier: workspace:^
         version: link:../cache
@@ -453,6 +474,12 @@ importers:
       '@expo/fingerprint':
         specifier: ^0.20.10
         version: 0.20.10(supports-color@8.1.1)
+      '@stim-cli/agent-driver':
+        specifier: workspace:^
+        version: link:../agent-driver
+      '@stim-cli/agent-driver-agent-device':
+        specifier: workspace:^
+        version: link:../agent-driver-agent-device
       '@stim-cli/cache':
         specifier: workspace:^
         version: link:../cache

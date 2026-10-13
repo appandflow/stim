@@ -7,6 +7,8 @@ const packageDirs = [
   'core',
   'cache',
   'cache-s3',
+  'agent-driver',
+  'agent-driver-agent-device',
   'metro',
   'expo-build-cache',
   'stim-cli',

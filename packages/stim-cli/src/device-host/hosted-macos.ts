@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hostedMacosBundleId,
@@ -9,7 +8,7 @@ import {
 } from '@stim-cli/core/state';
 import { macosDir } from '../macos/state.ts';
 import { type BuildHandoff } from '../offload/client.ts';
-import { agentAccess } from './hosted-agent.ts';
+import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { phaseLine } from '../command-output.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { pullHostedMacosLogs } from './hosted-logs.ts';
@@ -201,7 +200,10 @@ export async function placeHostedMacos(
     note(`${host.machine} did not apply macos.arguments. Update stim-server on that host.`);
   if (typeof delivery.notice === 'string') note(delivery.notice);
   return {
-    placement: { ...placement, agent: agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note) },
+    placement: {
+      ...placement,
+      agent: await agentAccess(agentRemoteConfig(root), host.credential, delivery.agent, note),
+    },
     launched: delivery.launched === true ? true : 'unverified',
     arguments: appliedArguments,
   };
@@ -228,5 +230,5 @@ export async function stopHostedMacos(root: string, placement: HostedMacosPlacem
   } finally {
     host.connection.close();
   }
-  rmSync(agentRemoteConfig(root), { force: true });
+  await removeAgentAccess(agentRemoteConfig(root));
 }

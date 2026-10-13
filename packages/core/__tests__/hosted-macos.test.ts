@@ -19,7 +19,7 @@ test('a hosted macOS identity names exactly the host and one reserved app slot',
     expect(parseHostedMacosDevice(value)).toBeNull();
 });
 
-test('an agent grant is usable only for a known driver, one session route, and a bounded token', () => {
+test('an agent grant is usable only for a driver name, one session route, and a bounded token', () => {
   const grant = {
     driver: 'agent-device',
     path: '/device-host/agent/12345678-1234-1234-1234-123456789abc/',
@@ -36,9 +36,12 @@ test('an agent grant is usable only for a known driver, one session route, and a
   expect(parseHostedAgentGrant({ ...ios, lease: { ...ios.lease, backend: 'macos-app' } })).toBeNull();
   expect(parseHostedAgentGrant({ ...ios, lease: { ...ios.lease, deviceKey: grant.lease.deviceKey } })).toBeNull();
   expect(parseHostedAgentGrant({ driver: 'none' })).toEqual({ driver: 'none' });
+  const unleased = { driver: 'argent', path: grant.path, token: grant.token, scope: 'emulator-5554' };
+  expect(parseHostedAgentGrant(unleased)).toEqual(unleased);
   for (const value of [
     { driver: 'none', token: grant.token },
-    { ...grant, driver: 'argent' },
+    { ...grant, driver: 'Agent Device' },
+    { ...grant, driver: 'none' },
     { ...grant, path: '/device-host/agent/../other/' },
     { ...grant, token: 'short' },
     { ...grant, extra: true },

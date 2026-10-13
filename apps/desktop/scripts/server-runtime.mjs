@@ -22,7 +22,17 @@ const NODE_SHA256 = {
   arm64: '6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe',
   x64: '0ae5a24c24bb7d015cd816c5036b3f90f2945aa872fcf54e58da054753b3a299',
 };
-const PACKAGES = ['core', 'cache', 'metro', 'stim-cli', 'transport', 'transport-tailscale', 'server'];
+const PACKAGES = [
+  'core',
+  'cache',
+  'agent-driver',
+  'agent-driver-agent-device',
+  'metro',
+  'stim-cli',
+  'transport',
+  'transport-tailscale',
+  'server',
+];
 
 const usage = 'usage: node scripts/server-runtime.mjs <destination> [--universal]';
 const args = process.argv.slice(2);
