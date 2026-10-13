@@ -91,7 +91,7 @@ struct AddMachineSteps: View {
           } else {
             Button(sample.test.state == .ready ? "Run test" : "Run again") {
               if let entry = model.machineEntry {
-                sample.run(entry: entry)
+                sample.run(entry: entry, platform: model.testPlatform)
               }
             }.disabled(sample.running || !model.wizard.capabilities.contains(.build))
           }
@@ -177,8 +177,9 @@ struct AddMachineSteps: View {
   }
 
   private func tryIt(_ machine: String) -> some View {
+    let platform = model.testPlatform == "android" ? "Android" : "iOS"
     let prompt =
-      "Build and run this project on iOS with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
+      "Build and run this project on \(platform) with Stim, offloading the build to \(machine), then tell me where it built and how long it took."
     return VStack(alignment: .leading, spacing: Space.md) {
       HStack {
         Label("Try It", systemImage: "sparkles").font(.stim(.headline))
@@ -188,7 +189,7 @@ struct AddMachineSteps: View {
       Text(prompt).font(.stim(.callout)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
       Text("Or run it yourself in a project:").font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-      CopyableCommand(command: "stim ios --remote-build \(machine)")
+      CopyableCommand(command: "stim \(model.testPlatform) --remote-build \(machine)")
       if model.sample != nil {
         Button("Run a Test Build with a Sample App") { model.openTest() }
           .buttonStyle(.stim(.plain))

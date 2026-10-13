@@ -11,16 +11,19 @@
     case toolsOK, toolsFixes, toolsBusy, toolsAndroid
     case testPreparingSample, sampleFailed, offloading, offloaded, localBuilding, testPassed, testFailed, testSkipped
     case summaryAuto, summaryNever, summaryUndo, summarySkippedAfterFailure
+    case linuxChoose, linuxCommand, linuxApproved, linuxTools, linuxSummary
     var id: Self { self }
+
+    private var linux: Bool { [.linuxChoose, .linuxCommand, .linuxApproved, .linuxTools, .linuxSummary].contains(self) }
 
     @MainActor func make() -> AddMachineModel {
       let later: [Self] = [
         .toolsOK, .toolsFixes, .toolsBusy, .toolsAndroid, .testPreparingSample, .sampleFailed, .offloading, .offloaded,
         .localBuilding, .testPassed, .testFailed, .testSkipped, .summaryAuto, .summaryNever, .summaryUndo,
-        .summarySkippedAfterFailure,
+        .summarySkippedAfterFailure, .linuxTools, .linuxSummary,
       ]
       if later.contains(self) {
-        let model = Self.approved.make()
+        let model = (linux ? Self.linuxApproved : Self.approved).make()
         model.configureLaterFixture(self)
         return model
       }
@@ -32,13 +35,17 @@
         {"BackendState":"\(self == .tailscaleStoppedCLI ? "Stopped" : "Running")",
          "Self":{"ID":"nSelf","HostName":"MacBook-Pro","DNSName":"macbook.tail.test."},
          "Peer":{"one":{"ID":"nMini","HostName":"janics-mac-mini","DNSName":"mini.tail.test.","OS":"macOS","Online":\(self != .peerOffline && self != .allOffline)},
-         "two":{"ID":"nAir","HostName":"old-air","DNSName":"old-air.tail.test.","OS":"macOS","Online":false}}}
+         "two":{"ID":"nAir","HostName":"old-air","DNSName":"old-air.tail.test.","OS":"macOS","Online":false},
+         "three":{"ID":"nUbuntu","HostName":"ubuntu-runner","DNSName":"ubuntu.tail.test.","OS":"linux","Online":true},
+         "four":{"ID":"nWin","HostName":"windows-pc","DNSName":"windows.tail.test.","OS":"windows","Online":true}}}
         """.utf8)
       let noMacStatus = Data(
         #"{"BackendState":"Running","Self":{"ID":"nSelf","HostName":"MacBook-Pro","DNSName":"macbook.tail.test."},"Peer":{}}"#
           .utf8)
       let client = Tailnet.selfNode(statusJSON: status)!
-      let mac = Tailnet.peers(statusJSON: status).first!.mac
+      let peers = Tailnet.peers(statusJSON: status)
+      let mac = (linux ? peers.first { $0.mac.isLinux } : peers.first)!.mac
+      let machine = mac.machine
       var wizard = SetupWizard(hasWorkspace: self != .noWorkspace)
       if ![.tailscaleMissing, .tailscaleStoppedApp, .tailscaleStoppedCLI, .noMac, .allOffline, .peerOffline, .ready].contains(
         self)
@@ -47,17 +54,37 @@
         if self == .chooseBuilds { _ = wizard.apply(.capabilitiesChanged([.build]), now: now) }
         if self == .chooseHosted { _ = wizard.apply(.capabilitiesChanged([.deviceHost]), now: now) }
         if self == .chooseNone { _ = wizard.apply(.capabilitiesChanged([]), now: now) }
-        var build = BuildMachineStatus(machine: "mini", state: .pending, deviceId: "build-id")
-        var host = BuildMachineStatus(machine: "mini", state: .pending, deviceId: "host-id")
-        if self == .alreadyApproved || self == .approved || self == .permissionSkipped {
+        var build = BuildMachineStatus(machine: machine, state: .pending, deviceId: "build-id")
+        var host = BuildMachineStatus(machine: machine, state: .pending, deviceId: "host-id")
+        if linux { host = BuildMachineStatus(machine: machine, state: .notAsked) }
+        if self == .alreadyApproved || self == .approved || self == .permissionSkipped || self == .linuxApproved {
           build.state = .approved
-          host.state = .approved
-          host.host = .init(name: "janics-mac-mini", screenRecording: self != .permissionSkipped, accessibility: true)
+          if !linux {
+            host.state = .approved
+            host.host = .init(name: "janics-mac-mini", screenRecording: self != .permissionSkipped, accessibility: true)
+          }
         }
         _ = wizard.apply(.doctorReported(build: build, host: host), now: now)
-        if ![.chooseBoth, .chooseBuilds, .chooseHosted, .chooseNone, .alreadyApproved].contains(self) {
+        if ![.chooseBoth, .chooseBuilds, .chooseHosted, .chooseNone, .alreadyApproved, .linuxChoose].contains(self) {
           _ = wizard.apply(.next(ticket), now: issued)
-          if ![.command, .expired, .noAnswer, .noWorkspace].contains(self) {
+          if self == .linuxApproved {
+            let steps: [SetupJournal.Step] = [
+              .init(id: "preflight", state: .ok, title: "Tailnet node verified"),
+              .init(id: "server", state: .ok, title: "stim-server 1.16.0 installed"),
+              .init(id: "service", state: .ok, title: "systemd user service dev.stim.server running"),
+              .init(id: "route", state: .ok, title: "Tailnet route", detail: "ubuntu.tail.test: https port 7443"),
+              .init(id: "approve", state: .ok, title: "Access approval"),
+              .init(
+                id: "approve.build", state: .ok, title: "Approved MacBook-Pro (nSelf) for builds", detail: "request build-id"),
+              .init(id: "tools", state: .ok, title: "Tools", detail: "Checked; installs nothing."),
+            ]
+            let journal = SetupJournal(
+              nodeId: client.id, ticket: ticket, capabilities: wizard.capabilities, steps: steps,
+              granted: [.init(capability: .build, id: "build-id")], done: true)
+            _ = wizard.apply(.journalAnswered(port: 7443, journal: journal), now: now)
+            _ = wizard.apply(.entriesWritten, now: now)
+            _ = wizard.apply(.doctorReported(build: build, host: host), now: now)
+          } else if ![.command, .expired, .noAnswer, .noWorkspace, .linuxCommand].contains(self) {
             var steps: [SetupJournal.Step] = [
               .init(id: "preflight", state: .ok, title: "Tailnet node verified"),
               .init(id: "server", state: .ok, title: "stim-server 1.16.0 installed"),

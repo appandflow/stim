@@ -1147,25 +1147,33 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
 10 seconds on step 4. `SetupWizard.refreshes(page:)` and
 `SetupRefreshClock` decide what is due.
 
-1. **Pick a Mac.** The Tailscale check comes first. `Tailnet.Install` tells the
+1. **Pick a Machine.** The Tailscale check comes first. `Tailnet.Install` tells the
    Tailscale app (`/Applications/Tailscale.app`) from a CLI-only install. Its
    `status` fails while the app is quit, so an installed app with no answer is
    off, not missing.
    - App off: art of the menu bar switch turning on.
    - CLI only: `tailscale up`.
    - Not installed: a **Download Tailscale** button.
-   - Running: the macOS peers, each marked **Reachable** or **Offline**. It does
-     not show stim-server state, which setup installs later.
+   - Running: the macOS and Linux peers, each marked **Reachable** or
+     **Offline**, a Linux one also **Linux · Android builds only**. Windows and
+     other peers are left out. It does not show stim-server state, which setup
+     installs later. With no such peer, the step links to the Tailscale
+     downloads for a Mac and for Linux.
 2. **What it does.** Builds and Hosted simulators checkboxes and the animated
    preview of what setup will do. Both can be off. Then Next is disabled and
-   the preview holds only `$ stim-server setup` and a cursor.
+   the preview holds only `$ stim-server setup` and a cursor. A Linux machine
+   gets Builds only (Android Debug builds); Hosted simulators is disabled with
+   its reason, and the preview names a systemd user service and no Stim Host.
 3. **Set it up.**
    - While nothing has reached the journal yet, the art shows this Mac and the
-     build Mac linked by a travelling dot (still under Reduce Motion).
-   - The copyable command, which needs Node 22.12+ on the build Mac. Run it in
+     remote machine linked by a travelling dot (still under Reduce Motion).
+   - The copyable command, which needs Node 22.12+ on the remote machine. Run it in
      Terminal while signed in there; answering each Y/n request approves
      access. Permission prompts appear on that Mac's screen. There is no SSH
-     option.
+     option. For a Linux machine the command starts with
+     `sudo tailscale set --operator=$USER` and `sudo loginctl enable-linger $USER`,
+     which `tailscale serve` and the systemd user service need, and it also
+     needs JDK 17 and the Android SDK there.
    - A live mirror in the preview's wording: no node or request ids, and no
      tool details or JSON. It shows skipped and failed steps as recorded.
    - When setup finishes with no failed step and every chosen capability is
@@ -1174,7 +1182,7 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
      Screen recording and Device control permissions (with the fix for a
      skipped one); it has no log. The expiry line shows only until the
      command starts.
-4. **Tools.** The build Mac's tools compared with this Mac, from doctor and
+4. **Tools.** The remote machine's tools compared with this Mac, from doctor and
    the setup journal. When Builds is chosen, Android tools are always compared
    and never block Next. Only a problem that stops the chosen capability blocks
    Next (red): a Stim build mismatch, no Xcode, a different CPU or an
@@ -1187,13 +1195,16 @@ setup journal every second and doctor every 5 seconds on step 3, and tools every
    Android tools or a different global CocoaPods. Doctor compares the global
    `pod --version` only for projects whose `Gemfile.lock` does not pin
    CocoaPods. The CocoaPods row offers `bundle add cocoapods --version <here>`
-   with `bundle install`, or `gem install cocoapods -v <here>` on the build
-   Mac. Shell commands have Copy buttons; prose fixes appear as text. Desktop
-   never runs these fixes.
+   with `bundle install`, or `gem install cocoapods -v <here>` on the remote
+   machine. Shell commands have Copy buttons; prose fixes appear as text. Desktop
+   never runs these fixes. A Linux machine is compared with
+   `stim doctor --platform android` only: it shows the Stim build and Android
+   rows, and a missing Android SDK or any JDK difference blocks Next, since no
+   build could offload there.
 5. **Done.**
    - The approvals.
    - A **Try it** card with a copyable agent prompt and
-     `stim ios --remote-build <machine>`.
+     `stim ios --remote-build <machine>`, or `stim android` for a Linux machine.
    - **Builds**: Auto / Always / Never for `remote.buildMode`. It defaults to
      Auto when the wizard added the first remote Mac, and otherwise keeps the
      current mode.
@@ -1212,10 +1223,11 @@ user projects and Stim's state directory. It also uses this checkout for setup
 requests when no workspace is listed. In that case preparation starts when a Mac
 is picked, and Next waits for the sample and checks existing approvals before
 generating the setup command. Failed preparation shows **Retry Sample** without
-a setup command. The test requires a build on the selected Mac and a verified
-launch, then forces a local build to prove the fallback path. Both runs bypass
+a setup command. The test requires a build on the selected machine and a verified
+launch, then forces a local build to prove the fallback path. It builds for iOS,
+or for Android on a Linux machine. Both runs bypass
 the build cache. When the wizard closes, it stops the sample, removes its Stim
-workspace and sample folder, and releases its owned simulator (parked for reuse
+workspace and sample folder, and releases its owned simulator or emulator (parked for reuse
 within the parked-simulator limit, deleted otherwise), quietly and on a best-effort
 basis.
 

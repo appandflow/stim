@@ -120,28 +120,36 @@ public struct SetupKnown: Equatable, Sendable {
   }
 }
 
+/// The command a person runs on the chosen machine. On Linux, `tailscale serve` needs the user as Tailscale's
+/// operator and the systemd user service needs linger to outlive the login, and both need sudo, which setup never
+/// runs itself.
 public func setupCommand(
-  version: String, client: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown
+  version: String, client: String, ticket: SetupTicket, capabilities: Set<SetupCapability>, known: SetupKnown,
+  linux: Bool = false
 ) -> String {
   let flags = SetupCapability.allCases.filter { capabilities.contains($0) && known.needsApproval($0) }
     .map { "--\($0.rawValue)" }
-  return
+  let setup =
     ([
       "npx --yes --package @stim-cli/server@\(version) stim-server setup", "--client \(client)",
       "--ticket \(ticket.value)", "--expires \(ticket.isoExpires)",
     ] + flags).joined(separator: " \\\n  ")
+  guard linux else { return setup }
+  return "sudo tailscale set --operator=$USER && \\\nsudo loginctl enable-linger $USER && \\\n" + setup
 }
 
-public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, version: String? = nil) -> [TerminalLine] {
+public func previewLines(
+  capabilities: Set<SetupCapability>, known: SetupKnown, version: String? = nil, linux: Bool = false
+) -> [TerminalLine] {
   func check(_ title: String, done: Bool = false) -> TerminalLine {
     TerminalLine(text: title + (done ? " (already done)" : ""), kind: .ok)
   }
   var lines = [TerminalLine(text: "$ stim-server setup", kind: .command)]
   guard !capabilities.isEmpty else { return lines }
-  lines += [
-    check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil),
-    check("Stim Host installed"), check("LaunchAgent running"), check("tailnet route https 7443 (no Funnel)"),
-  ]
+  lines.append(
+    check("stim-server \(known.serverVersion ?? version ?? "<version>") installed", done: known.serverVersion != nil))
+  if !linux { lines.append(check("Stim Host installed")) }
+  lines += [check(serviceNoun(linux: linux) + " running"), check("tailnet route https 7443 (no Funnel)")]
   if capabilities.contains(.build) { lines.append(check("approved \(known.clientName) for builds", done: known.buildApproved)) }
   if capabilities.contains(.deviceHost) {
     lines.append(check("approved \(known.clientName) for hosted simulators", done: known.hostApproved))
@@ -151,14 +159,18 @@ public func previewLines(capabilities: Set<SetupCapability>, known: SetupKnown, 
   return lines
 }
 
+/// What `stim-server setup` installs to keep the server running: a LaunchAgent on macOS, a systemd user service on
+/// Linux.
+public func serviceNoun(linux: Bool) -> String { linux ? "systemd user service" : "LaunchAgent" }
+
 /// The setup journal as short lines in the preview's wording: no node or request ids, no tool details.
-public func journalLines(_ journal: SetupJournal, clientName: String) -> [TerminalLine] {
+public func journalLines(_ journal: SetupJournal, clientName: String, linux: Bool = false) -> [TerminalLine] {
   [TerminalLine(text: "$ stim-server setup", kind: .command)]
-    + journal.steps.compactMap { setupStepLine($0, clientName: clientName) }
+    + journal.steps.compactMap { setupStepLine($0, clientName: clientName, linux: linux) }
 }
 
 /// One journal step in the preview's wording, with its state as the line's kind; nil for steps the mirror hides.
-public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> TerminalLine? {
+public func setupStepLine(_ step: SetupJournal.Step, clientName: String, linux: Bool = false) -> TerminalLine? {
   let kind: TerminalLine.Kind
   switch step.state {
   case .ok: kind = .ok
@@ -178,7 +190,7 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> Term
       text = running ? "installing stim-server" : "stim-server"
     }
   case "host": text = running ? "installing Stim Host" : "Stim Host installed"
-  case "service": text = running ? "starting the LaunchAgent" : "LaunchAgent running"
+  case "service": text = running ? "starting the \(serviceNoun(linux: linux))" : "\(serviceNoun(linux: linux)) running"
   case "route":
     let port = step.detail?.range(of: "https port ").map { step.detail![$0.upperBound...] }.map(String.init)
     text = running ? "checking the tailnet route" : port.map { "tailnet route https \($0) (no Funnel)" } ?? "tailnet route"
@@ -207,6 +219,7 @@ public func setupStepLine(_ step: SetupJournal.Step, clientName: String) -> Term
   default:
     if step.id.hasPrefix("tools.") {
       let tool = String(step.id.dropFirst("tools.".count))
+      if linux, ["Xcode", "iOS runtime", "CocoaPods"].contains(tool) { return nil }
       text = step.state == .ok ? tool : tool + " missing"
     } else {
       text = step.title
@@ -318,10 +331,11 @@ public struct SetupWizard: Sendable {
     case .macChosen(let mac):
       guard phase == .pick else { return [] }
       self.mac = mac
+      if mac.isLinux { capabilities = [.build] }
       phase = .choose
     case .capabilitiesChanged(let capabilities):
       guard phase == .choose else { return [] }
-      self.capabilities = capabilities
+      self.capabilities = mac?.isLinux == true ? capabilities.subtracting([.deviceHost]) : capabilities
     case .next(let ticket), .newCommand(let ticket):
       guard mac != nil, !capabilities.isEmpty, phase != .cancelled else { return [] }
       let previouslyKnown = known
@@ -377,6 +391,7 @@ public struct SetupWizard: Sendable {
       guard canGoBack else { return [] }
       if phase == .choose {
         phase = .pick
+        if mac?.isLinux == true { capabilities = [.build, .deviceHost] }
         mac = nil
         build = nil
         host = nil

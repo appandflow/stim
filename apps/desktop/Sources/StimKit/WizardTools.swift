@@ -26,9 +26,12 @@ public struct WizardTool: Equatable, Identifiable, Sendable {
 
 private let androidCodes: Set<String> = ["jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"]
 
+/// The Tools step's rows. A Linux machine (`linux`) builds Android only, so it gets no Xcode, iOS runtime or
+/// CocoaPods rows, and a missing Android SDK or any JDK problem doctor reports blocks Next there, since no build could
+/// offload. Setup's own tool check, used until doctor compares, never blocks.
 public func toolsReport(
   journal: SetupJournal?, status: BuildMachineStatus?, capabilities: Set<SetupCapability>, android: Bool = false,
-  findings: [DoctorReport.Finding] = []
+  findings: [DoctorReport.Finding] = [], linux: Bool = false
 ) -> [WizardTool] {
   let builds = capabilities.contains(.build)
   let hosts = capabilities.contains(.deviceHost)
@@ -49,11 +52,15 @@ public func toolsReport(
   func isMissing(_ reason: String) -> Bool {
     reason.hasPrefix("no ") || reason.contains("none") || reason.contains("null") || reason.contains("undefined")
   }
+  let apple: [(String, String, String)] = [
+    ("xcode", "Xcode", "Xcode"), ("runtime", "iOS simulator runtime", "iOS runtime"),
+    ("cocoapods", "CocoaPods / Bundler", "CocoaPods"),
+  ]
   let definitions: [(String, String, String)] =
-    [
-      ("xcode", "Xcode", "Xcode"), ("runtime", "iOS simulator runtime", "iOS runtime"),
-      ("cocoapods", "CocoaPods / Bundler", "CocoaPods"), ("stim-build", "Stim build (matches this Mac)", "Stim build"),
-      ("jdk", "Java (JDK)", "JDK"), ("android-sdk", "Android SDK", "Android SDK"),
+    (linux ? [] : apple)
+    + [
+      ("stim-build", "Stim build (matches this Mac)", "Stim build"), ("jdk", "Java (JDK)", "JDK"),
+      ("android-sdk", "Android SDK", "Android SDK"),
     ]
     + (android && builds
       ? [("ndk", "NDK", "NDK"), ("build-tools", "Build-tools", "Build-tools"), ("compile-sdk", "Compile SDK", "Compile SDK")]
@@ -82,15 +89,19 @@ public func toolsReport(
       let fix = fixes.enumerated().filter { fixes.firstIndex(of: $0.element) == $0.offset }.map(\.element)
         .joined(separator: "\n")
       row.state = missing ? .missing(fix) : .mismatch(fix)
-      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts)
+      (row.blocks, row.consequence) = policy(code: code, missing: missing, builds: builds, hosts: hosts, linux: linux)
       return row
     }
-    if isAndroid, let step {
+    if isAndroid, let step, !(linux && status?.state == .approved && status?.offloadable != nil) {
       var row = WizardTool(id: code, title: title, detail: nil, state: .ok)
       if step.state != .ok {
         row.state = .missing(step.fix ?? "Install it on \(machine).")
-        row.detail = "Needed only for Android builds"
-        row.consequence = "Android builds stay on this Mac."
+        if linux {
+          row.consequence = "Stim checks it again once it can compare an Android project."
+        } else {
+          row.detail = "Needed only for Android builds"
+          row.consequence = "Android builds stay on this Mac."
+        }
       }
       return row
     }
@@ -106,8 +117,8 @@ public func toolsReport(
     }
     if step.state == .ok { return WizardTool(id: code, title: title, detail: nil, state: .ok) }
     var row = WizardTool(id: code, title: title, detail: nil, state: .missing(step.fix!))
-    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts)
-    if isAndroid { row.detail = "Needed only for Android builds" }
+    (row.blocks, row.consequence) = policy(code: code, missing: true, builds: builds, hosts: hosts, linux: linux)
+    if isAndroid, !linux { row.detail = "Needed only for Android builds" }
     return row
   }
   for problem in status?.problems ?? []
@@ -138,7 +149,9 @@ public func toolsReport(
 }
 
 /// Whether a tool problem stops the chosen capability from working at all, and otherwise what it costs.
-private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool) -> (blocks: Bool, consequence: String?) {
+private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool, linux: Bool) -> (
+  blocks: Bool, consequence: String?
+) {
   switch code {
   case "stim-build":
     return builds ? (true, "The remote machine refuses builds until it runs this Mac's Stim build.") : (false, nil)
@@ -147,8 +160,10 @@ private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool) -> (
   case "runtime":
     if missing, hosts { return (true, nil) }
     return (false, missing ? "iOS builds stay on this Mac." : "Builds may differ from this Mac's.")
+  case "jdk" where linux, "android-sdk" where linux && missing:
+    return (true, nil)
   case _ where androidCodes.contains(code):
-    return (false, "Android builds stay on this Mac.")
+    return (false, linux ? "Builds that need it stay on this Mac." : "Android builds stay on this Mac.")
   default:
     return (false, "Builds fall back to this Mac until this is fixed.")
   }

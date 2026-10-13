@@ -38,6 +38,20 @@ import Testing
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nOn"])
   }
 
+  @Test func wizardPeersAddLinuxButNotWindowsWhileHostingOffersStayOnMacs() throws {
+    let data = Data(
+      #"""
+      {"BackendState":"Running","Self":{"ID":"nSelf","HostName":"Laptop","DNSName":"laptop.tail.test."},
+      "Peer":{"a":{"ID":"nMini","OS":"macOS","HostName":"Mini","DNSName":"mini.tail.test.","Online":true},
+      "b":{"ID":"nBox","OS":"linux","HostName":"build-box","DNSName":"build-box.tail.test.","Online":true},
+      "c":{"ID":"nWin","OS":"windows","HostName":"pc","DNSName":"pc.tail.test.","Online":true}}}
+      """#.utf8)
+    let peers = Tailnet.peers(statusJSON: data)
+    #expect(peers.map(\.mac.machine) == ["build-box", "mini"])
+    #expect(peers.map(\.mac.isLinux) == [true, false])
+    #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nMini"])
+  }
+
   @Test func readsHostingPermissionsFromApprovedDoctorEntries() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
