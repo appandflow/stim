@@ -483,6 +483,7 @@ public struct MachineReadiness: Equatable, Sendable {
       "checkout": ("Not a git checkout", "run Stim from a git checkout"),
       "stim-build": ("Stim build differs", "update the remote Mac"),
       "arch": ("Other CPU", "use a Mac with the same CPU"),
+      "platform": ("Not a Mac", "iOS and macOS builds need a Mac"),
       "xcode": ("Xcode differs", "select the same Xcode on both"),
       "simulator-sdk": ("Simulator SDK differs", "select the same Xcode on both"),
       "cocoapods": ("CocoaPods differs", "install the same CocoaPods there"),

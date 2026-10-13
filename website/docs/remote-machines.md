@@ -327,7 +327,7 @@ environment is used.
 
 Open **Stim > Settings > Remote Macs** on your main machine. It lists your
 remote machines, each with a status (**Approved**, **Waiting for approval**,
-**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Choose **Add Remote Machine...** to start the wizard,
+**Unreachable**, **Needs update** or the reason it is not offloading, with the reason and a fix under it), what it does and **Remove...**. Readiness covers every platform of the app: a Linux machine that matches for Android shows as approved even though it cannot build iOS, and a Mac without an Android SDK shows that reason for an app with Android. Choose **Add Remote Machine...** to start the wizard,
 which finds the Macs on your tailnet itself. **Remove** takes the Mac out of `remote.machines` and shows the optional
 commands to run on that machine: `stim-server devices revoke <id>` for each
 request and `stim-server service uninstall`.

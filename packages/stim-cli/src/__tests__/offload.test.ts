@@ -19,6 +19,7 @@ import {
   BuildConnection,
   chooseBuildMachine,
   offloadBuild,
+  machineProblems,
   offerProblems,
   offloadPlacement,
   pickOffer,
@@ -393,6 +394,51 @@ describe('macOS build compatibility', () => {
         offer({ toolchain: { cocoapods: null, bundler: null, runtimes: [], jdk: null, androidSdk: null } }).toolchain,
       ),
     ).toEqual([]);
+  });
+});
+
+describe('a worker that is not a Mac', () => {
+  const linux = offer({
+    toolchain: {
+      os: 'linux',
+      arch: 'x64',
+      xcode: null,
+      simulatorSdk: null,
+      macosSdk: null,
+      cocoapods: null,
+      runtimes: [],
+    },
+  }).toolchain;
+  const macos: BuildTarget = {
+    platform: 'macos',
+    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+  };
+
+  it('refuses iOS and macOS builds with one platform reason instead of every missing Apple tool', () => {
+    expect(toolchainMismatches(IOS, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('linux') }]);
+    expect(toolchainMismatches(macos, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('macOS') }]);
+  });
+
+  it('still takes Android builds', () => {
+    expect(toolchainMismatches(ANDROID, linux)).toEqual([]);
+  });
+
+  it('is judged for doctor on the platforms it can build, naming the platform of each reason', () => {
+    const offerFrom = (toolchain: Partial<BuildOffer['toolchain']>, capacityOver = {}) =>
+      offer({ toolchain: { ...linux, ...toolchain }, capacity: capacity(capacityOver) });
+    expect(machineProblems(offerFrom({}), [IOS, ANDROID])).toEqual([]);
+    expect(machineProblems(offerFrom({ jdk: '21' }), [IOS, ANDROID])).toEqual([
+      { code: 'jdk', reason: expect.stringMatching(/^Android: JDK 21 there/) },
+    ]);
+    expect(machineProblems(offerFrom({}), [IOS]).map((problem) => problem.code)).toEqual(['platform']);
+    expect(
+      machineProblems(offerFrom({}, { declined: 'all slots busy' }), [IOS, ANDROID]).filter((p) => p.code === 'busy'),
+    ).toHaveLength(1);
+  });
+
+  it('judges a stim-server that reports no OS by its tools, as before', () => {
+    const { os: _os, ...unreported } = linux;
+    expect(toolchainMismatches(IOS, unreported).map((problem) => problem.code)).toContain('xcode');
   });
 });
 

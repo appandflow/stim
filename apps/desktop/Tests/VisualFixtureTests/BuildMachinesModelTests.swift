@@ -166,12 +166,12 @@ final class BuildMachinesModelTests: XCTestCase {
     await waitUntil { harness.waiting != nil }
     let nextApproval = Task { await model.ask("mini", checkout: "/w") }
     await Task.yield()
-    XCTAssertEqual(harness.calls.count, 2)
+    XCTAssertEqual(harness.calls.count, 3)
     harness.block = false
     harness.waiting?.resume()
     await refresh.value
     await nextApproval.value
-    XCTAssertEqual(harness.calls.map { $0.1 }, [true, false, true])
+    XCTAssertEqual(harness.calls.map { $0.1 }, [true, false, false, true, false])
   }
 
   @MainActor func testFailedPickerRefreshIsAlsoThrottled() async {

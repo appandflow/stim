@@ -195,3 +195,16 @@ public func doctorInputs(checkout: String, repository: String) -> [String] {
 public func newestModification(_ paths: [String]) -> Date? {
   paths.compactMap { (try? FileManager.default.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
 }
+
+extension DoctorReport {
+  /// This report of an ask (`--fix --platform ios`) with each remote machine that `refreshed`, a plain
+  /// `stim doctor --json` for every platform of the app, reports approved taken from it. Every other machine keeps
+  /// what the ask reported, such as unreachable or pending.
+  public func refreshingApproved(from refreshed: DoctorReport) -> DoctorReport {
+    var merged = self
+    merged.remoteMachines = remoteMachines?.map { asked in
+      refreshed.remoteMachines?.first { $0.machine == asked.machine && $0.state == .approved } ?? asked
+    }
+    return merged
+  }
+}

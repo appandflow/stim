@@ -301,7 +301,10 @@ final class BuildMachinesModel {
   private func fetchStatuses(checkout: String, ask: Bool) async {
     runs += 1
     defer { runs -= 1 }
-    let result = await Result.awaiting { try await machineAccess(checkout, ask) }
+    var result = await Result.awaiting { try await machineAccess(checkout, ask) }
+    if ask, case .success(let asked) = result, let refreshed = try? await machineAccess(checkout, false) {
+      result = .success(asked.refreshingApproved(from: refreshed))
+    }
     guard !Task.isCancelled else { return }
     switch result {
     case .success(let report):

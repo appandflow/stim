@@ -557,13 +557,15 @@ leased until <time>" for each one.`,
                   simulator unless --platform android, Android emulator when
                   --platform android or the app has android/ or uses Expo,
                   plus macOS SwiftPM when Package.swift exists and no platform
-                  is selected on a Mac), and reasons, each reason it would not,
+                  is selected on a Mac; a platform the machine cannot build at
+                  all, such as iOS on Linux, is left out while it can build
+                  another), and reasons, each reason it would not,
                   prefixed "iOS: ", "Android: " or "macOS: " when only one platform
                   has it, with a finding
                   per reason (code build-machine-<reason>: unreachable,
                   checkout, stim-build, arch, xcode, simulator-sdk, macos-sdk,
                   cocoapods, bundler, runtime, jdk, android-sdk, ndk,
-                  build-tools, compile-sdk, disk or busy). problems lists the same
+                  build-tools, compile-sdk, disk, busy or platform). problems lists the same
                   reasons as { code, reason } with that code. capacity
                   is the machine's offer: { running, max, diskFreeBytes,
                   minDiskFreeBytes, cpus?, loadPerCore?, builds?, maxBuilds?,

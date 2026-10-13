@@ -1245,6 +1245,7 @@ connected since stim-server started keeps its directory when revoked.
   same Ruby selection and UTF-8 locale defaults as `pod install`; omitting
   `rubyVersion` uses the worker's default Ruby. It
   returns `toolchain` (`stimBuild`, a digest of the bundled Stim's built code;
+  `os`, the OS stim-server runs on as Node names it (`darwin`, `linux`, `win32`);
   `arch`; `xcode`; `simulatorSdk`; `macosSdk` (from
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
@@ -1866,7 +1867,7 @@ Events are `{ "event", "subscription", ... }`.
   commands run waits for them, and `measuredAt` says when they started. The
   commands fail after 150 seconds. Servers that predate it answer
   `unknown-method`. It also carries `buildMachines`, the `remoteMachines` list
-  of `stim doctor --json --platform ios` (never with `--fix`), so a phone can
+  of `stim doctor --json` (never with `--fix`), so a phone can
   show whether each remote machine takes builds. The server runs doctor only
   when `remote.machines` names a machine, else the list is empty; it runs it
   in the registered workspace that ran doctor for iOS most recently, because

@@ -116,9 +116,9 @@ public struct StimCLI: Sendable {
       DoctorReport.self, from: await run(["doctor", "--json"], cwd: cwd), source: .cli, diagnostics: diagnostics)
   }
 
-  /// The `remote.machines` states from `stim doctor --json --platform ios` in `cwd`. With `ask`, `--fix` also asks
-  /// each named machine this Mac has no pairing with for build access, and again one that revoked it; the iOS
-  /// platform keeps `--fix` from cleaning Android build state in that checkout.
+  /// The `remote.machines` states from `stim doctor --json` in `cwd`, judged for every platform of the app. With
+  /// `ask`, `--fix --platform ios` also asks each named machine this Mac has no pairing with for build access, and
+  /// again one that revoked it; the iOS platform keeps `--fix` from cleaning Android build state in that checkout.
   public func buildMachines(cwd: String, ask: Bool) async throws -> [BuildMachineStatus]? {
     try await machineAccess(cwd: cwd, ask: ask).remoteMachines
   }
@@ -127,7 +127,7 @@ public struct StimCLI: Sendable {
   public func machineAccess(
     cwd: String, ask: Bool, extraEnvironment: [String: String] = [:], timeout: TimeInterval? = nil
   ) async throws -> DoctorReport {
-    let args = ["doctor", "--json", "--platform", "ios"] + (ask ? ["--fix"] : [])
+    let args = ["doctor", "--json"] + (ask ? ["--platform", "ios", "--fix"] : [])
     return try decodeReporting(
       DoctorReport.self,
       from: await run(args, cwd: cwd, extraEnvironment: extraEnvironment, timeout: timeout ?? (ask ? 120 : 30)),

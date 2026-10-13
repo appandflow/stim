@@ -127,6 +127,7 @@ const PROBLEM_TITLES: Record<OffloadProblem['code'], string> = {
   'compile-sdk': "lacks this project's Android compile platform",
   disk: 'is low on disk',
   busy: 'is too busy to take builds',
+  platform: 'cannot build this platform',
 };
 
 function problemFix(code: OffloadProblem['code'], entry: string): string {
@@ -158,6 +159,8 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
       return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`;
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
+    case 'platform':
+      return `iOS and macOS builds need a Mac; ${entry} can take Android builds only.`;
     case 'busy':
       return `Builds stay on this machine until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
   }
