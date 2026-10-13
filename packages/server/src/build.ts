@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, type Hash } from 'node:crypto';
 import {
   appendFileSync,
@@ -41,7 +41,7 @@ import {
 import { validMacosResourceDestination } from '@stim-cli/core';
 import type { BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
-import { listProcesses } from './processes.ts';
+import { listCommandLines } from './processes.ts';
 import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -178,11 +178,19 @@ function gradleDaemonIdleMs(): number {
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
 /**
- * The Gradle daemons in `ps -A -ww -o pid=,command=` output that run from a client's Gradle home under `root`,
- * which the wrapper distribution on their classpath names.
+ * The Gradle daemons in `listCommandLines` output that run from a client's Gradle home under `root`, which the
+ * wrapper distribution on their classpath names.
  */
 function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; client: string }> {
-  const home = new RegExp(`${resolvePath(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
+  const separator = '[\\\\/]';
+  const prefix = resolvePath(root)
+    .split(/[\\/]/)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join(separator);
+  const home = new RegExp(
+    `${prefix}${separator}([^\\\\/\\s]+)${separator}cache${separator}gradle${separator}`,
+    process.platform === 'win32' ? 'i' : '',
+  );
   const daemons: Array<{ pid: number; client: string }> = [];
   for (const line of ps.split('\n')) {
     const match = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -191,6 +199,16 @@ function workerGradleDaemons(ps: string, root: string): Array<{ pid: number; cli
     if (client) daemons.push({ pid: Number(match[1]), client });
   }
   return daemons;
+}
+
+/**
+ * Windows has no process groups, and Node's SIGTERM there is TerminateProcess on the one process, so the build's
+ * Gradle and Java children are reached only through `taskkill /T`, which is always forceful.
+ */
+function killTree(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 30_000 }, () => resolve());
+  });
 }
 
 interface Job {
@@ -280,7 +298,7 @@ export class BuildHost {
     if (this.closed) return;
     const available = await readAvailableMemory();
     const low = available !== null && available < this.limits.minFreeMemoryBytes;
-    const daemons = workerGradleDaemons(await listProcesses().catch(() => ''), this.root());
+    const daemons = workerGradleDaemons(await listCommandLines().catch(() => ''), this.root());
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
@@ -569,8 +587,13 @@ export class BuildHost {
       releaseClaims();
       return refusal('build-refused', (error as Error).message);
     }
+    let treeKilled: Promise<void> | null = null;
     const signalGroup = (signal: NodeJS.Signals) => {
       if (child.pid === undefined) return;
+      if (process.platform === 'win32') {
+        treeKilled ??= killTree(child.pid);
+        return;
+      }
       try {
         process.kill(-child.pid, signal);
       } catch {}
@@ -660,6 +683,7 @@ export class BuildHost {
             setTimeout(settle, GROUP_POLL_MS).unref();
             return;
           }
+          await treeKilled;
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           releaseClaims();
