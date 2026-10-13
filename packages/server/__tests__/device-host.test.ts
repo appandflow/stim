@@ -3421,7 +3421,7 @@ test('sessions lists installed apps and device labels newest first, retaining pa
   await vi.waitFor(() => expect(readHostedAppMetadata(session.id, app.params.attempt).state).toBe('installed'), {
     timeout: 5000,
   });
-  const pending = requestDeviceHostAccess('Client Mac', {
+  const pending = requestDeviceHostAccess('Client machine', {
     kind: 'tailnet',
     nodeId: 'client-node',
     nodeName: 'client',
@@ -3455,7 +3455,7 @@ test('sessions lists installed apps and device labels newest first, retaining pa
     },
     {
       id: android.id,
-      client: { id: pending.device.id, name: 'Client Mac' },
+      client: { id: pending.device.id, name: 'Client machine' },
       platform: 'android',
       device: 'pixel_6 (android-30 google_apis arm64-v8a)',
       app: null,

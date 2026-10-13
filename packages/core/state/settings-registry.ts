@@ -161,7 +161,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: EVERY,
     description:
-      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
+      'Default iOS remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'ios.projectPath',
@@ -273,7 +273,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     },
     scopes: EVERY,
     description:
-      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this Mac is full or busy; local runs here, overriding a lower layer',
+      'Default Android remote target: eas, proxy, or an approved Mac in remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, overriding a lower layer',
   },
   {
     key: 'metro.tunnel',
@@ -771,7 +771,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     env: 'STIM_DEBUG',
     description:
-      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other Macs, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
+      'Debug-level logging. While on, the CLI records its commands, child processes and requests to other machines, and stim-server records every request with its timings, under STIM_HOME/logs/debug/ with rotation. Nothing is sent anywhere, and records never carry arguments, tokens or tickets',
   },
   {
     key: 'hosting.agentDriver',
@@ -803,14 +803,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: false,
     description:
-      "Whether a Mac approved for builds or device hosting here may update this Mac's stim-server service to that Mac's own stim-server build; releases from npm need no setting",
+      "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
     key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote Macs this Mac may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'Tailscale names of the remote machines this machine may build on and host owned simulators on, each optionally with :<port> of its tailscale serve route (default 7443); what each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -834,7 +834,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto, this Mac is at its concurrency.maxDevices cap and no Mac in remote.machines takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
+      'When ios.remote or android.remote is auto, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can',
   },
   {
     key: 'remote.build',
@@ -847,7 +847,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD',
     description:
-      'Build placement: auto follows remote.buildMode within enabled automatic pool members; local always builds here; a name in remote.machines requires that remote Mac without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
+      'Build placement: auto follows remote.buildMode within enabled automatic pool members; local always builds here; a name in remote.machines requires that remote machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
     key: 'remote.buildMode',
@@ -856,7 +856,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'auto',
     env: 'STIM_REMOTE_BUILD_MODE',
     description:
-      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this Mac has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded Mac in remote.machines; force builds on an enabled remote Mac whenever one can take the build; off builds here when local is enabled in remote.buildPoolDisabled',
+      'When remote.build is auto, where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: auto builds here while this machine has a free concurrency.maxBuilds slot and its load is under server.maxLoadPerCore, and otherwise builds on a less loaded machine in remote.machines; force builds on an enabled remote machine whenever one can take the build; off builds here when local is enabled in remote.buildPoolDisabled',
   },
   {
     key: 'server.maxLoadPerCore',
@@ -864,14 +864,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 2,
     description:
-      'Load per core (5-minute load average divided by the CPU count) at which this Mac counts as saturated: it declines builds other Macs send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
+      'Load per core (5-minute load average divided by the CPU count) at which this machine counts as saturated: it declines builds other machines send it, automatic build placement stops preferring it, and automatic iOS and Android device placement treats it as busy',
   },
   {
     key: 'server.workerRoot',
     type: ABSOLUTE_PATH,
     scopes: MACHINE,
     description:
-      'Directory where stim-server keeps the checkouts, dependencies and build state of the Macs that build here; default $STIM_HOME/build-worker',
+      'Directory where stim-server keeps the checkouts, dependencies and build state of the machines that build here; default $STIM_HOME/build-worker',
   },
   {
     key: 'server.gradleDaemonIdleMinutes',
@@ -879,7 +879,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 30,
     description:
-      'Minutes the Gradle daemon of an Android build another Mac sent here stays warm after the build; 0 stops it when the build ends',
+      'Minutes the Gradle daemon of an Android build another machine sent here stays warm after the build; 0 stops it when the build ends',
   },
   {
     key: 'caches.buildCache',

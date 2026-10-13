@@ -35,7 +35,10 @@ public func toolsReport(
   let machine = status?.machine ?? "the build Mac"
   func fix(code: String, reason: String, step: SetupJournal.Step? = nil) -> String {
     let finding = status.flatMap { status in
-      findings.first { $0.code == "build-machine-\(code)" && $0.title.hasPrefix("Remote Mac \(status.machine) ") }
+      findings.first { finding in
+        finding.code == "build-machine-\(code)"
+          && ["Remote machine", "Remote Mac"].contains { finding.title.hasPrefix("\($0) \(status.machine) ") }
+      }
     }
     return step?.fix ?? finding?.fix
       ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the build Mac.")

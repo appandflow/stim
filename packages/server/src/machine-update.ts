@@ -163,7 +163,7 @@ const failed = (code: ProtocolError['code'], message: string): { error: Protocol
 });
 
 /**
- * Asks an approved remote Mac or device host to update its stim-server to what this Mac runs: the same npm
+ * Asks an approved remote machine or device host to update its stim-server to what this machine runs: the same npm
  * release, or this checkout's own packed build. It connects with the credential `stim doctor --fix` stored for that
  * machine and sends the token only to the node it pinned.
  */
@@ -181,7 +181,7 @@ export class MachineUpdates {
       ? null
       : readDeviceHostMachines().find((entry) => entry.machine === machine && entry.state === 'approved');
     const credential = build ?? host;
-    if (!credential) throw new Error(`${machine} has not approved this Mac for builds or device hosting.`);
+    if (!credential) throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
     const pinned = pinnedEndpoint(credential, await this.options.status());
     if (typeof pinned === 'string') throw new Error(pinned);
     const upstream = new Upstream(this.options.endpoint?.(pinned) ?? pinned, credential.deviceToken);
@@ -201,7 +201,7 @@ export class MachineUpdates {
   }
 
   async start(machine: string): Promise<Answer<ServerUpdateProgress>> {
-    if (this.uploads.get(machine)?.active) return failed('action-busy', `This Mac is already updating ${machine}.`);
+    if (this.uploads.get(machine)?.active) return failed('action-busy', `This machine is already updating ${machine}.`);
     const upload: Upload = { sent: 0, total: 0, error: null, active: true };
     this.uploads.set(machine, upload);
     let upstream: Upstream | null = null;

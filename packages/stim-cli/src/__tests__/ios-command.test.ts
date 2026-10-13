@@ -3643,7 +3643,7 @@ describe('--remote', () => {
     expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
 
-  test('auto on a full Mac with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
+  test('auto on a full machine with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
     const remote = remoteStub();
     reserve();
     const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
@@ -7092,7 +7092,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no remote Mac is paired' },
+      placement: { decision: 'here', reason: 'no remote machine is paired' },
       phases: expect.any(Object),
       deviceSetup: false,
     });
@@ -7100,7 +7100,7 @@ describe('run statistics', () => {
     expect(runs[0]?.now).toBe(clock);
   });
 
-  test('a compiling run with a paired remote Mac records where it built and why', async () => {
+  test('a compiling run with a paired remote machine records where it built and why', async () => {
     reserve();
     writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini']);
     const credential = {
@@ -7178,7 +7178,7 @@ describe('run statistics', () => {
     expect(runs[0]?.placement?.deviceSlotWaitMs).toBe(3000);
   });
 
-  test('a compiling run without remote Macs records its local placement and slot wait', async () => {
+  test('a compiling run without remote machines records its local placement and slot wait', async () => {
     reserve();
     const { runs, recordStats } = recorder();
     await run(
@@ -7192,7 +7192,7 @@ describe('run statistics', () => {
 
     expect(runs[0]?.run.placement).toEqual({
       decision: 'here',
-      reason: 'no remote Mac is paired',
+      reason: 'no remote machine is paired',
       slotWaitMs: 5000,
     });
   });
@@ -8487,7 +8487,7 @@ describe('iOS placement on a hosting Mac', () => {
   });
 });
 
-describe('strict remote Mac selection', () => {
+describe('strict remote machine selection', () => {
   beforeEach(() => {
     setExecutor({ runFile: () => '', runFileQuiet: () => null });
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');

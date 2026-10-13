@@ -184,7 +184,7 @@ leased until <time>" for each one.`,
   alreadyRunning  true when nothing needed starting
   links           { desktop }: an HTTPS link containing this Stim home and
                   workspace IDs, opened by Desktop here or an already-paired phone. Absent when
-                  no app on this Mac opens stim-desktop links. Plain output
+                  no app on this machine opens stim-desktop links. Plain output
                   prints it on stderr as "Open in Stim: <link>"; so
                   does worktree warm, which has no JSON payload
 
@@ -248,7 +248,7 @@ leased until <time>" for each one.`,
                   configuration is part of it: -release-sim vs
                   -debug-sim-arm64). A single-architecture simulator build
                   ends in its architecture (-arm64 or -x86-64): a local Debug
-                  build compiles this Mac's, a --remote build the remote
+                  build compiles this machine's, a --remote build the remote
                   host's. A local non-Debug simulator build compiles every
                   architecture the project lists and has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
@@ -271,7 +271,7 @@ leased until <time>" for each one.`,
                   looked up", which is a different fact from "nothing was found"
   buildMachine    selected auto, local or machine name, including cache hits
   builtOn         here or machine name when a build ran; absent otherwise
-  offloadedTo     only on an app a remote Mac compiled: its
+  offloadedTo     only on an app a remote machine compiled: its
                   remote.machines entry (see \`guide settings\`). cacheHit is
                   false for it. The Android payload carries it too
   offloadFallback only on an app compiled here after the run considered
@@ -424,7 +424,7 @@ leased until <time>" for each one.`,
                   sets its own CMake compiler launcher, or a Gradle run whose
                   native work was all up to date. None of the three is an
                   error, and this field is separate from cacheHit. On an
-                  offloaded APK it is the remote Mac's ccache
+                  offloaded APK it is the remote machine's ccache
   logs            the workspace log directory
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
@@ -529,7 +529,7 @@ leased until <time>" for each one.`,
                   "tailscale-off", "unreachable", "invalid",
                   "credentials-unavailable" or "busy". Tokens stay private.
                   Only --fix asks for access or forgets removed names.
-                  A remote Mac approved for device hosting does not imply
+                  A remote machine approved for device hosting does not imply
                   build approval; see \`guide settings\`.
                   host is { name, screenRecording, accessibility }, present
                   only for approved machines whose worker reports it.
@@ -1323,7 +1323,7 @@ RULES
                    device: its boot, adoption cleanup, or a physical
                    device's lease and connection check. A boot that
                    finishes during the build adds no device time. For a
-                   device hosted on another Mac, device covers reserving
+                   device hosted on another machine, device covers reserving
                    and preparing it there, install covers delivering the
                    app, and launch starts when the host launches it. An
                    --eas-profile run has no cache lookup, so its outcome
@@ -1465,7 +1465,7 @@ RULES
   lookup, and create no lastBuild record or failed-run stats.
   buildMachine selected auto, local or configured machine entry; always on new build records
   builtOn      here or machine name; absent when no build ran (cache/refusal)
-  offloadedTo  only on a run a remote Mac compiled: its name
+  offloadedTo  only on a run a remote machine compiled: its name
   offloadFallback
                only on a run that considered offloading and built here: one
                reason per machine when none took the build, or why the
@@ -1705,7 +1705,7 @@ RULES
                 baseline. rekeyedBy is empty.
   placement     with ios.remote or android.remote set to auto or a Mac,
                 where the plan assumes the device runs: "on <machine>" or
-                "this Mac; auto may use <machines>"; absent otherwise
+                "this machine; auto may use <machines>"; absent otherwise
   refusal       { code, message, remedy } when the run would refuse:
                 STIM_PREBUILD_FAILED for a tracked native dir the fingerprint
                 leaves out, STIM_EAS_BUILD_MISSING for an EAS miss
@@ -1737,7 +1737,7 @@ RULES
   A bucket carries runs, failed, hits, misses, coldRuns, coldRunMs, hitRuns,
   hitRunMs, timeSavedMs, firstRunAt and lastRunAt, plus lastColdBuildMs and
   lastPodsMs once the project has compiled or installed pods, and
-  offloadedRuns, offloadedRunMs and lastOffloadHost once a remote Mac
+  offloadedRuns, offloadedRunMs and lastOffloadHost once a remote machine
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
   integers.
@@ -1857,10 +1857,10 @@ BUILD PLACEMENT (\`offload\`)
   decision, reason, machine?, buildMs?, slotWaitMs?, deviceSlotWaitMs?, localEstimateMs?, failed? }.
   slotWaitMs and deviceSlotWaitMs are whole milliseconds waiting for build
   and owned-device slots respectively, present only when positive.
-  decision is "here", "offloaded", or "fell-back" (it tried a remote Mac
+  decision is "here", "offloaded", or "fell-back" (it tried a remote machine
   and built here). reason is why: the run's \`placement:\` reason, such as
   "load 0.6/core, 1 of 3 build slots busy here" (auto keeps the build here
-  while this Mac has room) or "remote.buildMode is off" (which prints no line),
+  while this machine has room) or "remote.buildMode is off" (which prints no line),
   or for a fallback the cause, prefixed by the machine it concerns, such as
   "mini: no less loaded (load 1.2/core there, 0.6/core here)". buildMs is the compile here, or the offloaded build's
   total (offer, sync, build and fetch); localEstimateMs is this project's
@@ -1869,7 +1869,7 @@ BUILD PLACEMENT (\`offload\`)
   placements lists them newest first: the last 100 from the last 7 days.
   Per machine, \`total\` keeps { offloaded, offloadedMs, savedMs, fallbacks,
   lastOffloadAt?, lastFallbackAt? } for good and \`today\` counts { offloaded,
-  offloadedMs, savedMs, fallbacks } from the placements on this Mac's local
+  offloadedMs, savedMs, fallbacks } from the placements on this machine's local
   calendar day. savedMs sums localEstimateMs minus buildMs over offloaded
   builds that had an estimate, so it is an ESTIMATE and is negative when the
   machine was slower. \`offload.today\` counts the day's placements by

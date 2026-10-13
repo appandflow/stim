@@ -708,7 +708,7 @@ export function unverifiedLaunchLines({
         `until it is granted nothing the app sends reaches ${target}.`,
     );
     push(
-      'Check the phone is on the same network as this Mac -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
+      'Check the phone is on the same network as this machine -- the same Wi-Fi SSID, not cellular, not a VPN -- and that ' +
         'the network does not isolate clients from each other.',
     );
     push(
@@ -717,7 +717,7 @@ export function unverifiedLaunchLines({
         'because macOS routes a host connection to its own address over loopback.',
     );
     push(
-      `If this Mac has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
+      `If this machine has several network interfaces, ${target} may not be the one the phone shares: set ios.lanHost in ` +
         '.stim.json to the address it can reach.',
     );
     // The app takes ip.txt when it has no dev-client scheme, which is what the

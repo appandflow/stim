@@ -62,7 +62,7 @@ import {
 } from './protocol.ts';
 
 export interface BuildLimits {
-  /** Offloaded builds this Mac runs at once, across every client. */
+  /** Offloaded builds this machine runs at once, across every client. */
   maxJobs: number;
   /** Free bytes the worker root's volume must keep for a build to start there. */
   minFreeBytes: number;
@@ -78,7 +78,7 @@ export interface BuildLimits {
   minFreeMemoryBytes: number;
   /** How often the idle Gradle daemons of offloaded builds are checked. */
   daemonSweepMs: number;
-  /** How long a fetched macOS bundle stays here for a hosted session on this Mac to take. */
+  /** How long a fetched macOS bundle stays here for a hosted session on this machine to take. */
   handoffMs: number;
 }
 
@@ -199,7 +199,7 @@ interface Job {
   platform: unknown;
   child: ChildProcess;
   archive: string;
-  /** Whether the job holds one of this Mac's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
+  /** Whether the job holds one of this machine's `concurrency.maxBuilds` slots, which `machineCapacity` counts. */
   slotted: boolean;
   outcome: BuildJobOutcome | null;
   settled: boolean;
@@ -225,7 +225,7 @@ export interface BuildHostOptions {
   ready?: () => boolean;
 }
 
-/** Runs other Macs' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
+/** Runs other machines' iOS and Android builds here for clients with `build`, each in its own area under the worker root. */
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
@@ -355,7 +355,7 @@ export class BuildHost {
         ? undefined
         : await this.cache(client, params.repo).lookup(params.artifact, new AbortController().signal);
     const toolchain = await this.toolchain((params.rubyVersion as string | undefined) ?? null, params.native);
-    if (!toolchain) return refusal('build-refused', 'This Mac could not read its build toolchain.');
+    if (!toolchain) return refusal('build-refused', 'This machine could not read its build toolchain.');
     const root = this.root();
     mkdirSync(root, { recursive: true, mode: 0o700 });
     const area = join(this.clientDir(client), 'repos', params.repo);
@@ -499,9 +499,9 @@ export class BuildHost {
     session: BuildSession;
     send: (event: BuildProgressEvent) => void;
   }): Job | Refusal {
-    if (this.closed) return refusal('build-refused', 'This Mac is shutting down stim-server.');
+    if (this.closed) return refusal('build-refused', 'This machine is shutting down stim-server.');
     const { declined } = this.capacity();
-    if (declined) return refusal('build-busy', `This Mac declines the build: ${declined}.`);
+    if (declined) return refusal('build-busy', `This machine declines the build: ${declined}.`);
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
@@ -515,7 +515,7 @@ export class BuildHost {
       });
       if (!attempt.acquired) {
         if (attempt.pending) releaseClaim(attempt.pending);
-        return refusal('build-busy', 'Another build of this repository is running on this Mac.');
+        return refusal('build-busy', 'Another build of this repository is running on this machine.');
       }
       claim = attempt.acquired;
     } catch (error) {
@@ -535,7 +535,7 @@ export class BuildHost {
           : null;
       if (maxBuilds > 0 && !taken) {
         releaseClaim(claim);
-        return refusal('build-busy', `This Mac declines the build: all ${maxBuilds} build slots busy.`);
+        return refusal('build-busy', `This machine declines the build: all ${maxBuilds} build slots busy.`);
       }
       slot = taken?.claim ?? null;
     } catch (error) {
@@ -793,8 +793,8 @@ export class BuildHost {
     accept: (client: string) => boolean,
   ): { bundle: string; release: () => void } | string {
     const entry = this.retained.get(token);
-    if (!entry) return 'This Mac no longer holds that build.';
-    if (entry.sha256 !== sha256) return 'This Mac holds a different build under that handoff.';
+    if (!entry) return 'This machine no longer holds that build.';
+    if (entry.sha256 !== sha256) return 'This machine holds a different build under that handoff.';
     if (!accept(entry.client))
       return 'That build belongs to a client without build access from the same tailnet node as this one.';
     clearTimeout(entry.timer);
@@ -901,7 +901,7 @@ export class BuildSession {
     }
     if (typeof params.done !== 'boolean') return refusal('bad-request', 'build.sync needs params.done.');
     const low = this.host.lowDisk();
-    if (low) return refusal('build-busy', `This Mac declines the upload: ${low}.`);
+    if (low) return refusal('build-busy', `This machine declines the upload: ${low}.`);
     if (this.done || this.repo !== params.repo) {
       this.repo = params.repo;
       this.files = new Map();
@@ -943,7 +943,7 @@ export class BuildSession {
       const size = this.expected.get(sha256);
       if (size === undefined) return `blob ${sha256} was not asked for`;
       const low = this.host.lowDisk(size);
-      if (low) return `this Mac declines the upload: ${low}`;
+      if (low) return `this machine declines the upload: ${low}`;
       const tmp = join(this.blobs(), `.incoming-${randomUUID()}`);
       mkdirSync(this.blobs(), { recursive: true, mode: 0o700 });
       this.incoming = { sha256, size, received: 0, hash: createHash('sha256'), tmp };
@@ -1089,7 +1089,7 @@ export class BuildSession {
     const toolchain = await this.host.toolchain(null, native?.provider);
     if (this.closed) return refusal('build-refused', 'The connection closed.');
     if (!toolchain || toolchain.stimBuild !== params.stimBuild) {
-      return refusal('build-refused', `This Mac runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);
+      return refusal('build-refused', `This machine runs Stim build ${toolchain?.stimBuild ?? 'unknown'}.`);
     }
     const launched = this.host.launch({
       client: this.client,

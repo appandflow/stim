@@ -40,7 +40,7 @@ describe('machineCapacity', () => {
     expect(machineCapacity()).toMatchObject({ maxBuilds: 3, maxLoadPerCore: 1.5 });
   });
 
-  it('counts runs compiling here, not runs offloaded to a remote Mac', () => {
+  it('counts runs compiling here, not runs offloaded to a remote machine', () => {
     const claim = tryAcquireClaim({ root: join(home, 'native-run'), mode: 'exclusive', label: 'native run' }).acquired!;
     const write = (project: string, activeBuild: Record<string, unknown>) => {
       mkdirSync(workspaceStateDir(join(home, project)), { recursive: true });

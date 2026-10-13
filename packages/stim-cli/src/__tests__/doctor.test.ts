@@ -88,11 +88,11 @@ describe('offload-candidate', () => {
     project: '/app',
     platform: 'ios',
     decision: 'here',
-    reason: 'no remote Mac is paired',
+    reason: 'no remote machine is paired',
     buildMs: 240_000,
   };
 
-  test('three local cold builds averaging over three minutes suggest Desktop remote Mac setup', () => {
+  test('three local cold builds averaging over three minutes suggest Desktop remote machine setup', () => {
     const result = checkOffloadCandidate(
       [cold, { ...cold, buildMs: 180_000 }, { ...cold, buildMs: 300_000 }],
       [],
@@ -102,7 +102,7 @@ describe('offload-candidate', () => {
     expect(result).toEqual({
       code: 'offload-candidate',
       level: 'note',
-      title: 'Builds could run on another Mac',
+      title: 'Builds could run on another machine',
       detail: 'Cold builds averaged ~4 min over 3 builds this week.',
       fix: 'In Stim Desktop, open Settings > Remote Macs > Add.',
     });
@@ -136,7 +136,7 @@ describe('offload-candidate', () => {
     ).not.toBeNull();
   });
 
-  test('configured remote Macs suppress the candidate', () => {
+  test('configured remote machines suppress the candidate', () => {
     expect(checkOffloadCandidate([cold, cold, cold], ['mini'], [peer], now)).toBeNull();
   });
 
@@ -171,7 +171,7 @@ describe('offload-candidate', () => {
       ).toEqual({
         code: 'offload-candidate',
         level: 'note',
-        title: 'Builds could run on another Mac',
+        title: 'Builds could run on another machine',
         detail: 'Cold builds averaged ~4 min over 3 builds this week.',
         fix: 'In Stim Desktop, open Settings > Remote Macs > Add.',
       });

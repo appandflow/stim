@@ -189,7 +189,7 @@ test('the standalone Expo build cache provider separates Android ABIs', async ()
   }
 });
 
-test('the standalone Expo build cache provider keys iOS Debug simulator builds by this Mac arch', async () => {
+test('the standalone Expo build cache provider keys iOS Debug simulator builds by this machine arch', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
   process.env.STIM_HOME = home;

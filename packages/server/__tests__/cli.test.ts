@@ -104,7 +104,7 @@ describe('control', () => {
     });
   }
 
-  it('pair --control pairs a device that can run actions; devices grant changes it from the Mac', () => {
+  it('pair --control pairs a device that can run actions; devices grant changes it from the machine', () => {
     const { qr } = run('pair', '--json', '--port', '17787') as { qr: { pairingToken: string } };
     const control = run('pair', '--control', '--json', '--port', '17787') as { qr: { pairingToken: string } };
     spendPairingToken(qr.pairingToken, 'Reader', { kind: 'local' });

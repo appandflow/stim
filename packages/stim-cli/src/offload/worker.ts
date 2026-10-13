@@ -572,7 +572,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     const initial = await time('fingerprintMs', () =>
       fingerprintProject(root, { platform, iosProjectPath: iosProject.relative, androidLayout }),
     );
-    if (!initial) return failed('no-fingerprint', 'The remote Mac could not fingerprint the project.');
+    if (!initial) return failed('no-fingerprint', 'The remote machine could not fingerprint the project.');
     const plan = planPrebuild(root, platform, {
       isExpo: job.isExpo,
       fingerprint: initial.hash,

@@ -920,7 +920,7 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
   expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
-test('agents tell the user about remote Macs and the phone app and never set them up', () => {
+test('agents tell the user about remote machines and the phone app and never set them up', () => {
   for (const topic of ['agent', 'settings']) {
     const rendered = renderTopic(topic);
     assert(rendered);

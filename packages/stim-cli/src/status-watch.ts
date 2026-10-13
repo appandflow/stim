@@ -474,7 +474,7 @@ function ownerSteady(before: MachineOwner, after: MachineOwner): boolean {
 /**
  * The payload `status --watch --json` prints. A usage figure keeps its value from the `previous` printed payload until it moves by a step: an owner's `cpuPercent`
  * and `memoryMb`, an environment's `memoryMb` and `capacity.committedMb`. An owner's row is kept whole, `residentMb`
- * and `processes` included, until one of its two figures moves, so a Mac whose processes only jitter prints no new line.
+ * and `processes` included, until one of its two figures moves, so a machine whose processes only jitter prints no new line.
  */
 export function watchPayload(previous: StatusPayload | null, next: StatusPayload): StatusPayload {
   const payload: StatusPayload = { ...next };

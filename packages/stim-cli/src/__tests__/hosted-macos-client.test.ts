@@ -594,7 +594,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     ],
     ['an unapproved credential', () => credentials('pending'), 'has not confirmed hosting access'],
     ['a changed tailnet node', () => (tailnet.nodeId = 'nOther'), 'not the pinned nMini'],
-    ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this Mac hosting access'],
+    ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this machine hosting access'],
   ])('refuses %s before building and never launches locally', async (_name, change, message) => {
     change();
     await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow(message);

@@ -54,7 +54,7 @@ runs. Hardware never enters the owned-device registry and is never booted,
 shut down, or deleted by Stim.
 
 While a workspace holds the lease, `stim status` lists the device under that
-workspace with its name, model, whether the Mac reaches it, and when the lease
+workspace with its name, model, whether the machine reaches it, and when the lease
 ends, and Stim Desktop and the Stim phone app show it as a tile with a
 Physical badge. To keep a phone on screen while you work, lock it:
 
@@ -582,8 +582,8 @@ Control is off while you look at the past. Time when nothing was recorded, such
 as after `stim stop`, shows as a gap, and a stopped device's last footage stays
 replayable.
 
-Recordings stay on your Mac and are served only to paired phones and Stim
-Desktop. Turn them off for the whole Mac in the phone's Settings or in Stim
+Recordings stay on your machine and are served only to paired phones and Stim
+Desktop. Turn them off for the whole machine in the phone's Settings or in Stim
 Desktop's Phones settings, or on the Mac, where a repository or workspace can
 also be set on its own:
 
@@ -713,11 +713,11 @@ stim status
 stim reload ios
 stim stop`} />
 
-Set `ios.remote` to that name for a default: `--scope machine` for every app on this Mac, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
+Set `ios.remote` to that name for a default: `--scope machine` for every app on this machine, or a workspace, repo or committed scope for one app. `eas` and `proxy` keep
 those backend meanings. No flag or setting runs here. `auto` places iOS or
-Android on an approved Mac when this Mac is full or busy; see
+Android on an approved Mac when this machine is full or busy; see
 [automatic device placement](./remote-machines.md#automatic-device-placement). `--device` and `--simulator-app` cannot target a hosting Mac.
-The host boots headless; this Mac's viewer setting is ignored.
+The host boots headless; this machine's viewer setting is ignored.
 
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
 Model and runtime selectors use the host's installed choices. The build targets
@@ -725,7 +725,7 @@ its simulator architecture. `--remote-build` independently selects a compatible
 Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
-Metro stays on this Mac. Its supervisor runs a private tailnet gateway to the
+Metro stays on this machine. Its supervisor runs a private tailnet gateway to the
 host's loopback bridge; no `stim start --remote` is needed. `metro.tunnel` and
 `metro.publicUrl` are ignored, and non-Debug runs skip Metro. Hosted Debug runs
 require a running supervisor with private gateway support before reserving a
@@ -736,7 +736,7 @@ until bundle evidence, or positive native process evidence for a release run.
 
 Reruns reattach to the recorded session and upload a new app attempt. A stopped
 or missing session is replaced. An unreachable or unknown session refuses
-replacement. Switching between this Mac and a hosting Mac, or to a different
+replacement. Switching between this machine and a hosting Mac, or to a different
 hosting Mac, requires `stim stop` first for that slot.
 `status --json` adds `ios.host` with `machine`, `session`, `selected`, the device's
 `name` and `runtime`, `agent`, and the probed `state`. A shutdown local simulator
@@ -754,7 +754,7 @@ Unreadable machine or session state stays recorded: status warns, and stop names
 the workspace-state key to inspect. Only that slot's iOS run refuses; restore
 its recorded machine and session from the host, then run `stim stop` for that
 slot. Reload reports the failure and remedy in JSON when no other app can
-reload, and logs remain readable. A hello refusal after this Mac loses hosting
+reload, and logs remain readable. A hello refusal after this machine loses hosting
 access clears its placement during stop or worktree removal; other refusals
 retain it.
 A clean host server restart stops its sessions and preserves eligible parked
@@ -795,7 +795,7 @@ An older host prints an update note, uses uploads and shows previously copied lo
 
 Stim Desktop shows the simulator with the machine's name and the phone app with an
 **on &lt;machine&gt;** label. Turn on **Serve to phones** in Desktop and pair the phone with the client
-Mac. Both view and control it through that Mac's local stim-server relay;
+machine. Both view and control it through that machine's local stim-server relay;
 neither connects directly to the hosting Mac. Named slots work independently.
 Touch and text work in Desktop. Local Simulator.app, rotation, hardware buttons
 and simulator options are hidden there. The phone also sends supported buttons,
@@ -807,7 +807,7 @@ command; an unavailable host reports the connection failure.
 simulators in this phase; their recorded sessions prevent Metro idle stop.
 
 For agent control, set `hosting.agentDriver` to `agent-device` on the hosting Mac.
-Both Macs need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.
+Both machines need agent-device **0.21.20 or later**, with the daemon policy and remote-config contract.
 The host starts one loopback daemon per installed session, under an ownership claim
 whose child is that daemon. Its policy allows exactly the session's simulator UDID and
 refuses shutdown. Stop, close, revocation, reinstall and graceful server close stop
@@ -878,13 +878,13 @@ that config. Run stim stop when finished. If the host refuses, report its reason
 ## Paired Mac hosting approval
 
 Device-host approval is separate from build offloading and phone control. On the
-client Mac, set `remote.machines` to the expected tailnet names, then run
+client machine, set `remote.machines` to the expected tailnet names, then run
 `stim doctor --fix` in an app directory to request approval. Doctor stores a
 separate private, node-pinned credential and reports its state under
 `deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.
 See [machine settings](/docs/settings#machine-settings).
 Stim Desktop can show and approve an expected `device-host` request from
-another Mac on your tailnet. The server command is
+another machine on your tailnet. The server command is
 `stim-server devices grant <id> --device-host`; inspect `stim-server devices`
 first, or deny a request with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own

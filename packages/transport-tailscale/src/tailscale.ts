@@ -248,7 +248,7 @@ export async function setupServeRoute(
   state: TailscaleState,
 ): Promise<ServeRoute> {
   if (!binary || state.state !== 'running' || !state.dnsName) {
-    throw new Error('Start Tailscale on this Mac before setting up the phone connection.');
+    throw new Error('Start Tailscale on this machine before setting up the phone connection.');
   }
   const route = await serveRoute(binary, env, target, state.ips);
   const plan = planServe(route, target, null);

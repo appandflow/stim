@@ -25,7 +25,7 @@ comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
   The supervisor watches private gateway requests in workspace state, binds
-  only this Mac's Tailscale address and accepts only the pinned hosting peer
+  only this machine's Tailscale address and accepts only the pinned hosting peer
   with a per-session secret. The host's bridge is loopback-only. Port and secret
   stay in 0600 workspace state and never appear in status, JSON or logs.
   metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates

@@ -23,7 +23,7 @@ export interface PlacementSkip {
   code: string;
   reason: string;
 }
-/** Whether an EAS Simulator can take this run, checked only when remote.easFallback is on and this Mac is full. */
+/** Whether an EAS Simulator can take this run, checked only when remote.easFallback is on and this machine is full. */
 export type EasFallbackCheck = { usable: true } | { usable: false; code: string; reason: string };
 
 export type DevicePlacementDecision = (
@@ -99,7 +99,7 @@ export function decideDevicePlacement(
       ? local(code, reason + waiting, why, true)
       : { kind: 'refused', code: 'pool-unavailable', reason, skipped: why, atCapacity: true };
   };
-  if (!offers.length) return nowhere('no-remote-mac', 'no remote Macs configured; ' + localReason);
+  if (!offers.length) return nowhere('no-remote-mac', 'no remote machines configured; ' + localReason);
   if (localEnabled && count === null) return local('device-count-unknown', localReason);
   if (!cannotTake && here.memoryPressure === 'normal' && !here.budgetRefusal && here.loadPerCore < here.maxLoadPerCore)
     return local('this-mac-free', localReason);
@@ -121,8 +121,8 @@ export function decideDevicePlacement(
         [code, reason] = [
           'load',
           offer.resources.loadPerCore === null
-            ? 'host load unknown while this Mac has room'
-            : 'host is not less loaded than this Mac',
+            ? 'host load unknown while this machine has room'
+            : 'host is not less loaded than this machine',
         ];
       else admitted.push({ machine: probe.machine, offer, index });
     }
@@ -144,7 +144,7 @@ export function decideDevicePlacement(
     );
   const machines = admitted.map(({ machine, offer }) => ({
     machine,
-    reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote Mac,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
+    reason: `${localReason}; ${machine}${machine === buildMachine ? ' is the explicit remote machine,' : ''} load ${offer.resources.loadPerCore === null ? 'unknown' : offer.resources.loadPerCore.toFixed(1) + '/core'}`,
   }));
   return { kind: 'host', code: 'placed', machines, reason: machines[0]!.reason, skipped };
 }

@@ -69,7 +69,7 @@ interface FakeMachine {
 const FAILED = { ok: false, code: 'worker-failed', message: 'xcodebuild failed' };
 
 /**
- * A remote Mac that offers `offer` and answers `build.start` with `start`, then reports a failed build. With
+ * A remote machine that offers `offer` and answers `build.start` with `start`, then reports a failed build. With
  * `drop`, it drops the connection after the start instead, and answers `build.attach` with `attach`.
  */
 async function fakeMachine(
@@ -338,7 +338,7 @@ describe('offloadBuild', () => {
 
   it('moves to the next machine in placement order when the chosen one refuses build.start', async () => {
     const busy = await fakeMachine('busy', offer(0.1), {
-      error: { code: 'build-busy', message: 'This Mac declines the build: all 1 build slots busy.' },
+      error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
     });
     const next = await fakeMachine('next', offer(0.5), { result: { job: 'j1' } });
     machines.push(busy, next);
@@ -375,7 +375,7 @@ describe('offloadBuild', () => {
     });
 
     expect(placements).toEqual([
-      'placement: next (busy could not take the build: start: build-busy: This Mac declines the build: all 1 build slots busy.)',
+      'placement: next (busy could not take the build: start: build-busy: This machine declines the build: all 1 build slots busy.)',
     ]);
     expect(outcome).toEqual({ ok: false, machine: 'next', reason: 'worker-failed: xcodebuild failed' });
     expect(busy.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
@@ -500,7 +500,7 @@ describe('offloadBuild', () => {
     expect(machine.methods).not.toContain('build.attach');
   });
 
-  it('keeps reconnecting while the machine cannot identify this Mac for a moment', async () => {
+  it('keeps reconnecting while the machine cannot identify this machine for a moment', async () => {
     let hellos = 0;
     const machine = await fakeMachine(
       'mini',
@@ -525,7 +525,7 @@ describe('offloadBuild', () => {
     expect(hellos).toBe(3);
   });
 
-  it('stops reconnecting when the machine turns this Mac away', async () => {
+  it('stops reconnecting when the machine turns this machine away', async () => {
     let hellos = 0;
     const machine = await fakeMachine(
       'mini',
@@ -536,7 +536,7 @@ describe('offloadBuild', () => {
         hello: () =>
           ++hellos === 1
             ? { result: { capabilities: ['build'] } }
-            : { error: { code: 'unauthorized', message: 'This Mac does not recognize this device token.' } },
+            : { error: { code: 'unauthorized', message: 'This machine does not recognize this device token.' } },
       },
     );
     machines.push(machine);
@@ -544,7 +544,7 @@ describe('offloadBuild', () => {
       ok: false,
       machine: 'mini',
       reason:
-        'closed: the connection closed (1006); the machine turned this Mac away (This Mac does not recognize this device token.)',
+        'closed: the connection closed (1006); it turned this machine away (This machine does not recognize this device token.)',
     });
     expect(hellos).toBe(2);
   });

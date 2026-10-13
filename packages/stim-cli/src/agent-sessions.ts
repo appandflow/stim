@@ -24,7 +24,7 @@ const CLAUDE_DESKTOP_SESSION = /^local_[A-Za-z0-9-]{1,64}$/;
  */
 const CLAUDE_REMOTE_SESSION = /^session_[A-Za-z0-9]{1,64}$/;
 
-/** Which desktop apps that open agent sessions are installed on this Mac. */
+/** Which desktop apps that open agent sessions are installed on this machine. */
 export interface AgentApps {
   claude: boolean;
   codex: boolean;

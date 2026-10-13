@@ -298,7 +298,7 @@ describe('build placements', () => {
     record = updateStats(
       record,
       run({
-        placement: { decision: 'offloaded', machine: 'mini', reason: 'this Mac is busy: slots', buildMs: 180_000 },
+        placement: { decision: 'offloaded', machine: 'mini', reason: 'this machine is busy: slots', buildMs: 180_000 },
       }),
       T0 + 1000,
     );
@@ -309,7 +309,7 @@ describe('build placements', () => {
         project: '/repo/app',
         platform: 'ios',
         decision: 'offloaded',
-        reason: 'this Mac is busy: slots',
+        reason: 'this machine is busy: slots',
         machine: 'mini',
         buildMs: 180_000,
         localEstimateMs: 300_000,
@@ -827,7 +827,7 @@ describe('stim stats', async () => {
     );
     record = updateStats(
       record,
-      run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'this Mac is busy', buildMs: 200_000 } }),
+      run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'this machine is busy', buildMs: 200_000 } }),
       now,
     );
     writeFileSync(statsFile(), JSON.stringify(record));

@@ -144,13 +144,13 @@ describe('BuildMachinesCache', () => {
     expect(calls).not.toContain('doctor');
   });
 
-  it('says to update a stim whose doctor reports no remote Macs, once settled', async () => {
+  it('says to update a stim whose doctor reports no remote machines, once settled', async () => {
     const cache = new BuildMachinesCache();
     expect(cache.snapshot(run, { cwd: '/app' })).toEqual({ buildMachines: null, buildMachinesPending: true });
     await flush();
     expect(cache.snapshot(run, { cwd: '/app' })).toMatchObject({
       buildMachines: null,
-      buildMachinesError: 'This stim does not report remote Macs; update it.',
+      buildMachinesError: 'This stim does not report remote machines; update it.',
     });
   });
 

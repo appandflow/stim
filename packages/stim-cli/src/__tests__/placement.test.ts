@@ -33,7 +33,7 @@ const full: PlacementHere = { ...here, devices: { count: 3, max: 3, queued: 0 } 
 const decide = (local = here, offers: PlacementProbe[] = [offered('mini')], extra = {}) =>
   decideDevicePlacement({ platform: 'ios', here: local, offers, noWait: false, ...extra });
 
-test('a free local slot on a healthy Mac stays local instead of consuming a host', () => {
+test('a free local slot on a healthy machine stays local instead of consuming a host', () => {
   expect(decide()).toEqual({
     kind: 'local',
     code: 'this-mac-free',
@@ -52,10 +52,10 @@ test.each([
   expect(decide(local)).toMatchObject({ kind: 'host', machines: [{ machine: 'mini' }] });
 });
 
-test('no configured hosts stays local even when this Mac is busy', () => {
+test('no configured hosts stays local even when this machine is busy', () => {
   expect(decide(full, [])).toMatchObject({
     kind: 'local',
-    reason: expect.stringContaining('no remote Macs configured'),
+    reason: expect.stringContaining('no remote machines configured'),
   });
 });
 
@@ -70,7 +70,7 @@ test.each([
   { loadPerCore: 3 },
   { memoryPressure: 'warning' as const },
   { budgetRefusal: 'committed memory exceeds budget' },
-])('with local room a busy Mac selects only a less loaded host: %j', (busy) => {
+])('with local room a busy machine selects only a less loaded host: %j', (busy) => {
   const local = { ...here, ...busy };
   expect(
     decide(local, [
@@ -85,7 +85,7 @@ test.each([
   });
 });
 
-test('ranking prefers the explicit remote Mac, then load, free memory and configuration order', () => {
+test('ranking prefers the explicit remote machine, then load, free memory and configuration order', () => {
   const offers = [
     offered('first', 1, 200),
     offered('second', 1, 200),
@@ -141,7 +141,7 @@ test('fallback includes every declined, incompatible, full, pressured and unreac
   expect(result.code).toBe('no-host-admits');
 });
 
-test('a placed host and the reasons this Mac stays local carry stable codes', () => {
+test('a placed host and the reasons this machine stays local carry stable codes', () => {
   expect(decide(full).code).toBe('placed');
   expect(decide(full, []).code).toBe('no-remote-mac');
   expect(decide({ ...full, devices: { ...full.devices, count: null } }).code).toBe('device-count-unknown');
@@ -186,7 +186,7 @@ const usable = { usable: true } as const;
 const missing = { usable: false, code: 'eas-no-cli', reason: 'eas-cli is not installed' } as const;
 const unreachable = { machine: 'mini', failure: 'unreachable' };
 
-test('remote.easFallback takes a full Mac to an EAS Simulator only after no Mac admits', () => {
+test('remote.easFallback takes a full machine to an EAS Simulator only after no Mac admits', () => {
   expect(decide(full, [offered('mini')], { eas: usable })).toMatchObject({ kind: 'host' });
   for (const offers of [[], [unreachable]])
     expect(decide(full, offers, { eas: usable })).toMatchObject({
@@ -197,7 +197,7 @@ test('remote.easFallback takes a full Mac to an EAS Simulator only after no Mac 
   expect(decide({ ...here, devices: { count: 1, max: 3, queued: 2 } }, [], { eas: usable }).kind).toBe('eas');
 });
 
-test('an EAS Simulator is never chosen while this Mac has room or cannot count its devices', () => {
+test('an EAS Simulator is never chosen while this machine has room or cannot count its devices', () => {
   for (const local of [
     here,
     { ...here, loadPerCore: 3 },
@@ -207,7 +207,7 @@ test('an EAS Simulator is never chosen while this Mac has room or cannot count i
     for (const offers of [[], [unreachable]]) expect(decide(local, offers, { eas: usable }).kind).toBe('local');
 });
 
-test('a full Mac marks the local result so the caller asks EAS, and keeps the wait without it', () => {
+test('a full machine marks the local result so the caller asks EAS, and keeps the wait without it', () => {
   expect(decide(full, [unreachable])).toMatchObject({ kind: 'local', atCapacity: true });
   expect(decide(full, [])).toMatchObject({ kind: 'local', atCapacity: true });
   expect(decide({ ...here, loadPerCore: 3 }, [unreachable])).not.toHaveProperty('atCapacity');

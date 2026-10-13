@@ -554,7 +554,7 @@ test.each([
   ['unauthorized', false, 'run stim doctor, restore hosting access, then rerun stim stop'],
 ])('stop handles a hello refusal with host code %s', async (code, cleared, remedy) => {
   writeHostedIos(root, 'default', placement());
-  open.mockResolvedValue({ refused: true, code, failure: 'This Mac is refused.' });
+  open.mockResolvedValue({ refused: true, code, failure: 'This machine is refused.' });
   const result = await runStop({ root, report: () => {} });
   const outcome = JSON.stringify(result.outcomes.device);
   expect(result.ok).toBe(cleared);
@@ -566,7 +566,7 @@ test.each([
 
 test('worktree removal clears placement when hosting was revoked at hello', async () => {
   writeHostedIos(root, 'default', placement());
-  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: 'This Mac is refused.' });
+  open.mockResolvedValue({ refused: true, code: 'forbidden', failure: 'This machine is refused.' });
   const result = await reclaimProject(root);
   expect(result.keptEntry).toBe(false);
   expect(result.failedDevices).toEqual([]);
@@ -1145,7 +1145,7 @@ test('auto reports a declined offer and falls to the local path without reservin
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
 });
 
-test('remote.easFallback asks EAS only when this Mac is full and no host admits', async () => {
+test('remote.easFallback asks EAS only when this machine is full and no host admits', async () => {
   const eas = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
   const place = (count: number) =>
     automaticDevicePlacement(
@@ -1177,7 +1177,7 @@ test('remote.easFallback asks EAS only when this Mac is full and no host admits'
   writeFileSync(getConfigPath(), JSON.stringify({}));
   expect((await place(3)).placement).toMatchObject({
     decision: 'eas',
-    reason: expect.stringContaining('no remote Macs'),
+    reason: expect.stringContaining('no remote machines'),
   });
 });
 

@@ -24,7 +24,7 @@ function part(outcome: CommandOutcome, label: string): { payload: Record<string,
 const iosDoctorRanAt = ([, record]: [string, ProjectRecord]) => Date.parse(record.doctorRuns?.ios?.at ?? '') || 0;
 
 /**
- * Where `machine.details` runs `stim doctor` for the remote Macs: null when `remote.machines` names none, else
+ * Where `machine.details` runs `stim doctor` for the remote machines: null when `remote.machines` names none, else
  * the registered workspace that still exists and ran doctor for iOS most recently, or the first one; `cwd` is null
  * when no registered workspace exists. Doctor refuses outside a project, and judges a machine against that app.
  */
@@ -42,7 +42,7 @@ export function doctorWorkspace(
   return { cwd: newest?.[0] ?? null };
 }
 
-/** Where to run doctor, why it cannot run, or null when no remote Mac is named. */
+/** Where to run doctor, why it cannot run, or null when no remote machine is named. */
 export type DoctorTarget = { cwd: string | null } | { error: string } | null;
 
 /** The build-machines part of a `machine.details` reply, without the pending flag a stale-cache read adds. */
@@ -56,7 +56,7 @@ async function runDoctor(
   if (!payload) return { buildMachines: null, buildMachinesError: error! };
   const machines = payload.remoteMachines;
   if (!Array.isArray(machines)) {
-    return { buildMachines: null, buildMachinesError: 'This stim does not report remote Macs; update it.' };
+    return { buildMachines: null, buildMachinesError: 'This stim does not report remote machines; update it.' };
   }
   return {
     buildMachines: machines.filter(
@@ -168,8 +168,8 @@ export async function loadMachineDetails(
 
 /**
  * The gc/stats part of one `machine.details` result shared by every connection: a request while a load runs joins
- * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the Mac run `stim gc` back
- * to back. Remote Macs are cached and refreshed separately by `BuildMachinesCache`, never joined into this
+ * it, and a finished load answers for `ttlMs` after it settled, so phones cannot make the machine run `stim gc` back
+ * to back. Remote machines are cached and refreshed separately by `BuildMachinesCache`, never joined into this
  * promise, so a re-poll observes its progress instead of the gc/stats snapshot from whenever this last loaded.
  */
 export class MachineDetailsCache {

@@ -202,7 +202,7 @@ adds `review: ai-approved` and marks the pull request ready with `gh pr ready`.
 When the diff has a change in one of these that no maintainer has approved, it
 adds `review: needs-human` and removes any `review: human-approved`:
 
-- what another machine can reach or do on this Mac: a new or wider network
+- what another machine can reach or do on this machine: a new or wider network
   listener, authentication or pairing path, or stim-server capability;
 - how secrets, tokens or signing keys are stored, passed or exposed;
 - deleting or killing something Stim does not own, or a new way to decide that
@@ -293,8 +293,8 @@ outside it moves to its own issue and pull request.
   override, and sensitivity. Validation, doctor, `stim settings`, the shipped
   JSON Schema, and the guide contract tests derive from it; add a setting there
   first.
-- **Build access.** stim-server's `build` capability lets another Mac on the
-  tailnet run its project code on this Mac to build. The client asks with a
+- **Build access.** stim-server's `build` capability lets another machine on the
+  tailnet run its project code on this machine to build. The client asks with a
   build request and a person approves it on the worker with
   `stim-server devices grant <id> --build`, or by running `stim-server setup`
   on the worker. Running setup is the worker-side approval: a person on the
@@ -304,7 +304,7 @@ outside it moves to its own issue and pull request.
   never enables Funnel or changes TCC. There is no pairing code for build.
   It never comes with `read` or `control`, and an honest loopback connection
   never gets it. Build clients live in `server/build-clients.json`, apart from
-  `devices.json`. The client names its remote Macs in `remote.machines`,
+  `devices.json`. The client names its remote machines in `remote.machines`,
   pins each one's tailnet node in `build-machines.json`, and sends its token
   only to that node. `remote.buildMode` places iOS simulator Debug builds and Android emulator
   debug builds and macOS SwiftPM Debug builds;
@@ -318,7 +318,7 @@ outside it moves to its own issue and pull request.
   that group, so it never holds a claim or build slot. The client's daemon
   stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
   and stim-server stops it when the build is cancelled, the client loses
-  `build`, or the Mac's available memory runs low. Gradle stops a daemon
+  `build`, or the machine's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user LaunchAgent and, only when asked, a
   tailnet-only serve route; it never enables Funnel and never touches
@@ -327,7 +327,7 @@ outside it moves to its own issue and pull request.
   `~/Library/Application Support/Stim/services/<label>/versions/`, keeping the
   running and the previous version, and repoint only the LaunchAgent's server
   script; a failed health check switches back. A client approved for `build` or
-  `device-host` can run the same update on this Mac over the tailnet, and no
+  `device-host` can run the same update on this machine over the tailnet, and no
   other connection can. An exact npm release needs no setting; a client's own
   packages are taken only while `server.acceptClientBuilds` is `true`, its
   default being `false`.

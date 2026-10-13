@@ -288,7 +288,7 @@ used.
 ON ANOTHER MAC
 
 stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
-approved remote Mac over the tailnet, without SSH. The machine must be listed
+approved remote Mac over the tailnet, without SSH. The Mac must be listed
 in remote.machines and approved: stim doctor --fix asks it, a person on that
 Mac runs stim-server devices grant <id> --device-host or stim-server setup
 with that client node, ticket and expiry (guide settings), and stim doctor then

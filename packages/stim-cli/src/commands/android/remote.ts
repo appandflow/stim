@@ -72,7 +72,7 @@ export async function connectAndroidHosting({
       return {
         failure: {
           code: 'STIM_BAD_ARG',
-          message: `This workspace's Android emulator for slot ${slot} runs on this Mac; run stim stop first.`,
+          message: `This workspace's Android emulator for slot ${slot} runs on this machine; run stim stop first.`,
         },
       };
   }

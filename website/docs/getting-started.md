@@ -88,7 +88,7 @@ Clone a tiny Expo app and watch two agents work on two changes at once, each
 in its own worktree with its own simulator and dev server, each checking its own
 work on the device. The first build can take a few minutes on a cold cache; the
 parallel one reuses it. Uncached dependencies need network access. Both
-changes build and run on this Mac even when `ios.remote` or `remote.build` would
+changes build and run on this machine even when `ios.remote` or `remote.build` would
 pick another one.
 
 <PromptBox
@@ -245,7 +245,8 @@ OK: com.appandflow.trailhead on stim-trailhead (iPhone 17 26.5) (4F2A..), Metro 
   `stim guide errors <CODE>` for its cause and remedy, or look it up on the
   [troubleshooting page](./troubleshooting.md).
 
-Use [remote Macs](./remote-machines.md) to build or run on an approved Mac,
+Use [remote machines](./remote-machines.md) to build on an approved machine or
+run on an approved Mac,
 and the [phone app](./phone-app.md) to watch workspaces, devices and logs away
 from your desk.
 

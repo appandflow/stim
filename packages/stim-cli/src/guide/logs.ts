@@ -230,16 +230,16 @@ failures before a later launch marker are hidden. Machine passes are reported in
 status and maintenance/maintenance.ndjson; this command reads workspace logs.
 
 REMOTE REQUEST RECORDS
-A request to another Mac that fails is a warn record with src: build in the
+A request to another machine that fails is a warn record with src: build in the
 run's build log: remote_connect_failed { host, capability, ms, timeoutMs, msg,
-code } (could not connect or say hello, e.g. "no reply in time" when the Mac
+code } (could not connect or say hello, e.g. "no reply in time" when the machine
 did not answer hello) and remote_request_failed { method, ms, code, msg }.
 Timings of requests that succeed are debug records (below).
 stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
 no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
 ms=<n> error=<code>" for an error reply (once a minute per client, method and
 code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
-Mac fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
+machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
 whois and probe are the hello's Tailscale identity lookup and its wait for
@@ -256,14 +256,14 @@ stim logs does not show them. Read them with jq:
   jq -c 'select(.event=="exec" and .ms>1000)' ~/.stim/logs/debug/cli.ndjson
 Events: run_start, run_end { exit, ms }, exec { program, ms, ok, exit? }, and
 remote_connect and remote_request { ms, ok, code? } for requests to another
-Mac. They carry no arguments, tokens or tickets.
+machine. They carry no arguments, tokens or tickets.
 
 Placement records use src: placement and sit in the run's build log
 (build-*.ndjson), so a new run replaces the previous run's. A run writes one
-record per decision it makes (a build that compiles and has a remote Mac to
+record per decision it makes (a build that compiles and has a remote machine to
 consider, or ios/android --remote auto), with event build_placement,
 device_placement or placement_fallback. A cache hit, a project with no paired
-remote Mac and a named --remote target write none:
+remote machine and a named --remote target write none:
   stim logs --source placement
   stim logs --source placement --json
 Fields: kind (build or device), platform, settings [{ key, value, from }] with
@@ -271,7 +271,7 @@ from flag, env, setting or default (remote.build and remote.buildMode for a
 build, ios.remote or android.remote, plus remote.easFallback when it is on, for
 a device), candidates [{ machine, code,
 msg, detail? }], choice { machine, code, msg } with machine local when the run
-stays on this Mac, and fallback { code, msg, machine? } when a remote Mac that
+stays on this machine, and fallback { code, msg, machine? } when a remote machine that
 was meant to take the run did not (level warn). The msg is the same text the
 placement: and build: phase lines print.
 Candidate codes: accepted, unreachable, busy, disk, load, version-mismatch

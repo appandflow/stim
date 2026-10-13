@@ -106,7 +106,7 @@ export interface DeviceHostOptions {
   allowed: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
-  /** Takes the native app a build on this Mac retained under `handoff`, when `client` may have it, or says why not. */
+  /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
   builtBundle?: (client: string, handoff: string, sha256: string) => { bundle: string; release: () => void } | string;
   limits?: Partial<DeviceHostLimits>;
 }

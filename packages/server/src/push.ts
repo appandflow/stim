@@ -68,7 +68,7 @@ export interface PushNotifierOptions {
   ownLeases: () => readonly string[];
   devices: () => PairedDevice[];
   dropToken: (token: string) => void;
-  /** Where every notification the rules produce for this Mac is logged, pushed or not. */
+  /** Where every notification the rules produce for this machine is logged, pushed or not. */
   log: NotificationLog;
   /** Whether the rules run while any device is paired, or only while one is registered for pushes. */
   whilePaired: boolean;
@@ -173,7 +173,7 @@ interface Ticket {
 }
 
 /**
- * Logs this Mac's notifications and pushes them to the devices that asked with `push.register`. While any device is
+ * Logs this machine's notifications and pushes them to the devices that asked with `push.register`. While any device is
  * paired, or with `whilePaired` false registered, it keeps its own `stim status --watch --json` subscription and
  * reads the disks and memory pressure every minute, and, while a device wants `finished`, looks up the pushed
  * worktrees' pull requests every few minutes.

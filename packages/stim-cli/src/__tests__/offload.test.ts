@@ -106,22 +106,22 @@ describe('offloadPlacement', () => {
       'auto, every slot busy',
       { ...base, here: { ...IDLE, builds: 3 } },
       true,
-      'this Mac is busy: all 3 build slots busy (load 0.3/core, 3 of 3 build slots busy)',
+      'this machine is busy: all 3 build slots busy (load 0.3/core, 3 of 3 build slots busy)',
     ],
     [
       'auto, no build limit but saturated',
       { ...base, here: { ...IDLE, maxBuilds: 0, loadPerCore: 8.2 } },
       true,
-      'this Mac is busy: load at or above 2/core (load 8.2/core, 0 builds)',
+      'this machine is busy: load at or above 2/core (load 8.2/core, 0 builds)',
     ],
-    ['force on an idle Mac', { ...base, mode: 'force' as const }, true, 'remote.buildMode is force'],
+    ['force on an idle machine', { ...base, mode: 'force' as const }, true, 'remote.buildMode is force'],
     [
-      'off on a saturated Mac',
+      'off on a saturated machine',
       { ...base, mode: 'off' as const, here: { ...IDLE, builds: 3 } },
       false,
       'remote.buildMode is off',
     ],
-    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no remote Mac is paired'],
+    ['force with no machine', { ...base, mode: 'force' as const, machines: 0 }, false, 'no remote machine is paired'],
     [
       'force for a device build',
       { ...base, mode: 'force' as const, unsupported: 'device builds build here' },
@@ -227,7 +227,7 @@ describe('pickOffer', () => {
       { ...IDLE, maxBuilds: 0, loadPerCore: 6 },
       { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 },
       null,
-      ['mac0: capacity unknown (older stim-server) while this Mac has a free slot'],
+      ['mac0: capacity unknown (older stim-server) while this machine has a free slot'],
     ],
     ['force, idle here, machine more loaded', 'force', IDLE, capacity({ loadPerCore: 1.9 }), 0, []],
     ['force, older machine', 'force', IDLE, { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 }, 0, []],
@@ -477,7 +477,7 @@ describe('explicit build placement', () => {
     expect(() => offloadPlacement({ selected: 'mini', mode: 'off', here: IDLE, machines: 1, unsupported })).toThrow(
       expect.objectContaining({
         code: 'STIM_OFFLOAD_REFUSED',
-        message: `mini: ${unsupported}, so a named remote Mac cannot take it`,
+        message: `mini: ${unsupported}, so a named remote machine cannot take it`,
       }),
     );
   });
