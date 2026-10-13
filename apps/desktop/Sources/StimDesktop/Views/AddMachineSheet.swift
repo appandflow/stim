@@ -16,7 +16,7 @@ struct AddMachineSheet: View {
     case .setup: return wizard.phase == .pick ? 0 : wizard.phase == .choose ? 1 : 2
     }
   }
-  private var name: String { wizard.mac?.hostName ?? "the build Mac" }
+  private var name: String { wizard.mac?.hostName ?? "the remote machine" }
   private var allApproved: Bool {
     !wizard.capabilities.isEmpty && wizard.capabilities.allSatisfy { !model.known.needsApproval($0) }
   }
@@ -77,7 +77,7 @@ struct AddMachineSheet: View {
       Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
-        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the build Mac must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)
@@ -144,7 +144,7 @@ struct AddMachineSheet: View {
       switch model.reachability {
       case .tailscaleMissing:
         checkLine("Tailscale is not installed on this Mac", ready: false)
-        Text("Stim reaches your build Mac over Tailscale. Install it, sign in, and this step continues by itself.")
+        Text("Stim reaches your remote machine over Tailscale. Install it, sign in, and this step continues by itself.")
           .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
         Button("Download Tailscale", systemImage: "arrow.down.circle") {
           NSWorkspace.shared.open(URL(string: "https://tailscale.com/download/mac")!)
@@ -340,7 +340,7 @@ struct AddMachineSheet: View {
 
   private var statusText: String {
     if wizard.phase == .cancelled {
-      return "The wizard's settings have been removed. Approval on the build Mac stays until you revoke it there."
+      return "The wizard's settings have been removed. Approval on the remote machine stays until you revoke it there."
     }
     if wizard.phase == .approved {
       return "Approved. \(name) is finishing its checks; Next checks its tools."

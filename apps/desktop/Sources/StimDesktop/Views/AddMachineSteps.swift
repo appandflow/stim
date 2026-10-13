@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AddMachineSteps: View {
   @Bindable var model: AddMachineModel
-  private var name: String { model.wizard.mac?.hostName ?? "the build Mac" }
+  private var name: String { model.wizard.mac?.hostName ?? "the remote machine" }
 
   var body: some View {
     switch model.page {

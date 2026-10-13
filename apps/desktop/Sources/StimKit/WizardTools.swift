@@ -32,7 +32,7 @@ public func toolsReport(
 ) -> [WizardTool] {
   let builds = capabilities.contains(.build)
   let hosts = capabilities.contains(.deviceHost)
-  let machine = status?.machine ?? "the build Mac"
+  let machine = status?.machine ?? "the remote machine"
   func fix(code: String, reason: String, step: SetupJournal.Step? = nil) -> String {
     let finding = status.flatMap { status in
       findings.first { finding in
@@ -41,7 +41,7 @@ public func toolsReport(
       }
     }
     return step?.fix ?? finding?.fix
-      ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the build Mac.")
+      ?? (isLocal(code, reason) ? "Check this problem on this Mac." : "Check this problem on the remote machine.")
   }
   func isLocal(_ code: String, _ reason: String) -> Bool {
     code == "checkout" || (code == "jdk" && reason.contains("none here"))
@@ -113,7 +113,7 @@ public func toolsReport(
   for problem in status?.problems ?? []
   where builds && ["arch", "checkout", "busy", "disk", "unreachable"].contains(problem.code) {
     var row = WizardTool(
-      id: problem.code, title: problem.code == "busy" ? "Build Mac is busy" : "Build readiness", detail: problem.reason,
+      id: problem.code, title: problem.code == "busy" ? "Remote machine is busy" : "Build readiness", detail: problem.reason,
       state: problem.code == "busy" ? .busy : .missing(fix(code: problem.code, reason: problem.reason)),
       onThisMac: isLocal(problem.code, problem.reason))
     if problem.code == "arch" || problem.code == "unreachable" {
@@ -126,8 +126,8 @@ public func toolsReport(
   if let status, builds, status.state != .approved {
     rows.append(
       WizardTool(
-        id: "access", title: "Build Mac access", detail: status.detail,
-        state: .missing("Check approval and stim-server on the build Mac"), blocks: true))
+        id: "access", title: "Remote machine access", detail: status.detail,
+        state: .missing("Check approval and stim-server on the remote machine"), blocks: true))
   }
   if builds, status?.offloadable == false, (status?.problems ?? []).isEmpty {
     rows.append(
@@ -141,7 +141,7 @@ public func toolsReport(
 private func policy(code: String, missing: Bool, builds: Bool, hosts: Bool) -> (blocks: Bool, consequence: String?) {
   switch code {
   case "stim-build":
-    return builds ? (true, "The build Mac refuses builds until it runs this Mac's Stim build.") : (false, nil)
+    return builds ? (true, "The remote machine refuses builds until it runs this Mac's Stim build.") : (false, nil)
   case "xcode":
     return missing ? (true, nil) : (false, "Builds may differ, and the build cache is not shared between the two Macs.")
   case "runtime":
