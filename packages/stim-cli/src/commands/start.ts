@@ -540,7 +540,7 @@ export async function startDevServer(
 
     const managedRemote = remote && !tunnel && !publicUrl && tunnelMode !== 'off';
     const runStart = async (): Promise<StartFacts> => {
-      const appIds = detectAppIds(
+      const appIds = await detectAppIds(
         root,
         resolveIosProjectDir(settings, root).dir,
         resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root).moduleDir,

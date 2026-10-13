@@ -325,7 +325,7 @@ export default function doctorCommand(
 
       const stim = await inspectVersions(version);
 
-      const { findings, context } = runDoctor(
+      const { findings, context } = await runDoctor(
         root,
         {
           xcodeMajor: selected.platforms.includes('ios') && host === 'darwin' ? detectXcodeMajor() : null,

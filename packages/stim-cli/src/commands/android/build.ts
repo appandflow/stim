@@ -158,7 +158,7 @@ export async function buildAndroidOperation(
             cacheProviderConfig: plan.plan.cacheProviderConfig,
             requestedBuildCache: options.buildCache !== false,
             easBuild: null,
-            androidPackage: integration.appIds().androidPackage,
+            androidPackage: (await integration.appIds()).androidPackage,
             record,
             maxBuilds: getConcurrencyLimits().maxBuilds,
             progress: {

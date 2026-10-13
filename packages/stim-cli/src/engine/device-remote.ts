@@ -703,7 +703,7 @@ export async function ensureRemoteBootOwned<T extends BootResult>({
       () => {
         projectLocked = true;
         return withLock(root, async () => {
-          register();
+          await register();
           const booted = await boot();
           if (booted.failed) return booted;
           const sessionId = createdSessionId();

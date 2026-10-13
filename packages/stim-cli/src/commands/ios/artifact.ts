@@ -276,7 +276,7 @@ export async function acquireIosArtifact(
         remote = loaded;
       }
       if (remote?.name === 'eas') {
-        const auth = d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const auth = await d.checkEasAuth({ projectRoot: root, owner: loaded?.owner || null });
         const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
         if (authNote) note(chalk.yellow(phaseLine('cache', authNote)));
         if (auth?.code === 'logged-out') remote = null;

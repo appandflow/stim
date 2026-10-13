@@ -95,7 +95,7 @@ async function expoRemoteHit(lookup: CachedBuildLookup, deps: CachedBuildLookupD
   if (!loaded?.provider) return null;
   const name = loaded.name ?? 'the build cache provider';
   if (name === 'eas') {
-    const auth = deps.checkEasAuth({ projectRoot: root, owner: loaded.owner || null });
+    const auth = await deps.checkEasAuth({ projectRoot: root, owner: loaded.owner || null });
     const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
     if (authNote) deps.note(chalk.yellow(phaseLine('cache', authNote)));
     if (auth?.code === 'logged-out') return null;

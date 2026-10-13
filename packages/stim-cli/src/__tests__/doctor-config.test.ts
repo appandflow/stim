@@ -13,8 +13,8 @@ import { mergeSettingsLayers, settingsLayers } from '../workspace/settings.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { writeCasToolchain } from './_factories.ts';
 
-function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
-  return inspectDoctor(root, options, [reactNativeDoctorFindings]).findings;
+async function runDoctor(root: string, options: DoctorInspectionOptions = {}) {
+  return (await inspectDoctor(root, options, [reactNativeDoctorFindings])).findings;
 }
 
 const MACHINE = '/home/.stim/config.json';
@@ -247,7 +247,7 @@ describe('against a config file on disk', () => {
     );
   });
 
-  test('an unparseable config reports the repair line instead of crashing doctor', () => {
+  test('an unparseable config reports the repair line instead of crashing doctor', async () => {
     writeFileSync(join(home, 'config.json'), '{ "projects": ');
     const machine = readMachineSettings({ projectPath: project, gitCommonDir: null, repoRoot: project });
     assert(machine.corrupt);
@@ -256,14 +256,14 @@ describe('against a config file on disk', () => {
     expect(machine.corrupt.fix).toBe(
       `Repair the file, or move it aside to start over: mv "${join(home, 'config.json')}" "${join(home, 'config.json')}.broken"`,
     );
-    expect(runDoctor(project)).toEqual([machine.corrupt]);
+    expect(await runDoctor(project)).toEqual([machine.corrupt]);
   });
 
-  test('doctor reports a toolchain the environment names but does not supply', () => {
+  test('doctor reports a toolchain the environment names but does not supply', async () => {
     writeConfig({ version: 2, repos: {}, projects: {} });
     const missing = join(home, 'gone', 'toolchain.json');
     process.env.STIM_ANDROID_CAS_TOOLCHAIN = missing;
-    const findings = runDoctor(project).filter((found) => found.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'));
+    const findings = (await runDoctor(project)).filter((found) => found.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'));
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({
       level: 'note',
@@ -274,7 +274,7 @@ describe('against a config file on disk', () => {
     );
   });
 
-  test('doctor reports a dead machine path on every platform, not only the native one', () => {
+  test('doctor reports a dead machine path on every platform, not only the native one', async () => {
     writeConfig({
       version: 2,
       repos: {},
@@ -282,7 +282,7 @@ describe('against a config file on disk', () => {
       optimizations: { android: { compilerCache: 'cas', casToolchain: join(home, 'gone', 'toolchain.json') } },
     });
     for (const platform of [undefined, 'ios', 'android'] as const) {
-      const findings = runDoctor(project, { platform }).filter((found) =>
+      const findings = (await runDoctor(project, { platform })).filter((found) =>
         found.detail.includes('optimizations.android.casToolchain'),
       );
       expect(findings).toHaveLength(1);
@@ -290,7 +290,7 @@ describe('against a config file on disk', () => {
     }
   });
 
-  test('a manifest that is there but cannot be used is reported in the words the build warns with', () => {
+  test('a manifest that is there but cannot be used is reported in the words the build warns with', async () => {
     const manifest = join(home, 'toolchain.json');
     writeFileSync(manifest, '{}');
     writeConfig({
@@ -299,7 +299,9 @@ describe('against a config file on disk', () => {
       projects: {},
       optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } },
     });
-    const findings = runDoctor(project).filter((found) => found.detail.includes('optimizations.android.casToolchain'));
+    const findings = (await runDoctor(project)).filter((found) =>
+      found.detail.includes('optimizations.android.casToolchain'),
+    );
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ level: 'note', title: 'A setting holds a value Stim cannot use' });
     expect(findings[0]?.detail).toBe(
@@ -312,30 +314,30 @@ describe('against a config file on disk', () => {
     );
   });
 
-  test('the ccache checks follow the backend a dead CAS toolchain leaves the build with', () => {
+  test('the ccache checks follow the backend a dead CAS toolchain leaves the build with', async () => {
     const usable = writeCasToolchain(join(home, 'cas')).manifest;
     const options = { lookupCcache: () => false, platform: 'android' as const };
-    const ccacheReported = (casToolchain: string) => {
+    const ccacheReported = async (casToolchain: string) => {
       writeConfig({
         version: 2,
         repos: {},
         projects: {},
         optimizations: { android: { compilerCache: 'cas', casToolchain } },
       });
-      return runDoctor(project, options).some((found) => /ccache is not on PATH/.test(found.title));
+      return (await runDoctor(project, options)).some((found) => /ccache is not on PATH/.test(found.title));
     };
-    expect(ccacheReported(usable)).toBe(false);
-    expect(ccacheReported(join(home, 'gone', 'toolchain.json'))).toBe(true);
+    expect(await ccacheReported(usable)).toBe(false);
+    expect(await ccacheReported(join(home, 'gone', 'toolchain.json'))).toBe(true);
   });
 
-  test('a compilerCache Stim cannot resolve is one finding that invents no toolchain path', () => {
+  test('a compilerCache Stim cannot resolve is one finding that invents no toolchain path', async () => {
     writeConfig({
       version: 2,
       repos: {},
       projects: {},
       optimizations: { android: { compilerCache: 'CAS', casToolchain: 'tc/toolchain.json' } },
     });
-    const reported = runDoctor(project);
+    const reported = await runDoctor(project);
     const findings = reported.filter(
       (found) => found.detail.includes('compilerCache') || found.detail.includes('casToolchain'),
     );

@@ -339,7 +339,7 @@ function harness(overrides: LooseDeps = {}) {
       record('loadProjectProvider', { projectRoot, ...opts });
       return { none: true };
     },
-    checkEasAuth: (args) => {
+    checkEasAuth: async (args) => {
       record('checkEasAuth', args);
       return { ok: true, account: 'janic' };
     },
@@ -1832,7 +1832,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-        checkEasAuth: () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
+        checkEasAuth: async () => ({ failed: true, code: 'logged-out', reason: 'Not logged in' }),
       },
     );
     expect(exitCode).toBe(null);
@@ -1857,7 +1857,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-        checkEasAuth: (args) => {
+        checkEasAuth: async (args) => {
           asked.push(args);
           return { ok: true, account: 'janic' };
         },
@@ -1878,7 +1878,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => provider('./p.cjs'),
-        checkEasAuth: () => {
+        checkEasAuth: async () => {
           asked = true;
           return { failed: true, code: 'logged-out' };
         },
@@ -1895,7 +1895,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => provider(),
-        checkEasAuth: () => ({ unknown: 'eas whoami timed out after 15000ms' }),
+        checkEasAuth: async () => ({ unknown: 'eas whoami timed out after 15000ms' }),
       },
     );
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
@@ -1909,7 +1909,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => ({ ...provider(), owner: 'th3rd-wave' }),
-        checkEasAuth: () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
+        checkEasAuth: async () => ({ failed: true, code: 'wrong-account', account: 'janic', owner: 'th3rd-wave' }),
       },
     );
     expect(calls.order.includes('resolveRemote')).toBeTruthy();
@@ -1928,7 +1928,7 @@ describe('the remote cache', () => {
       {
         detectIsExpo: () => true,
         loadProjectProvider: async () => provider(),
-        checkEasAuth: () => ({ unknown: 'offline' }),
+        checkEasAuth: async () => ({ unknown: 'offline' }),
         resolveRemote: async () => ({ failed: 'Error: Not logged in' }),
       },
     );

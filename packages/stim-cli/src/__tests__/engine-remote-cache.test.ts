@@ -52,6 +52,42 @@ function writeProviderModule(file: string, body: string) {
   return file;
 }
 
+describe.skipIf(process.platform === 'win32')('responsive project probes', () => {
+  test.each(['config', 'auth'])(
+    '%s discovery leaves the event loop responsive while its child is pending',
+    async (kind) => {
+      const binDir = join(root, 'node_modules', '.bin');
+      mkdirSync(binDir, { recursive: true });
+      const bin = join(binDir, kind === 'config' ? 'expo' : 'eas');
+      const output = kind === 'config' ? JSON.stringify({ android: { package: 'com.example.dynamic' } }) : 'fixture';
+      writeFileSync(bin, `#!/usr/bin/env node\nsetTimeout(() => console.log(${JSON.stringify(output)}), 100);\n`, {
+        mode: 0o755,
+      });
+      if (kind === 'config') writeProviderModule('app.config.js', 'module.exports = {};');
+      let finished = false;
+      const pending = (
+        kind === 'config'
+          ? readProjectConfig(root)
+          : checkEasAuth({ projectRoot: root, cache: null, resolveBin: () => ({ file: bin, source: 'project' }) })
+      ).then((result) => {
+        finished = true;
+        return result;
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(finished).toBe(false);
+      } finally {
+        const result = await pending;
+        expect(result).toMatchObject(
+          kind === 'config'
+            ? { config: { android: { package: 'com.example.dynamic' } } }
+            : { ok: true, account: 'fixture' },
+        );
+      }
+    },
+  );
+});
+
 const RECORDING_PROVIDER = (log: string, appPath: string | null) => `
 const fs = require('fs');
 const log = ${JSON.stringify(log)};
@@ -134,10 +170,10 @@ describe('isProviderPlugin', () => {
 });
 
 describe('readProjectConfig', () => {
-  test('a static app.json is parsed directly, with no child process at all', () => {
+  test('a static app.json is parsed directly, with no child process at all', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'eas' } });
     let ran = false;
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         ran = true;
         return '{}';
@@ -148,18 +184,18 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toBe('eas');
   });
 
-  test('no config at all is simply no config', () => {
-    expect(readProjectConfig(root, { run: () => '{}' })).toEqual({ config: null, source: null });
+  test('no config at all is simply no config', async () => {
+    expect(await readProjectConfig(root, { run: () => '{}' })).toEqual({ config: null, source: null });
   });
 
-  test("a dynamic config is evaluated by the PROJECT's own expo binary, bounded", () => {
+  test("a dynamic config is evaluated by the PROJECT's own expo binary, bounded", async () => {
     writeAppJson({ expo: { name: 'ignored' } });
     writeProviderModule('app.config.js', 'module.exports = {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
 
     const calls: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: (file, args, opts) => {
         calls.push({ file, args, opts });
         return JSON.stringify({ name: 'app', buildCacheProvider: { plugin: './p.cjs' } });
@@ -175,10 +211,10 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toEqual({ plugin: './p.cjs' });
   });
 
-  test('a dynamic config with no installed expo is unavailable, never guessed from app.json', () => {
+  test('a dynamic config with no installed expo is unavailable, never guessed from app.json', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'eas' } });
     writeProviderModule('app.config.ts', 'export default {};');
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         throw new Error('should not run');
       },
@@ -187,7 +223,7 @@ describe('readProjectConfig', () => {
     expect(read.unavailable).toMatch(/`expo` package is not resolvable/);
   });
 
-  test('a HOISTED monorepo evaluates the config with the workspace-root expo', () => {
+  test('a HOISTED monorepo evaluates the config with the workspace-root expo', async () => {
     const app = join(root, 'apps', 'mobile');
     mkdirSync(join(app, 'node_modules'), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
@@ -197,7 +233,7 @@ describe('readProjectConfig', () => {
     mkdirSync(join(root, '.git'));
 
     const calls: { file: string; args: string[] }[] = [];
-    const read = readProjectConfig(app, {
+    const read = await readProjectConfig(app, {
       run: (file, args) => {
         calls.push({ file, args });
         return JSON.stringify({ name: 'app', buildCacheProvider: 'eas' });
@@ -211,11 +247,11 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toBe('eas');
   });
 
-  test('an expo config that fails (or times out) is unavailable with the reason', () => {
+  test('an expo config that fails (or times out) is unavailable with the reason', async () => {
     writeProviderModule('app.config.js', 'module.exports = {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         const e = new Error('ETIMEDOUT: expo config --json\nstack line');
         throw e;
@@ -226,9 +262,9 @@ describe('readProjectConfig', () => {
     expect(!read.unavailable.includes('stack line')).toBeTruthy();
   });
 
-  test('a malformed app.json is unavailable rather than a crash', () => {
+  test('a malformed app.json is unavailable rather than a crash', async () => {
     writeFileSync(join(root, 'app.json'), '{ not json');
-    expect(readProjectConfig(root).unavailable).toMatch(/app\.json could not be parsed/);
+    expect((await readProjectConfig(root)).unavailable).toMatch(/app\.json could not be parsed/);
   });
 });
 
@@ -903,8 +939,8 @@ describe('checkEasAuth', () => {
       throw makeError('Command failed', { status: exitCode, stdout, stderr });
     };
 
-  test('a logged-in session whose accounts include the owner is ok', () => {
-    const status = checkEasAuth({
+  test('a logged-in session whose accounts include the owner is ok', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: '/bin/eas', source: 'project' }),
@@ -914,14 +950,14 @@ describe('checkEasAuth', () => {
     expect(status.account).toBe('janic');
   });
 
-  test('no eas binary anywhere is its own code, with an install remedy', () => {
-    const status = checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
+  test('no eas binary anywhere is its own code, with an install remedy', async () => {
+    const status = await checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
     expect(status.code).toBe('no-cli');
     expect(status.remedy).toMatch(/eas-cli/);
   });
 
-  test('a logged-out session is a definitive failure naming both ways back in', () => {
-    const status = checkEasAuth({
+  test('a logged-out session is a definitive failure naming both ways back in', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: 'eas', source: 'path' }),
       run: whoami('Not logged in\n', 1),
@@ -931,8 +967,8 @@ describe('checkEasAuth', () => {
     expect(status.remedy).toMatch(/EXPO_TOKEN/);
   });
 
-  test('an owner no account covers is a wrong-account failure naming both', () => {
-    const status = checkEasAuth({
+  test('an owner no account covers is a wrong-account failure naming both', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: 'eas', source: 'path' }),
@@ -943,8 +979,8 @@ describe('checkEasAuth', () => {
     expect(status.owner).toBe('th3rd-wave');
   });
 
-  test('an owner is never contradicted by an account list that could not be read', () => {
-    const status = checkEasAuth({
+  test('an owner is never contradicted by an account list that could not be read', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: 'eas', source: 'path' }),
@@ -953,8 +989,8 @@ describe('checkEasAuth', () => {
     expect(status.ok).toBe(true);
   });
 
-  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', () => {
-    const status = checkEasAuth({
+  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: 'eas', source: 'path' }),
       run: () => {
@@ -965,7 +1001,7 @@ describe('checkEasAuth', () => {
     expect(status.unknown).toMatch(/timed out|ETIMEDOUT/);
   });
 
-  test('whoami runs ONCE per command run, however many times it is asked', () => {
+  test('whoami runs ONCE per command run, however many times it is asked', async () => {
     let runs = 0;
     const args = {
       projectRoot: root,
@@ -976,15 +1012,15 @@ describe('checkEasAuth', () => {
         return 'janic\n';
       },
     };
-    checkEasAuth(args);
-    checkEasAuth(args);
-    checkEasAuth(args);
+    await checkEasAuth(args);
+    await checkEasAuth(args);
+    await checkEasAuth(args);
     expect(runs).toBe(1);
   });
 
-  test('it is bounded, and it asks the binary it resolved', () => {
+  test('it is bounded, and it asks the binary it resolved', async () => {
     const seen: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
-    checkEasAuth({
+    await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: '/p/node_modules/.bin/eas', source: 'project' }),
       run: (file, args, opts) => {

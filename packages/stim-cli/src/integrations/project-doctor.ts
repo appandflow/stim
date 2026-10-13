@@ -4,7 +4,7 @@ import type { SettingsObject } from '../workspace/settings.ts';
 
 /** Adds read-only project checks to shared findings; only repair runs under doctor --fix. */
 export interface ProjectDoctor {
-  inspect(context: DoctorContext): Finding[];
+  inspect(context: DoctorContext): Finding[] | Promise<Finding[]>;
   inspectAsync?(context: DoctorContext): Promise<Finding[]>;
   /** Defers toolchain probes until a configured remote build machine is inspected. */
   offloadTargets?(

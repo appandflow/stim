@@ -94,7 +94,7 @@ export interface IosProject {
     operation?: StimContext,
   ): Promise<ProjectPlanResult>;
   isExpo: boolean;
-  bundleId(): string | null;
+  bundleId(): string | null | Promise<string | null>;
   schemeProblem(scheme: string | undefined, configuration?: string | null): FailArgs | null;
   targets: readonly ('simulator' | 'physical' | 'remote' | 'hosted')[];
   eas: boolean;

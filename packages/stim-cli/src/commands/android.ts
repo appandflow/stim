@@ -955,7 +955,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     buildCache: requestedBuildCache,
   });
   if (isEasBuildFailure(easBuild)) return fail(easBuild.code, easBuild.message, easBuild.remedy);
-  const appIds = integration.appIds();
+  const appIds = await integration.appIds();
   let androidPackage = appIds.androidPackage;
   record.bundleId = androidPackage;
   const registerProject = () =>
@@ -1432,7 +1432,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         phase,
         fail,
         readApkPackage,
-        readProjectPackage: () => integration.appIds().androidPackage,
+        readProjectPackage: async () => (await integration.appIds()).androidPackage,
         packageRemedy: integration.packageRemedy,
         install,
         launch,

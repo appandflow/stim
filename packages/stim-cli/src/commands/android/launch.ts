@@ -458,7 +458,7 @@ interface FinishAndroidRunArgs {
     extra?: FailExtra,
   ) => RunAndroidResult;
   readApkPackage: (apkPath: string | null) => string | null;
-  readProjectPackage: () => string | null;
+  readProjectPackage: () => string | null | Promise<string | null>;
   packageRemedy: string;
   install: typeof installAndroidApp;
   launch: typeof launchAndroidApp;
@@ -729,7 +729,7 @@ export async function finishAndroidRun({
   if (packageFromApk && androidPackage && packageFromApk !== androidPackage) {
     phase('install', chalk.dim(`applicationId ${packageFromApk} (from the APK; project files say ${androidPackage})`));
   }
-  androidPackage = packageFromApk || androidPackage || readProjectPackage();
+  androidPackage = packageFromApk || androidPackage || (await readProjectPackage());
   if (!androidPackage && androidPackageProblem) {
     return fail(LAUNCH_FAILED, androidPackageProblem, packageRemedy, { lastBuildStatus: true });
   }

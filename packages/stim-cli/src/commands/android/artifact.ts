@@ -294,7 +294,7 @@ export async function acquireAndroidArtifact(
         remote = loaded;
       }
       if (remote?.name === 'eas') {
-        const auth = easAuth({ projectRoot: root, owner: loaded?.owner || null });
+        const auth = await easAuth({ projectRoot: root, owner: loaded?.owner || null });
         const authNote = easAuthNote(auth as Parameters<typeof easAuthNote>[0]);
         if (authNote) phase('cache', chalk.yellow(authNote));
         if (auth?.code === 'logged-out') remote = null;

@@ -38,8 +38,8 @@ function literalString(text: string | null, key: string): string | null {
   return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
 }
 
-function idsFromConfig(projectRoot: string): Pick<AppIds, 'bundleId' | 'androidPackage'> {
-  const read = readProjectConfig(projectRoot);
+async function idsFromConfig(projectRoot: string): Promise<Pick<AppIds, 'bundleId' | 'androidPackage'>> {
+  const read = await readProjectConfig(projectRoot);
   if (!read.unavailable) {
     return {
       bundleId: configString(read.config, 'ios', 'bundleIdentifier'),
@@ -54,12 +54,12 @@ function idsFromConfig(projectRoot: string): Pick<AppIds, 'bundleId' | 'androidP
   };
 }
 
-export function detectAppIds(
+export async function detectAppIds(
   projectRoot: string,
   iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
   androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
-): AppIds {
-  const ids = idsFromConfig(projectRoot);
+): Promise<AppIds> {
+  const ids = await idsFromConfig(projectRoot);
   const problems: string[] = [];
   const accept = androidPackageFilter(problems);
   return {
@@ -71,18 +71,18 @@ export function detectAppIds(
   };
 }
 
-export function detectBundleId(
+export async function detectBundleId(
   projectRoot: string,
   iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
-): string | null {
-  return detectAppIds(projectRoot, iosDir).bundleId;
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, iosDir)).bundleId;
 }
 
-export function detectAndroidPackage(
+export async function detectAndroidPackage(
   projectRoot: string,
   androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
-): string | null {
-  return detectAppIds(projectRoot, undefined, androidModuleDir).androidPackage;
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, undefined, androidModuleDir)).androidPackage;
 }
 
 function detectBundleIdFromPbxproj(iosDir: string): string | null {

@@ -140,7 +140,7 @@ test('native plan and doctor never execute Gradle or probe a dev server', async 
     { context: { projectPath: root, gitCommonDir: null, repoRoot: null }, settings: {} },
   );
   expect(result).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
-  const findings = nativeAndroidDoctor(root).inspect({
+  const findings = await nativeAndroidDoctor(root).inspect({
     root,
     options: {},
     settings: {},

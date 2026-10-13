@@ -735,7 +735,13 @@ function readProjectEasCliVersion(projectRoot: string): string | null {
   return onPath ? readInstalledEasCliVersion(onPath, projectRoot) : null;
 }
 
-function doctorEasAuth({ projectRoot, owner }: { projectRoot: string; owner?: string | null }): EasAuthResult {
+async function doctorEasAuth({
+  projectRoot,
+  owner,
+}: {
+  projectRoot: string;
+  owner?: string | null;
+}): Promise<EasAuthResult> {
   const file = easCliOutsideRepository(projectRoot);
   if (file) return probeEasAuth({ projectRoot, owner, resolveBin: () => ({ file, source: 'path' }) });
   const unchecked = resolveEasCliBin(projectRoot);
@@ -947,7 +953,7 @@ function configuredRemoteBackends(
 export interface DoctorInspectionOptions {
   readFile?: typeof readFileSync;
   xcodeMajor?: number | null;
-  easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult;
+  easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult | Promise<EasAuthResult>;
   concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
   liveDevices?: (() => number) | null;
   activeBuilds?: (() => number) | null;
@@ -976,11 +982,11 @@ export interface DoctorContext {
   repoRoot: string | null;
 }
 
-export function runDoctor(
+export async function runDoctor(
   projectRoot: string,
   options: DoctorInspectionOptions = {},
-  inspectors: readonly ((context: DoctorContext) => Finding[])[] = [],
-): { findings: Finding[]; context: DoctorContext } {
+  inspectors: readonly ((context: DoctorContext) => Finding[] | Promise<Finding[]>)[] = [],
+): Promise<{ findings: Finding[]; context: DoctorContext }> {
   const {
     concurrency = getConcurrencyLimits,
     liveDevices = null,
@@ -1087,16 +1093,17 @@ export function runDoctor(
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));
-  return { findings: [...shared, ...inspectors.flatMap((inspect) => inspect(context))], context };
+  const inspected = await Promise.all(inspectors.map((inspect) => inspect(context)));
+  return { findings: [...shared, ...inspected.flat()], context };
 }
 
-export function reactNativeDoctorFindings({
+export async function reactNativeDoctorFindings({
   root: projectRoot,
   settings: projectSettings,
   optimizations,
   options,
   repoRoot: repositoryRoot,
-}: DoctorContext): Finding[] {
+}: DoctorContext): Promise<Finding[]> {
   const androidLayout = resolveAndroidLayout(projectSettings, projectRoot, repositoryRoot ?? projectRoot);
   const {
     readFile = readFileSync,
@@ -1148,7 +1155,7 @@ export function reactNativeDoctorFindings({
   const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
   const easFinding =
     remoteBuildCache && provider === 'eas'
-      ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
+      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner }) })
       : null;
   const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
