@@ -243,6 +243,7 @@ beforeEach(() => {
   const real = getExecutor();
   setExecutor({
     ...real,
+    runFileAsync: undefined,
     findExecutable: (name: string) => (name === 'agent-device' ? null : real.findExecutable(name)),
     spawn: (cmd: string, args: string[], opts: object) => {
       spawned.push(cmd);

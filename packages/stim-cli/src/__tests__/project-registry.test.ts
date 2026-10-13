@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -225,7 +226,9 @@ test.each([JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }), JSON.
     const selected = projectRegistry.selectMacos(dir);
     if ('problem' in selected) throw new Error(selected.problem.message);
     const project = await selected.load();
-    expect(() => project.prepare({})).toThrow(expect.objectContaining({ code: 'STIM_BAD_ARG' }));
+    await expect(project.prepare(testContext({ projectRoot: dir, cwd: dir }), {})).rejects.toThrow(
+      expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+    );
   },
 );
 
