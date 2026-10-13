@@ -17,6 +17,7 @@ export {
 } from './context.ts';
 export { validMacosResourceDestination } from './macos-resources.ts';
 export { quotedPath } from './quoted-path.ts';
+export { quoteUnitWord, unitLines, unitWords, type UnitLine } from './systemd-unit.ts';
 export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions } from './artifact-store.ts';
 export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
