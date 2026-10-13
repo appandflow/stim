@@ -21,7 +21,13 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
     : {},
   workspaces: {
     '.': {
-      entry: ['apps/desktop/scripts/*.mjs!', 'packaging/store/assemble.mjs', 'scripts/ci/app-smoke.mjs'],
+      entry: [
+        'apps/desktop/scripts/*.mjs!',
+        'packaging/store/assemble.mjs',
+        'scripts/ci/app-smoke.mjs',
+        'scripts/agent-benchmark/native-driver.mjs',
+        'scripts/agent-benchmark/native-fixtures.mjs',
+      ],
     },
     'packages/stim-cli': {
       // supervisor/server-bare.ts loads @stim-cli/metro with createRequire at runtime.

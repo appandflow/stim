@@ -30,7 +30,7 @@ export function selectBenchmarkCacheKey(platform, fingerprint, entries) {
   const matches =
     platform === 'android'
       ? entries.filter((entry) => entry.startsWith(`${base}-`))
-      : entries.filter((entry) => entry === base);
+      : entries.filter((entry) => entry === base || entry === `${base}-arm64` || entry === `${base}-x86_64`);
   if (matches.length !== 1) {
     throw new Error(`expected one ${platform} benchmark cache key for ${base}, got ${JSON.stringify(matches)}`);
   }

@@ -8,6 +8,9 @@ dispatch, evidence collection, audit, cleanup, and reporting reviewable.
 The driver runs the iOS and Android readiness suites plus the JavaScript
 launch-failure suite described in [`../../docs/agent-benchmark.md`](../../docs/agent-benchmark.md).
 Runs are sequential. Never dispatch two cells against the same benchmark root.
+Standalone native iOS, Android and macOS use the separate [native cohort](./NATIVE.md).
+Freeze a copy of the coordinator before timed dispatch: proof receipts bind its
+exact bytes, so editing a helper during a run invalidates that attempt.
 
 ## Task prompts
 
@@ -390,3 +393,7 @@ proof, recording copy, session close and every captured command must finish
 before it. A missing or late proof, a running command, or a different runner
 failure still rejects the run. The final conversational response is not a task
 completion requirement; its timeout remains recorded in the private evidence.
+
+Both arms keep temporary build outputs under the supplied run-scoped `TMPDIR`
+on the benchmark volume. Confirm enough free space for a fresh simulator on
+the host volume before dispatch; disk-exhausted attempts are invalid evidence.

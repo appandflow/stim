@@ -1,9 +1,9 @@
+import { killProcessTree, makeRunnerHome, spawnStamped, terminateProcessTree } from './runner.mjs';
 import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
 import { ownedMetroListeners } from './metro-listeners.mjs';
 import {
   chmodSync,
   copyFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -19,7 +19,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 import {
   changedPathsFromGitOutputs,
   injectRootRenderCrash,
@@ -310,6 +309,17 @@ function waitForSimulatorQuiescence(udid) {
   throw new Error(`simulator did not become quiescent: ${udid}`);
 }
 
+function pinnedIosDevice() {
+  const deviceTypes = jsonRun('xcrun', ['simctl', 'list', 'devicetypes', '--json']).devicetypes;
+  const runtimes = jsonRun('xcrun', ['simctl', 'list', 'runtimes', '--json']).runtimes;
+  const device = deviceTypes.find((item) => item.name === pins.IOS_DEVICE_TYPE);
+  const runtime = runtimes.find(
+    (item) => item.name.startsWith('iOS ') && item.version === pins.IOS_RUNTIME && item.isAvailable,
+  );
+  if (!device || !runtime) throw new Error('pinned iOS device type or runtime is unavailable');
+  return { deviceTypeIdentifier: device.identifier, runtimeIdentifier: runtime.identifier };
+}
+
 function verifyParkedSimulator(stimHome, expectedUdid) {
   const configPath = join(stimHome, 'config.json');
   if (!existsSync(configPath)) throw new Error('golden Stim config is missing');
@@ -331,9 +341,10 @@ function verifyParkedSimulator(stimHome, expectedUdid) {
   ) {
     throw new Error(`golden parked simulator is not ready: ${JSON.stringify({ record, simulator })}`);
   }
+  const expected = pinnedIosDevice();
   if (
-    record.deviceTypeIdentifier !== 'com.apple.CoreSimulator.SimDeviceType.iPhone-17' ||
-    !record.runtimeIdentifier.endsWith('iOS-26-5')
+    record.deviceTypeIdentifier !== expected.deviceTypeIdentifier ||
+    record.runtimeIdentifier !== expected.runtimeIdentifier
   ) {
     throw new Error(`golden parked simulator has the wrong model or runtime: ${JSON.stringify(record)}`);
   }
@@ -396,15 +407,18 @@ function prepareAllowedBin() {
     'watchman',
   ];
   if (compatibility) names.push('xcodebuild');
+  if (compatibility?.emulatorProcess) names.push('ps');
   for (const name of names) {
     let source;
     try {
       source =
         name === 'agent-device'
           ? executablePath(agentDeviceBin)
-          : name === 'xcodebuild' && compatibility
-            ? join(compatibility.directory, 'bin/xcodebuild')
-            : run('/usr/bin/which', [name], { cwd: root });
+          : name === 'ps' && compatibility?.emulatorProcess
+            ? join(compatibility.directory, 'emulator-process/ps')
+            : name === 'xcodebuild' && compatibility
+              ? join(compatibility.directory, 'bin/xcodebuild')
+              : run('/usr/bin/which', [name], { cwd: root });
     } catch {
       continue;
     }
@@ -985,7 +999,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const deviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
   const device =
     platform === 'ios'
-      ? `an isolated iPhone 17 simulator with iOS 26.5${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
+      ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
       : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}, with the default hardware profile and an 8 GiB data partition` : ''}`;
   const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const screenshot = join('/tmp', `${runId}-settings.png`);
@@ -1037,64 +1051,6 @@ function writeClaudeGuidance(codexHome, arm, runDir) {
   return { path, skillNames };
 }
 
-function makeRunnerHome(runDir, arm) {
-  if (!codexAuthPath || !agentSkillsRoot) {
-    throw new Error('STIM_BENCH_CODEX_AUTH and STIM_BENCH_SKILLS_ROOT are required');
-  }
-  const home = join(runDir, 'runner-home');
-  const codexHome = join(home, '.codex');
-  mkdirSync(codexHome, { recursive: true });
-  copyFileSync(codexAuthPath, join(codexHome, 'auth.json'));
-  chmodSync(join(codexHome, 'auth.json'), 0o600);
-  const selectedSkills = [
-    {
-      name: 'agent-device',
-      source: join(agentSkillsRoot, 'agent-device'),
-    },
-  ];
-  if (arm === 'stim') {
-    selectedSkills.push({
-      name: 'stim',
-      source: join(stimPackage, 'skill'),
-    });
-  }
-  for (const skill of selectedSkills) {
-    const target = join(codexHome, 'skills', skill.name);
-    mkdirSync(dirname(target), { recursive: true });
-    cpSync(skill.source, target, { recursive: true });
-  }
-  const skillRoot = agentSkillsRoot;
-  const skillPaths = [];
-  function visit(path) {
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-      const child = join(path, entry.name);
-      if (entry.isDirectory()) visit(child);
-      if (entry.isFile() && entry.name === 'SKILL.md') {
-        skillPaths.push(realpathSync(child));
-      }
-    }
-  }
-  visit(skillRoot);
-  const config = [
-    'service_tier = "priority"',
-    'model_reasoning_effort = "high"',
-    '',
-    '[features]',
-    'plugins = false',
-    'multi_agent = false',
-    '',
-    '[skills]',
-    'include_instructions = true',
-    '',
-    '[skills.bundled]',
-    'enabled = false',
-    ...skillPaths.flatMap((path) => ['', '[[skills.config]]', `path = ${JSON.stringify(path)}`, 'enabled = false']),
-    '',
-  ].join('\n');
-  writeFileSync(join(codexHome, 'config.toml'), config);
-  return { codexHome };
-}
-
 function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null, compatibilityProof = null) {
   const runTmp = join(runDir, 'tmp');
   return prepareRunnerIsolation({
@@ -1107,7 +1063,7 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
         ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
       ],
-      writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
+      writePaths: [join(main, '.git'), env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
         readPaths: [
           crash?.fixtureCheckout,
@@ -1165,7 +1121,7 @@ function smoke(arm) {
   const runId = `smoke-${arm}`;
   rmSync(runDir, { recursive: true, force: true });
   mkdirSync(runDir, { recursive: true });
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const env = {
     ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
@@ -1199,7 +1155,7 @@ async function runnerSmoke(arm) {
   const runDir = join(state, `runner-smoke-${arm}`);
   rmSync(runDir, { recursive: true, force: true });
   mkdirSync(runDir, { recursive: true });
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const env = {
     ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
@@ -1235,88 +1191,6 @@ async function runnerSmoke(arm) {
     throw new Error(`runner smoke failed: ${JSON.stringify({ result, usage })}`);
   }
   process.stdout.write(`${JSON.stringify({ arm, result, usage }, null, 2)}\n`);
-}
-
-function killProcessTree(child, processGroupId, signal) {
-  try {
-    if (process.platform !== 'win32' && processGroupId) process.kill(-processGroupId, signal);
-    else if (child.exitCode == null && child.signalCode == null) child.kill(signal);
-  } catch (error) {
-    if (error?.code !== 'ESRCH') throw error;
-  }
-}
-
-function terminateProcessTree(child, processGroupId, graceMs) {
-  killProcessTree(child, processGroupId, 'SIGTERM');
-  const timer = setTimeout(() => killProcessTree(child, processGroupId, 'SIGKILL'), graceMs);
-  timer.unref();
-  return timer;
-}
-
-function spawnStamped(command, args, output, options, input, timeoutMs = null, killGraceMs = 5000, onEvent = null) {
-  const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' });
-  const processGroupId = process.platform === 'win32' ? null : child.pid;
-  let timedOut = false;
-  let forceKill = null;
-  const timeout = timeoutMs
-    ? setTimeout(() => {
-        timedOut = true;
-        forceKill = terminateProcessTree(child, processGroupId, killGraceMs);
-      }, timeoutMs)
-    : null;
-  const stampOut = spawn('node', [join(scriptRoot, 'stamp.mjs'), 'stdout'], {
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  const stampErr = spawn('node', [join(scriptRoot, 'stamp.mjs'), 'stderr'], {
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  const outChunks = [];
-  const errChunks = [];
-  stampOut.stdout.on('data', (chunk) => outChunks.push(chunk));
-  stampErr.stdout.on('data', (chunk) => errChunks.push(chunk));
-  child.stdout.pipe(stampOut.stdin);
-  child.stderr.pipe(stampErr.stdin);
-  if (onEvent) {
-    createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        return;
-      }
-      onEvent(event);
-    });
-  }
-  child.stdin.end(input);
-  const stampOutClosed = new Promise((done) => stampOut.on('close', done));
-  const stampErrClosed = new Promise((done) => stampErr.on('close', done));
-  return new Promise((resolvePromise) => {
-    child.on('close', (code, signal) => {
-      if (timeout) clearTimeout(timeout);
-      if (forceKill) {
-        clearTimeout(forceKill);
-        killProcessTree(child, processGroupId, 'SIGKILL');
-      }
-      stampOut.stdin.end();
-      stampErr.stdin.end();
-      return Promise.all([stampOutClosed, stampErrClosed]).then(() => {
-        const lines = [outChunks, errChunks]
-          .flatMap((chunks) => Buffer.concat(chunks).toString('utf8').split('\n'))
-          .filter(Boolean)
-          .map((line) => JSON.parse(line))
-          .toSorted((a, b) => a.arrivedAt.localeCompare(b.arrivedAt));
-        writeFileSync(output, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
-        writeFileSync(
-          join(dirname(output), 'runner-stream.jsonl'),
-          lines
-            .filter((line) => line.stream === 'stdout')
-            .map((line) => line.line)
-            .join('\n') + '\n',
-        );
-        return resolvePromise({ code, signal, timedOut });
-      });
-    });
-  });
 }
 
 async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform = 'ios') {
@@ -1364,8 +1238,8 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const expectedControlSimulator = {
     name: platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`,
     deviceTypeIdentifier:
-      platform === 'ios' ? 'com.apple.CoreSimulator.SimDeviceType.iPhone-17' : ready.deviceTypeIdentifier,
-    runtimeIdentifier: platform === 'ios' ? 'com.apple.CoreSimulator.SimRuntime.iOS-26-5' : ready.runtimeIdentifier,
+      platform === 'ios' ? expectedParkedSimulator.deviceTypeIdentifier : ready.deviceTypeIdentifier,
+    runtimeIdentifier: platform === 'ios' ? expectedParkedSimulator.runtimeIdentifier : ready.runtimeIdentifier,
     ...(platform === 'android' ? { systemImage: ready.systemImage } : {}),
   };
   const expectedStimDevice =
@@ -1388,7 +1262,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const runnerKind = runnerForModel(model);
   const runnerEnvironment =
     runnerKind === 'claude' ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' } : {};
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const runTmp = join(runDir, 'tmp');
   mkdirSync(runTmp, { recursive: true });
   run('cp', ['-cR', `${join(platformGolden, 'control-tmp')}/.`, runTmp], {

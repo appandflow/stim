@@ -56,6 +56,14 @@ describe('benchmark cache key selection', () => {
     expect(selectBenchmarkCacheKey('ios', 'abc', ['abc-debug-sim', 'abc-debug-sim-arm64-v8a'])).toBe('abc-debug-sim');
   });
 
+  it('selects a current architecture-scoped iOS key and refuses ambiguous artifacts', () => {
+    expect(selectBenchmarkCacheKey('ios', 'abc', ['abc-debug-sim-arm64'])).toBe('abc-debug-sim-arm64');
+    expect(() => selectBenchmarkCacheKey('ios', 'abc', ['abc-debug-sim-arm64', 'abc-debug-sim-x86_64'])).toThrow(
+      /arm64.*x86_64/,
+    );
+    expect(() => selectBenchmarkCacheKey('ios', 'abc', ['abc-debug-sim', 'abc-debug-sim-arm64'])).toThrow(/got/);
+  });
+
   it('selects the ABI-scoped Android simulator key', () => {
     expect(selectBenchmarkCacheKey('android', 'abc', ['abc-debug-sim-arm64-v8a'])).toBe('abc-debug-sim-arm64-v8a');
   });
