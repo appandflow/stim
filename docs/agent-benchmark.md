@@ -369,8 +369,12 @@ After collection, close the exact run-scoped `agent-device` session and verify
 that the campaign session inventory is empty before a simulator can be parked
 or reused. If closure cannot be proven, stop and clean only the campaign-owned
 daemon. Remove the temporary screenshot and terminate only benchmark-owned
-processes. For Stim, run `stim stop` and `stim worktree remove --force`. On iOS,
-then verify that the same simulator is shut down, renamed as parked, and is the
+processes. For Stim, run `stim stop` and `stim worktree remove --force`.
+Before each workspace removal, check all registered and parked devices against
+that run's golden identity. An unexpected, missing, duplicate, or unowned device
+refuses removal and retains the run and crash-fixture worktrees for inspection;
+cleanup must not evict a golden device to make room for a failed run's device.
+On iOS, then verify that the same simulator is shut down, renamed as parked, and is the
 sole pool record. On Android, verify that the same AVD is stopped and remains
 the sole compatible parked record, ready for the next sequential run. For
 control, remove its worktree and branch and shut down and delete only the newly
