@@ -402,9 +402,15 @@ with a `deviceToken`, no capabilities and
 **Deny** run those commands. Until then, `hello` with its token
 fails with `approval-pending`, which does not count as a failed attempt, while
 the request itself does, so a peer cannot send more requests than failed
-attempts. A request lapses after 15 minutes. Each node has at most one pending
-request, the newest, and the server holds at most 8; more fail with
-`limit-exceeded`. There is no pairing code for `build`: `stim-server pair`
+attempts. A request lapses after 15 minutes. A new request replaces the
+node's pending one only when both carry the same setup ticket; otherwise both
+stay pending. Each node has at most 3 pending requests per capability, and the
+server holds at most 8; more fail with `limit-exceeded`. `stim-server devices`
+shows each request's id, name, request time and whether it carried a setup
+ticket. Any process on this Mac can file a request in a tailnet node's name, so
+`devices grant` refuses a request while its node has another pending one for
+the same capability: revoke the ones that Mac did not make, then grant.
+`stim-server setup` approves the request its ticket names. There is no pairing code for `build`: `stim-server pair`
 never grants it.
 
 `devices grant` never gives `build` to a paired device, or `read` or

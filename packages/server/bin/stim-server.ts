@@ -242,13 +242,34 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
   if (note) console.error(note);
 }
 
+function nodeOf(client: PairedDevice): string | null {
+  return client.identity.kind === 'tailnet' ? client.identity.nodeId : null;
+}
+
+function ambiguousGrant(id: string): string {
+  const clients = [...readBuildClients(), ...readDeviceHostClients()];
+  const target = clients.find((client) => client.id === id);
+  const pending = clients.filter(
+    (client) =>
+      target &&
+      client.pendingUntil !== undefined &&
+      client.requestedCapability === target.requestedCapability &&
+      nodeOf(client) === nodeOf(target),
+  );
+  return [
+    `${id} is one of several pending ${target?.requestedCapability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
+    ...pending.map((client) => `  ${describe(client)}`),
+    'Revoke each request that Mac did not make with `stim-server devices revoke <id>`, then grant again.',
+  ].join('\n');
+}
+
 function describe(device: PairedDevice): string {
   const from =
     device.identity.kind === 'local'
       ? 'this machine'
       : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
   if (device.pendingUntil !== undefined) {
-    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
+    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}  ${device.setupTicketHash ? 'with setup ticket' : 'no setup ticket'}`;
   }
   const scope = device.capabilities.includes('device-host')
     ? 'device-host'
@@ -424,6 +445,7 @@ async function main(): Promise<void> {
       fail('Hosting simulators needs a Mac. This machine takes build requests only; approve them with --build.');
     const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
+    if (outcome === 'ambiguous') fail(ambiguousGrant(arg));
     if (outcome === 'unknown') {
       fail(
         `no paired device ${arg}, and no pending access request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
@@ -464,14 +486,24 @@ async function main(): Promise<void> {
     }
     if (values.json) {
       const listed = devices.map(
-        ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({
+        ({
           id,
           name,
           identity,
           pairedAt,
           lastSeenAt,
           capabilities,
-          ...(pendingUntil ? { pendingUntil } : {}),
+          pendingUntil,
+          requestedCapability,
+          setupTicketHash,
+        }) => ({
+          id,
+          name,
+          identity,
+          pairedAt,
+          lastSeenAt,
+          capabilities,
+          ...(pendingUntil ? { pendingUntil, setupTicket: setupTicketHash !== undefined } : {}),
           ...(requestedCapability ? { requestedCapability } : {}),
         }),
       );

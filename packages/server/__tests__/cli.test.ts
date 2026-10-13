@@ -177,6 +177,30 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
     expect(plain('devices', 'revoke', denied.device.id).status).toBe(0);
     expect(plain('devices', 'grant', denied.device.id, `--${capability}`).status).toBe(1);
   }, 20_000);
+
+  it('shows which pending requests carry a setup ticket, and refuses to choose between one node requests', () => {
+    const ask = capability === 'build' ? requestBuildAccess : requestDeviceHostAccess;
+    const laptop = { kind: 'tailnet' as const, nodeId: 'nL', nodeName: 'laptop', user: 'u' };
+    const ticketed = ask('Laptop', laptop, undefined, 'Ab_9-'.repeat(8) + 'xyz');
+    const other = ask('Laptop', laptop);
+    if (!ticketed.ok || !other.ok) throw new Error('request refused');
+    const listed = plain('devices').stdout;
+    expect(listed).toContain(`${ticketed.device.id}  Laptop  pending ${capability}  from laptop (u)  requested`);
+    expect(listed).toMatch(new RegExp(`${ticketed.device.id} .* with setup ticket\\n`));
+    expect(listed).toMatch(new RegExp(`${other.device.id} .* no setup ticket\\n`));
+    expect(run('devices', '--json')).toMatchObject({
+      devices: [
+        { id: ticketed.device.id, setupTicket: true },
+        { id: other.device.id, setupTicket: false },
+      ],
+    });
+    const refused = plain('devices', 'grant', ticketed.device.id, `--${capability}`);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain(other.device.id);
+    expect(refused.stderr).toContain('stim-server devices revoke');
+    expect(plain('devices', 'revoke', other.device.id).status).toBe(0);
+    expect(plain('devices', 'grant', ticketed.device.id, `--${capability}`).status).toBe(0);
+  }, 20_000);
 });
 
 withTailscale('pair with Tailscale running', () => {

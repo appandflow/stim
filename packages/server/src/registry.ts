@@ -21,6 +21,8 @@ export const BUILD_REQUEST_TTL_MS: number = 15 * 60_000;
 
 export const MAX_BUILD_REQUESTS = 8;
 
+export const MAX_NODE_REQUESTS = 3;
+
 type RequestedCapability = 'build' | 'device-host';
 
 export type PeerIdentity = { kind: 'local' } | { kind: 'tailnet'; nodeId: string; nodeName: string; user: string };
@@ -116,7 +118,7 @@ export type AuthOutcome =
         | 'bad-device-name';
     };
 
-export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch';
+export type GrantOutcome = 'granted' | 'unknown' | 'build-mismatch' | 'device-host-mismatch' | 'ambiguous';
 
 export function serverDir(): string {
   return join(configDir(), 'server');
@@ -366,8 +368,9 @@ export function spendPairingToken(
 }
 
 /**
- * Records a pending request from a tailnet peer to build here, replacing that node's earlier request.
- * The returned token authenticates only after `grantDevice` approves it with `build`.
+ * Records a pending request from a tailnet peer to build here. It replaces that node's earlier request only when
+ * both carry the same setup ticket; other requests from the node stay pending beside it, up to
+ * `MAX_NODE_REQUESTS`. The returned token authenticates only after `grantDevice` approves it with `build`.
  */
 export function requestBuildAccess(
   name: string,
@@ -397,11 +400,27 @@ function requestClientAccess(
 ): AuthOutcome {
   if (identity.kind === 'local') return { ok: false, reason: `${capability}-needs-tailnet` };
   if (!validClientName(name)) return { ok: false, reason: 'bad-device-name' };
+  const setupTicketHash =
+    typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
+      ? hashToken(setupTicket)
+      : undefined;
   return transaction(() => {
     const clients = readRecords(clientsFile(capability))
       .filter((client) => !lapsed(client, now))
-      .filter((client) => !(client.pendingUntil !== undefined && sameNode(client.identity, identity)));
-    if (clients.filter((client) => client.pendingUntil !== undefined).length >= MAX_BUILD_REQUESTS) {
+      .filter(
+        (client) =>
+          !(
+            client.pendingUntil !== undefined &&
+            setupTicketHash !== undefined &&
+            client.setupTicketHash === setupTicketHash &&
+            sameNode(client.identity, identity)
+          ),
+      );
+    const pending = clients.filter((client) => client.pendingUntil !== undefined);
+    if (
+      pending.length >= MAX_BUILD_REQUESTS ||
+      pending.filter((client) => sameNode(client.identity, identity)).length >= MAX_NODE_REQUESTS
+    ) {
       return { ok: false, reason: `${capability}-requests-full` };
     }
     const deviceToken = newToken();
@@ -414,9 +433,7 @@ function requestClientAccess(
       lastSeenAt: null,
       capabilities: [],
       requestedCapability: capability,
-      ...(typeof setupTicket === 'string' && setupTicket.length === 43 && /^[A-Za-z0-9_-]{43}$/.test(setupTicket)
-        ? { setupTicketHash: hashToken(setupTicket) }
-        : {}),
+      ...(setupTicketHash ? { setupTicketHash } : {}),
       pendingUntil: new Date(now + BUILD_REQUEST_TTL_MS).toISOString(),
     };
     writeJson(clientsFile(capability), { version: 1, devices: [...clients, device] });
@@ -445,9 +462,17 @@ export function authenticateDevice(token: string, identity: PeerIdentity, now: n
 
 /**
  * Sets a pairing's read/control permissions or approves a client for its registry's single requested capability.
- * A grant cannot move a client between read/control, build and device-host registries.
+ * A grant cannot move a client between read/control, build and device-host registries. It does not approve a
+ * request while its node has another pending request for the same capability (`ambiguous`): any process on this
+ * Mac can file a request in a tailnet node's name, so the person revokes the requests they did not make first.
+ * `setupTicketHash`, from `stim-server setup`, names the request by its ticket instead, which settles the choice.
  */
-export function grantDevice(id: string, capabilities: Capability[], now: number = Date.now()): GrantOutcome {
+export function grantDevice(
+  id: string,
+  capabilities: Capability[],
+  now: number = Date.now(),
+  setupTicketHash?: string,
+): GrantOutcome {
   return transaction<GrantOutcome>(() => {
     const devices = readDevices();
     const device = devices.find((entry) => entry.id === id);
@@ -463,6 +488,15 @@ export function grantDevice(id: string, capabilities: Capability[], now: number 
       const client = clients.find((entry) => entry.id === id);
       if (!client) continue;
       if (capabilities.length !== 1 || capabilities[0] !== capability) return `${capability}-mismatch`;
+      if (
+        client.pendingUntil !== undefined &&
+        (setupTicketHash === undefined || client.setupTicketHash !== setupTicketHash) &&
+        clients.some(
+          (other) => other !== client && other.pendingUntil !== undefined && sameNode(other.identity, client.identity),
+        )
+      ) {
+        return 'ambiguous';
+      }
       client.capabilities = [capability];
       delete client.pendingUntil;
       writeJson(clientsFile(capability), { version: 1, devices: clients });

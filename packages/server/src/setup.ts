@@ -978,7 +978,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           }
         }
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
-        if (!approved && deps.grant(record.id, [capability], deps.now()) !== 'granted')
+        if (!approved && deps.grant(record.id, [capability], deps.now(), opts.ticketHash) !== 'granted')
           throw new SetupRefusal(`Request ${record.id} lapsed or changed; rerun with a new request.`);
         journal.granted.push({ capability, id: record.id });
         output.granted.push({ capability, id: record.id, client: { nodeId: opts.nodeId, name: record.name } });
