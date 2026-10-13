@@ -14,6 +14,16 @@ function render(run: BenchmarkRun): HTMLElement {
 }
 
 describe('benchmark timeline presentation', () => {
+  it('shows measurement warnings for an otherwise valid outcome', () => {
+    const run = {
+      ...opus.runs[0],
+      valid: true,
+      measurementWarnings: ['platform-command-target-exceeded'],
+    } as BenchmarkRun;
+    expect(render(run).textContent).toContain('platform-command-target-exceeded');
+    expect(render({ ...run, measurementWarnings: [] }).textContent).not.toContain('Measurement warnings');
+  });
+
   it('names the keyboard-scrollable timeline and exposes playback time to assistive technology', () => {
     const run = { ...opus.runs[0], totalSeconds: 90 } as BenchmarkRun;
     const view = render(run);

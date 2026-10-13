@@ -87,8 +87,8 @@ each platform, change, and arm:
 ```
 
 Every dispatched cell needs an entry. `screenReadySeconds` is reported as a
-performance target but does not invalidate a slow model. A Stim platform
-command over `platformCommandSeconds` is an invalid machine/build result.
+performance target. A Stim platform command over `platformCommandSeconds`
+also produces a measurement warning; a proven slow outcome remains valid.
 `runTimeoutSeconds` terminates and invalidates a runaway agent. Keep
 authentication and raw evidence out of Git.
 
@@ -100,11 +100,11 @@ C++ compilation, and flags missing or below-target compiler-cache evidence. A
 `stim android` invocation that exits 1 with a `STIM_NO_METRO` refusal and no
 build phase output stays in the timeline but does not count as missing
 compiler-cache evidence; another `stim android` invocation must still carry
-compiler statistics or a proven artifact hit, and a failed, interrupted, or
-crashed command that could have compiled still fails closed.
+compiler statistics or a proven artifact hit to establish cache performance.
+Missing counters remain unknown and produce a warning.
 Completed tool output triggers an immediate `CACHE ALERT` and preserves
-`cache-alerts.json`. A flagged attempt stays available for investigation and is
-excluded from published comparisons; investigate the cause before retrying.
+`cache-alerts.json`. A flagged attempt stays in comparisons when its outcome
+and evidence pass validation; retain the warning when reporting it.
 When a completed build fails later during launch, collection can retain the
 owned workspace's timestamped compiler statistics. A literal `cd` to that
 worktree followed by `&& stim android ...; echo "EXIT=$?"` is also eligible;
@@ -320,7 +320,8 @@ agent to create the measured run worktree itself. `collect` rejects source
 inspection before launch/error capture, a missing exact repair, a missing
 mismatched device, missing Settings-screen proof, failed Stim guide or warm
 setup, dependency installation inside the timer, missing Gradle cache injection,
-or exceeded machine phase target. The recovery mechanism is measured, not
+or an actual run timeout. Exceeded phase targets and missing diagnosis token
+usage produce measurement warnings. The recovery mechanism is measured, not
 prescribed.
 
 Run the self-tests before a campaign:
@@ -381,7 +382,9 @@ source under `raw/`, with hashes in `auxiliary-audit-evidence.json`. A review's
 `sourceChanges` contains that file's `evidenceSha256` and an `assessment`; export
 checks every retained hash, the original source hash and checksum-only semantics.
 It cannot clear other source changes, dependency changes or source-before-capture
-violations. Valid runs with setup or auxiliary warnings also require review before publication. The original
+violations. Valid runs with benign setup warnings publish with those warnings
+without separate review. Auxiliary sessions and evidence corrections still
+require review before publication. The original
 `run.json` is never rewritten, and review records stay private.
 
 The coordinator may adjudicate source-inspection false positives with

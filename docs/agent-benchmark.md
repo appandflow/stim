@@ -59,12 +59,20 @@ The isolated shell restores the locale for login and non-login commands.
 Preflight checks it, and preparation/run metadata records it. An older golden
 without matching locale provenance needs requalification before dispatch.
 
-Each machine has targets for every platform, change kind, and arm. The
-screen-ready target is a visible performance signal, not a validity gate,
-because agent reasoning time is part of what the benchmark measures. A Stim
-platform-command target is a validity gate for abnormal host/build work, and a
-larger run timeout terminates a runaway attempt. This separates slow model
-behavior from a missing or ineffective cache.
+Each machine has targets for every platform, change kind, and arm. Screen-ready
+and platform-command targets are performance signals. A slow run remains a valid
+measurement when its outcome and evidence pass validation, so regressions stay
+in the results. The larger run timeout still terminates and invalidates a runaway
+attempt.
+
+Run records, reports, and the benchmark viewer expose `measurementWarnings` for
+missed targets, unavailable compiler-cache counters, low cache hit rates, and
+missing diagnosis token usage. Unknown measurements stay null; they are not zero
+or a successful cache result. These warnings do not invalidate a proven outcome.
+Device identity, artifact and evidence hashes, visual proof, allowed source
+changes, and crash capture before source inspection remain required. Benign
+setup-command warnings do not require a separate manual publication review when
+those checks pass; evidence corrections and auxiliary sessions still do.
 
 Give the campaign its own `AGENT_DEVICE_STATE_DIR`, separate from the
 operator's normal sessions, and set `AGENT_DEVICE_SESSION` to the exact run id.

@@ -284,6 +284,17 @@ export default function BenchmarkTimeline({ run }: { run: BenchmarkRun }): React
       <section className={styles.summary}>
         <span>What the agent did</span>
         <p>{run.summary}</p>
+        {!!run.measurementWarnings?.length && (
+          <div>
+            <strong>Measurement warnings</strong>
+            <p>The outcome passed validation; these measurements need attention.</p>
+            <ul>
+              {run.measurementWarnings.map((warning, index) => (
+                <li key={index}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
 
       <div className={styles.breakdown}>
