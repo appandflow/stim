@@ -39,13 +39,17 @@ source changes, and changed coordinator or compatibility-tool hashes. A run
 that passes those checks remains `pending-independent-ui-and-command-audit`;
 an agent's success message does not certify it. Before accepting a
 result, inspect the complete command evidence, verify the exact source change,
-check the pre-interaction PID/start identity in `target.json` against its original
+check the PID/start identity captured before the final verification sequence in `target.json` against its original
 command output, confirm that exact process identity is still alive, and attach to the same run-scoped
 agent-device session without relaunching, verify both texts and capture an
 independent screenshot. Bind that review to the transcript and screenshot
 hashes. Reject wrong devices, source changes that fake the counter, missing
 proof, incomplete builds, process replacement, and failed or timed-out runners.
-Retain invalid attempts; never overwrite their evidence with a retry.
+Keep failed attempts and relaunches in the timed transcript. Recovery before the
+final verification is allowed; if the process changes during verification,
+restart the whole verification sequence. Its final identity must remain live
+through coordinator verification. Retain invalid runs; never overwrite their
+evidence with a retry.
 
 Stop and remove Stim worktrees through the pinned CLI with their exact
 `STIM_HOME`. For control, stop only the recorded app process and delete only
