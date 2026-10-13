@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,9 +29,6 @@ import { installHostApp, type HostApp } from './stim-host.ts';
 
 const MANAGER_TIMEOUT_MS = 15_000;
 const SUPERVISOR_WAIT_MS = 30_000;
-const TASK_STATE_RUNNING = 4;
-/** Task Scheduler records `LastRunTime` to the second. */
-const TASK_CLOCK_SLACK_MS = 2000;
 
 export interface Run {
   ok: boolean;
@@ -263,27 +260,25 @@ const taskName = (label: string) => `Stim\\${label}`;
 const supervisorState = (label: string) => join(taskScheduler.root(label), 'supervisor.json');
 
 /**
- * The supervisor's state while the task runs: Task Scheduler runs one instance of the task, and only a state file
- * written since that instance started describes it. This reads the task through the Task Scheduler COM API, whose
- * state numbers, unlike the text `schtasks` prints, are not localized.
+ * The supervisor's state while the task runs: the state file counts only when the pid it names is the process
+ * Task Scheduler started for the task's running instance (its `EnginePID`), read through the Task Scheduler COM API.
+ * `GetInstances(1)` includes hidden tasks.
  */
 async function runningSupervisor(label: string): Promise<SupervisorState | null> {
   const task = await run('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    `$s = New-Object -ComObject Schedule.Service; $s.Connect(); $t = $s.GetFolder('\\Stim').GetTask('${label}'); "$($t.State) $(([DateTimeOffset]$t.LastRunTime).ToUnixTimeMilliseconds())"`,
+    `$s = New-Object -ComObject Schedule.Service; $s.Connect(); foreach ($i in $s.GetFolder('\\Stim').GetTask('${label}').GetInstances(1)) { $i.EnginePID }`,
   ]);
-  const [state, lastRun] = task.stdout.trim().split(' ').map(Number);
-  if (state !== TASK_STATE_RUNNING || lastRun === undefined || !Number.isFinite(lastRun)) return null;
+  const running = new Set(task.stdout.split(/\s+/).filter(Boolean).map(Number));
   let value: unknown;
   try {
-    if (statSync(supervisorState(label)).mtimeMs < lastRun - TASK_CLOCK_SLACK_MS) return null;
     value = JSON.parse(readFileSync(supervisorState(label), 'utf8'));
   } catch {
     return null;
   }
-  if (!isJsonObject(value) || typeof value.supervisor !== 'number' || !serverAlive(value.supervisor)) return null;
+  if (!isJsonObject(value) || typeof value.supervisor !== 'number' || !running.has(value.supervisor)) return null;
   return {
     supervisor: value.supervisor,
     server: typeof value.server === 'number' ? value.server : null,

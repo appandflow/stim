@@ -41,12 +41,21 @@ function program(file: string): Program {
 async function supervise(file: string, statePath: string, throttleMs: number): Promise<void> {
   let runs = 0;
   let lastExitCode: string | null = null;
+  const log = (line: string) => {
+    try {
+      appendFileSync(join(dirname(statePath), 'supervisor.log'), `${new Date().toISOString()} ${line}\n`);
+    } catch {}
+  };
   const record = (server: number | null) => {
     const state: SupervisorState = { supervisor: process.pid, server, runs, lastExitCode };
-    mkdirSync(dirname(statePath), { recursive: true });
-    const partial = `${statePath}.${process.pid}.tmp`;
-    writeFileSync(partial, `${JSON.stringify(state)}\n`);
-    renameSync(partial, statePath);
+    try {
+      mkdirSync(dirname(statePath), { recursive: true });
+      const partial = `${statePath}.${process.pid}.tmp`;
+      writeFileSync(partial, `${JSON.stringify(state)}\n`);
+      renameSync(partial, statePath);
+    } catch (error) {
+      log(`could not record ${statePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
   record(null);
   for (;;) {
@@ -57,9 +66,7 @@ async function supervise(file: string, statePath: string, throttleMs: number): P
       });
     } catch (error) {
       lastExitCode = `supervisor: ${error instanceof Error ? error.message : String(error)}`;
-      try {
-        appendFileSync(join(dirname(statePath), 'supervisor.log'), `${new Date().toISOString()} ${lastExitCode}\n`);
-      } catch {}
+      log(lastExitCode);
     }
     record(null);
     await sleep(throttleMs);
