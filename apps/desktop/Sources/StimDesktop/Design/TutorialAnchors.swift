@@ -72,7 +72,7 @@ extension View {
         GeometryReader { geometry in
           TutorialGlow(
             rect: CGRect(origin: .zero, size: geometry.size), bounds: geometry.size, callout: nil,
-            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)")
+            restartKey: "\(hint.step ?? "")|\(hint.selectedPath ?? "")|\(anchor)", overflowsWindow: false)
         }
       }
     }
@@ -127,7 +127,9 @@ private struct TutorialGlow: View {
   var bounds: CGSize
   var callout: String?
   var restartKey: String
+  var overflowsWindow = true
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
+  @Environment(\.colorScheme) private var colorScheme
   @State private var faded = false
   @State private var gone = false
   @State private var windowKey = false
@@ -136,12 +138,20 @@ private struct TutorialGlow: View {
     ZStack {
       WindowStateReader { windowKey = $0 == .key }
       if windowKey, !gone {
-        TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
-          let phase =
-            reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
-          glow(phase: phase)
+        if overflowsWindow {
+          TutorialGlowSurface(
+            content: AnyView(
+              animatedGlow
+                .padding(TutorialGlowSurface.margin)
+                .environment(\.colorScheme, colorScheme)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+            )
+          )
+          .frame(width: bounds.width, height: bounds.height)
+        } else {
+          animatedGlow
         }
-        .opacity(faded ? 0 : 1)
       }
     }
     .allowsHitTesting(false)
@@ -155,6 +165,17 @@ private struct TutorialGlow: View {
       try? await Task.sleep(for: .seconds(Self.fadeSeconds))
       if !Task.isCancelled { gone = true }
     }
+  }
+
+  private var animatedGlow: some View {
+    TimelineView(reduceMotion ? .animation(minimumInterval: 3600) : .animation) { context in
+      let phase =
+        reduceMotion ? 0 : (sin(context.date.timeIntervalSinceReferenceDate * 2 * .pi / Self.pulsePeriod) + 1) / 2
+      glow(phase: phase)
+    }
+    .frame(width: bounds.width, height: bounds.height)
+    .opacity(faded ? 0 : 1)
+    .animation(.easeOut(duration: Self.fadeSeconds), value: faded)
   }
 
   private func glow(phase: Double) -> some View {
@@ -183,5 +204,107 @@ private struct TutorialGlow: View {
           )
       }
     }
+  }
+}
+
+private struct TutorialGlowSurface: NSViewRepresentable {
+  static let margin: CGFloat = 32
+  var content: AnyView
+
+  func makeNSView(context: Context) -> TutorialGlowHost { TutorialGlowHost() }
+
+  func updateNSView(_ view: TutorialGlowHost, context: Context) {
+    view.content = content
+    view.position()
+  }
+
+  static func dismantleNSView(_ view: TutorialGlowHost, coordinator: ()) { view.close() }
+}
+
+private final class TutorialGlowPanel: NSPanel {
+  override var canBecomeKey: Bool { false }
+  override var canBecomeMain: Bool { false }
+}
+
+private final class TutorialGlowHost: NSView {
+  var content = AnyView(EmptyView()) {
+    didSet { hosting?.rootView = content }
+  }
+  private weak var owner: NSWindow?
+  private var panel: TutorialGlowPanel?
+  private var hosting: NSHostingView<AnyView>?
+  private var observers: [NSObjectProtocol] = []
+
+  override func viewDidMoveToWindow() {
+    super.viewDidMoveToWindow()
+    close()
+    guard let window else { return }
+    owner = window
+    let names: [Notification.Name] = [
+      NSWindow.didMoveNotification, NSWindow.didResizeNotification,
+      NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+    ]
+    observers = names.map { name in
+      NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+        self?.position()
+      }
+    }
+    observers.append(
+      NotificationCenter.default.addObserver(
+        forName: NSWindow.willCloseNotification, object: window, queue: .main
+      ) { [weak self] _ in self?.close() })
+    position()
+  }
+
+  override func layout() {
+    super.layout()
+    position()
+  }
+
+  func position() {
+    guard let owner, owner.isKeyWindow, owner.isVisible, !owner.isMiniaturized, owner.occlusionState.contains(.visible),
+      bounds.width > 0, bounds.height > 0
+    else {
+      panel?.orderOut(nil)
+      return
+    }
+    let frame = owner.convertToScreen(convert(bounds, to: nil))
+      .insetBy(dx: -TutorialGlowSurface.margin, dy: -TutorialGlowSurface.margin)
+    if panel == nil {
+      let hosting = NSHostingView(rootView: content)
+      hosting.sizingOptions = []
+      let panel = TutorialGlowPanel(
+        contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+      panel.isOpaque = false
+      panel.backgroundColor = .clear
+      panel.hasShadow = false
+      panel.ignoresMouseEvents = true
+      panel.hidesOnDeactivate = true
+      panel.isReleasedWhenClosed = false
+      panel.isExcludedFromWindowsMenu = true
+      panel.setAccessibilityElement(false)
+      panel.collectionBehavior = [.fullScreenAuxiliary, .ignoresCycle]
+      panel.contentView = hosting
+      self.hosting = hosting
+      self.panel = panel
+      owner.addChildWindow(panel, ordered: .above)
+    }
+    panel?.appearance = owner.effectiveAppearance
+    panel?.level = NSWindow.Level(rawValue: owner.level.rawValue + 1)
+    panel?.setFrame(frame, display: true)
+    if panel?.isVisible == false { panel?.orderFront(nil) }
+  }
+
+  func close() {
+    for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    observers = []
+    if let panel {
+      owner?.removeChildWindow(panel)
+      panel.orderOut(nil)
+      panel.contentView = nil
+    }
+    panel = nil
+    hosting = nil
+    owner = nil
   }
 }
