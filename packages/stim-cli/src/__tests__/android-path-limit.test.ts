@@ -7,6 +7,7 @@ import {
   androidPathRoomRemedy,
 } from '../engine/android-path-limit.ts';
 import { checkAndroidPathRoom } from '../diagnostics/doctor.ts';
+import { windowsShortDir } from '@stim-cli/core/state';
 
 const rootOf = (length: number) => `D:\\${'a'.repeat(length - 3)}`;
 const maxRoot = (abi: string) => ANDROID_OBJECT_PATH_MAX - 1 - LONGEST_ANDROID_OBJECT_PATH_TAIL - abi.length;
@@ -91,4 +92,12 @@ test('doctor uses the Windows ARM64 emulator ABI when checking path room', () =>
   const finding = checkAndroidPathRoom(root, 'android', 'win32', 'arm64');
   expect(finding?.detail).toContain('for arm64-v8a');
   expect(finding?.detail).toContain('STIM_PATH_TOO_LONG');
+});
+
+test("a Windows build worker's checkout leaves room for a monorepo app however deep its area is", () => {
+  const area = `C:\\Users\\${'a'.repeat(40)}\\.stim\\build-worker\\0f0f890f\\repos\\trailhead-0636c44874f1`;
+  const checkout = windowsShortDir(area, 'C:');
+  expect(androidPathRoom(checkout, { platform: 'win32' })).toBeNull();
+  expect(androidPathRoom(`${checkout}\\apps\\member-app`, { abi: 'arm64-v8a', platform: 'win32' })).toBeNull();
+  expect(windowsShortDir(area.toUpperCase(), 'C:')).toBe(checkout);
 });

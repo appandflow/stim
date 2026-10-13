@@ -1,7 +1,7 @@
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { execFile } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, win32 } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import { planServe } from './serve-plan.ts';
 
@@ -32,11 +32,20 @@ function executable(path: string): boolean {
   }
 }
 
-export function findTailscale(env: NodeJS.ProcessEnv): string | null {
+export function findTailscale(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  isExecutable: (path: string) => boolean = executable,
+): string | null {
+  const name = platform === 'win32' ? 'tailscale.exe' : 'tailscale';
   for (const dir of (env.PATH ?? '').split(delimiter)) {
-    if (dir && executable(join(dir, 'tailscale'))) return join(dir, 'tailscale');
+    if (dir && isExecutable(join(dir, name))) return join(dir, name);
   }
-  return executable(MAC_APP_BINARY) ? MAC_APP_BINARY : null;
+  const installed =
+    platform === 'win32'
+      ? win32.join(env.ProgramFiles ?? 'C:\\Program Files', 'Tailscale', 'tailscale.exe')
+      : MAC_APP_BINARY;
+  return isExecutable(installed) ? installed : null;
 }
 
 export type TailscaleInstall = 'app' | 'cli' | 'none';

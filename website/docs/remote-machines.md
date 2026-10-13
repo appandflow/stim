@@ -313,7 +313,8 @@ project's `Gemfile.lock` pins it; then both machines use Bundler and the pinned
 version. For macOS, Xcode and the macOS SDK must match. For Android, JDK major
 versions must match, and the worker needs the project's NDK, build-tools and
 compile SDK. An Android worker can have another CPU architecture, and it can
-be an x86_64 Linux machine; see [Linux worker](#linux-worker). See [machine settings](./settings.md#machine-settings) for the
+be an x86_64 Linux or Windows machine; see [Linux worker](#linux-worker) and
+[Windows worker](#windows-worker). See [machine settings](./settings.md#machine-settings) for the
 full toolchain and placement rules.
 
 The CocoaPods comparison selects the project's `.ruby-version` when that Ruby
@@ -557,6 +558,35 @@ emulators. On the Linux machine:
 
 `stim doctor` on the main machine rates a Linux machine for Android only, so a
 project with iOS too still reports it offloadable for Android builds.
+
+### Windows worker
+
+A Windows machine can take this machine's offloaded Android debug builds. It
+cannot build for iOS or macOS, and it cannot host simulators or emulators. On
+the Windows machine:
+
+1. Install Node 22.12.0 or later, Tailscale signed in to the same tailnet,
+   JDK 17 and the Android SDK with the project's NDK, build-tools and compile
+   SDK, and set `JAVA_HOME` and `ANDROID_HOME`.
+2. Serve stim-server on a tailnet-only route once:
+   `tailscale serve --bg --https=7443 http://127.0.0.1:7787`.
+3. Install the server globally with `npm install --global @stim-cli/server@latest`
+   and start it yourself: `stim-server`
+   (`setup` and `service` are macOS and Linux only).
+   Start it with a real Node first on `PATH`. A version manager's `node.exe`
+   shim, such as pnpm's, breaks the Node IPC that Expo's config loader uses,
+   and the build then fails with `fingerprint-mismatch`.
+4. On your main machine, add it to `remote.machines` and run
+   `stim doctor --fix` as above. Approve the request on the Windows machine
+   with `stim-server devices grant <build-id> --build`.
+
+The NDK's ninja on Windows cannot open a path longer than 260 characters, so
+a Windows worker keeps each checkout and each client's Gradle home in a short
+directory under `C:\sw` (the system drive) that only its user can open, and
+deletes them when the client loses `build`. A project whose native object
+paths are still too long refuses with `STIM_PATH_TOO_LONG`.
+
+`stim doctor` on the main machine rates a Windows machine for Android only.
 
 ## Permissions
 

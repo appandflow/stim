@@ -314,7 +314,11 @@ outside it moves to its own issue and pull request.
   client are approved on the same tailnet node, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group. A Gradle daemon leaves
+  claim whose child is the build's process group. Windows has no process
+  groups: there the claim follows the worker process, cancel stops its tree
+  with `taskkill /T`, and the checkout, linked from the area, and the
+  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
+  because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
   stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
   and stim-server stops it when the build is cancelled, the client loses
@@ -345,7 +349,7 @@ outside it moves to its own issue and pull request.
   stim-server never writes or prunes under `archive/` and reads archived segments
   through core's recording readers. The other exceptions are
   the build worker root (`server.workerRoot`, default `build-worker/`),
-  which stim-server and the builds it runs own, and the build slot
+  with its Windows short directories, which stim-server and the builds it runs own, and the build slot
   stim-server takes under `build-slots/` for each offloaded build it runs,
   through core's `tryAcquireBuildSlotClaim`.
 - **Hosted devices.** `device-host` approval is separate from read, control and

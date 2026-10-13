@@ -17,7 +17,7 @@ import {
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
-import { tailscaleInstall } from '@stim-cli/transport-tailscale';
+import { findTailscale, tailscaleInstall } from '@stim-cli/transport-tailscale';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
@@ -331,6 +331,16 @@ test.each([
       present.includes(path.replaceAll('\\', '/')),
     ),
   ).toBe(expected);
+});
+
+test.each([
+  ['tailscale.exe on PATH', ['/opt/bin/tailscale.exe'], '/opt/bin/tailscale.exe'],
+  ['only the default install', ['D:/Apps/Tailscale/tailscale.exe'], 'D:/Apps/Tailscale/tailscale.exe'],
+  ['a tailscale without .exe on PATH', ['/opt/bin/tailscale'], null],
+])('Windows finds Tailscale with %s', (_name, present, expected) => {
+  const env = { PATH: ['/usr/bin', '/opt/bin'].join(delimiter), ProgramFiles: 'D:\\Apps' };
+  const found = findTailscale(env, 'win32', (path) => present.includes(path.replaceAll('\\', '/')));
+  expect(found?.replaceAll('\\', '/') ?? null).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {

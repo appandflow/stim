@@ -463,7 +463,7 @@ in that order:
   access to fetch SwiftPM dependencies the first time and keeps a dependency
   cache per client. The returned app is verified and launched locally; macOS
   artifacts are not cached. See [macOS development](./macos.md).
-- For Android, its CPU architecture may differ, so an x86_64 Linux machine
+- For Android, its CPU architecture may differ, so an x86_64 Linux or Windows machine
   running stim-server can build for an Apple silicon Mac. Its JDK major version must match (the vendor may differ), and
   its Android SDK must hold the NDK, build-tools and compile platform that the
   project's React Native version names in `gradle/libs.versions.toml`. Gradle

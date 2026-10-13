@@ -1373,11 +1373,14 @@ connected since stim-server started keeps its directory when revoked.
   Gradle daemon leaves the build's process group, so no claim or slot tracks
   it. An Android build keeps the client's daemon warm, with Gradle's idle
   timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM. Gradle
+  when the build ends), and stops it when the build gets SIGTERM (on Windows,
+  where a cancel ends the build's process tree with `taskkill /T /F`, the
+  daemon sweep below stops it). Gradle
   fixes a daemon's idle timeout when the daemon starts, so a new value
   applies to the next daemon. Once no build of that client runs, stim-server
   sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home when a build of the client was cancelled, when the client
+  Gradle home (on Windows, every process running from it, the Kotlin daemon
+  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
   loses `build`, and, for every client, while this machine has less than 2 GB of
   available memory (total memory minus Activity Monitor's Memory Used). It
   checks every minute and on each change under its server directory. A daemon
@@ -1453,7 +1456,14 @@ DerivedData, the compilation cache and ccache, and the output. A build never rea
 writes this machine's own Stim home. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. With a non-zero
+and build are both gone is recovered by the next build. Windows has no
+process groups, so there the claim follows the build's worker process, and a
+cancel ends its whole tree with `taskkill /T /F` before the claim is
+released. The NDK's ninja on Windows cannot open paths longer than 260
+characters, so a Windows worker keeps each area's checkout and each client's
+Gradle home in private short directories, `<SystemDrive>\sw\<6 hex>`, with
+an owner key beside each; the area's `src` is a junction to its checkout.
+Removing a client deletes them too. With a non-zero
 `concurrency.maxBuilds`, the build also holds one of this machine's build slots
 (`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
 same child, so a local build waits for it and `builds` counts it. Each finished build

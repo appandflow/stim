@@ -1,6 +1,9 @@
 # DISPATCH-ONLY. Prepares a windows-latest runner the same way the
 # windows job in e2e-native.yml does, then opens SSH to it over Tailscale
-# and holds so the Android loop can be worked on interactively (#888).
+# and holds so the Android loop can be worked on interactively (#888). Port
+# 7787 is served on the tailnet-only HTTPS port 7443 so the runner can act as a
+# build worker (#3616); the first request to that route waits for its
+# certificate, so the job makes one before SSH opens.
 #
 # tunnel=tailscale needs a TAILSCALE_AUTHKEY repository secret (ephemeral,
 # reusable auth key); the node leaves the tailnet when the job ends and SSH
@@ -39,6 +42,11 @@ on:
         required: false
         default: true
         type: boolean
+      sdk_packages:
+        description: 'Extra sdkmanager packages, space-separated, such as "ndk;27.1.12297006 build-tools;36.0.0"'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -61,6 +69,14 @@ jobs:
           build: ${{ inputs.prepare }}
       - uses: ./.github/actions/windows-android-sdk
         if: inputs.prepare
+
+      - name: Install Android SDK packages
+        if: inputs.prepare && inputs.sdk_packages != ''
+        env:
+          SDK_PACKAGES: ${{ inputs.sdk_packages }}
+        run: |
+          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
+          & $sdkmanager --install @($env:SDK_PACKAGES -split '\s+' | Where-Object { $_ })
 
       - name: Tailscale
         if: inputs.tunnel == 'tailscale'
@@ -85,6 +101,7 @@ jobs:
           Set-Content -Path $keys -Value "${{ inputs.public_key }}" -Encoding ascii
           icacls $keys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F" | Out-Null
           [Environment]::SetEnvironmentVariable('JAVA_HOME', $env:JAVA_HOME, 'Machine')
+          [Environment]::SetEnvironmentVariable('ANDROID_HOME', $env:ANDROID_HOME, 'Machine')
           if ($env:EXPO_TOKEN) { [Environment]::SetEnvironmentVariable('EXPO_TOKEN', $env:EXPO_TOKEN, 'Machine') }
           [Environment]::SetEnvironmentVariable('TEMP', $env:TEMP, 'Machine')
           [Environment]::SetEnvironmentVariable('TMP', $env:TMP, 'Machine')
@@ -96,6 +113,9 @@ jobs:
           if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) {
             New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Direction Inbound -Protocol TCP -LocalPort 22 -Action Allow | Out-Null
           }
+          tailscale serve --bg --https=7443 http://127.0.0.1:7787
+          $dns = (tailscale status --json | ConvertFrom-Json).Self.DNSName.TrimEnd('.')
+          try { Invoke-WebRequest -Uri "https://${dns}:7443/health" -TimeoutSec 90 -SkipCertificateCheck | Out-Null } catch {}
           "ssh runneradmin@$(tailscale ip -4)  (MagicDNS: stim-windows-runner)"
 
       - name: tmate
