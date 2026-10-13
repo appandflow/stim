@@ -60,7 +60,7 @@ struct TipsTests {
     var inputs = TipInputs()
     inputs.machines = []
     inputs.hosting = []
-    inputs.macs = [mac]
+    inputs.peers = [mac]
     inputs.pairedPhones = 0
     inputs.phoneApp = true
     inputs.rows = 11
@@ -104,11 +104,26 @@ struct TipsTests {
     #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
     inputs.machines = []
     inputs.hosting = []
-    for macs: [TailnetMac]? in [nil, []] {
-      inputs.macs = macs
+    for peers: [TailnetMac]? in [nil, []] {
+      inputs.peers = peers
       #expect(!Tips.applicable(.buildMachine, inputs: inputs))
       #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
     }
+  }
+
+  @Test func aLinuxPeerSuggestsBuildsButNeverHostedSimulators() {
+    var linux = TailnetMac(id: "box", hostName: "build-box", dnsName: "build-box.tail.test")
+    linux.os = .linux
+    var inputs = TipInputs()
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [linux]
+    #expect(Tips.applicable(.buildMachine, inputs: inputs))
+    #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
+    #expect(Tips.emptyState(gate: true, machines: [], settingsError: nil, selectedMachine: nil, peers: [linux]) == .addMachine)
+    #expect(Tips.preselected([mac, linux], hostedSimulators: false)?.id == linux.id)
+    #expect(Tips.preselected([mac, linux], hostedSimulators: true)?.id == mac.id)
+    #expect(Tips.preselected([linux], hostedSimulators: true) == nil)
   }
 
   @Test func replayOpensTheNewestArchiveWhoseRecordingsCanStillBePlayed() throws {
@@ -331,14 +346,14 @@ struct TipsTests {
 
   @Test func emptyStateRequiresKnownEmptyMachinesSuccessfulSettingsAndLocalSelection() {
     func variant(
-      gate: Bool = true, machines: [String]? = [], error: String? = nil, selected: String? = nil, macs: [TailnetMac]? = nil
+      gate: Bool = true, machines: [String]? = [], error: String? = nil, selected: String? = nil, peers: [TailnetMac]? = nil
     ) -> BuildMachineEmptyState? {
-      Tips.emptyState(gate: gate, machines: machines, settingsError: error, selectedMachine: selected, macs: macs)
+      Tips.emptyState(gate: gate, machines: machines, settingsError: error, selectedMachine: selected, peers: peers)
     }
-    #expect(variant(macs: [mac]) == .addMachine)
-    #expect(variant(macs: []) == .tailscale)
-    #expect(variant(macs: nil) == nil)
-    #expect(variant(gate: false, macs: [mac]) == nil)
+    #expect(variant(peers: [mac]) == .addMachine)
+    #expect(variant(peers: []) == .tailscale)
+    #expect(variant(peers: nil) == nil)
+    #expect(variant(gate: false, peers: [mac]) == nil)
     #expect(variant(machines: ["mini"]) == nil)
     #expect(variant(machines: nil) == nil)
     #expect(variant(error: "unavailable") == nil)

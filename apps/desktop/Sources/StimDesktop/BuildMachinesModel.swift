@@ -18,7 +18,8 @@ final class BuildMachinesModel {
 
   /// Whether Tailscale is running, once checked.
   private(set) var tailscaleRunning: Bool?
-  private(set) var macs: [TailnetMac]?
+  /// The online tailnet peers that can build here, Macs and Linux machines; nil until read or while Tailscale is off.
+  private(set) var peers: [TailnetMac]?
   private(set) var working: String?
   private(set) var progress: String?
   private(set) var writeFailure: String?
@@ -262,8 +263,8 @@ final class BuildMachinesModel {
 
   func refreshTailnet() async {
     let environment = await cli.value.environment
-    let found = await Task.detached { Tailnet.status(environment: environment).flatMap(Tailnet.macs(statusJSON:)) }.value
-    macs = found ?? []
+    let status = await Task.detached { Tailnet.status(environment: environment) }.value
+    peers = status.flatMap(Tailnet.buildPeers(statusJSON:)) ?? []
   }
 
   func load(checkout: String?) async {

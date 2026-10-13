@@ -36,6 +36,7 @@ import Testing
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[0]) == .peerOffline)
     #expect(Tailnet.reachability(statusJSON: data, peer: peers[1]) == .ready)
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nOn"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nOn"])
   }
 
   @Test func wizardPeersAddLinuxButNotWindowsWhileHostingOffersStayOnMacs() throws {
@@ -50,6 +51,8 @@ import Testing
     #expect(peers.map(\.mac.machine) == ["build-box", "mini"])
     #expect(peers.map(\.mac.isLinux) == [true, false])
     #expect(Tailnet.macs(statusJSON: data)?.map(\.id) == ["nMini"])
+    #expect(Tailnet.buildPeers(statusJSON: data)?.map(\.id) == ["nBox", "nMini"])
+    #expect(Tailnet.buildPeers(statusJSON: Data(#"{"BackendState":"Stopped"}"#.utf8)) == nil)
   }
 
   @Test func readsHostingPermissionsFromApprovedDoctorEntries() throws {

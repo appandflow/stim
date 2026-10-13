@@ -53,12 +53,12 @@ struct MachineView: View {
         }
         if let variant = Tips.emptyState(
           gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
-          selectedMachine: machine, macs: buildMachines.macs)
+          selectedMachine: machine, peers: buildMachines.peers)
         {
           BuildMachinesEmptyState(
             add: {
               OpenRequests.shared.addMachine = AddMachineRequest(
-                machineID: Tips.firstMac(buildMachines.macs)?.id, hostedSimulators: false)
+                machineID: Tips.preselected(buildMachines.peers, hostedSimulators: false)?.id, hostedSimulators: false)
             }, needsTailscale: variant == .tailscale)
         }
         if let failure = buildMachines.settingsFailure {
