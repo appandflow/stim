@@ -15,7 +15,18 @@ import { launchCrashSetup } from './launch-crash-setup.mjs';
 const launcher = '/usr/bin/sandbox-exec';
 
 export function benchmarkFixtureReadPaths(fixture, crashSetup = null) {
-  return crashSetup ? launchCrashSetup(crashSetup).ignoredPaths.map((name) => join(fixture, name)) : [fixture];
+  if (!crashSetup) return [fixture];
+  const paths = new Set();
+  for (const name of launchCrashSetup(crashSetup).ignoredPaths) {
+    paths.add(join(fixture, name));
+    let directory = dirname(name);
+    while (true) {
+      paths.add(join(fixture, directory, '.gitignore'));
+      if (directory === '.') break;
+      directory = dirname(directory);
+    }
+  }
+  return [...paths];
 }
 
 function canonicalPath(path) {
