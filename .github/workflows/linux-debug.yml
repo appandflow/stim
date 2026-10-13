@@ -1,0 +1,96 @@
+# DISPATCH-ONLY. Prepares an ubuntu-latest runner with Stim built from this
+# ref, JDK 17 and the Android SDK, joins it to the tailnet as
+# stim-linux-runner, serves port 7787 on the tailnet-only HTTPS port 7443 and
+# opens SSH, then holds so the runner can act as a Linux build worker (#3608).
+#
+# Needs the TAILSCALE_AUTHKEY repository secret (ephemeral, reusable auth
+# key); the node leaves the tailnet when the job ends. SSH lands as `runner`;
+# `source ~/stim-env` sets the toolchain, then start the worker with
+# `nohup node packages/server/dist/stim-server.mjs > ~/stim-server.log 2>&1 &`
+# from ~/work/stim/stim. Create a file named `stop` in the workspace to end the
+# hold early. GitHub caps a job at 6 hours. The first request to the serve
+# route waits for its certificate, so the job makes one before SSH opens.
+#
+#   gh workflow run linux-debug.yml -F public_key=@~/.ssh/id_rsa.pub -f hours=2
+#   ssh runner@stim-linux-runner
+name: Linux debug host
+
+on:
+  workflow_dispatch:
+    inputs:
+      public_key:
+        description: 'SSH public key allowed to log in as runner'
+        required: true
+        type: string
+      hours:
+        description: 'How long to hold the runner (max 6)'
+        required: false
+        default: '2'
+        type: string
+      sdk_packages:
+        description: 'Extra sdkmanager packages, space-separated, such as "ndk;27.1.12297006 build-tools;36.0.0"'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: linux debug host
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android SDK packages
+        if: inputs.sdk_packages != ''
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkmanager" --licenses > /dev/null
+          read -ra packages <<< "${{ inputs.sdk_packages }}"
+          "$sdkmanager" --install "${packages[@]}"
+
+      - name: Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+          hostname: stim-linux-runner
+          # tailscale serve needs a state directory to store its HTTPS certificate.
+          statedir: ${{ runner.temp }}/tailscale
+
+      # SSH sessions do not see GITHUB_ENV or GITHUB_PATH, so the toolchain is
+      # written to a file the session sources.
+      - name: Open SSH and serve stim-server on the tailnet
+        env:
+          PUBLIC_KEY: ${{ inputs.public_key }}
+        run: |
+          {
+            echo "export JAVA_HOME='$JAVA_HOME'"
+            echo "export ANDROID_HOME='$ANDROID_HOME'"
+            echo "export PATH='$(dirname "$(command -v node)"):$(dirname "$(command -v pnpm)"):$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH'"
+            echo "cd '$GITHUB_WORKSPACE'"
+          } > ~/stim-env
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$PUBLIC_KEY" >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          sudo apt-get install -y openssh-server > /dev/null
+          sudo systemctl start ssh
+          sudo tailscale serve --bg --https=7443 http://127.0.0.1:7787
+          dns="$(tailscale status --json | jq -r '.Self.DNSName' | sed 's/\.$//')"
+          curl -sk --max-time 90 -o /dev/null "https://$dns:7443/health" || true
+          echo "ssh runner@$dns"
+
+      - name: Hold
+        run: |
+          deadline=$(( $(date +%s) + $(awk "BEGIN { h = ${{ inputs.hours }}; print int((h > 5.8 ? 5.8 : h) * 3600) }") ))
+          echo "holding; touch $GITHUB_WORKSPACE/stop to end early"
+          while [ "$(date +%s)" -lt "$deadline" ] && [ ! -e "$GITHUB_WORKSPACE/stop" ]; do sleep 30; done
