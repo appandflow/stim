@@ -1490,6 +1490,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   try {
     return await runFromFingerprint();
   } catch (error) {
+    const cancelled = cancelledFailure(context, PLATFORM, {
+      code: 'STIM_CANCELLED',
+      message: 'while finishing the run',
+    });
+    if (cancelled) return fail(cancelled.code, cancelled.message, cancelled.remedy, { lastBuildStatus: true });
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
   } finally {

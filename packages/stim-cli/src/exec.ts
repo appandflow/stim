@@ -2,7 +2,8 @@ import { type ChildProcess, type SpawnOptions, execSync } from 'child_process';
 import spawn from 'cross-spawn';
 import which from 'which';
 import { basename } from 'path';
-import { ambientEnv, ambientContext } from '@stim-cli/core';
+import { ambientEnv, ambientContext, type StimContext } from '@stim-cli/core';
+import { spawnDeclared } from './engine/spawn-claims.ts';
 import { debugLog } from './debug-log.ts';
 
 export interface ExecOptions {
@@ -16,6 +17,8 @@ export interface ExecOptions {
   input?: string;
   /** `runFileAsync` only: called with the child right after it starts; a throw kills the child and rejects the call. */
   onSpawn?: (child: ChildProcess) => void;
+  /** runFileAsync only: record this serialized child on the operation's active ownership claims. */
+  declareFor?: StimContext;
   /** `runFile` and `runFileAsync`: return stdout as written, without trimming surrounding whitespace. */
   untrimmed?: boolean;
   /**
@@ -160,7 +163,20 @@ const defaultExecutor: Executor = {
   runFileAsync(
     file,
     args = [],
-    { timeoutMs, killSignal, cwd, env, omitEnv, input, untrimmed, rejectStderr, onSpawn, detachedSilent, redact },
+    {
+      timeoutMs,
+      killSignal,
+      cwd,
+      env,
+      omitEnv,
+      input,
+      untrimmed,
+      rejectStderr,
+      onSpawn,
+      declareFor,
+      detachedSilent,
+      redact,
+    },
   ) {
     const command = [file, ...args].join(' ');
     return new Promise((resolve, reject) => {
@@ -175,7 +191,8 @@ const defaultExecutor: Executor = {
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
-      const child = spawn(file, args, opts);
+      const start = () => spawn(file, args, opts);
+      const child = declareFor ? spawnDeclared(declareFor, start) : start();
       try {
         onSpawn?.(child);
       } catch (error) {

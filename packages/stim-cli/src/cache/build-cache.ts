@@ -7,6 +7,7 @@ import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/buil
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import { writeFile } from 'node:fs/promises';
+import { isTermination, operationState } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
@@ -239,31 +240,55 @@ export async function storeBuild(
   registerOnce(root);
 
   try {
-    return await storeArtifactAsync(entryDir(platform, key, root), buildPath, {
-      signal,
-      runFile: (file, args) =>
-        getExecutor().runFileAsync(file, args, {
-          timeoutMs: 'unbounded',
-          ...(env ? childEnvironment(env) : {}),
-          onSpawn: killOnAbort(signal),
-        }),
-      overwrite: Boolean(options.overwrite),
-      writeMetadata: async (staging) => {
-        if (Array.isArray(options.sources)) {
-          try {
-            await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
-          } catch {}
-        }
-        if (options.assetManifest) {
-          try {
-            await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
-          } catch {}
-        }
-      },
-    });
+    return await runBuildCacheWork(options.context, signal, () =>
+      storeArtifactAsync(entryDir(platform, key, root), buildPath, {
+        signal,
+        runFile: (file, args) =>
+          getExecutor().runFileAsync(file, args, {
+            timeoutMs: 'unbounded',
+            ...(env ? childEnvironment(env) : {}),
+            onSpawn: killOnAbort(signal),
+            declareFor: options.context,
+          }),
+        overwrite: Boolean(options.overwrite),
+        writeMetadata: async (staging) => {
+          if (Array.isArray(options.sources)) {
+            try {
+              await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
+            } catch {}
+          }
+          if (options.assetManifest) {
+            try {
+              await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+            } catch {}
+          }
+        },
+      }),
+    );
   } catch (error) {
     throwIfCancelled(signal, 'build cache copy');
     throw error;
+  }
+}
+
+/** Keeps cache I/O unwinding on the CLI's first interrupt until its owned work has settled. */
+export async function runBuildCacheWork<T>(
+  context: StimContext | undefined,
+  signal: AbortSignal | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!context) return work();
+  const abort = () => {
+    const state = operationState(context);
+    state.handled = true;
+    if (!isTermination(context.signal.reason)) state.draining = true;
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  try {
+    return await work();
+  } finally {
+    signal?.removeEventListener('abort', abort);
   }
 }
 

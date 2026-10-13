@@ -9464,3 +9464,51 @@ test.each(['local build', 'EAS hit'])(
     expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
   },
 );
+
+test('provider upload cancellation after launch emits one iOS refusal and records failure', async () => {
+  reserve();
+  let uploadAborted = false;
+  let uploadClosed = false;
+  let exitedBeforeUploadClosed = false;
+  const result = await run(
+    { json: true },
+    {
+      resolveCacheProviderConfig: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+      loadCacheProvider: async () => ({
+        name: 'fixture-cache',
+        provider: {
+          builds: {
+            resolve: () => null,
+            store: ({ signal }: { signal: AbortSignal }) =>
+              new Promise((_resolve, reject) => {
+                signal.addEventListener(
+                  'abort',
+                  () => {
+                    uploadAborted = true;
+                    setImmediate(() => {
+                      uploadClosed = true;
+                      reject(signal.reason);
+                    });
+                  },
+                  { once: true },
+                );
+              }),
+          },
+        },
+      }),
+      launchIosApp: async () => {
+        process.emit('SIGINT');
+        return { pid: DEVICE_PID };
+      },
+    },
+    () => {
+      exitedBeforeUploadClosed ||= !uploadClosed;
+    },
+  );
+  expect(exitedBeforeUploadClosed).toBe(false);
+  expect(uploadAborted).toBe(true);
+  expect(result.exitCode).toBe(130);
+  expect(result.logs).toHaveLength(1);
+  expect(parseFirst(result.logs)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ status: 'failed', errorCode: 'STIM_CANCELLED' });
+});

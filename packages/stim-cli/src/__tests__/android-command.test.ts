@@ -8245,3 +8245,51 @@ test.each(['local build', 'EAS hit'])(
     expect(readClaimSet(join(workspaceDir(root), 'native-run.lock')).live).toEqual([]);
   },
 );
+
+test('provider upload cancellation after launch emits one Android refusal and records failure', async () => {
+  const context = testContext();
+  let uploadAborted = false;
+  const h = harness({
+    context,
+    json: true,
+    resolveCacheProvider: () => ({ provider: './cache.cjs', options: {}, baseDir: root }),
+    loadCacheProviderModule: async () => ({
+      name: 'fixture-cache',
+      provider: {
+        builds: {
+          resolve: () => null,
+          store: ({ signal }: { signal: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              signal.addEventListener(
+                'abort',
+                () => {
+                  uploadAborted = true;
+                  reject(signal.reason);
+                },
+                { once: true },
+              );
+            }),
+        },
+      },
+    }),
+    launch: async () => {
+      const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+      assert(claim);
+      requestNativeRunCancel(root, claim.claimId);
+      return {};
+    },
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(uploadAborted).toBe(true);
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.stdout).toHaveLength(1);
+  const output = h.stdout[0];
+  assert(output);
+  expect(JSON.parse(output)).toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+    status: 'failed',
+    errorCode: 'STIM_CANCELLED',
+  });
+});

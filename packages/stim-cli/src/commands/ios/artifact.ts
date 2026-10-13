@@ -9,7 +9,12 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
+import {
+  prepareProviderDownloadDir,
+  providerDownloadPath,
+  providerUploadOutcome,
+  runBuildCacheWork,
+} from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -243,16 +248,18 @@ export async function acquireIosArtifact(
     storeHash = fingerprint;
     storeKey = cacheKey;
 
-    const found = await resolveTieredBuild({
-      local: recipe.cache(),
-      loadProvider,
-      target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
-      destinationDir: providerDownloadPath(workspaceDir(root)),
-      ensureDestination: prepareProviderDownloadDir,
-      skipRead: !useBuildCache,
-      warn: cacheWarn,
-      signal,
-    });
+    const found = await runBuildCacheWork(context, signal, () =>
+      resolveTieredBuild({
+        local: recipe.cache(),
+        loadProvider,
+        target: { projectRoot: root, platform: PLATFORM, key: cacheKey },
+        destinationDir: providerDownloadPath(workspaceDir(root)),
+        ensureDestination: prepareProviderDownloadDir,
+        skipRead: !useBuildCache,
+        warn: cacheWarn,
+        signal,
+      }),
+    );
     const cached = found?.tier === 'local' ? found.path : null;
     cacheHit = cached ? 'local' : false;
     phase(
@@ -752,17 +759,22 @@ export async function acquireIosArtifact(
 
   async function storeArtifact(artifactPath: string): Promise<void> {
     if (storeKey && cachePolicy.write) {
+      const key = storeKey;
       try {
-        const stored = await storeTieredBuild({
-          local: recipe.cache(),
-          loadProvider,
-          target: { projectRoot: root, platform: PLATFORM, key: storeKey },
-          sourcePath: artifactPath,
-          overwrite: !useBuildCache || swapFellBack,
-          warn: cacheWarn,
-          signal,
-        });
-        providerUpload = stored.providerUpload;
+        const stored = await runBuildCacheWork(context, signal, () =>
+          storeTieredBuild({
+            local: recipe.cache(),
+            loadProvider,
+            target: { projectRoot: root, platform: PLATFORM, key },
+            sourcePath: artifactPath,
+            overwrite: !useBuildCache || swapFellBack,
+            warn: cacheWarn,
+            signal,
+          }),
+        );
+        const pending = stored.providerUpload;
+        providerUpload = pending ? runBuildCacheWork(context, signal, () => pending) : null;
+        void providerUpload?.catch(() => {});
         providerName = stored.providerName ?? providerName;
       } catch (e) {
         throwIfCancelled(signal, 'build cache storage');
