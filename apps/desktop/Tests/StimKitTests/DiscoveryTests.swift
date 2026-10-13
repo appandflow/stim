@@ -18,39 +18,51 @@ struct DiscoveryTests {
   }
 
   @Test func newMacRecordsTheFirstBaselineWithoutSuggestingIt() {
-    let first = Discovery.newMac(macs: [mini], seen: nil, machines: [], hosting: [], now: now)
+    let first = Discovery.newMac(peers: [mini], seen: nil, machines: [], hosting: [], now: now)
     #expect(first.prompt == nil)
     #expect(first.seen == [mini.id])
-    let later = Discovery.newMac(macs: [mini, studio], seen: first.seen, machines: [], hosting: [], now: now)
+    let later = Discovery.newMac(peers: [mini, studio], seen: first.seen, machines: [], hosting: [], now: now)
     #expect(later.prompt?.action == .addMachine(mac: studio, hostedSimulators: false))
     #expect(later.seen == [mini.id, studio.id])
   }
 
   @Test func newMacSuppressesSeenAndConfiguredPeersWithoutLosingTheirIDs() {
-    #expect(Discovery.newMac(macs: [mini], seen: [mini.id], machines: [], hosting: [], now: now).prompt == nil)
+    #expect(Discovery.newMac(peers: [mini], seen: [mini.id], machines: [], hosting: [], now: now).prompt == nil)
     for entry in ["MINI:7444", "mini.tail.test:7443"] {
-      let result = Discovery.newMac(macs: [mini], seen: ["old"], machines: [entry], hosting: [], now: now)
+      let result = Discovery.newMac(peers: [mini], seen: ["old"], machines: [entry], hosting: [], now: now)
       #expect(result.prompt == nil)
       #expect(result.seen == ["old", mini.id])
     }
-    #expect(Discovery.newMac(macs: [], seen: ["old"], machines: [], hosting: [], now: now).seen == ["old"])
+    #expect(Discovery.newMac(peers: [], seen: ["old"], machines: [], hosting: [], now: now).seen == ["old"])
   }
 
   @Test func newMacShowsNothingOnceAnyMacIsPairedButKeepsRecordingPeers() {
     for (machines, hosting) in [(["other"], []), ([], ["other"])] as [([String], [String])] {
-      let result = Discovery.newMac(macs: [mini, studio], seen: [mini.id], machines: machines, hosting: hosting, now: now)
+      let result = Discovery.newMac(peers: [mini, studio], seen: [mini.id], machines: machines, hosting: hosting, now: now)
       #expect(result.prompt == nil)
       #expect(result.seen == [mini.id, studio.id])
     }
   }
 
   @Test func newMacPicksTheFirstUnseenDNSNameInsteadOfInputOrder() {
-    let result = Discovery.newMac(macs: [studio, mini], seen: [], machines: [], hosting: [], now: now)
+    let result = Discovery.newMac(peers: [studio, mini], seen: [], machines: [], hosting: [], now: now)
     #expect(result.prompt?.action == .addMachine(mac: mini, hostedSimulators: false))
   }
 
   func slotWait(_ placements: [BuildPlacements.Placement], paired: [String]? = []) -> DiscoveryPrompt? {
-    Discovery.slotWait(placements: placements, macs: [studio, mini], paired: paired, now: now)
+    Discovery.slotWait(placements: placements, peers: [studio, mini], paired: paired, now: now)
+  }
+
+  @Test func slotWaitPreselectsALinuxPeerOnlyAfterAnAndroidBuildWaited() {
+    var linux = TailnetMac(id: "box", hostName: "Box", dnsName: "box.tail.test")
+    linux.os = .linux
+    func preselected(_ platform: String) -> DiscoveryPrompt? {
+      var waited = placement(wait: 1)
+      waited.platform = platform
+      return Discovery.slotWait(placements: [waited], peers: [linux, mini], paired: [], now: now)
+    }
+    #expect(preselected("ios")?.action == .addMachine(mac: mini, hostedSimulators: false))
+    #expect(preselected("android")?.action == .addMachine(mac: linux, hostedSimulators: false))
   }
 
   @Test func slotWaitFiresOnTheFirstBuildThatWaitedForASlotAndOnlyWhenNoMacIsPaired() {
@@ -97,25 +109,33 @@ struct DiscoveryTests {
 
   @Test func capacitySuggestsSettingUpOnlyWhenNoMacIsApprovedForHosting() throws {
     let event = try #require(source([refusal()]))
-    let setup = Discovery.capHit(source: event, mac: mini, hosts: [], paired: [])
+    let setup = Discovery.capHit(source: event, peers: [mini], hosts: [], paired: [])
     #expect(setup?.action == .addMachine(mac: mini, hostedSimulators: true))
     #expect(setup?.title == "Device limit reached. Run simulators on mini?")
     #expect(
-      Discovery.capHit(source: event, mac: nil, hosts: [], paired: [])?.title
+      Discovery.capHit(source: event, peers: [], hosts: [], paired: [])?.title
         == "Device limit reached. Run simulators on another Mac?")
+    var linux = TailnetMac(id: "box", hostName: "Box", dnsName: "box.tail.test")
+    linux.os = .linux
+    let hostless = Discovery.capHit(source: event, peers: [linux], hosts: [], paired: [])
+    #expect(hostless?.action == .addMachine(mac: nil, hostedSimulators: true))
+    #expect(hostless?.title == "Device limit reached. Run simulators on another Mac?")
+    #expect(
+      Discovery.capHit(source: event, peers: [linux, mini], hosts: [], paired: [])?.action
+        == .addMachine(mac: mini, hostedSimulators: true))
   }
 
   @Test func capacitySetupNeedsKnownEmptyPairedMachines() throws {
     let event = try #require(source([refusal()]))
-    #expect(Discovery.capHit(source: event, mac: mini, hosts: [], paired: ["other"]) == nil)
-    #expect(Discovery.capHit(source: event, mac: mini, hosts: [], paired: nil) == nil)
+    #expect(Discovery.capHit(source: event, peers: [mini], hosts: [], paired: ["other"]) == nil)
+    #expect(Discovery.capHit(source: event, peers: [mini], hosts: [], paired: nil) == nil)
   }
 
   @Test func onceAMacHasBeenSuggestedOnlyTheUseAutoCapPromptStillShows() throws {
     let event = try #require(source([refusal()]))
     let wait = try #require(slotWait([placement(wait: 1)]))
-    let setup = try #require(Discovery.capHit(source: event, mac: mini, hosts: [], paired: []))
-    let auto = try #require(Discovery.capHit(source: event, mac: mini, hosts: ["mini"], paired: ["mini"]))
+    let setup = try #require(Discovery.capHit(source: event, peers: [mini], hosts: [], paired: []))
+    let auto = try #require(Discovery.capHit(source: event, peers: [mini], hosts: ["mini"], paired: ["mini"]))
     #expect(auto.action == .runOnAuto(workspaceID: "fixture", platform: "ios"))
     let all = [wait, setup, auto]
     #expect(Discovery.suppressedByMacSuggestion(all, macSuggested: false) == all)
@@ -125,25 +145,25 @@ struct DiscoveryTests {
 
   @Test func capacityOffersUsingAnApprovedHostingMacInsteadOfSetup() throws {
     let event = try #require(source([refusal()]))
-    let one = Discovery.capHit(source: event, mac: mini, hosts: ["janics-mac-mini:7787"], paired: ["janics-mac-mini:7787"])
+    let one = Discovery.capHit(source: event, peers: [mini], hosts: ["janics-mac-mini:7787"], paired: ["janics-mac-mini:7787"])
     #expect(one?.title == "Device limit reached. Run on janics-mac-mini?")
     #expect(one?.action == .runOnAuto(workspaceID: "fixture", platform: "ios"))
     #expect(
-      Discovery.capHit(source: event, mac: nil, hosts: ["a", "b"], paired: ["a", "b"])?.title
+      Discovery.capHit(source: event, peers: [], hosts: ["a", "b"], paired: ["a", "b"])?.title
         == "Device limit reached. Run on a hosting Mac?")
   }
 
   @Test func capacityShowsNothingWhenApprovalIsUnknownOrTheWorkspaceAlreadyRunsRemotely() throws {
     let event = try #require(source([refusal()]))
-    #expect(Discovery.capHit(source: event, mac: mini, hosts: nil, paired: []) == nil)
+    #expect(Discovery.capHit(source: event, peers: [mini], hosts: nil, paired: []) == nil)
     #expect(
       Discovery.capHit(
-        source: event, mac: mini, hosts: ["mini"], paired: ["mini"],
+        source: event, peers: [mini], hosts: ["mini"], paired: ["mini"],
         isRemote: { id, platform in id == "fixture" && platform == "ios" }) == nil)
     let anonymous = Discovery.CapHitSource(at: now, workspaceID: nil, platform: "ios")
-    #expect(Discovery.capHit(source: anonymous, mac: mini, hosts: ["mini"], paired: ["mini"]) == nil)
+    #expect(Discovery.capHit(source: anonymous, peers: [mini], hosts: ["mini"], paired: ["mini"]) == nil)
     #expect(
-      Discovery.capHit(source: anonymous, mac: mini, hosts: [], paired: [])?.action
+      Discovery.capHit(source: anonymous, peers: [mini], hosts: [], paired: [])?.action
         == .addMachine(mac: mini, hostedSimulators: true))
   }
 
@@ -185,7 +205,7 @@ struct DiscoveryTests {
   }
 
   @Test func newMacSkipsMacsAlreadyUsedForHosting() {
-    let result = Discovery.newMac(macs: [mini, studio], seen: [mini.id], machines: [], hosting: ["studio.tail.test"], now: now)
+    let result = Discovery.newMac(peers: [mini, studio], seen: [mini.id], machines: [], hosting: ["studio.tail.test"], now: now)
     #expect(result.prompt == nil)
   }
 
@@ -294,7 +314,7 @@ struct DiscoveryTests {
     defer { defaults.removePersistentDomain(forName: suite) }
     let store = DiscoveryStore(defaults: defaults)
     let prompt = try #require(
-      Discovery.capHit(source: .init(at: now, workspaceID: "w", platform: "ios"), mac: nil, hosts: [], paired: []))
+      Discovery.capHit(source: .init(at: now, workspaceID: "w", platform: "ios"), peers: [], hosts: [], paired: []))
     store.shown(prompt, now: now)
     let nextLaunch = DiscoveryStore(defaults: defaults)
     #expect(nextLaunch.state(.capHit) == .shown)

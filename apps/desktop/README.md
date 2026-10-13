@@ -1639,10 +1639,13 @@ that the installed `stim` does not list. **Not Now** hides the offer for good.
 
 ### Suggestions and tips
 
-Desktop suggestions offer a remote Mac, cache review, or phone pairing when
+Desktop suggestions offer a remote machine, cache review, or phone pairing when
 recent activity makes them useful. A low-disk banner points to the Machine page,
-where caches are reviewed and cleared. Suggestions to add a Mac appear only
-while no Mac is paired in `remote.machines`. A build waiting for a build slot or
+where caches are reviewed and cleared. Suggestions to add a remote machine appear
+only while `remote.machines` is empty. A new tailnet peer and a build waiting
+for a build slot consider Macs and Linux machines (a Linux machine only after an
+Android build waited); the device limit offers only a Mac, since only a Mac
+hosts. A build waiting for a build slot or
 the device limit suggests one at most once, ever, across both. The X snoozes a suggestion for
 7 days; **Don't Suggest Again** dismisses that kind permanently. Suggestions
 wait for completed setup and the second launch, never appear during a running
