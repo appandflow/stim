@@ -66,8 +66,17 @@ export async function stoppingAgentDriver(
   return configuredAgentDriver(ran ?? name, env, area, device);
 }
 
-/** The action readers of every first-party driver that loads; a driver that does not load contributes none. */
-export async function agentActionReaders(): Promise<AgentDriverActions[]> {
+let actionReaders: Promise<AgentDriverActions[]> | undefined;
+
+/**
+ * The action readers of every first-party driver that loads, imported on the first call and shared by later
+ * ones. Never rejects; a driver that does not load contributes none.
+ */
+export function agentActionReaders(): Promise<AgentDriverActions[]> {
+  return (actionReaders ??= loadActionReaders());
+}
+
+async function loadActionReaders(): Promise<AgentDriverActions[]> {
   const readers: AgentDriverActions[] = [];
   for (const name of NAMES) {
     const loaded = await loadAgentDriverModule(name, DRIVERS[name]);
