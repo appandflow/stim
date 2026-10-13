@@ -1,11 +1,19 @@
+import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+import { withAmbientContext } from '@stim-cli/core';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { runAndroidOperation } from '../commands/android.ts';
+import { runIosOperation } from '../commands/ios.ts';
+import { requestNativeRunCancel } from '../engine/native-run.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { git } from '../workspace/git.ts';
 import { upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { projectSettingsContextAsync, resolveProjectSettingsAsync } from '../workspace/settings.ts';
+import { testContext } from './_context.ts';
 
 let directory: string;
 let children: ChildProcess[];
@@ -23,26 +31,29 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-function delayedGit(delay: number): void {
+function delayedGit(delay: number): Promise<void> {
   const real = getExecutor();
-  setExecutor({
-    ...real,
-    runFileAsync: (file, args, options) => {
-      if (file !== 'git') return real.runFileAsync(file, args, options);
-      const script = `
+  return new Promise<void>((notifyStarted) => {
+    setExecutor({
+      ...real,
+      runFileAsync: (file, args, options) => {
+        if (file !== 'git') return real.runFileAsync(file, args, options);
+        const script = `
         setTimeout(() => {
           if (process.env.HOME || !process.env.SETTINGS_ROOT) process.exit(1);
           console.log(process.env.SETTINGS_ROOT + ${JSON.stringify(args.includes('--git-common-dir') ? '/.git' : '')});
         }, ${delay});
       `;
-      return real.runFileAsync(process.execPath, ['-e', script], {
-        ...options,
-        onSpawn: (child) => {
-          children.push(child);
-          options.onSpawn?.(child);
-        },
-      });
-    },
+        return real.runFileAsync(process.execPath, ['-e', script], {
+          ...options,
+          onSpawn: (child) => {
+            children.push(child);
+            options.onSpawn?.(child);
+            notifyStarted();
+          },
+        });
+      },
+    });
   });
 }
 
@@ -70,8 +81,37 @@ test('cancellation stops active Git children and rejects instead of using fallba
   });
   expect(children.length).toBeGreaterThan(0);
   controller.abort(reason);
-  await expect(pending).rejects.toBe(reason);
+  await expect(pending).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
   expect(children.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+});
+
+test.each([
+  ['ios', null],
+  ['android', expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'STIM_CANCELLED' }) })],
+])('stopping a %s run during settings resolution emits the typed cancellation result', async (platform, expected) => {
+  writeFileSync(join(directory, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.83.0' } }));
+  const started = delayedGit(30_000);
+  const context = testContext({ projectRoot: directory, cwd: directory });
+  const stdout = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    const pending =
+      platform === 'ios'
+        ? withAmbientContext(context, () => runIosOperation(context, directory, { json: true }))
+        : withAmbientContext(context, () => runAndroidOperation(context, directory, { json: true }));
+    await started;
+    const [claim] = readClaimSet(join(workspaceDir(directory), 'native-run.lock')).live;
+    assert(claim, 'A settings probe must hold its native run claim');
+    requestNativeRunCancel(directory, claim.claimId);
+    const result = await pending;
+    expect(result).toEqual(expected);
+    expect(stdout).toHaveBeenCalledOnce();
+    const [output] = stdout.mock.calls;
+    assert(output);
+    expect(JSON.parse(output[0])).toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(children.every((child) => child.exitCode !== null || child.signalCode !== null)).toBe(true);
+  } finally {
+    stdout.mockRestore();
+  }
 });
 
 test('async settings preserve repository, app and workspace precedence and non-Git fallback', async () => {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
 import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
+import { throwIfCancelled } from '../cancellation.ts';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
 import {
   gitCommonDir as projectGitCommonDir,
@@ -774,12 +775,12 @@ export async function projectSettingsContextAsync(
   git: ProjectSettingsReaders = { gitCommonDir: gitCommonDirAsync, repoRoot: repoRootAsync },
   { env = process.env, signal }: ProjectSettingsReadOptions = {},
 ): Promise<ProjectSettingsContext> {
-  signal?.throwIfAborted();
+  throwIfCancelled(signal, 'settings resolution');
   const [gitCommonDir, repoRoot] = await Promise.all([
     git.gitCommonDir(root, { env, signal }),
     git.repoRoot(root, { env, signal }),
   ]);
-  signal?.throwIfAborted();
+  throwIfCancelled(signal, 'settings resolution');
   return { projectPath: root, gitCommonDir, repoRoot };
 }
 

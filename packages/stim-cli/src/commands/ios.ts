@@ -514,10 +514,14 @@ async function runIos(
     return null;
   };
 
-  const settingsContext = await projectSettingsContextAsync(root, d, {
-    env: context.env,
-    signal: runCancellationSignal(context) ?? context.signal,
-  });
+  const settingsSignal = runCancellationSignal(context) ?? context.signal;
+  let settingsContext: Awaited<ReturnType<typeof projectSettingsContextAsync>>;
+  try {
+    settingsContext = await projectSettingsContextAsync(root, d, { env: context.env, signal: settingsSignal });
+  } catch (error) {
+    if (!settingsSignal.aborted) throw error;
+    return fail({ code: 'STIM_CANCELLED', message: 'before resolving project settings', setup: true });
+  }
   const projectKey = statsProjectKey({
     root,
     commonDir: settingsContext.gitCommonDir,
