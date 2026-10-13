@@ -6460,7 +6460,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     const out = errs.join('\n');
     expect(out).not.toMatch(/LOCAL NETWORK PERMISSION IS NOT GRANTED/);
     expect(out).toMatch(/socketfilterfw --getglobalstate/);
-    expect(out).toMatch(/cannot be PRE-granted from this machine/);
+    expect(out).toMatch(/cannot be PRE-granted from this Mac/);
     expect(out).toMatch(/agent-device alert get, then agent-device alert accept/);
   });
 

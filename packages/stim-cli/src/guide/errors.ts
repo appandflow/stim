@@ -532,9 +532,9 @@ spending a build or a bundle, that the check can succeed.`,
 so a Debug run on one is wired to a LAN origin instead of localhost. Both codes
 fire BEFORE the build, because a refusal that costs a build is a bad refusal.`,
       body: () => `STIM_NO_LAN_ADDRESS
-  This machine reports no non-internal IPv4 interface, so there is no address to
+  This Mac reports no non-internal IPv4 interface, so there is no address to
   give the phone: it is offline, or on nothing but utun/awdl/bridge. Join a
-  Wi-Fi or Ethernet network, or connect this machine by cable, and run again.
+  Wi-Fi or Ethernet network, or connect this Mac by cable, and run again.
   Deliberately NOT "set metro.publicUrl": neither channel to a phone carries a
   URL. The dev-client deep link composes http://<host>:<port> itself, and
   ip.txt is read by RCTBundleURLProvider, which prefixes the scheme. A tunnel

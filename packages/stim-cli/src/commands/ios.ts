@@ -926,10 +926,10 @@ async function runIos(
         return {
           code: 'STIM_NO_LAN_ADDRESS',
           message:
-            'A Debug run on a phone needs an address the phone can reach, and this machine has no non-internal IPv4 interface.',
+            'A Debug run on a phone needs an address the phone can reach, and this Mac has no non-internal IPv4 interface.',
           remedy:
             'The phone reaches Metro over the network you share, because USB carries no reverse forward. ' +
-            'Join a Wi-Fi or Ethernet network, or connect this machine by cable, then run the command again.',
+            'Join a Wi-Fi or Ethernet network, or connect this Mac by cable, then run the command again.',
         };
       }
       lanAddress = chosen.address;

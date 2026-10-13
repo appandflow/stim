@@ -329,7 +329,7 @@ export async function inspectDeviceHostMachines(
             ];
             inspected.findings.push(
               note(
-                `Remote machine ${machine} needs ${panes.join(' and ')} for ${host.name}`,
+                `Remote Mac ${machine} needs ${panes.join(' and ')} for ${host.name}`,
                 detail.join(' '),
                 `On ${machine}, approve ${host.name} in System Settings > Privacy & Security, or run \`stim-server service install\` there again to show the requests.`,
               ),

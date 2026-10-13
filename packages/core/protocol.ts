@@ -480,7 +480,7 @@ export interface ReplayTarget {
   slot?: string;
 }
 
-/** A time range with recorded footage, in epoch milliseconds on the Mac's clock. */
+/** A time range with recorded footage, in epoch milliseconds on the machine's clock. */
 export interface ReplaySpan {
   start: number;
   end: number;
@@ -593,7 +593,7 @@ export interface ArchiveDetailResult {
   recordings: { platform: 'ios' | 'android' | 'web'; slot: string; spans: ReplaySpan[] }[];
 }
 
-/** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the Mac's clock. */
+/** A device slot, as {@link ReplayTarget} names it, and a time in epoch milliseconds on the machine's clock. */
 export interface ReplayKeyframeParams extends ReplayTarget {
   at: number;
 }
