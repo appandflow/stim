@@ -7,7 +7,7 @@ import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/buil
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
 import { writeFile } from 'node:fs/promises';
-import { isTermination, operationState } from '../engine/operation-state.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
@@ -240,7 +240,7 @@ export async function storeBuild(
   registerOnce(root);
 
   try {
-    return await runBuildCacheWork(options.context, signal, () =>
+    return await withDrainingCancellation(options.context, signal, () =>
       storeArtifactAsync(entryDir(platform, key, root), buildPath, {
         signal,
         runFile: (file, args) =>
@@ -268,27 +268,6 @@ export async function storeBuild(
   } catch (error) {
     throwIfCancelled(signal, 'build cache copy');
     throw error;
-  }
-}
-
-/** Keeps cache I/O unwinding on the CLI's first interrupt until its owned work has settled. */
-export async function runBuildCacheWork<T>(
-  context: StimContext | undefined,
-  signal: AbortSignal | undefined,
-  work: () => Promise<T>,
-): Promise<T> {
-  if (!context) return work();
-  const abort = () => {
-    const state = operationState(context);
-    state.handled = true;
-    if (!isTermination(context.signal.reason)) state.draining = true;
-  };
-  signal?.addEventListener('abort', abort, { once: true });
-  if (signal?.aborted) abort();
-  try {
-    return await work();
-  } finally {
-    signal?.removeEventListener('abort', abort);
   }
 }
 

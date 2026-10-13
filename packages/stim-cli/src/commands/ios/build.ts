@@ -1,4 +1,5 @@
-import { constants, cpSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
+import { constants, promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
@@ -112,196 +113,221 @@ export async function buildIosOperation(
   );
   const phase = (label: unknown, line: string) => note(phaseLine(label, line));
   await ensureWorkspaceStorageSafely(root, { note });
-  return withNativeBuildRun(
-    context,
-    root,
-    { command: 'build', platform: 'ios' },
-    async (claim) => {
-      if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root);
-      const started = Date.now();
-      const startedAt = new Date(started).toISOString();
-      const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
-      const logs = workspaceLogsDir(root);
-      const logFile = join(logs, 'build-artifact-ios.ndjson');
-      const writer = tapBuildLog(
-        createNdjsonWriter(logFile, { truncate: true, fields: { platform: 'ios' } }),
-        progress,
-      );
-      setRemoteLogSink((entry) => writer.write(entry));
-      const projectKey = statsProjectKey({
-        root,
-        commonDir: settingsContext.gitCommonDir,
-        repoRoot: settingsContext.repoRoot,
-      });
-      const stats = createRunRecorder({
-        platform: 'ios',
-        write: recordRunStats,
-        now: Date.now,
-        note,
-        phases: () => progress.durations(),
-        deviceSetup: () => false,
-      });
-      stats.setProject(projectKey);
-      progress.estimate(projectKey);
-      let artifact: PreparedIosArtifact | undefined;
-      let directory: string | undefined;
-      let succeeded = false;
-      const finish = (status: string, appPath?: string, errorCode?: string) => {
+  return withDrainingCancellation(context, context.signal, () =>
+    withNativeBuildRun(
+      context,
+      root,
+      { command: 'build', platform: 'ios' },
+      async (claim) => {
+        if (!getProject(root)) upsertProject(root, {});
+        recordWorkspaceUse(root);
+        const started = Date.now();
+        const startedAt = new Date(started).toISOString();
+        const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, note });
+        const logs = workspaceLogsDir(root);
+        const logFile = join(logs, 'build-artifact-ios.ndjson');
+        const writer = tapBuildLog(
+          createNdjsonWriter(logFile, { truncate: true, fields: { platform: 'ios' } }),
+          progress,
+        );
+        setRemoteLogSink((entry) => writer.write(entry));
+        const projectKey = statsProjectKey({
+          root,
+          commonDir: settingsContext.gitCommonDir,
+          repoRoot: settingsContext.repoRoot,
+        });
+        const stats = createRunRecorder({
+          platform: 'ios',
+          write: recordRunStats,
+          now: Date.now,
+          note,
+          phases: () => progress.durations(),
+          deviceSetup: () => false,
+        });
+        stats.setProject(projectKey);
+        progress.estimate(projectKey);
+        let artifact: PreparedIosArtifact | undefined;
+        let directory: string | undefined;
+        let succeeded = false;
+        let built: IosBuildFacts;
+        let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
+        const finish = (status: string, appPath?: string, errorCode?: string) => {
+          try {
+            recordFinishedBuild(
+              root,
+              lastBuildRecord({
+                startedAt,
+                status,
+                appPath,
+                errorCode,
+                configuration,
+                durationMs: Date.now() - started,
+                fingerprint: artifact?.cache.identity?.fingerprint,
+                cacheKey: artifact?.cache.identity?.key,
+                cacheHit: artifact?.cache.hit,
+                cacheSkipped: artifact ? !artifact.cache.readEnabled : !cache.read,
+                bundleId: artifact?.bundleId,
+                buildMachine,
+                builtOn: artifact?.cache.builtOn,
+                offloadedTo: artifact?.cache.offloadedTo,
+                offloadFallback: artifact?.cache.offloadFallback,
+              }),
+              { artifactOnly: true },
+            );
+          } catch (error) {
+            note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
+          }
+        };
         try {
-          recordFinishedBuild(
-            root,
-            lastBuildRecord({
-              startedAt,
-              status,
-              appPath,
-              errorCode,
-              configuration,
-              durationMs: Date.now() - started,
-              fingerprint: artifact?.cache.identity?.fingerprint,
-              cacheKey: artifact?.cache.identity?.key,
-              cacheHit: artifact?.cache.hit,
-              cacheSkipped: artifact ? !artifact.cache.readEnabled : !cache.read,
-              bundleId: artifact?.bundleId,
-              buildMachine,
-              builtOn: artifact?.cache.builtOn,
-              offloadedTo: artifact?.cache.offloadedTo,
-              offloadFallback: artifact?.cache.offloadFallback,
-            }),
-            { artifactOnly: true },
-          );
-        } catch (error) {
-          note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
-        }
-      };
-      try {
-        const acquired = await acquireIosArtifact(
-          {
-            context,
-            root,
-            logFile,
-            configuration,
-            buildMachine,
-            physical: false,
-            recipe: integration.artifact({
-              operation: context,
+          const acquired = await acquireIosArtifact(
+            {
+              context,
               root,
               logFile,
               configuration,
-              buildScheme,
-              buildProfile: optimizationBuildProfile('ios', optimizations),
-              target: {
-                udid: null,
-                destination: 'generic/platform=iOS Simulator',
-                sdk: 'iphonesimulator',
-                arch,
-                keyArch: arch,
-                offloadRuntime: () =>
-                  listIosRuntimes().toSorted((a, b) =>
-                    b.version.localeCompare(a.version, undefined, { numeric: true }),
-                  )[0]?.identifier ?? null,
-                ...(arch ? { hostedArchitecture: arch } : {}),
-                offloadRefusal: null,
+              buildMachine,
+              physical: false,
+              recipe: integration.artifact({
+                operation: context,
+                root,
+                logFile,
+                configuration,
+                buildScheme,
+                buildProfile: optimizationBuildProfile('ios', optimizations),
+                target: {
+                  udid: null,
+                  destination: 'generic/platform=iOS Simulator',
+                  sdk: 'iphonesimulator',
+                  arch,
+                  keyArch: arch,
+                  offloadRuntime: () =>
+                    listIosRuntimes().toSorted((a, b) =>
+                      b.version.localeCompare(a.version, undefined, { numeric: true }),
+                    )[0]?.identifier ?? null,
+                  ...(arch ? { hostedArchitecture: arch } : {}),
+                  offloadRefusal: null,
+                },
+                device: null,
+                optimizations: optimizations.ios,
+                cache,
+                phase,
+                note,
+                logWriter: () => writer,
+                estimates: () => readRunEstimates({ projectKey, platform: 'ios' }),
+                step: progress.step,
+                setPodsMs: (ms) => stats.setPodsMs(ms),
+              }),
+              cache: {
+                policy: cache,
+                providerConfig: resolveCacheProviderConfig(settingsContext),
+                disabledByFlag: options.buildCache === false,
               },
-              device: null,
-              optimizations: optimizations.ios,
-              cache,
-              phase,
-              note,
-              logWriter: () => writer,
-              estimates: () => readRunEstimates({ projectKey, platform: 'ios' }),
-              step: progress.step,
-              setPodsMs: (ms) => stats.setPodsMs(ms),
-            }),
-            cache: {
-              policy: cache,
-              providerConfig: resolveCacheProviderConfig(settingsContext),
-              disabledByFlag: options.buildCache === false,
+              easBuild: null,
+              maxBuilds: getConcurrencyLimits().maxBuilds,
+              progress: {
+                phase,
+                note,
+                logWriter: () => writer,
+                stats,
+                step: progress.step,
+                miss: progress.miss,
+                hit: progress.hit,
+                place: progress.place,
+                waitingOn: progress.waitingOn,
+                waitingFor: progress.waitingFor,
+              },
             },
-            easBuild: null,
-            maxBuilds: getConcurrencyLimits().maxBuilds,
-            progress: {
-              phase,
-              note,
-              logWriter: () => writer,
-              stats,
-              step: progress.step,
-              miss: progress.miss,
-              hit: progress.hit,
-              place: progress.place,
-              waitingOn: progress.waitingOn,
-              waitingFor: progress.waitingFor,
+            {
+              loadCacheProvider,
+              checkEasAuth,
+              resolveRemote,
+              uploadRemote,
+              acquireBuildLock,
+              releaseBuildLock,
+              waitForBuild,
+              acquireBuildSlot,
+              releaseBuildSlot,
+              now: Date.now,
             },
-          },
-          {
-            loadCacheProvider,
-            checkEasAuth,
-            resolveRemote,
-            uploadRemote,
-            acquireBuildLock,
-            releaseBuildLock,
-            waitForBuild,
-            acquireBuildSlot,
-            releaseBuildSlot,
-            now: Date.now,
-          },
-        );
-        if (!acquired.ok)
-          throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
-        artifact = acquired.artifact;
-        artifact.bundleId ??= readBundleId(artifact.path) ?? (await integration.bundleId());
-        throwIfCancelled(runCancellationSignal(context), 'iOS build');
-        const artifacts = join(workspaceDir(root), 'artifacts');
-        mkdirSync(artifacts, { recursive: true });
-        directory = mkdtempSync(join(artifacts, 'ios-'));
-        const appPath = join(directory, basename(artifact.path));
-        cpSync(artifact.path, appPath, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
-        await artifact.completeUploads();
-        const links = {
-          workspace: await workspaceShareURL(
-            root,
-            { platform: 'ios' },
-            runCancellationSignal(context) ?? context.signal,
-          ),
-        };
-        throwIfCancelled(runCancellationSignal(context), 'iOS build');
-        finish('ok', appPath);
-        stats.record({
-          failed: false,
-          durationMs: Date.now() - started,
-          cacheHit: artifact.cache.hit === 'local' || artifact.cache.hit === 'remote' ? artifact.cache.hit : false,
-          offloadedTo: artifact.cache.offloadedTo,
-          waited: artifact.cache.waitedForBuild,
-        });
-        succeeded = true;
-        return {
-          appPath,
-          bundleId: artifact.bundleId,
-          configuration: configuration ?? 'Debug',
-          scheme: buildScheme ?? null,
-          arch,
-          cacheKey: artifact.cache.identity?.key ?? null,
-          cacheHit: artifact.cache.hit,
-          cacheSkipped: !artifact.cache.readEnabled,
-          buildMachine,
-          builtOn: artifact.cache.builtOn ?? null,
-          compilationCache: artifact.cache.compilation,
-          durationMs: Date.now() - started,
-          logs: { dir: logs },
-          links,
-        };
-      } catch (error) {
-        const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
-        finish('failed', undefined, (failure as { code?: string }).code);
-        stats.record({ failed: true, durationMs: Date.now() - started });
-        throw failure;
-      } finally {
-        await artifact?.release();
-        if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
-        writer.close();
-        progress.clear();
-      }
-    },
-    { write: (line) => phase('lock', line) },
+          );
+          if (!acquired.ok)
+            throw Object.assign(new Error(acquired.failure.message ?? 'The iOS build failed.'), acquired.failure);
+          artifact = acquired.artifact;
+          artifact.bundleId ??= readBundleId(artifact.path) ?? (await integration.bundleId());
+          throwIfCancelled(runCancellationSignal(context), 'iOS build');
+          const artifacts = join(workspaceDir(root), 'artifacts');
+          await fs.mkdir(artifacts, { recursive: true });
+          directory = await fs.mkdtemp(join(artifacts, 'ios-'));
+          const appPath = join(directory, basename(artifact.path));
+          await fs.cp(artifact.path, appPath, {
+            recursive: true,
+            verbatimSymlinks: true,
+            mode: constants.COPYFILE_FICLONE,
+            filter: () => {
+              throwIfCancelled(runCancellationSignal(context), 'iOS build');
+              return true;
+            },
+          });
+          throwIfCancelled(runCancellationSignal(context), 'iOS build');
+          await artifact.completeUploads();
+          const links = {
+            workspace: await workspaceShareURL(
+              root,
+              { platform: 'ios' },
+              runCancellationSignal(context) ?? context.signal,
+            ),
+          };
+          throwIfCancelled(runCancellationSignal(context), 'iOS build');
+          finish('ok', appPath);
+          built = {
+            appPath,
+            bundleId: artifact.bundleId,
+            configuration: configuration ?? 'Debug',
+            scheme: buildScheme ?? null,
+            arch,
+            cacheKey: artifact.cache.identity?.key ?? null,
+            cacheHit: artifact.cache.hit,
+            cacheSkipped: !artifact.cache.readEnabled,
+            buildMachine,
+            builtOn: artifact.cache.builtOn ?? null,
+            compilationCache: artifact.cache.compilation,
+            durationMs: Date.now() - started,
+            logs: { dir: logs },
+            links,
+          };
+          succeeded = true;
+        } catch (error) {
+          const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;
+          finish('failed', undefined, (failure as { code?: string }).code);
+          stats.record({ failed: true, durationMs: Date.now() - started });
+          throw failure;
+        } finally {
+          await artifact?.release();
+          failureAfterCleanup =
+            succeeded && runCancellationSignal(context)?.aborted ? cancelledError('iOS build') : null;
+          if (failureAfterCleanup) {
+            succeeded = false;
+            finish('failed', undefined, failureAfterCleanup.code);
+            stats.record({ failed: true, durationMs: Date.now() - started });
+          }
+          if (!succeeded && directory) await fs.rm(directory, { recursive: true, force: true });
+          if (succeeded) {
+            stats.record({
+              failed: false,
+              durationMs: Date.now() - started,
+              cacheHit:
+                artifact?.cache.hit === 'local' || artifact?.cache.hit === 'remote' ? artifact?.cache.hit : false,
+              offloadedTo: artifact?.cache.offloadedTo,
+              waited: artifact?.cache.waitedForBuild,
+            });
+          }
+          writer.close();
+          progress.clear();
+        }
+        if (failureAfterCleanup) throw failureAfterCleanup;
+        return built;
+      },
+      { write: (line) => phase('lock', line) },
+    ),
   );
 }

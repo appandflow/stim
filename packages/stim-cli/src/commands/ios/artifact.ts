@@ -1,3 +1,4 @@
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,12 +10,7 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import {
-  prepareProviderDownloadDir,
-  providerDownloadPath,
-  providerUploadOutcome,
-  runBuildCacheWork,
-} from '../../cache/build-cache.ts';
+import { prepareProviderDownloadDir, providerDownloadPath, providerUploadOutcome } from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -248,7 +244,7 @@ export async function acquireIosArtifact(
     storeHash = fingerprint;
     storeKey = cacheKey;
 
-    const found = await runBuildCacheWork(context, signal, () =>
+    const found = await withDrainingCancellation(context, signal, () =>
       resolveTieredBuild({
         local: recipe.cache(),
         loadProvider,
@@ -761,7 +757,7 @@ export async function acquireIosArtifact(
     if (storeKey && cachePolicy.write) {
       const key = storeKey;
       try {
-        const stored = await runBuildCacheWork(context, signal, () =>
+        const stored = await withDrainingCancellation(context, signal, () =>
           storeTieredBuild({
             local: recipe.cache(),
             loadProvider,
@@ -773,7 +769,7 @@ export async function acquireIosArtifact(
           }),
         );
         const pending = stored.providerUpload;
-        providerUpload = pending ? runBuildCacheWork(context, signal, () => pending) : null;
+        providerUpload = pending ? withDrainingCancellation(context, signal, () => pending) : null;
         void providerUpload?.catch(() => {});
         providerName = stored.providerName ?? providerName;
       } catch (e) {

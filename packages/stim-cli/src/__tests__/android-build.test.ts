@@ -1,10 +1,21 @@
+import * as buildProgress from '../engine/build-progress.ts';
+import { execFile } from 'node:child_process';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import * as results from '../commands/android/result.ts';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  promises as fs,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -15,7 +26,7 @@ import type { AndroidProject } from '../integrations/android-project.ts';
 import { readBuildHistory } from '@stim-cli/core/state';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { getProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let controller = new AbortController();
@@ -212,3 +223,136 @@ test.each(['compile', 'upload', 'materialize'])(
     expect(readWorkspaceState(root)?.android).toEqual(existing);
   },
 );
+
+test('cancelling an APK export drains the copy before cleanup and permits recovery', async () => {
+  const existing = { serial: 'already-running' };
+  writeWorkspaceState(root, { android: existing });
+  const copy = fs.copyFile;
+  let began!: (value: boolean) => void;
+  const copying = new Promise<boolean>((resolve) => {
+    began = resolve;
+  });
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let destination = '';
+  vi.spyOn(fs, 'copyFile').mockImplementationOnce(async (...args) => {
+    destination = String(args[1]);
+    await copy(...args);
+    began(true);
+    await completion;
+  });
+  const operation = buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
+  let settled = false;
+  void operation.then(
+    () => {
+      return (settled = true);
+    },
+    () => {
+      return (settled = true);
+    },
+  );
+  try {
+    expect(await Promise.race([copying, operation.then(() => false)])).toBe(true);
+    controller.abort('SIGINT');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(existsSync(destination)).toBe(true);
+  } finally {
+    finish();
+  }
+  await expect(operation).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
+  expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
+    result: 'cancelled',
+    errorCode: 'STIM_CANCELLED',
+  });
+  expect(readWorkspaceState(root)?.android).toEqual(existing);
+  controller = new AbortController();
+  const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(existsSync(recovered.apkPath)).toBe(true);
+});
+
+test('a first CLI SIGINT during APK export drains the copy and cleanup before exit130', async () => {
+  const script = `
+    const { buildAndroidOperation } = await import(${JSON.stringify(new URL('../commands/android/build.ts', import.meta.url).href)});
+    const { projectRegistry } = await import(${JSON.stringify(new URL('../integrations/projects.ts', import.meta.url).href)});
+    const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});
+    const { workspaceDir } = await import(${JSON.stringify(new URL('../workspace/paths.ts', import.meta.url).href)});
+    const { readClaimSet } = await import(${JSON.stringify(new URL('../ownership-claim.ts', import.meta.url).href)});
+    const { promises: fs } = await import('node:fs');
+    const { join } = await import('node:path');
+    const root = process.argv[1];
+    const source = join(root, 'fixture.apk');
+    await fs.writeFile(source, 'fixture APK bytes');
+    projectRegistry.selectAndroid = () => ({ id: 'fixture', load: async () => ({
+      isExpo: false, targets: [], eas: false,
+      appIds: () => ({ androidPackage: 'org.example.native', bundleId: null }),
+      variantProblem: () => null, runtimeKind: () => 'process',
+      artifact: () => ({
+        identity: async () => ({ cacheIneligible: 'fixture' }), cache: () => null,
+        prepare: async () => {}, reconcile: async () => ({ identity: { cacheIneligible: 'fixture' }, rekeyedBy: [], cacheRefusal: null }),
+        validate: async () => ({ cacheIneligible: 'fixture' }),
+        compile: async () => ({ ok: true, apkPath: source, durationMs: 1, lastLines: [] }),
+        untrackedLine: () => null, legacyCache: null, offload: null,
+      }),
+    }) });
+    const copy = fs.copyFile;
+    let closed = false;
+    let claimed = false;
+    fs.copyFile = async (...args) => {
+      await copy(...args);
+      claimed = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length === 1;
+      process.emit('SIGINT');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      closed = true;
+    };
+    const { value, interrupted } = await runProcessOperation(root, async (context) => {
+      try {
+        await buildAndroidOperation(context, root, { buildCache: false, remoteBuild: 'local' });
+        return { code: 'unexpected-success' };
+      } catch (error) {
+        return { code: error.code, closed, claimed, exports: await fs.readdir(join(workspaceDir(root), 'artifacts')), claims: readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length };
+      }
+    });
+    process.stdout.write(JSON.stringify(value));
+    process.exitCode = interrupted ?? 0;
+  `;
+  const result = await new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve) => {
+    execFile(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', script, root],
+      {
+        env: { ...process.env, STIM_HOME: join(scratch, 'cli-state') },
+        timeout: 15_000,
+      },
+      (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }),
+    );
+  });
+  expect(result.stdout ? JSON.parse(result.stdout) : result.stderr).toEqual({
+    code: 'STIM_CANCELLED',
+    closed: true,
+    claimed: true,
+    exports: [],
+    claims: 0,
+  });
+  expect(result.code).toBe(130);
+}, 20_000);
+
+test('cancellation after exporting the APK still refuses the result and removes the export', async () => {
+  const record = buildProgress.recordFinishedBuild;
+  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementationOnce((...args) => {
+    record(...args);
+    controller.abort('SIGINT');
+  });
+  await expect(buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(readBuildHistory(readWorkspaceState(root)).android?.[0]).toMatchObject({
+    result: 'cancelled',
+    errorCode: 'STIM_CANCELLED',
+  });
+});

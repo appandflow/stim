@@ -1,7 +1,19 @@
+import { readBuildHistory } from '@stim-cli/core/state';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  promises as fs,
+  readFileSync,
+  readlinkSync,
+  symlinkSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildIosOperation } from '../commands/ios/build.ts';
@@ -16,7 +28,7 @@ import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { getProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
@@ -30,6 +42,7 @@ let failBuild: boolean;
 let cancelBuild: boolean;
 let copies: string[];
 let projectBundleId: string | null;
+let linkedApp: boolean;
 
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), 'stim-ios-build-'));
@@ -44,6 +57,7 @@ beforeEach(() => {
   cancelBuild = false;
   copies = [];
   projectBundleId = 'org.example.native';
+  linkedApp = false;
   const runFile = getExecutor().runFile;
   vi.spyOn(getExecutor(), 'runFile').mockImplementation((command, args, options) => {
     if (command === 'plutil') {
@@ -86,7 +100,7 @@ beforeEach(() => {
           copies.push(directory);
           ownTemporary(directory);
           const app = join(directory, 'Native.app');
-          cpSync(path, app, { recursive: true });
+          cpSync(path, app, { recursive: true, verbatimSymlinks: true });
           return app;
         },
         compile: async () => {
@@ -113,6 +127,8 @@ beforeEach(() => {
             join(appPath, 'Native'),
             `${readFileSync(join(root, 'Main.swift'), 'utf8')}:${configuration}:${target.arch}`,
           );
+          const alias = join(appPath, 'Alias');
+          if (linkedApp && !existsSync(alias)) symlinkSync('Native', alias);
           return {
             ok: true,
             appPath,
@@ -217,4 +233,84 @@ test('an unusable optimizations setting is refused as a setting error before the
     remedy: SETTING_SHAPE_REMEDY,
   });
   expect(compilations).toBe(0);
+});
+
+test('cancelling an app export drains the copy before cleanup and permits recovery', async () => {
+  const existing = { udid: 'existing' };
+  writeWorkspaceState(root, { ios: existing });
+  const copy = fs.cp;
+  let began!: (value: boolean) => void;
+  const copying = new Promise<boolean>((resolve) => {
+    began = resolve;
+  });
+  let finish!: () => void;
+  const completion = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let destination = '';
+  vi.spyOn(fs, 'cp').mockImplementationOnce(async (...args) => {
+    destination = String(args[1]);
+    await copy(...args);
+    began(true);
+    await completion;
+  });
+  const operation = buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  let settled = false;
+  void operation.then(
+    () => {
+      return (settled = true);
+    },
+    () => {
+      return (settled = true);
+    },
+  );
+  try {
+    expect(await Promise.race([copying, operation.then(() => false)])).toBe(true);
+    controller.abort('SIGINT');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(settled).toBe(false);
+    expect(existsSync(join(destination, 'Native'))).toBe(true);
+  } finally {
+    finish();
+  }
+  await expect(operation).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])).toBeNull();
+  expect(readWorkspaceState(root)?.ios).toEqual(existing);
+  controller = new AbortController();
+  const recovered = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+  expect(existsSync(join(recovered.appPath, 'Native'))).toBe(true);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'retained app links remain relative to their own exported bytes',
+  async () => {
+    linkedApp = true;
+    const cold = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    const bytes = readFileSync(join(cold.appPath, 'Alias'), 'utf8');
+    expect(readlinkSync(join(cold.appPath, 'Alias'))).toBe('Native');
+    const warm = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    expect(warm.cacheHit).toBe('local');
+    expect(readlinkSync(join(warm.appPath, 'Alias'))).toBe('Native');
+    writeFileSync(join(root, 'Main.swift'), 'changed source');
+    await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
+    expect(readFileSync(join(cold.appPath, 'Alias'), 'utf8')).toBe(bytes);
+    expect(readFileSync(join(warm.appPath, 'Alias'), 'utf8')).toBe(bytes);
+  },
+);
+
+test('cancellation after exporting the app still refuses the result and removes the export', async () => {
+  const record = buildProgress.recordFinishedBuild;
+  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementationOnce((...args) => {
+    record(...args);
+    controller.abort('SIGINT');
+  });
+  await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
+    code: 'STIM_CANCELLED',
+  });
+  expect(await fs.readdir(join(workspaceDir(root), 'artifacts'))).toEqual([]);
+  expect(readBuildHistory(readWorkspaceState(root)).ios?.[0]).toMatchObject({
+    result: 'cancelled',
+    errorCode: 'STIM_CANCELLED',
+  });
 });

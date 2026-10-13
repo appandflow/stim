@@ -1,3 +1,4 @@
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,7 +11,7 @@ import {
   type LoadCacheProviderResult,
   type ProviderCallResult,
 } from '@stim-cli/cache';
-import { prepareProviderDownloadDir, providerDownloadPath, runBuildCacheWork } from '../../cache/build-cache.ts';
+import { prepareProviderDownloadDir, providerDownloadPath } from '../../cache/build-cache.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
@@ -255,7 +256,7 @@ export async function acquireAndroidArtifact(
     storeHash = hash;
     storeKey = cacheKey;
 
-    const found = await runBuildCacheWork(context, signal, () =>
+    const found = await withDrainingCancellation(context, signal, () =>
       resolveTieredBuild({
         local: recipe.cache(),
         loadProvider: loadTieredProvider,
@@ -775,7 +776,7 @@ export async function acquireAndroidArtifact(
     if (cachePolicy.write) {
       const local = recipe.cache(true);
       try {
-        const stored = await runBuildCacheWork(context, signal, () =>
+        const stored = await withDrainingCancellation(context, signal, () =>
           storeTieredBuild({
             local,
             loadProvider: loadTieredProvider,
@@ -787,7 +788,7 @@ export async function acquireAndroidArtifact(
           }),
         );
         const pending = stored.providerUpload;
-        providerUpload = pending ? runBuildCacheWork(context, signal, () => pending) : null;
+        providerUpload = pending ? withDrainingCancellation(context, signal, () => pending) : null;
         void providerUpload?.catch(() => {});
         providerName = stored.providerName ?? providerName;
       } catch (err) {
