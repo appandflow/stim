@@ -49,7 +49,7 @@ async function pairAndSave(payload: PairingPayload): Promise<{ id: string; name:
     CLIENT,
   );
   const name = payload.name || paired.serverName;
-  const mac = await saveMac({ name, endpoint: payload.endpoint }, paired.deviceToken);
+  const mac = await saveMac({ name, endpoint: payload.endpoint, serverId: paired.serverId }, paired.deviceToken);
   return { id: mac.id, name };
 }
 

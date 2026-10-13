@@ -590,6 +590,7 @@ function isLink(path: string): boolean {
 }
 
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
+  let homeId: string | undefined;
   let hostProbe: Promise<HelloResult['host']> | undefined;
   let hostExpires = 0;
   const hostHealth = (): Promise<HelloResult['host']> => {
@@ -1155,7 +1156,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (options.host) tracker.step(id, 'probe', Date.now() - probeWaited);
       const result: HelloResult = {
         protocol: PROTOCOL_VERSION,
-        server: { name: options.name, version: options.serverVersion, stim: options.stimVersion, home: homedir() },
+        server: {
+          name: options.name,
+          version: options.serverVersion,
+          stim: options.stimVersion,
+          home: homedir(),
+          id: homeId,
+        },
         ...(options.host ? { host } : {}),
         capabilities: device.capabilities,
         features: [...FEATURES],
@@ -3105,6 +3112,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (closing) return settle(startup);
     if (reason === null) {
       try {
+        homeId = await createStim({ projectRoot: homedir(), env: options.env }).identity();
+        if (closing) return settle(startup);
         becomeReady();
       } catch (error) {
         reason = (error as Error).message;

@@ -358,7 +358,7 @@ export function registerWarm(worktree: Command): void {
         process.exitCode = 1;
       } finally {
         progress?.finish(!process.exitCode);
-        const links = workspace && !process.exitCode ? workspaceLinks(workspace) : undefined;
+        const links = workspace && !process.exitCode ? await workspaceLinks(workspace) : undefined;
         if (links) console.error(chalk.dim(workspaceLinkLine(links)));
       }
     });

@@ -62,6 +62,7 @@ public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
 
 public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var path: String
+  public var workspaceId: String?
   public var tutorial: TutorialMarker?
   public var doctorRuns: DoctorRuns?
   public var agentDevice: AgentDevice?
@@ -110,7 +111,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var titleOverride: String?
 
   enum CodingKeys: String, CodingKey {
-    case path, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android, web, metro
+    case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
+      web, metro
     case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice

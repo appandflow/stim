@@ -430,7 +430,7 @@ export function registerStart(program: Command, overrides: Partial<StartCommandD
         facts: result.facts,
         waited: result.waited,
         reclaimed: result.reclaimed,
-        links: workspaceLinks(root),
+        links: await workspaceLinks(root),
       });
     });
 }

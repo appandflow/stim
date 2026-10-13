@@ -110,7 +110,7 @@ export default function webCommand(program: Command): void {
       }
       const { facts, remedy } = result;
       if (remedy) printNote(chalk.yellow(phaseLine('launch', remedy)));
-      const links = workspaceLinks(root, { platform: 'web' });
+      const links = await workspaceLinks(root, { platform: 'web' });
       if (json) {
         console.log(JSON.stringify(links ? { ...facts, links } : facts));
         return;

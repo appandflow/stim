@@ -641,6 +641,8 @@ export const TUTORIAL_VERSION = 2;
 export interface EnvironmentState {
   slots?: { slot: string; ios: SimulatorState | null | undefined; android: AndroidDeviceState | null | undefined }[];
   path: string;
+  /** The 16-hex identity of the registered canonical project path, used by shared workspace links. */
+  workspaceId?: string;
   /** Statically detected app platforms; always set by status, empty when none are detected. */
   platforms?: string[];
   /** Present when the app's app.json sets expo.extra.stimTutorial to a positive integer: that version. */

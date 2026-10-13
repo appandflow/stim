@@ -1,6 +1,10 @@
 import type { ChildProcess } from 'node:child_process';
+import { realpath } from 'node:fs/promises';
 import { getExecutor } from '../exec.ts';
 import type { SettingDefinition } from '@stim-cli/core/state';
+import { workspaceId } from '@stim-cli/core';
+import { sharedWorkspaceURL } from '@stim-cli/core/workspace-link';
+import { ensureHomeIdentity } from '../workspace/home-identity.ts';
 
 const STIM_DESKTOP_BUNDLE_ID = 'dev.stim.desktop';
 
@@ -61,32 +65,40 @@ export interface WorkspaceLinks {
   desktop: string;
 }
 
-function stimDesktopHandlesLinks(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env) {
+async function stimDesktopHandlesLinks(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+) {
   if (platform !== 'darwin') return false;
   if (env.STIM_DESKTOP_APP) return true;
-  return launchServicesFinds(SCHEME_HANDLER_LOOKUP);
+  return Boolean(
+    await getExecutor()
+      .runFileAsync('osascript', ['-l', 'JavaScript', '-e', SCHEME_HANDLER_LOOKUP], {
+        timeoutMs: 5000,
+        killSignal: 'SIGKILL',
+      })
+      .catch(() => ''),
+  );
 }
 
 /**
  * The links that open this workspace for a human, or undefined when no app on this Mac handles
  * `stim-desktop://`. `target` names the device Stim Desktop focuses when the user opens the workspace.
  */
-export function workspaceLinks(
+export async function workspaceLinks(
   root: string,
-  target?: { platform: 'ios' | 'android' | 'web'; slot?: string },
-  handlesLinks: () => boolean = stimDesktopHandlesLinks,
-): WorkspaceLinks | undefined {
-  if (!handlesLinks()) return undefined;
-  let desktop = `stim-desktop://workspace?path=${linkParam(root)}`;
-  if (target) desktop += `&platform=${target.platform}`;
-  if (target?.slot && target.slot !== 'default') desktop += `&slot=${linkParam(target.slot)}`;
-  return { desktop };
+  target?: { platform: 'ios' | 'android' | 'macos' | 'web'; slot?: string },
+  handlesLinks: () => boolean | Promise<boolean> = stimDesktopHandlesLinks,
+): Promise<WorkspaceLinks | undefined> {
+  if (!(await handlesLinks())) return undefined;
+  const canonical = await realpath(root);
+  return {
+    desktop: sharedWorkspaceURL({ machine: await ensureHomeIdentity(), workspace: workspaceId(canonical), ...target }),
+  };
 }
 
-const linkParam = (value: string) => encodeURIComponent(value).replaceAll('%2F', '/');
-
 export function workspaceLinkLine(links: WorkspaceLinks): string {
-  return `Open in Stim Desktop: ${links.desktop}`;
+  return `Open in Stim: ${links.desktop}`;
 }
 
 export function settingDefault(

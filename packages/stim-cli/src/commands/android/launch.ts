@@ -1025,7 +1025,7 @@ export async function finishAndroidRun({
     recordRun,
     reclaimed,
     devServer,
-    links: workspaceLinks(root, { platform: 'android', slot }),
+    links: await workspaceLinks(root, { platform: 'android', slot }),
   });
   return { ok: true, facts, uploadsAbandoned: remoteWasAbandoned || uploadWasAbandoned };
 }

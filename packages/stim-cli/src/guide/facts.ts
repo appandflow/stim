@@ -182,10 +182,10 @@ leased until <time>" for each one.`,
   agentDevice     { stateDir }: absolute workspace agent-device state path;
                   set AGENT_DEVICE_STATE_DIR to it (see guide logs)
   alreadyRunning  true when nothing needed starting
-  links           { desktop }: a stim-desktop://workspace?path=<workspace>
-                  link that shows this workspace in Stim Desktop. Absent when
+  links           { desktop }: an HTTPS link containing this Stim home and
+                  workspace IDs, opened by Desktop here or an already-paired phone. Absent when
                   no app on this Mac opens stim-desktop links. Plain output
-                  prints it on stderr as "Open in Stim Desktop: <link>"; so
+                  prints it on stderr as "Open in Stim: <link>"; so
                   does worktree warm, which has no JSON payload
 
   stim macos --json

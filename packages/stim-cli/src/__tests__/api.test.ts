@@ -39,6 +39,22 @@ function fixture(name: string) {
   return { root, home, directory };
 }
 
+test('home identities persist across clients and separate homes under concurrent initialization', async () => {
+  const first = fixture('first');
+  const second = fixture('second');
+  const make = (item: typeof first) => createStim({ projectRoot: item.root, home: item.home });
+  const [one, same, other] = await Promise.all([
+    make(first).identity(),
+    make(first).identity(),
+    make(second).identity(),
+  ]);
+  expect(one).toBe(same);
+  expect(one).not.toBe(other);
+  expect(await make(first).identity()).toBe(one);
+  expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8')).homeId).toBe(one);
+  expect(JSON.parse(readFileSync(join(second.home, 'config.json'), 'utf8')).homeId).toBe(other);
+});
+
 test('concurrent clients read only their own home without changing caller process context', async () => {
   const first = fixture('first');
   const second = fixture('second');

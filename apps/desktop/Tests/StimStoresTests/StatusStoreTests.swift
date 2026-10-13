@@ -183,6 +183,44 @@ struct StatusStoreTests {
     #expect(store.sidebarStatusCounts(options)[.notSetUp] == 2)
   }
 
+  @Test func sharedLinksRequireTheCurrentServerSnapshotAndLocalHome() async throws {
+    let home = "871c7262-f6bc-469a-b822-15da928350ee"
+    let workspace = "0123456789abcdef"
+    let link = try #require(
+      sharedWorkspaceRequest(
+        from: URL(
+          string:
+            "https://stim.appandflow.com/open?v=1&machine=\(home)&workspace=\(workspace)")!))
+    let cli = StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/home-a"])
+    let store = StatusStore(cli: Task { cli }, stimHome: "/home-a", fetch: { throw Failed() })
+    let client = ServerClient(
+      endpoint: URL(string: "ws://127.0.0.1:7787")!, clientName: "test", clientVersion: "1",
+      auth: { .device(token: "test") }, transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
+    defer { client.stop() }
+    client.start()
+    #expect(await until { client.isOpen && store.stimHome == "/home-a" })
+    let json =
+      #"{"environments":[{"path":"/workspace","workspaceId":"\#(workspace)","live":false,"warnings":[],"issues":[],"memoryMb":0}]}"#
+    let status = try JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
+    store.accept(.success(status), source: (client, client.generation))
+    #expect(await until { store.target(for: link, connection: (client, "/home-a"))?.workspace.path == "/workspace" })
+    #expect(store.target(for: link, connection: (client, "/home-b")) == nil)
+
+    client.stop()
+    client.start()
+    #expect(await until { client.isOpen })
+    #expect(store.payload?.environments.first?.path == "/workspace")
+    #expect(store.target(for: link, connection: (client, "/home-a")) == nil)
+    store.accept(.success(payload(live: 0)), source: (client, client.generation))
+    #expect(await until { store.payload?.environments.isEmpty == true })
+    #expect(store.target(for: link, connection: (client, "/home-a")) == nil)
+    store.accept(.success(status), source: (client, client.generation))
+    #expect(await until { store.target(for: link, connection: (client, "/home-a"))?.workspace.path == "/workspace" })
+    store.accept(.success(payload(live: 1)))
+    #expect(await until { store.payload?.capacity?.liveCount == 1 })
+    #expect(store.target(for: link, connection: (client, "/home-a")) == nil)
+  }
+
   private func watchingCLI(in directory: URL) throws -> StimCLI {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let executable = directory.appendingPathComponent("stim")
@@ -225,5 +263,32 @@ struct StatusStoreTests {
 
     store.serverDelivering(false)
     #expect(await until { watcherPIDs(in: directory).count == 2 && store.watching })
+  }
+}
+
+@MainActor private final class IdentityTransport: ServerTransport {
+  let home: String
+  let onEvent: @MainActor (ServerTransportEvent) -> Void
+
+  init(home: String, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+    self.home = home
+    self.onEvent = onEvent
+  }
+
+  func close() {}
+
+  func send(_ text: String) {
+    guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+      request["method"] == .string("hello"), let id = request["id"]
+    else { return }
+    let result: JSONValue = .object([
+      "protocol": .number(1),
+      "server": .object([
+        "id": .string(home), "name": .string("Mac"), "version": .string("1"), "stim": .string("1"),
+      ]),
+      "capabilities": .array([.string("read")]),
+    ])
+    guard let data = try? JSONEncoder().encode(JSONValue.object(["id": id, "result": result])) else { return }
+    onEvent(.text(String(decoding: data, as: UTF8.self)))
   }
 }

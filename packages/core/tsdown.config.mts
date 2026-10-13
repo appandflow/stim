@@ -11,6 +11,7 @@ export default defineConfig({
     'receive-protocol': 'receive-protocol.ts',
     oversight: 'oversight.ts',
     toolchain: 'toolchain.ts',
+    'workspace-link': 'workspace-link.ts',
   },
   format: 'esm',
   dts: true,

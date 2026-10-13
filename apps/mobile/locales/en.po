@@ -994,6 +994,10 @@ msgstr "automatic maintenance"
 msgid "Back"
 msgstr "Back"
 
+#: src/screens/open-workspace.tsx
+msgid "Back to Workspaces"
+msgstr "Back to Workspaces"
+
 #: src/lib/settings-options.ts
 msgid "Background notifications need an iPhone and a Mac that sends push."
 msgstr "Background notifications need an iPhone and a Mac that sends push."
@@ -3000,6 +3004,11 @@ msgstr "Open the live screen of {deviceName}, app closed"
 msgid "Open the live screen of {name}"
 msgstr "Open the live screen of {name}"
 
+#: src/screens/open-workspace.tsx
+#: src/screens/open-workspace.tsx
+msgid "Open Workspace"
+msgstr "Open Workspace"
+
 #: src/screens/build-details.tsx
 msgid "Opens {name}"
 msgstr "Opens {name}"
@@ -3066,6 +3075,10 @@ msgstr "Page failed to load"
 msgid "Pair"
 msgstr "Pair"
 
+#: src/screens/open-workspace.tsx
+msgid "Pair a Mac"
+msgstr "Pair a Mac"
+
 #: src/app/_layout.tsx
 #: src/screens/home.tsx
 #: src/screens/home.tsx
@@ -3077,6 +3090,10 @@ msgstr "Pair a Machine"
 #: src/components/mac-chip.tsx
 msgid "Pair again"
 msgstr "Pair again"
+
+#: src/screens/open-workspace.tsx
+msgid "Pair or reconnect the Mac to open this workspace."
+msgstr "Pair or reconnect the Mac to open this workspace."
 
 #: src/screens/pair.tsx
 msgid "Pair with this machine?"
@@ -3259,6 +3276,7 @@ msgstr "Reclaims Disk"
 
 #: src/components/read-only.tsx
 #: src/screens/device-view.tsx
+#: src/screens/open-workspace.tsx
 msgid "Reconnect"
 msgstr "Reconnect"
 
@@ -4007,6 +4025,14 @@ msgstr "The endpoint must start with wss://."
 msgid "the Mac"
 msgstr "the Mac"
 
+#: src/screens/open-workspace.tsx
+msgid "The Mac is not connected. Connect to it and try the link again."
+msgstr "The Mac is not connected. Connect to it and try the link again."
+
+#: src/screens/open-workspace.tsx
+msgid "The Mac no longer lists this workspace. Ask for a new link."
+msgstr "The Mac no longer lists this workspace. Ask for a new link."
+
 #: src/lib/connection.ts
 #: src/lib/connection.ts
 msgid "The Mac sent an invalid pairing response."
@@ -4115,6 +4141,10 @@ msgstr "This workspace is no longer in the status."
 #: src/lib/device-unavailable.ts
 msgid "This workspace is no longer on this Mac."
 msgstr "This workspace is no longer on this Mac."
+
+#: src/screens/open-workspace.tsx
+msgid "This workspace link is incomplete or unsupported."
+msgstr "This workspace link is incomplete or unsupported."
 
 #: src/lib/inbox.ts
 msgid "Today"
@@ -4267,6 +4297,10 @@ msgstr "Update {id}, {date}"
 msgid "Update ready, tap to restart"
 msgstr "Update ready, tap to restart"
 
+#: src/screens/open-workspace.tsx
+msgid "Update Stim and its server to open shared workspace links."
+msgstr "Update Stim and its server to open shared workspace links."
+
 #: src/components/viewer-keyboard.tsx
 msgid "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
 msgstr "Update Stim on the Mac to use modifiers with letters and digits. The extra keys and shortcuts still work."
@@ -4377,6 +4411,10 @@ msgstr "Waiting for frames"
 #: src/components/device-tile.tsx
 msgid "Waiting for the {buildName} Build"
 msgstr "Waiting for the {buildName} Build"
+
+#: src/screens/open-workspace.tsx
+msgid "Waiting for the paired Mac's workspace list."
+msgstr "Waiting for the paired Mac's workspace list."
 
 #: src/lib/workspace-view.ts
 msgid "warmed {since} ago"

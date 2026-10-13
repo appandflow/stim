@@ -79,6 +79,7 @@ export interface ConcurrencyLimits {
 
 export interface StimConfig {
   version?: number;
+  homeId?: string;
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   tempDir?: unknown;

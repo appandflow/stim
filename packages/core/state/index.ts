@@ -7,6 +7,7 @@ export * from './automatic-pools.ts';
 export * from './config.ts';
 export * from './debug-log.ts';
 export * from './config-types.ts';
+export * from './home-identity.ts';
 export * from './json-file.ts';
 export * from './ledgers.ts';
 export * from './error-entries.ts';

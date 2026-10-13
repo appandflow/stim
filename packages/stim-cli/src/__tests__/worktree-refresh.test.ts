@@ -257,13 +257,13 @@ test('--refresh fast-forwards the source checkout, then copies', async () => {
 
 test('a warm that registers an app ends with the Stim Desktop link on stderr, also when the refresh had nothing to do', async () => {
   write(target, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
-  vi.mocked(workspaceLinks).mockReturnValue({ desktop: 'stim-desktop://workspace?path=/w' });
+  vi.mocked(workspaceLinks).mockResolvedValue({ desktop: 'stim-desktop://workspace?path=/w' });
   try {
     for (const args of [[], ['--refresh']]) {
       const result = await runWarm(target, ...args);
       expect(result.code).toBe(0);
       expect(result.stdout).toEqual([]);
-      expect(result.stderr).toContain('Open in Stim Desktop: stim-desktop://workspace?path=/w');
+      expect(result.stderr).toContain('Open in Stim: stim-desktop://workspace?path=/w');
     }
     expect(vi.mocked(workspaceLinks)).toHaveBeenLastCalledWith(target);
   } finally {

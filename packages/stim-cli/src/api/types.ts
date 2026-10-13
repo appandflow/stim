@@ -123,6 +123,8 @@ export type StimStats = StatsReport;
 
 export interface StimClient {
   readonly projectRoot: string;
+  /** Returns this home's persistent nonsecret identity, initializing it under the config lock on first use. */
+  identity(options?: StimReadOptions): Promise<string>;
   /** Builds an artifact without acquiring a device or starting a runtime. */
   build<P extends StimBuildOptions['platform']>(
     options: StimBuildOptions & { platform: P },

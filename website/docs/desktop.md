@@ -576,12 +576,23 @@ When an agent creates a workspace while Desktop is open, a "New workspace"
 card appears at the bottom left with **Show**, once per workspace. It reads
 "Building iOS" or "Building Android" while that workspace's build runs.
 
-Stim prints `Open in Stim Desktop: stim-desktop://workspace?path=...` when it
-starts work, and coding agents share the same link, so you can jump straight to
-a workspace. When no active workspace matches the exact path within 10 seconds, the
-link opens its newest archive; an optional `&archive=<id>` opens a specific archive
-belonging to that path at once. Settings and other details are in the
-[app's README](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md).
+Stim prints an `Open in Stim: https://stim.appandflow.com/open?...` link when it
+starts work. The link contains a persistent Stim-home ID and the registered
+workspace ID, plus the device platform and slot when applicable. It contains no
+workspace path, server address or pairing token. Opening it navigates to the
+workspace; it never starts a build or grants device control.
+
+On a paired iPhone or iPad, Stim resolves the link through the matching approved
+server. The Mac must be connected and still list that workspace. Different homes
+on one Mac have different IDs, and moving a workspace makes its old link stale.
+An unpaired Mac uses the normal pairing flow. Desktop opens links only for its
+local home; a link for another Mac asks you to open it there or on a paired phone.
+
+The website's small fallback page offers **Open on this Mac** and **Open on iPhone
+or iPad** if the native app does not open. Universal links require a new signed
+native app build and Apple's domain association; an OTA update alone cannot
+enable them. Older local `stim-desktop://workspace?path=...` links retain their
+existing workspace and archive behavior.
 
 ## Add a remote Mac
 

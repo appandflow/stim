@@ -36,6 +36,7 @@ public enum ServerAuth: Equatable, Sendable {
 
 public struct HelloResult: Decodable, Equatable, Sendable {
   public struct Server: Decodable, Equatable, Sendable {
+    public var id: String?
     public var name: String
     public var version: String
     public var stim: String

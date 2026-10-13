@@ -604,6 +604,7 @@ export function protocolJsonSchema(): JsonSchema {
               version: { type: 'string' },
               stim: { type: 'string' },
               home: { type: 'string' },
+              id: { type: 'string' },
             },
           },
           capabilities: { type: 'array', items: { enum: [...CAPABILITIES] } },

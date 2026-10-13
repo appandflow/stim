@@ -33,11 +33,12 @@ public final class StatusStore: ObservableObject {
   private var watcher: Process?
   private var watchGeneration = 0
   private var restartTimer: Timer?
+  private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
   private var serverActive = false
   private var serverConnection: (client: ServerClient, home: String)?
   private var shownWorkspace: String?
   private lazy var serverFeed = ServerStatusFeed(
-    onPayload: { [weak self] in self?.accept($0) },
+    onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
     onDelivering: { [weak self] in self?.serverDelivering($0) })
   private var watchStderr: [String] = []
   private var backoff = RestartBackoff()
@@ -191,8 +192,20 @@ public final class StatusStore: ObservableObject {
   }
 
   /// Shows a payload the live watch delivered, which is newer than every refresh started before it.
-  func accept(_ result: Result<StatusPayload, Error>) {
-    show(result, sequence: nextSequence())
+  func accept(_ result: Result<StatusPayload, Error>, source: (client: ServerClient, generation: Int)? = nil) {
+    show(result, sequence: nextSequence(), source: source)
+  }
+
+  /// Resolves a shared link only from a snapshot of the current authenticated connection to this store's home.
+  public func target(for link: SharedWorkspaceOpenRequest, connection: (client: ServerClient, home: String)?)
+    -> (workspace: Workspace, device: DeviceRef?)?
+  {
+    guard let client = readCapableServer(connection, stimHome: stimHome),
+      let source = payloadSource, source.client === client, source.generation == client.generation,
+      case .open(let hello) = client.state, let homeId = hello.server.id
+    else { return nil }
+    guard let request = source.payload.request(for: link, homeId: homeId) else { return nil }
+    return source.payload.target(of: request)
   }
 
   private func nextSequence() -> Int {
@@ -200,7 +213,8 @@ public final class StatusStore: ObservableObject {
     return issued
   }
 
-  private func show(_ result: Result<StatusPayload, Error>, sequence: Int) {
+  private func show(_ result: Result<StatusPayload, Error>, sequence: Int, source: (client: ServerClient, generation: Int)? = nil)
+  {
     guard case .success(let payload) = result else {
       if sequence > shown, case .failure(let failure) = result { error = failure.localizedDescription }
       return
@@ -230,6 +244,7 @@ public final class StatusStore: ObservableObject {
         for i in payload.environments.indices {
           payload.environments[i].project = self.project(ofPath: payload.environments[i].path)
         }
+        self.payloadSource = source.map { (client: $0.client, generation: $0.generation, payload: payload) }
         self.payload = payload
         self.followShown()
         self.error = nil

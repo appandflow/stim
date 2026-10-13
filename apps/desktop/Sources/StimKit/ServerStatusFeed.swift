@@ -16,9 +16,10 @@ import Foundation
 /// machine, `archived.list` for the archives whenever their summary changes, and `workspace.subscribe` for each
 /// followed workspace, whose full environment replaces its summary. Each change yields one payload shaped like
 /// `stim status --json`. `onDelivering(true)` runs with the first payload and `onDelivering(false)` when a view ends,
-/// errors or is dropped, so the caller can run its own watcher meanwhile.
+/// errors or is dropped, so the caller can run its own watcher meanwhile. `onPayload` includes its authenticated
+/// client and transport generation so consumers can reject retained snapshots after reconnect.
 @MainActor public final class ServerStatusFeed {
-  private let onPayload: @MainActor (Result<StatusPayload, Error>) -> Void
+  private let onPayload: @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void
   private let onDelivering: @MainActor (Bool) -> Void
   private var client: ServerClient?
   private var views = StatusViews()
@@ -28,6 +29,7 @@ import Foundation
   private var archivesRead: Task<Void, Never>?
   private var archivedSeen: JSONValue?
   private var generation = 0
+  private var connectionGeneration: Int?
   private var issued = 0
   private var shown = 0
   private var delivering = false {
@@ -35,7 +37,7 @@ import Foundation
   }
 
   public init(
-    onPayload: @escaping @MainActor (Result<StatusPayload, Error>) -> Void,
+    onPayload: @escaping @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void,
     onDelivering: @escaping @MainActor (Bool) -> Void
   ) {
     self.onPayload = onPayload
@@ -72,6 +74,7 @@ import Foundation
   private func subscribe() {
     guard let client else { return }
     generation += 1
+    connectionGeneration = client.generation
     views = StatusViews()
     archivedSeen = nil
     unsubscribes = [
@@ -109,7 +112,19 @@ import Foundation
     return true
   }
 
+  private func prepareViews() {
+    guard let client, connectionGeneration != client.generation else { return }
+    connectionGeneration = client.generation
+    generation += 1
+    views = StatusViews()
+    archivedSeen = nil
+    archivesRead?.cancel()
+    archivesRead = nil
+    delivering = false
+  }
+
   private func receiveWorkspaces(_ event: ServerEvent) {
+    prepareViews()
     if ended(event) { return }
     guard event.name == "workspaces" else { return }
     switch views.applyWorkspaces(event.fields) {
@@ -126,12 +141,14 @@ import Foundation
   }
 
   private func receiveMachine(_ event: ServerEvent) {
+    prepareViews()
     if ended(event) { return }
     guard event.name == "machine", views.applyMachine(event.fields) == .changed, views.hasWorkspaces else { return }
     decode()
   }
 
   private func receiveDetail(_ event: ServerEvent, path: String) {
+    prepareViews()
     guard event.name == "workspace", followed.contains(path) else { return }
     if views.setDetail(event.fields["environment"], for: path) == .changed, views.hasWorkspaces { decode() }
   }
@@ -174,6 +191,8 @@ import Foundation
   }
 
   private func decode() {
+    guard let client else { return }
+    let connectionGeneration = client.generation
     issued += 1
     let sequence = issued
     let generation = generation
@@ -181,14 +200,19 @@ import Foundation
     Task.detached(priority: .userInitiated) { [weak self] in
       let result = Result { try decodeReporting(StatusPayload.self, from: payload, source: .server) }
       await LaunchMilestones.reach("first-server-payload-decoded")
-      await self?.show(result, sequence: sequence, generation: generation)
+      await self?.show(
+        result, sequence: sequence, generation: generation, client: client, connectionGeneration: connectionGeneration)
     }
   }
 
-  private func show(_ result: Result<StatusPayload, Error>, sequence: Int, generation: Int) {
-    guard generation == self.generation, sequence > shown else { return }
+  private func show(
+    _ result: Result<StatusPayload, Error>, sequence: Int, generation: Int, client: ServerClient, connectionGeneration: Int
+  ) {
+    guard generation == self.generation, sequence > shown, client === self.client, client.isOpen,
+      connectionGeneration == client.generation
+    else { return }
     shown = sequence
     if case .success = result { delivering = true }
-    if delivering { onPayload(result) }
+    if delivering { onPayload(result, client, connectionGeneration) }
   }
 }

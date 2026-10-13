@@ -41,11 +41,11 @@ Their Release builds embed JavaScript and skip that requirement.
 [Native Xcode apps](#native-xcode-apps) run without Metro in every configuration.
 
 When [Stim Desktop](./desktop.md) is installed, `worktree warm`, `start`,
-`ios`, `android` and `web` print a link that opens the workspace in it, on
+`ios`, `android` and `web` print an HTTPS workspace link, on
 stderr, and add it to their `--json` payload as `links.desktop`:
 
 ```text
-Open in Stim Desktop: stim-desktop://workspace?path=/Users/me/app-feature
+Open in Stim: https://stim.appandflow.com/open?v=1&machine=<home-id>&workspace=<workspace-id>
 ```
 
 The agent guide tells agents to share this link with you once, when they
