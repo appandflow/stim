@@ -357,6 +357,11 @@ logs. Existing control runs without this integration can remain: record
 comparison. This measures integrated Stim against the standard toolchain,
 not identical startup logging. Do not imply that retained controls were rerun.
 
+Platform timing and cache checks recognize literal `env STIM_TMPDIR=/path`
+or `env TMPDIR=/path` prefixes, including quoted paths. They do not infer values
+from shell expansion or accept environment overrides that change executable
+resolution or Stim ownership state.
+
 Invalid attempts are immutable audit records. Fix only a coordinator defect or
 environmental prerequisite, then reschedule the same cell under a new run id.
 Never relabel an invalid attempt to improve a result. Collector-only proof

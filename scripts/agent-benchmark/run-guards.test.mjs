@@ -318,6 +318,72 @@ describe('agent-device session isolation', () => {
   });
 });
 
+describe('temporary-directory platform prefixes', () => {
+  const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 30 } };
+  const output =
+    'build compiling debug\ncache gradle build cache on (--build-cache)\ncompilation cache 386 hits / 0 misses (100%)';
+  const target = benchmarkTarget(targetConfig, meta);
+
+  it.each([
+    'env STIM_TMPDIR=/tmp/run stim android',
+    'env TMPDIR="/tmp/run space" STIM_TMPDIR=/tmp/build stim android',
+    `/bin/zsh -lc "env STIM_TMPDIR=/tmp/run stim android --system-image 'system-images;android-36;arm64-v8a'"`,
+  ])('retains timing, cache evidence and warm ordering for %s', (command) => {
+    const launch = {
+      id: 'launch',
+      command,
+      output,
+      exitCode: 0,
+      elapsedSeconds: 65.275,
+      startEventOffset: 4,
+      endEventOffset: 5,
+    };
+    expect(benchmarkTiming(target, [launch], 145.112, false)).toMatchObject({
+      platformCommandSeconds: 65.275,
+      platformCommandTargetMet: true,
+    });
+    expect(benchmarkCcache(meta, [launch])).toMatchObject({
+      status: 'measured',
+      builds: [{ hits: 386, misses: 0 }],
+      invalidReasons: [],
+    });
+    const guide = { command: 'stim guide agent', exitCode: 0 };
+    const warm = { command: 'stim worktree warm', exitCode: 0, startEventOffset: 1, endEventOffset: 2 };
+    expect(benchmarkSetupInvalidReasons(meta, [guide, warm, launch])).toEqual([]);
+    expect(benchmarkSetupInvalidReasons(meta, [guide, { ...warm, endEventOffset: 6 }, launch])).toContain(
+      'stim-worktree-warm-not-complete-before-use',
+    );
+    expect(
+      benchmarkSetupInvalidReasons(meta, [guide, warm, { ...launch, output: 'fingerprint abcdef.. miss' }]),
+    ).toContain('stim-gradle-build-cache-missing');
+    expect(benchmarkTiming(target, [{ ...launch, elapsedSeconds: 181 }], 145, false).invalidReasons).toContain(
+      'platform-command-target-exceeded',
+    );
+  });
+
+  it('recognizes the same prefix for iOS timing without changing recorded commands', () => {
+    const commands = [{ command: 'env STIM_TMPDIR="/tmp/run space" stim ios', elapsedSeconds: 61 }];
+    const before = JSON.stringify(commands);
+    expect(benchmarkTiming({ ...target, key: 'ios.native.stim' }, commands, 90, false).platformCommandSeconds).toBe(61);
+    expect(JSON.stringify(commands)).toBe(before);
+  });
+
+  it.each([
+    'env PATH=/other STIM_TMPDIR=/tmp/run stim android',
+    'env STIM_TMPDIR=/tmp/run STIM_HOME=/other stim android',
+    'env NODE_OPTIONS=--import=/other STIM_TMPDIR=/tmp/run stim android',
+    'env -i STIM_TMPDIR=/tmp/run stim android',
+    'env STIM_TMPDIR="$TMPDIR" stim android',
+    'env STIM_TMPDIR=$(pwd) stim android',
+    'env STIM_TMPDIR=/tmp/run echo stim android',
+    'env STIM_TMPDIR=/tmp/run stim android$(echo suffix)',
+  ])('does not infer a platform execution from %s', (command) => {
+    const commands = [{ command, output, exitCode: 0, elapsedSeconds: 65 }];
+    expect(benchmarkTiming(target, commands, 90, false).platformCommandSeconds).toBeNull();
+    expect(benchmarkCcache(meta, commands).invalidReasons).toContain('ccache-evidence-missing');
+  });
+});
+
 describe('compiler cache health', () => {
   const meta = { arm: 'stim', platform: 'android', variant: 'native', timingTarget: { ccacheMinHitRatePercent: 50 } };
 

@@ -38,6 +38,15 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 const evidence = (capture = true) => ccacheLogEvidence({ runDir, meta, commands, worktree, capture });
 
 describe('captured compiler cache evidence', () => {
+  it('captures a literal temp-prefixed build and retains its original command identity', () => {
+    commands[0].command =
+      'env STIM_TMPDIR="/tmp/run space" stim android --system-image "system-images;android-36;arm64-v8a"';
+    const original = JSON.stringify(commands);
+    expect(evidence()).toMatchObject({ hits: 2, misses: 0, commandId: 'build' });
+    expect(benchmarkCcache(meta, commands, evidence(false))).toMatchObject({ status: 'measured', invalidReasons: [] });
+    expect(JSON.stringify(commands)).toBe(original);
+  });
+
   it('retains exact command identity for a scoped build with a reported launch failure', () => {
     commands[0].command = `cd ${worktree} && stim android --system-image "system-images;android-36;arm64-v8a"; echo "EXIT=$?"`;
     commands[0].exitCode = 0;

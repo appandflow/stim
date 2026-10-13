@@ -271,8 +271,16 @@ export function agentDeviceIsolationInvalidReasons(commands, expectedPrefix, tar
   return reasons;
 }
 
-function commandSegmentsStartingWith(command, expected) {
-  return shellCommandSegments(command).filter((segment) => segment === expected || segment.startsWith(`${expected} `));
+export function stimCommandSegments(command, expected) {
+  const required = literalShellArguments(expected);
+  return shellCommandSegments(command).filter((segment) => {
+    if (segment === expected || segment.startsWith(`${expected} `)) return true;
+    const words = literalShellArguments(segment);
+    if (words?.[0] !== 'env' || !required?.length) return false;
+    let index = 1;
+    while (/^(?:STIM_TMPDIR|TMPDIR)=\//.test(words[index] ?? '')) index++;
+    return index > 1 && required.every((word, offset) => words[index + offset] === word);
+  });
 }
 
 export function commandWithReportedStatus(command) {
@@ -291,7 +299,7 @@ function successfulCommand(commands, expected) {
     if (command.exitCode !== 0) return false;
     const segments = shellCommandSegments(command.command);
     const final = segments.at(-1);
-    return final === expected || final?.startsWith(`${expected} `);
+    return stimCommandSegments(final, expected).length === 1;
   });
 }
 
@@ -333,9 +341,7 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
   if (!successfulCommand(commands, 'stim guide agent') && !successfulGuideFirstChain(commands)) {
     reasons.push('stim-guide-agent-missing-or-failed');
   }
-  const warmRuns = commands.filter(
-    (command) => commandSegmentsStartingWith(command.command, 'stim worktree warm').length > 0,
-  );
+  const warmRuns = commands.filter((command) => stimCommandSegments(command.command, 'stim worktree warm').length > 0);
   const successfulWarms = warmRuns.filter((warm) => successfulCommand([warm], 'stim worktree warm'));
   if (!successfulWarms.length) {
     reasons.push('stim-worktree-warm-missing-or-failed');
@@ -343,7 +349,7 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
   const dependentRuns = commands.filter(
     (command) =>
       ['stim start', 'stim ios', 'stim android'].some(
-        (prefix) => commandSegmentsStartingWith(command.command, prefix).length > 0,
+        (prefix) => stimCommandSegments(command.command, prefix).length > 0,
       ) || dependencyInstallCommand(command.command),
   );
   if (
@@ -357,9 +363,7 @@ export function benchmarkSetupInvalidReasons(meta, commands) {
     reasons.push('stim-worktree-warm-not-complete-before-use');
   }
   const platformCommand = `stim ${meta.platform ?? 'ios'}`;
-  const platformRuns = commands.filter(
-    (command) => commandSegmentsStartingWith(command.command, platformCommand).length > 0,
-  );
+  const platformRuns = commands.filter((command) => stimCommandSegments(command.command, platformCommand).length > 0);
   const builtRun = platformRuns.find(
     (command) => command.exitCode === 0 && /fingerprint\s+[0-9a-f]{6}\.\.\s+miss\b/.test(command.output),
   );
@@ -387,7 +391,7 @@ export function benchmarkTiming(target, commands, screenReadySeconds, timedOut) 
   }
   const platformPrefix = `stim ${target.key.split('.').at(0)}`;
   const platformCommands = commands.filter(
-    (command) => commandSegmentsStartingWith(command.command, platformPrefix).length > 0,
+    (command) => stimCommandSegments(command.command, platformPrefix).length > 0,
   );
   const platformCommandSeconds = platformCommands.reduce(
     (maximum, command) => Math.max(maximum, command.elapsedSeconds ?? 0),
@@ -488,7 +492,7 @@ export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
   if (meta.arm !== 'stim' || meta.platform !== 'android') return result;
   if (meta.variant === 'native' && minimum == null) result.invalidReasons.push('ccache-target-missing');
   const attemptedBuilds = commands.filter(
-    (entry) => commandSegmentsStartingWith(entry.command, 'stim android').length > 0 && !preBuildRefusal(entry),
+    (entry) => stimCommandSegments(entry.command, 'stim android').length > 0 && !preBuildRefusal(entry),
   );
   for (const entry of attemptedBuilds) {
     const measurements = ccacheMeasurements(entry.output);
@@ -515,7 +519,7 @@ export function benchmarkCcache(meta, commands, statsLogMeasurement = null) {
   if (
     commands.some(
       (entry) =>
-        commandSegmentsStartingWith(entry.command, 'stim doctor').length > 0 &&
+        stimCommandSegments(entry.command, 'stim doctor').length > 0 &&
         /configured CMake cache|CMake launcher state could not be inspected/.test(entry.output),
     )
   ) {
