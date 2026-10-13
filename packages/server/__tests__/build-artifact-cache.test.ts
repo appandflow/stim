@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
@@ -72,6 +72,8 @@ if (process.argv[2] !== 'build') {
 }
 `,
   );
+  await mkdir(join(root, 'home'), { recursive: true });
+  await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
   const host = new BuildHost({ worker, env: process.env });
   const frames: Buffer[] = [];
   const socket = {
