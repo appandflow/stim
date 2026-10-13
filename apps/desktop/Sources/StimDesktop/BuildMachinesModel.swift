@@ -304,6 +304,8 @@ final class BuildMachinesModel {
     let result = await Result.awaiting { try await machineAccess(checkout, ask) }
     guard !Task.isCancelled else { return }
     switch result {
+    case .success where ask:
+      await fetchStatuses(checkout: checkout, ask: false)
     case .success(let report):
       checks[checkout] = Check(
         statuses: report.remoteMachines ?? [], hosts: report.deviceHosts,
