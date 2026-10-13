@@ -171,6 +171,9 @@ state remain accessible. Configured tool/cache paths cannot overlap golden,
 results, coordinator state or worktree directories, including through symlinks.
 Only the coordinator's selected run paths receive scoped exceptions. Dispatch
 also refuses a policy that exposes the protected coordinator probes.
+Launch-crash arms can read the original fixture's prepared dependencies and
+build inputs so warmed dependency links remain usable. Original application
+source stays hidden, and dependency writes remain denied.
 
 `smoke stim` and `smoke control` verify real filesystem denials and the Codex
 skill profile without running a model task. Timed dispatch repeats the same

@@ -45,6 +45,7 @@ import { ccacheLogEvidence } from './ccache-evidence.mjs';
 import { retireAndroidRecording } from './recording-cleanup.mjs';
 import { benchmarkEnvironment, benchmarkLocale, isolatedShellEnvironment } from './shell-environment.mjs';
 import {
+  benchmarkFixtureReadPaths,
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
   runnerIsolationPolicy,
@@ -982,6 +983,7 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   });
   return {
     fixtureCheckout: absolute,
+    setup: { arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE },
     fixtureBranch,
     fixtureCommit: run('git', ['rev-parse', 'HEAD'], { cwd: absolute }),
     sourcePath,
@@ -1058,7 +1060,7 @@ function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidan
       protectedRoots: [root, worktreeParent],
       reservedRoots: [golden, results, state, worktreeParent],
       readPaths: [
-        ...(!crash ? [main] : []),
+        ...benchmarkFixtureReadPaths(main, crash?.setup),
         allowedBin,
         ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),

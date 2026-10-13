@@ -116,6 +116,10 @@ and sibling-run file contents and writes, while permitting parent-directory
 listings. Each run retains its own worktree, proof, temporary files, runner
 home, selected tools, and the configured shared native-cache/device state.
 Coordinator metadata and transcripts remain outside those writable grants.
+Launch-crash runs hide the original application source but allow read-only access
+to the original fixture's prepared dependency directories for both arms. This
+keeps `stim worktree warm` dependency links usable without exposing a clean copy
+of the faulty application source. Dependency writes remain blocked.
 Before timing starts, real read/write and child-process probes must verify the
 policy; an unavailable sandbox or overbroad grant refuses dispatch. Dispatch
 also probes toolchain compatibility under the exact policy: the macOS kernel

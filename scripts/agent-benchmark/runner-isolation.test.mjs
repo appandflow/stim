@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  benchmarkFixtureReadPaths,
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
   runnerIsolationPolicy,
@@ -58,6 +59,48 @@ function prepare(paths, policy = paths.policy) {
 }
 
 describe('benchmark runner filesystem isolation', () => {
+  it.skipIf(process.platform !== 'darwin').each([
+    ['ios', 'stim'],
+    ['ios', 'control'],
+    ['android', 'stim'],
+    ['android', 'control'],
+  ])('reads warmed %s %s dependencies without exposing original source or writes', (platform, arm) => {
+    const paths = fixture();
+    const original = join(paths.root, 'fixture');
+    const dependency = join(original, 'node_modules', 'package', 'index.js');
+    const source = join(original, 'app', '_layout.tsx');
+    mkdirSync(join(original, 'node_modules', 'package'), { recursive: true });
+    mkdirSync(join(original, 'app'));
+    writeFileSync(dependency, 'dependency');
+    writeFileSync(source, 'clean-source');
+    symlinkSync(join(original, 'node_modules'), join(paths.run, 'node_modules'));
+    symlinkSync(source, join(paths.run, 'source-alias'));
+    const setup = { platform, arm, systemImage: 'system-images;android-36;google_apis_playstore_ps16k;arm64-v8a' };
+    const policy = runnerIsolationPolicy({
+      protectedRoots: [paths.root],
+      readPaths: benchmarkFixtureReadPaths(original, setup),
+      writePaths: [paths.run],
+    });
+    const isolation = prepare(paths, policy);
+    const invocation = isolatedRunnerInvocation(isolation, process.execPath, [
+      '-e',
+      `const fs=require('node:fs');
+       const [dependency, source, alias] = process.argv.slice(1);
+       if(fs.readFileSync(dependency,'utf8')!=='dependency')throw Error('dependency unreadable');
+       for(const path of [source,alias]) {
+         try{fs.readFileSync(path);throw Error('source readable');}catch(e){if(e.code!=='EPERM')throw e;}
+       }
+       try{fs.writeFileSync(dependency,'changed');throw Error('dependency writable');}catch(e){if(e.code!=='EPERM')throw e;}
+       process.stdout.write('ok');`,
+      join(paths.run, 'node_modules', 'package', 'index.js'),
+      source,
+      join(paths.run, 'source-alias'),
+    ]);
+    expect(execFileSync(invocation.command, invocation.args, { encoding: 'utf8' })).toBe('ok');
+    expect(readFileSync(dependency, 'utf8')).toBe('dependency');
+    expect(readFileSync(source, 'utf8')).toBe('clean-source');
+  });
+
   it('rejects configured grants inside reserved data, including future paths and aliases, but allows scoped run paths', () => {
     const paths = fixture();
     const worktrees = join(paths.root, 'worktrees');

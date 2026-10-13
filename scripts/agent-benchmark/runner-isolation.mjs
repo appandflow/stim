@@ -10,8 +10,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { launchCrashSetup } from './launch-crash-setup.mjs';
 
 const launcher = '/usr/bin/sandbox-exec';
+
+export function benchmarkFixtureReadPaths(fixture, crashSetup = null) {
+  return crashSetup ? launchCrashSetup(crashSetup).ignoredPaths.map((name) => join(fixture, name)) : [fixture];
+}
 
 function canonicalPath(path) {
   if (!isAbsolute(path)) throw new Error('benchmark isolation paths must be absolute');
