@@ -927,7 +927,7 @@ bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
 For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
-x86_64 Linux machine running stim-server can build for an Apple silicon Mac. Its JDK major
+x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
