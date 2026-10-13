@@ -892,7 +892,7 @@ cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
 stim guide macos. macOS artifacts are not cached.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
-build matches this Mac and, for iOS, CPU matches the target simulator, with enough disk, that does not decline,
+build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.

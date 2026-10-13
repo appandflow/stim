@@ -1509,7 +1509,7 @@ export function simulatorRuntime(udid: string): string | null {
 const DOCTOR_CONNECT_MS = 5000;
 const DOCTOR_OFFER_MS = 8000;
 const PLATFORM_LABEL = { ios: 'iOS', android: 'Android', macos: 'macOS' } as const;
-const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'arch', 'disk', 'busy']);
+const SHARED_PROBLEMS: ReadonlySet<OffloadProblem['code']> = new Set(['stim-build', 'disk', 'busy']);
 
 /**
  * Doctor's offload check for `projectRoot`: one bounded offer per machine, judged for each build `targets` returns

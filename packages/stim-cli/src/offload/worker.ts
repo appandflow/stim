@@ -401,17 +401,28 @@ async function packArchive(archive: string, dir: string, name: string): Promise<
   if (!tarball) throw new Error('tar opened no output stream.');
   const stderr: string[] = [];
   child.stderr?.on('data', (chunk: Buffer) => stderr.push(String(chunk)));
-  const exited = new Promise<number | null>((resolve, reject) => {
-    child.once('error', reject);
+  let spawnError: Error | null = null;
+  const exited = new Promise<number | null>((resolve) => {
+    child.once('error', (error) => {
+      spawnError = error;
+      resolve(null);
+    });
     child.once('close', resolve);
   });
-  const timer = setTimeout(() => child.kill('SIGKILL'), 600_000);
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), 600_000);
   try {
-    const [code] = await Promise.all([exited, pipeline(tarball, createGzip({ level: 1 }), createWriteStream(archive))]);
-    if (code !== 0) throw new Error(`tar exited with ${code}: ${stderr.join('').trim().slice(-500)}`);
+    await pipeline(tarball, createGzip({ level: 1 }), createWriteStream(archive), { signal: timeout.signal });
+  } catch (error) {
+    child.kill('SIGKILL');
+    await exited;
+    throw timeout.signal.aborted ? new Error('Packing the artifact did not finish within 10 minutes.') : error;
   } finally {
     clearTimeout(timer);
   }
+  const code = await exited;
+  if (spawnError) throw spawnError;
+  if (code !== 0) throw new Error(`tar exited with ${code}: ${stderr.join('').trim().slice(-500)}`);
 }
 
 async function sha256Of(path: string): Promise<string> {

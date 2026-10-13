@@ -446,7 +446,7 @@ architecture and runtime.
 
 In `auto`, an offloaded iOS/Android build runs prebuild (and `pod install` for iOS) here, then asks
 every paired machine what it can build. Stim picks one whose Stim build
-matches and, for iOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
+matches and, for iOS and macOS, whose CPU architecture matches the target simulator, with at least 10 GB free, that does
 not decline, preferring the one that already holds this repository, then the
 least loaded. When a machine that offered fails the sync or refuses to start
 the build, for example because it got busy meanwhile, Stim tries the next one
