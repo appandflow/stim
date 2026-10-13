@@ -428,7 +428,7 @@ STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup \
 <TabItem value="npx" label="npx">
 
 ```bash
-STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@1.16.0 stim-server setup \
+STIM_SETUP_TICKET=<43-base64url-characters> npx --yes --package @stim-cli/server@<version> stim-server setup \
   --client <node-id> \
   --expires <ISO-time> \
   --build \

@@ -155,8 +155,14 @@ final class AddMachineModel {
     else { return nil }
     return text
   }
+  /// This Mac's stim-server version when it predates `setupTicketVariableVersion`, so no command is offered.
+  var serverTooOldForSetup: String? {
+    guard let version, let found = SemanticVersion(version), found < setupTicketVariableVersion else { return nil }
+    return version
+  }
   var command: String? {
     if checkout == nil, sample != nil, commandKnown == nil { return nil }
+    guard serverTooOldForSetup == nil else { return nil }
     guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
       version: version, client: selfNode.id, ticket: ticket,
@@ -719,7 +725,7 @@ final class AddMachineModel {
       selectedId = peers.first?.id
       self.health = health
       healthChecked = Set(peers.filter(\.online).map(\.id))
-      version = "1.16.0"
+      version = "1.20.3"
       draftTicket = ticket
     }
   }

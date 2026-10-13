@@ -116,8 +116,13 @@ public struct SetupKnown: Equatable, Sendable {
   }
 }
 
+/// The first stim-server release whose setup reads the ticket from `STIM_SETUP_TICKET`. The command pins this Mac's
+/// server version, so an older one would run a setup that refuses the command.
+public let setupTicketVariableVersion = SemanticVersion("1.20.3")!
+
 /// The command a person runs on the chosen machine. The ticket travels in `STIM_SETUP_TICKET`, never as an argument,
-/// because any local user can read another user's process arguments. On Linux, `tailscale serve` needs the user as Tailscale's
+/// because any local user can read another user's process arguments; in PowerShell a script block sets it and
+/// removes it afterwards, since `$env:` lasts for the session. On Linux, `tailscale serve` needs the user as Tailscale's
 /// operator and the systemd user service needs linger to outlive the login, and both need sudo, which setup never
 /// runs itself. On Windows it is PowerShell: `npx.cmd`, because PowerShell otherwise runs npm's `npx.ps1`, which the
 /// default script execution policy of Windows desktops blocks; a backtick continues a line; and the package is quoted
@@ -130,12 +135,16 @@ public func setupCommand(
     .map { "--\($0.rawValue)" }
   let package = os == .windows ? "\"@stim-cli/server@\(version)\"" : "@stim-cli/server@\(version)"
   let ticketVariable =
-    os == .windows ? "$env:STIM_SETUP_TICKET='\(ticket.value)'; " : "STIM_SETUP_TICKET=\(ticket.value) "
+    os == .windows
+    ? "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { " : "STIM_SETUP_TICKET=\(ticket.value) "
   let setup =
     ([
       "\(ticketVariable)\(os == .windows ? "npx.cmd" : "npx") --yes --package \(package) stim-server setup",
       "--client \(client)", "--expires \(ticket.isoExpires)",
     ] + flags).joined(separator: os == .windows ? " `\n  " : " \\\n  ")
+  if os == .windows {
+    return setup + " } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }"
+  }
   guard os == .linux else { return setup }
   return "sudo tailscale set --operator=$USER && \\\nsudo loginctl enable-linger $USER && \\\n" + setup
 }

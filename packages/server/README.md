@@ -114,8 +114,9 @@ STIM_SETUP_TICKET=<43-base64url-characters> stim-server setup --client <node-id>
 
 The ticket travels in the `STIM_SETUP_TICKET` environment variable, because
 other users on the worker can read a process's command-line arguments but not
-its environment. Setup refuses `--ticket`. On Windows the generated command
-sets it with `$env:STIM_SETUP_TICKET='<ticket>';` first.
+its environment. Setup refuses `--ticket`, and needs stim-server 1.20.3 or
+later. On Windows the generated command runs in a PowerShell script block that
+sets `$env:STIM_SETUP_TICKET` and removes it when setup ends.
 
 If the server is not installed globally, use `npx --yes --package @stim-cli/server@<version> stim-server`
 in place of `stim-server`, with the exact version from the client machine.

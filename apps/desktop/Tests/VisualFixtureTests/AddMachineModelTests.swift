@@ -61,6 +61,8 @@ final class AddMachineModelTests: XCTestCase {
           "deviceHosts": statuses(hosts, id: "h"),
         ]))
     }
+    var version = "1.20.3"
+
     func make(workspace: Bool = true, sample: SampleBuildModel? = nil) -> AddMachineModel {
       AddMachineModel(
         checkout: workspace ? "/fixture" : nil,
@@ -92,7 +94,7 @@ final class AddMachineModelTests: XCTestCase {
               self.builds = try value.map { try JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
             default: break
             }
-          }, version: { "1.16.0" },
+          }, version: { self.version },
           toolsDoctor: { _, platform in
             self.toolCalls.append(platform)
             return try self.report(platform: platform)
@@ -665,9 +667,22 @@ final class AddMachineModelTests: XCTestCase {
     XCTAssertEqual(model.page, .summary)
   }
 
+  @MainActor func testOffersNoCommandWhileThisMacsServerPredatesTheTicketVariable() async {
+    let harness = Harness()
+    harness.peers = #""one":{"ID":"nMini","HostName":"Mini","DNSName":"mini.tail.test.","OS":"macOS","Online":true}"#
+    harness.version = "1.20.2"
+    let model = harness.make()
+    await model.start()
+    defer { model.stop() }
+    model.preselect(machineID: "nMini", hostedSimulators: true)
+    await model.pick()
+    XCTAssertEqual(model.serverTooOldForSetup, "1.20.2")
+    XCTAssertNil(model.command)
+  }
+
   @MainActor func testLinuxAndWindowsMachinesSetUpBuildsOnlyAndCheckAndroidToolsOnly() async {
     for (os, prefix) in [
-      ("linux", "sudo tailscale set --operator=$USER && \\\n"), ("windows", "$env:STIM_SETUP_TICKET='"),
+      ("linux", "sudo tailscale set --operator=$USER && \\\n"), ("windows", "& { $env:STIM_SETUP_TICKET='"),
     ] {
       await checkAndroidOnly(os: os, commandPrefix: prefix)
     }

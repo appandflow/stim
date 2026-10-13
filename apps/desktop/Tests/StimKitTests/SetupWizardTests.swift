@@ -120,9 +120,11 @@ final class SetupWizardTests: XCTestCase {
     let lines = command.components(separatedBy: " `\n")
     XCTAssertEqual(
       lines.first,
-      "$env:STIM_SETUP_TICKET='\(ticket.value)'; npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup")
+      "& { $env:STIM_SETUP_TICKET='\(ticket.value)'; try { npx.cmd --yes --package \"@stim-cli/server@1.16.0\" stim-server setup"
+    )
     XCTAssertFalse(command.contains("--ticket"))
-    XCTAssertEqual(lines.last, "  --build")
+    XCTAssertEqual(
+      lines.last, "  --build } finally { Remove-Item Env:STIM_SETUP_TICKET -ErrorAction SilentlyContinue } }")
     XCTAssertFalse(command.contains("sudo"))
     XCTAssertFalse(command.contains("\\"))
 
