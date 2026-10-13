@@ -1,0 +1,136 @@
+{
+  "schemaVersion": 1,
+  "cohort": "standalone-native-v1",
+  "metric": "dispatch-to-completed-task",
+  "machine": "Mac mini, Apple M4, 16 GB",
+  "pairs": [
+    {
+      "platform": "ios",
+      "backend": "native-xcode",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "high",
+      "requestedServiceTier": "priority",
+      "returnedServiceTier": "unverified",
+      "samplePairs": 1,
+      "provenance": {
+        "stimVersion": "1.20.2",
+        "nodeVersion": "26.7.0",
+        "macosVersion": "27.0",
+        "macosBuild": "26A428",
+        "xcodeVersion": "27.0",
+        "xcodeBuild": "27A266a",
+        "codexVersion": "0.154.0",
+        "fixtureCommit": "cb1c4cae00fd77849242ec326585631da46ab462"
+      },
+      "timeReductionPercent": 44.83326123653063,
+      "runs": [
+        {
+          "arm": "stim",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 169.614,
+          "usage": {
+            "input_tokens": 1625913,
+            "cached_input_tokens": 1523200,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 11057,
+            "reasoning_output_tokens": 3856
+          },
+          "proof": "ios-stim.png",
+          "evidence": {
+            "recordSha256": "0215ad002610f4de2b4e58d6bdbf4c5e575cd6e966c0884347534901b8d6a8f6",
+            "metadataSha256": "f52529a0dbbf18792edc6ac8a46164e9ebee98ff303ec46f058bacffc029fb29",
+            "auditSha256": "63514949091040a58df75ae160134bb058626cfb85933ab6ca073c0584516334",
+            "cleanupSha256": "a217922b9c82ac6d9bbc672540800fc0a8b9d2f185603a786e2bef1c7d20414e",
+            "eventsSha256": "7eb10be9c13802df0fa215565fe25cbfcd8c984c764ffe8327cb6978d6e702dd",
+            "proofSha256": "ed1a3625d806e7734865f38a927678218b80d20e13e3f41a8d0974eeacc93170"
+          }
+        },
+        {
+          "arm": "control",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 307.457,
+          "usage": {
+            "input_tokens": 3303869,
+            "cached_input_tokens": 3137920,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 18085,
+            "reasoning_output_tokens": 6031
+          },
+          "proof": "ios-control.png",
+          "evidence": {
+            "recordSha256": "f71aa61f8a9a92e69700182e68ab8023ddc7f033107f0c8f5df940889eead981",
+            "metadataSha256": "de667ab177fa36aedebe47fe0d9f5b0f9427a6c838bd238e5359b52c29f87bf5",
+            "auditSha256": "5c6c6bb6321859b9e8d647d46c9b4920eec8b7aff2660096ff0efdd918a73e41",
+            "cleanupSha256": "0ce547e287a1a40d928ddec1c6138e655e004d0793992db9f0a490b05f395146",
+            "eventsSha256": "6e9eb1481fb252939c0ef6820f8d1109a7cd287011b8bb602b7fd8b168c48622",
+            "proofSha256": "6f83706fff9d2638eaa9c4cc6bbf0c05490f10b95dcb67b912ac0481e5df8bfa"
+          }
+        }
+      ]
+    },
+    {
+      "platform": "macos",
+      "backend": "native-swiftpm",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "high",
+      "requestedServiceTier": "priority",
+      "returnedServiceTier": "unverified",
+      "samplePairs": 1,
+      "provenance": {
+        "stimVersion": "1.20.2",
+        "nodeVersion": "26.7.0",
+        "macosVersion": "27.0",
+        "macosBuild": "26A428",
+        "xcodeVersion": "27.0",
+        "xcodeBuild": "27A266a",
+        "codexVersion": "0.154.0",
+        "fixtureCommit": "4b3e8b17e84e2d597ca28b0ee0bcdfae038adabd"
+      },
+      "timeReductionPercent": 51.31305341724391,
+      "runs": [
+        {
+          "arm": "stim",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 70.71,
+          "usage": {
+            "input_tokens": 675950,
+            "cached_input_tokens": 637696,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 7647,
+            "reasoning_output_tokens": 2912
+          },
+          "proof": "macos-stim.png",
+          "evidence": {
+            "recordSha256": "82261d94e9a01ff0b9a8aa3e365529acca8685e080d27ff896f359aa1b1ed1f6",
+            "metadataSha256": "fb7de9c67307423798dc9402c02127114b6f84a8499e53e4358cf276908006db",
+            "auditSha256": "6733da7f1c406cf3a34b6ded03881f4b976e2e6e4e5d95aea5e6e6bcaac5cc20",
+            "cleanupSha256": "3d2e3994a49fb3b414455f271e1a5832f3bd5f4ba73e2c5f2f64f82bf8fc97c4",
+            "eventsSha256": "6b7f93f5888ada1ed0f183b2a18d91238895f88f3c2b7626d92c26ef7ee46784",
+            "proofSha256": "67352593d49023a5d7768b358913f3a1da67f4c7d9fca68ca0fa9feb58182734"
+          }
+        },
+        {
+          "arm": "control",
+          "recordedOn": "2026-10-13",
+          "taskSeconds": 145.234,
+          "usage": {
+            "input_tokens": 1132184,
+            "cached_input_tokens": 1072640,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 14710,
+            "reasoning_output_tokens": 6750
+          },
+          "proof": "macos-control.png",
+          "evidence": {
+            "recordSha256": "bdd10ae3c8e094acb6ed0ccf7877ed1b07e7db5004ce65a340e3d381b3377cab",
+            "metadataSha256": "0caa486404af12a7e55343863a083781ae5f8ebb847e1e277eda10ce53668cc9",
+            "auditSha256": "a79c8585f7f9ab367b99c4b6a64755a28e51e9178ccfd3978e9e3ffaaea5b864",
+            "cleanupSha256": "18b97cdcd516a53000bb62e77e9553144416d220a91dddc78de464427f6bce1f",
+            "eventsSha256": "f3a58f61ac345b8dc3f164accd032b7d698c9c68063816f85b83e5863da1c5db",
+            "proofSha256": "0ed6265f17b9cdb02b92934a1a90faa594d447c4704d804674bc88a87703265f"
+          }
+        }
+      ]
+    }
+  ]
+}

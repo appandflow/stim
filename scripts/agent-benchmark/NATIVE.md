@@ -64,3 +64,22 @@ comparison, not a broad performance claim. Native Xcode projects can benefit
 from Stim's reusable artifacts and compiler cache. Native Gradle and macOS
 SwiftPM do not have reusable Stim artifact caching; measure any benefit in
 workspace/device preparation, incremental compilation, launch, and verification.
+
+## Website publication
+
+Publish only paired runs with accepted independent audits and completed cleanup:
+
+```bash
+node scripts/export-native-benchmarks.mjs "$STIM_BENCH_ROOT" website/src/data/benchmarks/native-luna-1.20.2.json website/static/benchmarks/native-luna-1.20.2
+```
+
+Each platform's `comparison.json` selects its Stim and control run IDs. The
+exporter verifies matching fixture, release, model, and environment metadata;
+turn timestamps; required audit checks; and all retained evidence hashes. A
+platform without a comparison is omitted. A selected rejected or incomplete
+pair refuses publication before writing output. Review every exported proof
+image for private content before committing it.
+
+The benchmark overview displays these pilots separately as total task time,
+including retries and evidence capture. Keep the one-pair limitation visible.
+Native Android joins that section only after an accepted comparison is exported.
