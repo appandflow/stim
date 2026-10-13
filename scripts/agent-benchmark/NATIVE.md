@@ -34,6 +34,22 @@ process identity before and after each read; the real-tool test covers paths
 with spaces under the sandbox. Each frozen coordinator gets its own tools
 directory, and collection rejects changed adapter bytes.
 
+## Android emulator lifetime
+
+The standalone native task keeps its app and device alive for independent
+coordinator verification after the model turn. Android protocol
+`standalone-native-v2` tells both arms to launch any manually started emulator
+headlessly in a separate OS session, with stdin closed and output in a run-local
+log. A foreground exec session ends with the runner; `nohup` alone does not
+separate its process group. This guidance changes the protocol: requalify both
+arms and compare only matching cohorts and coordinator bytes. Do not pair a v2
+control with a previously accepted v1 Stim run or revise old run verdicts.
+
+Keep source, build, process continuity, and visual checks intact. A device that
+vanishes before independent verification still lacks that evidence. Cleanup
+uses the exact retained run-owned device identity, never a device selected only
+by its serial or a broad emulator shutdown.
+
 Collection rejects failed or timed-out runners, missing evidence, incorrect
 source changes, and changed coordinator or compatibility-tool hashes. A run
 that passes those checks remains `pending-independent-ui-and-command-audit`;
@@ -74,7 +90,8 @@ node scripts/export-native-benchmarks.mjs "$STIM_BENCH_ROOT" website/src/data/be
 ```
 
 Each platform's `comparison.json` selects its Stim and control run IDs. The
-exporter verifies matching fixture, release, model, and environment metadata;
+exporter verifies matching cohort and coordinator hashes within each pair,
+fixture, release, model, and environment metadata;
 turn timestamps; required audit checks; and all retained evidence hashes. A
 platform without a comparison is omitted. A selected rejected or incomplete
 pair refuses publication before writing output. Review every exported proof
