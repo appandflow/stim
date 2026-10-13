@@ -4,6 +4,7 @@ import { loadCacheProvider } from '@stim-cli/cache';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
 import { listIosRuntimes } from '../../devices/ios.ts';
+import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
@@ -61,6 +62,7 @@ export interface IosBuildFacts {
   compilationCache: CompilationCacheActivity;
   durationMs: number;
   logs: { dir: string };
+  links: { workspace: string };
 }
 
 const note = (line: string) => console.error(line);
@@ -255,6 +257,13 @@ export async function buildIosOperation(
         const appPath = join(directory, basename(artifact.path));
         cpSync(artifact.path, appPath, { recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE });
         await artifact.completeUploads();
+        const links = {
+          workspace: await workspaceShareURL(
+            root,
+            { platform: 'ios' },
+            runCancellationSignal(context) ?? context.signal,
+          ),
+        };
         throwIfCancelled(runCancellationSignal(context), 'iOS build');
         finish('ok', appPath);
         stats.record({
@@ -279,6 +288,7 @@ export async function buildIosOperation(
           compilationCache: artifact.cache.compilation,
           durationMs: Date.now() - started,
           logs: { dir: logs },
+          links,
         };
       } catch (error) {
         const failure = runCancellationSignal(context)?.aborted ? cancelledError('iOS build', error) : error;

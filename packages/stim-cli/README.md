@@ -87,6 +87,9 @@ already running server. `run` builds, installs and launches.
 `build({ platform: 'ios' })` returns a retained simulator app without starting
 a device or runtime; Android returns an APK and macOS returns an app bundle.
 Build-only preserves existing sessions and uses the same cache and build locks.
+Successful builds include `result.facts.links.workspace`, an HTTPS workspace link
+agents can share with an already-paired phone or Desktop, including when the
+build machine has no Desktop app installed.
 Each result is a separate copy kept in the workspace until `stim worktree remove`.
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.

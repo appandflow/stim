@@ -1,3 +1,4 @@
+import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
 import { EventEmitter } from 'node:events';
@@ -391,6 +392,7 @@ describe('macOS build placement and promotion', () => {
       const previous = record();
       writeWorkspaceState(root, { macos: previous });
       const first = await buildMacosOperation(testContext(), root, { remoteBuild: 'local' });
+      expect(parseWorkspaceLink(first.links.workspace)).toMatchObject({ platform: 'macos' });
       expect(first.build).toMatchObject({ state: 'ok', builtOn: 'here' });
       expect(readFileSync(first.executable, 'utf8')).toBe('local');
       expect(readWorkspaceState(root)?.macos).toEqual(previous);

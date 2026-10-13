@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test } from 'vitest';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
-import { workspaceLinks } from '../devices/stim-desktop.ts';
+import { workspaceId, withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
+import { workspaceLinks, workspaceShareURL } from '../devices/stim-desktop.ts';
 
 const installed = () => true;
 let home: string;
@@ -52,4 +54,23 @@ test('a device run names its platform and nondefault slot, including macOS', asy
 
 test('no link when no app on this Mac opens Stim links', async () => {
   expect(await workspaceLinks('/w', { platform: 'web' }, () => false)).toBeUndefined();
+});
+
+test('API share URLs use the caller home even when no Desktop handles links', async () => {
+  expect(await workspaceLinks(root, undefined, () => false)).toBeUndefined();
+  const firstContext = testContext({ home: join(home, 'first'), projectRoot: root });
+  const contexts = [firstContext, testContext({ home: join(home, 'second'), projectRoot: root })];
+  const links = await Promise.all(
+    contexts.map((context) =>
+      withAmbientContext(context, () => workspaceShareURL(root, { platform: 'android' }, context.signal)),
+    ),
+  );
+  const parsed = links.map(parseWorkspaceLink);
+  expect(parsed[0]?.machine).not.toBe(parsed[1]?.machine);
+  for (const link of parsed)
+    expect(link).toMatchObject({ workspace: workspaceId(realpathSync(root)), platform: 'android' });
+  expect(await withAmbientContext(firstContext, () => workspaceShareURL(root, { platform: 'android' }))).toBe(links[0]);
+  expect(links.every((link) => link.startsWith('https://stim.appandflow.com/open?') && !link.includes(root))).toBe(
+    true,
+  );
 });

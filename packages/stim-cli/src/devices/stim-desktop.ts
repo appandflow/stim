@@ -91,10 +91,21 @@ export async function workspaceLinks(
   handlesLinks: () => boolean | Promise<boolean> = stimDesktopHandlesLinks,
 ): Promise<WorkspaceLinks | undefined> {
   if (!(await handlesLinks())) return undefined;
+  return { desktop: await workspaceShareURL(root, target) };
+}
+
+/** A share URL for the canonical workspace in this Stim home, usable by its already-paired phone or Desktop. */
+export async function workspaceShareURL(
+  root: string,
+  target?: { platform: 'ios' | 'android' | 'macos' | 'web'; slot?: string },
+  signal?: AbortSignal,
+): Promise<string> {
   const canonical = await realpath(root);
-  return {
-    desktop: sharedWorkspaceURL({ machine: await ensureHomeIdentity(), workspace: workspaceId(canonical), ...target }),
-  };
+  return sharedWorkspaceURL({
+    machine: await ensureHomeIdentity(signal),
+    workspace: workspaceId(canonical),
+    ...target,
+  });
 }
 
 export function workspaceLinkLine(links: WorkspaceLinks): string {

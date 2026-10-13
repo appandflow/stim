@@ -5,6 +5,7 @@ import { loadCacheProvider } from '@stim-cli/cache';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
+import { workspaceShareURL } from '../../devices/stim-desktop.ts';
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../../engine/build-progress.ts';
@@ -48,6 +49,7 @@ export interface AndroidBuildFacts {
   ccache: CcacheActivity;
   durationMs: number;
   logs: { dir: string };
+  links: { workspace: string };
 }
 
 const note = (line: string) => console.error(line);
@@ -208,6 +210,13 @@ export async function buildAndroidOperation(
           artifact.providerName,
         );
         if (uploaded) phase('cache', uploaded.line);
+        const links = {
+          workspace: await workspaceShareURL(
+            root,
+            { platform: 'android' },
+            runCancellationSignal(context) ?? context.signal,
+          ),
+        };
         throwIfCancelled(runCancellationSignal(context), 'Android build');
         record.appPath = apkPath;
         record.bundleId = artifact.androidPackage;
@@ -233,6 +242,7 @@ export async function buildAndroidOperation(
           ccache: artifact.ccache,
           durationMs: Date.now() - started,
           logs: { dir: logs },
+          links,
         };
       } catch (error) {
         const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
+import { workspaceShareURL } from '../devices/stim-desktop.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { cancelledError, throwIfCancelled } from '../cancellation.ts';
@@ -28,6 +29,7 @@ export interface MacosBuildFacts {
   executable: string;
   build: MacosBuild;
   logs: { dir: string };
+  links: { workspace: string };
 }
 
 const note = (line: string) => console.error(line);
@@ -95,9 +97,25 @@ export async function buildMacosOperation(
         });
         throwIfCancelled(runCancellationSignal(context), 'macOS build');
         const executable = realpathSync(join(bundle, 'Contents', 'MacOS', recipe.product));
+        const links = {
+          workspace: await workspaceShareURL(
+            root,
+            { platform: 'macos' },
+            runCancellationSignal(context) ?? context.signal,
+          ),
+        };
+        throwIfCancelled(runCancellationSignal(context), 'macOS build');
         build.state = 'ok';
         succeeded = true;
-        return { product: recipe.product, bundle, bundleId: recipe.bundleId, executable, build, logs: { dir: logs } };
+        return {
+          product: recipe.product,
+          bundle,
+          bundleId: recipe.bundleId,
+          executable,
+          build,
+          logs: { dir: logs },
+          links,
+        };
       } catch (error) {
         const failure = runCancellationSignal(context)?.aborted ? cancelledError('macOS build', error) : error;
         build.state = 'failed';
