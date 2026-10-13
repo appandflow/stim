@@ -1,5 +1,6 @@
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { StimContext } from '@stim-cli/core';
-import { constants, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
@@ -92,170 +93,184 @@ export async function buildAndroidOperation(
       ? null
       : (options.abi ?? (plan.plan.build.targetAbiOnly && !plan.plan.build.release ? hostSystemImageArch() : null));
   await ensureWorkspaceStorageSafely(root, { note });
-  return withNativeBuildRun(
-    context,
-    root,
-    { command: 'build', platform: 'android' },
-    async (claim) => {
-      if (!getProject(root)) upsertProject(root, {});
-      recordWorkspaceUse(root);
-      const started = Date.now();
-      const startedAt = new Date(started).toISOString();
-      const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
-      const logs = workspaceLogsDir(root);
-      const buildLog = join(logs, 'build-artifact-android.ndjson');
-      const writer = tapBuildLog(
-        createNdjsonWriter(buildLog, { truncate: true, fields: { platform: 'android' } }),
-        progress,
-      );
-      setRemoteLogSink((entry) => writer.write(entry));
-      const projectKey = statsProjectKey({
-        root,
-        commonDir: settingsContext.gitCommonDir,
-        repoRoot: settingsContext.repoRoot,
-      });
-      const stats = createRunRecorder({
-        platform: 'android',
-        write: recordRunStats,
-        now: Date.now,
-        note,
-        phases: () => progress.durations(),
-        deviceSetup: () => false,
-      });
-      stats.setProject(projectKey);
-      progress.estimate(projectKey);
-      const record: AndroidRecord = { buildMachine: placement.selected, configuration: plan.plan.build.variant };
-      let artifact: PreparedAndroidArtifact | undefined;
-      let directory: string | undefined;
-      let succeeded = false;
-      const finishRecord = (status: string, errorCode?: string) =>
-        persistLastBuild({
+  return withDrainingCancellation(context, context.signal, () =>
+    withNativeBuildRun(
+      context,
+      root,
+      { command: 'build', platform: 'android' },
+      async (claim) => {
+        if (!getProject(root)) upsertProject(root, {});
+        recordWorkspaceUse(root);
+        const started = Date.now();
+        const startedAt = new Date(started).toISOString();
+        const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, note });
+        const logs = workspaceLogsDir(root);
+        const buildLog = join(logs, 'build-artifact-android.ndjson');
+        const writer = tapBuildLog(
+          createNdjsonWriter(buildLog, { truncate: true, fields: { platform: 'android' } }),
+          progress,
+        );
+        setRemoteLogSink((entry) => writer.write(entry));
+        const projectKey = statsProjectKey({
           root,
-          record,
-          startedAt,
-          durationMs: Date.now() - started,
-          status,
-          errorCode,
-          out: note,
-          recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
+          commonDir: settingsContext.gitCommonDir,
+          repoRoot: settingsContext.repoRoot,
         });
-      try {
-        const acquired = await acquireAndroidArtifact(
-          {
-            context,
+        const stats = createRunRecorder({
+          platform: 'android',
+          write: recordRunStats,
+          now: Date.now,
+          note,
+          phases: () => progress.durations(),
+          deviceSetup: () => false,
+        });
+        stats.setProject(projectKey);
+        progress.estimate(projectKey);
+        const record: AndroidRecord = { buildMachine: placement.selected, configuration: plan.plan.build.variant };
+        let artifact: PreparedAndroidArtifact | undefined;
+        let directory: string | undefined;
+        let built: AndroidBuildFacts | null = null;
+        let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
+        const finishRecord = (status: string, errorCode?: string) =>
+          persistLastBuild({
             root,
-            buildLog,
-            writer,
-            recipe: integration.artifact({
+            record,
+            startedAt,
+            durationMs: Date.now() - started,
+            status,
+            errorCode,
+            out: note,
+            recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
+          });
+        try {
+          const acquired = await acquireAndroidArtifact(
+            {
+              context,
               root,
               buildLog,
               writer,
-              settings,
+              recipe: integration.artifact({
+                root,
+                buildLog,
+                writer,
+                settings,
+                buildPlan: plan.plan.build,
+                target: { abi },
+                phase,
+                out: note,
+                step: progress.step,
+                estimates: () => readRunEstimates({ projectKey, platform: 'android' }),
+              }),
+              targetOffloadRefusal: null,
               buildPlan: plan.plan.build,
-              target: { abi },
-              phase,
-              out: note,
-              step: progress.step,
-              estimates: () => readRunEstimates({ projectKey, platform: 'android' }),
-            }),
-            targetOffloadRefusal: null,
-            buildPlan: plan.plan.build,
-            cacheProviderConfig: plan.plan.cacheProviderConfig,
-            requestedBuildCache: options.buildCache !== false,
-            easBuild: null,
-            androidPackage: (await integration.appIds()).androidPackage,
-            record,
-            maxBuilds: getConcurrencyLimits().maxBuilds,
-            progress: {
-              phase,
-              out: note,
-              stats,
-              step: progress.step,
-              miss: progress.miss,
-              hit: progress.hit,
-              place: progress.place,
-              waitingOn: progress.waitingOn,
-              waitingFor: progress.waitingFor,
+              cacheProviderConfig: plan.plan.cacheProviderConfig,
+              requestedBuildCache: options.buildCache !== false,
+              easBuild: null,
+              androidPackage: (await integration.appIds()).androidPackage,
+              record,
+              maxBuilds: getConcurrencyLimits().maxBuilds,
+              progress: {
+                phase,
+                out: note,
+                stats,
+                step: progress.step,
+                miss: progress.miss,
+                hit: progress.hit,
+                place: progress.place,
+                waitingOn: progress.waitingOn,
+                waitingFor: progress.waitingFor,
+              },
             },
-          },
-          {
-            acquireLock: acquireBuildLock,
-            releaseLock: releaseBuildLock,
-            waitForBuild,
-            easAuth: checkEasAuth,
-            resolveRemoteBuild: resolveRemote,
-            uploadRemoteBuild: uploadRemote,
-            loadCacheProviderModule: loadCacheProvider,
-            acquireSlot: acquireBuildSlot,
-            releaseSlot: releaseBuildSlot,
-            now: Date.now,
-          },
-        );
-        if (!acquired.ok)
-          throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure, {
-            details: acquired.failure.extra,
-          });
-        artifact = acquired.artifact;
-        throwIfCancelled(runCancellationSignal(context), 'Android build');
-        if (!artifact.apkPath)
-          throw Object.assign(new Error('The Android build produced no APK.'), { code: 'STIM_BUILD_FAILED' });
-        const artifacts = join(workspaceDir(root), 'artifacts');
-        mkdirSync(artifacts, { recursive: true });
-        directory = mkdtempSync(join(artifacts, 'android-'));
-        const apkPath = join(directory, 'app.apk');
-        copyFileSync(artifact.apkPath, apkPath, constants.COPYFILE_FICLONE);
-        await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);
-        const uploaded = providerUploadOutcome(
-          artifact.providerUpload ? await artifact.providerUpload : null,
-          artifact.providerName,
-        );
-        if (uploaded) phase('cache', uploaded.line);
-        const links = {
-          workspace: await workspaceShareURL(
-            root,
-            { platform: 'android' },
-            runCancellationSignal(context) ?? context.signal,
-          ),
-        };
-        throwIfCancelled(runCancellationSignal(context), 'Android build');
-        record.appPath = apkPath;
-        record.bundleId = artifact.androidPackage;
-        finishRecord('ok');
-        stats.record({
-          failed: false,
-          cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
-          durationMs: Date.now() - started,
-          offloadedTo: record.offloadedTo,
-          waited: artifact.waitedForBuild,
-        });
-        succeeded = true;
-        return {
-          apkPath,
-          androidPackage: artifact.androidPackage,
-          variant: plan.plan.build.variant ?? 'debug',
-          abi,
-          cacheKey: record.cacheKey ?? null,
-          cacheHit: record.cacheHit ?? false,
-          cacheSkipped: record.cacheSkipped ?? false,
-          buildMachine: placement.selected,
-          builtOn: record.builtOn ?? null,
-          ccache: artifact.ccache,
-          durationMs: Date.now() - started,
-          logs: { dir: logs },
-          links,
-        };
-      } catch (error) {
-        const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
-        finishRecord('failed', (failure as { code?: string }).code);
-        stats.record({ failed: true, durationMs: Date.now() - started });
-        throw failure;
-      } finally {
-        await artifact?.release();
-        if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
-        writer.close();
-        progress.clear();
-      }
-    },
-    { write: (line) => phase('lock', line) },
+            {
+              acquireLock: acquireBuildLock,
+              releaseLock: releaseBuildLock,
+              waitForBuild,
+              easAuth: checkEasAuth,
+              resolveRemoteBuild: resolveRemote,
+              uploadRemoteBuild: uploadRemote,
+              loadCacheProviderModule: loadCacheProvider,
+              acquireSlot: acquireBuildSlot,
+              releaseSlot: releaseBuildSlot,
+              now: Date.now,
+            },
+          );
+          if (!acquired.ok)
+            throw Object.assign(new Error(acquired.failure.message ?? 'Android build failed.'), acquired.failure, {
+              details: acquired.failure.extra,
+            });
+          artifact = acquired.artifact;
+          throwIfCancelled(runCancellationSignal(context), 'Android build');
+          if (!artifact.apkPath)
+            throw Object.assign(new Error('The Android build produced no APK.'), { code: 'STIM_BUILD_FAILED' });
+          const artifacts = join(workspaceDir(root), 'artifacts');
+          await fs.mkdir(artifacts, { recursive: true });
+          directory = await fs.mkdtemp(join(artifacts, 'android-'));
+          const apkPath = join(directory, 'app.apk');
+          // Node's fs.copyFile has no AbortSignal; settle the copy before removing its destination.
+          await fs.copyFile(artifact.apkPath, apkPath, constants.COPYFILE_FICLONE);
+          throwIfCancelled(runCancellationSignal(context), 'Android build');
+          await finishAndroidUpload(artifact.uploadPending, artifact.remote, phase);
+          const uploaded = providerUploadOutcome(
+            artifact.providerUpload ? await artifact.providerUpload : null,
+            artifact.providerName,
+          );
+          if (uploaded) phase('cache', uploaded.line);
+          const links = {
+            workspace: await workspaceShareURL(
+              root,
+              { platform: 'android' },
+              runCancellationSignal(context) ?? context.signal,
+            ),
+          };
+          throwIfCancelled(runCancellationSignal(context), 'Android build');
+          record.appPath = apkPath;
+          record.bundleId = artifact.androidPackage;
+          built = {
+            apkPath,
+            androidPackage: artifact.androidPackage,
+            variant: plan.plan.build.variant ?? 'debug',
+            abi,
+            cacheKey: record.cacheKey ?? null,
+            cacheHit: record.cacheHit ?? false,
+            cacheSkipped: record.cacheSkipped ?? false,
+            buildMachine: placement.selected,
+            builtOn: record.builtOn ?? null,
+            ccache: artifact.ccache,
+            durationMs: Date.now() - started,
+            logs: { dir: logs },
+            links,
+          };
+        } catch (error) {
+          const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
+          finishRecord('failed', (failure as { code?: string }).code);
+          stats.record({ failed: true, durationMs: Date.now() - started });
+          throw failure;
+        } finally {
+          await artifact?.release();
+          failureAfterCleanup =
+            built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
+          if (failureAfterCleanup) {
+            finishRecord('failed', failureAfterCleanup.code);
+            stats.record({ failed: true, durationMs: Date.now() - started });
+          }
+          if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
+          if (built && !failureAfterCleanup) {
+            finishRecord('ok');
+            stats.record({
+              failed: false,
+              cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+              durationMs: Date.now() - started,
+              offloadedTo: record.offloadedTo,
+              waited: artifact?.waitedForBuild,
+            });
+          }
+          writer.close();
+          progress.clear();
+        }
+        if (failureAfterCleanup) throw failureAfterCleanup;
+        return built;
+      },
+      { write: (line) => phase('lock', line) },
+    ),
   );
 }
