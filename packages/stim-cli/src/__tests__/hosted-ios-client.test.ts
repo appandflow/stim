@@ -48,6 +48,7 @@ const loopbackAvailable = await new Promise<boolean>((resolve) => {
 const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../offload/tailnet.ts')>()),
+  realIo: { ...(await importOriginal<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
   pinnedEndpoint: () =>
     tailnet.changed
       ? 'the pinned node changed; run stim doctor'

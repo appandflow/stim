@@ -139,7 +139,10 @@ case and port; whitespace is not normalized. An unmatched entry excludes nothing
 so copy the configured entry or use Desktop's switches. Both lists default to `[]`.
 Each pool must retain local or at least one configured remote already approved for
 that role. An offline approved member still counts as configured, but must be
-reachable and compatible to take a run. Settings also refuses removing the last
+reachable and compatible to take a run. A remote that Tailscale reports as running
+an OS other than macOS, such as a Linux machine, never counts for the device pool
+and is never a hosting candidate, since it cannot host; an unknown OS counts as
+able to host. Settings also refuses removing the last
 member from `remote.machines`.
 
 Named placement and `--remote-build local` bypass membership. Devices stay local

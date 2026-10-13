@@ -607,7 +607,8 @@ members from new automatic placement only; an excluded local member is never a
 fallback. Existing sessions keep their owner and named placement bypasses the pool.
 See stim guide settings for separate build/device membership controls.
 
-Otherwise Stim asks every approved remote.machines host in parallel, with a
+Otherwise Stim asks every approved remote.machines host in parallel, skipping
+one that tailscale status reports as running an OS other than macOS, with a
 3-second probe timeout and this run's model/runtime or image/profile selectors.
 A compatible choice, no declined reason, normal memory pressure and available
 capacity are required. With a free local slot, a host must report a lower load;

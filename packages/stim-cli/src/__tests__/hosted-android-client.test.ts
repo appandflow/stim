@@ -37,6 +37,7 @@ import { runReload } from '../commands/reload.ts';
 
 vi.mock('../offload/tailnet.ts', async (original) => ({
   ...(await original<typeof import('../offload/tailnet.ts')>()),
+  realIo: { ...(await original<typeof import('../offload/tailnet.ts')>()).realIo, status: () => null },
   pinnedEndpoint: () => ({ url: 'ws://127.0.0.1:12345', host: 'mini', servername: 'mini' }),
 }));
 const session = '12345678-1234-1234-1234-123456789abc';

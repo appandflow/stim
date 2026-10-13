@@ -65,7 +65,9 @@ public enum AppPreferences {
 
     public static let discoveryLaunches = "discovery.launches"
     public static let discoveryLastShown = "discovery.lastShown"
-    public static let discoverySeenPeers = "discovery.seenPeers"
+    /// The build peers (Macs and Linux machines) already seen. A new key, since the older `discovery.seenPeers` held only
+    /// Macs, so the first read after an upgrade records a fresh baseline instead of announcing every Linux peer.
+    public static let discoverySeenPeers = "discovery.seenBuildPeers"
     public static let discoveryMacSuggested = "discovery.macSuggested"
     public static let discoveryMigrations = "discovery.migrations"
     public static func discovery(_ type: DiscoveryType) -> String { "discovery.\(type.rawValue)" }

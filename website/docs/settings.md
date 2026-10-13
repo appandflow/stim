@@ -329,8 +329,9 @@ from this requester's automatic build and simulator/emulator placement. Both def
 to `[]`; use `local` or exact `remote.machines` entries, including case and port.
 Names are not trimmed; unmatched entries exclude nothing. The settings preserve
 pairing, running work and explicit placement, and refuse disabling or removing the
-last configured, approved member of either pool. Excluding local prevents local
-fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
+last configured, approved member of either pool. A remote that Tailscale reports as
+running an OS other than macOS never counts for the device pool. Excluding local
+prevents local fallback. See [automatic machine pools](./remote-machines.md#automatic-machine-pools).
 
 `remote.machines` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name and optional serve port (default 7443).

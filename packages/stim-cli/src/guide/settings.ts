@@ -730,8 +730,10 @@ case and port. Names are not trimmed; unmatched entries exclude nothing. Copy th
 configured name or use Desktop's switches. Each pool
 must retain local or at least one configured remote already approved for that role.
 Offline approved members count as configured members, but placement still requires
-an available compatible host. Settings refuses removing the last member, including
-removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+an available compatible host. A remote that tailscale status reports as running an
+OS other than macOS is never a device-pool member or hosting candidate, since it
+cannot host; an unknown OS counts as able to host. Settings refuses removing the
+last member, including removing it from remote.machines. Disabling does not unpair a machine or stop a run.
 
 These settings apply only to new automatic work requested by this machine. They do not
 change which work other requesters send to a host. Named placement and --remote-build
