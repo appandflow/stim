@@ -598,7 +598,9 @@ existing workspace and archive behavior.
 ## Add a remote machine
 
 **Settings > Remote Machines** also shows **Builds enabled** and **Simulators enabled**
-for this Mac, in a card under **This Machine**, and on each remote machine's card. These switches control new automatic placement
+for this Mac, in a card under **This Machine**, and on each remote machine's card; a
+machine Tailscale reports as Linux shows only **Builds enabled**, since it cannot
+host. These switches control new automatic placement
 requested by this Mac without unpairing or stopping anything. Each pool retains at
 least one local or configured, approved remote member. Explicit placement is unchanged.
 See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for CLI controls.
@@ -683,7 +685,9 @@ unaffected. Suggestions keep their own once-per-day limit.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
 machine wizard. After the same usage threshold, **Machines > This Mac** shows a
-card when no remote machine is configured. With another machine on the tailnet it
-offers **Add Remote Machine…**; otherwise it explains how to connect both Macs
-with Tailscale. The existing **Link Machine** button is also available. Build
-machines are not a step in the first-run setup guide.
+card when no remote machine is configured. With another Mac or Linux machine
+online on the tailnet it offers **Add Remote Machine…**; otherwise it explains
+how to connect both machines with Tailscale. The remote machines tip also counts
+an online Linux peer; the hosted simulators tip counts only Macs. The existing
+**Link Machine** button is also available. Build machines are not a step in the
+first-run setup guide.

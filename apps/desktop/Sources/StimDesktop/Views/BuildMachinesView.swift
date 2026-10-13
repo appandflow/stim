@@ -39,6 +39,7 @@ struct BuildMachinesView: View {
       remove: { entry in removing = entry },
       poolDisabled: model.poolDisabled,
       setPool: { role, machine, enabled in Task { await model.setPool(role, machine: machine, enabled: enabled) } },
+      hostsSimulators: { !model.linuxNames.contains(OffloadMachines.name($0)) },
       hosted: { hostedDevices(on: $0, in: store.payload?.environments ?? []) },
       stopHosted: { entry, devices in
         var steps: [StimCommand] = []
@@ -64,6 +65,7 @@ struct BuildMachinesView: View {
       }
     }
     .task { await model.load(checkout: checkout) }
+    .task { await model.refreshTailnet() }
     .task {
       while !Task.isCancelled {
         server.reloadDevices()
@@ -189,6 +191,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   var remove: (String) -> Void
   var poolDisabled: [String: [String]]? = nil
   var setPool: (String, String, Bool) -> Void = { _, _, _ in }
+  var hostsSimulators: (String) -> Bool = { _ in true }
   var hosted: (String) -> [HostedOnMachine] = { _ in [] }
   var stopHosted: (String, [HostedOnMachine]) -> Void = { _, _ in }
   var showsThisMac = false
@@ -263,7 +266,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
   @ViewBuilder private func poolToggles(_ machine: String) -> some View {
     if let poolDisabled {
       HStack(spacing: Space.xxxl) {
-        ForEach(["build", "device"], id: \.self) { role in
+        ForEach(hostsSimulators(machine) ? ["build", "device"] : ["build"], id: \.self) { role in
           let title = role == "build" ? "Builds enabled" : "Simulators enabled"
           HStack(spacing: Space.md) {
             Text(title).font(.stim(.callout)).foregroundStyle(Palette.secondary)

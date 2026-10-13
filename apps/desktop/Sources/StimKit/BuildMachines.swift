@@ -115,6 +115,14 @@ public enum Tailnet {
     return parseNode(node)
   }
 
+  /// The online peers that can build for this Mac, Macs and Linux machines alike; nil when Tailscale is not running.
+  public static func buildPeers(statusJSON: Data) -> [TailnetMac]? {
+    guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any],
+      status["BackendState"] as? String == "Running"
+    else { return nil }
+    return peers(statusJSON: statusJSON).filter(\.online).map(\.mac)
+  }
+
   /// The macOS and Linux peers the wizard can add; Windows and other systems cannot be remote machines yet.
   public static func peers(statusJSON: Data) -> [Peer] {
     guard let status = try? JSONSerialization.jsonObject(with: statusJSON) as? [String: Any] else { return [] }

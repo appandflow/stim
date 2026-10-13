@@ -123,7 +123,8 @@ Android also accepts these backends. The [macOS prototype](./macos.md) also supp
 ## Automatic machine pools
 
 In **Settings > Remote Machines**, **Builds enabled** and **Simulators enabled**
-control this machine and each configured remote independently. All members start enabled.
+control this machine and each configured remote independently; a remote that Tailscale reports
+as Linux shows only **Builds enabled**. All members start enabled.
 Turning a switch off keeps pairing and active builds or sessions intact. It only
 changes new automatic work requested by this machine; other requesters keep their own policy.
 
