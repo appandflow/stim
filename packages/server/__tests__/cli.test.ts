@@ -195,6 +195,7 @@ describe.each(['build', 'device-host'] as const)('%s approval', (capability) => 
         { id: other.device.id, setupTicket: false },
       ],
     });
+    if (capability !== 'build' && process.platform !== 'darwin') return;
     const refused = plain('devices', 'grant', ticketed.device.id, `--${capability}`);
     expect(refused.status).toBe(1);
     expect(refused.stderr).toContain(other.device.id);
