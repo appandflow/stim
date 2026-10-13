@@ -242,13 +242,34 @@ async function pair(port: number, json: boolean, control: boolean): Promise<void
   if (note) console.error(note);
 }
 
+function nodeOf(client: PairedDevice): string | null {
+  return client.identity.kind === 'tailnet' ? client.identity.nodeId : null;
+}
+
+function ambiguousGrant(id: string): string {
+  const registries = [
+    { capability: 'build', clients: readBuildClients() },
+    { capability: 'device-host', clients: readDeviceHostClients() },
+  ];
+  const registry = registries.find(({ clients }) => clients.some((client) => client.id === id));
+  const target = registry?.clients.find((client) => client.id === id);
+  const pending = (registry?.clients ?? []).filter(
+    (client) => target && client.pendingUntil !== undefined && nodeOf(client) === nodeOf(target),
+  );
+  return [
+    `${id} is one of several pending ${registry?.capability ?? 'access'} requests from the same Mac, and any process on this Mac can file one in its name:`,
+    ...pending.map((client) => `  ${describe(client)}`),
+    `The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${registry?.capability ?? 'build'}\`); the name and request time above are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then grant that id.`,
+  ].join('\n');
+}
+
 function describe(device: PairedDevice): string {
   const from =
     device.identity.kind === 'local'
       ? 'this machine'
       : `${device.identity.nodeName || device.identity.nodeId}${device.identity.user ? ` (${device.identity.user})` : ''}`;
   if (device.pendingUntil !== undefined) {
-    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}`;
+    return `${device.id}  ${device.name}  pending ${device.requestedCapability ?? 'build'}  from ${from}  requested ${device.pairedAt}  lapses ${device.pendingUntil}  ${device.setupTicketHash ? 'with setup ticket' : 'no setup ticket'}`;
   }
   const scope = device.capabilities.includes('device-host')
     ? 'device-host'
@@ -340,28 +361,29 @@ async function runService(
   }
 }
 
-async function main(): Promise<void> {
-  if (process.argv[2] === 'setup') {
-    if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
-    const controller = new AbortController();
-    const interrupt = () => controller.abort();
-    process.on('SIGINT', interrupt);
-    process.on('SIGTERM', interrupt);
-    const ticket = process.env.STIM_SETUP_TICKET;
-    delete process.env.STIM_SETUP_TICKET;
-    try {
-      process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
-        ...defaultSetupDeps(),
-        ticket,
-        signal: controller.signal,
-      });
-    } finally {
-      process.off('SIGINT', interrupt);
-      process.off('SIGTERM', interrupt);
-    }
-    if (controller.signal.aborted) process.exit(1);
-    return;
+async function setup(): Promise<void> {
+  if (process.argv.slice(3).some((arg) => arg === '--help' || arg === '-h')) return void console.log(USAGE);
+  const controller = new AbortController();
+  const interrupt = () => controller.abort();
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', interrupt);
+  const ticket = process.env.STIM_SETUP_TICKET;
+  delete process.env.STIM_SETUP_TICKET;
+  try {
+    process.exitCode = await runSetup(process.argv.slice(3), pkg.version, {
+      ...defaultSetupDeps(),
+      ticket,
+      signal: controller.signal,
+    });
+  } finally {
+    process.off('SIGINT', interrupt);
+    process.off('SIGTERM', interrupt);
   }
+  if (controller.signal.aborted) process.exit(1);
+}
+
+async function main(): Promise<void> {
+  if (process.argv[2] === 'setup') return setup();
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
@@ -424,6 +446,7 @@ async function main(): Promise<void> {
       fail('Hosting simulators needs a Mac. This machine takes build requests only; approve them with --build.');
     const capabilities = scope === 'build' || scope === 'device-host' ? [scope] : capabilitiesFor(scope === 'control');
     const outcome = grantDevice(arg, [...capabilities]);
+    if (outcome === 'ambiguous') fail(ambiguousGrant(arg));
     if (outcome === 'unknown') {
       fail(
         `no paired device ${arg}, and no pending access request with that id (requests lapse after 15 minutes). Run \`stim-server devices\` to list them.`,
@@ -464,14 +487,24 @@ async function main(): Promise<void> {
     }
     if (values.json) {
       const listed = devices.map(
-        ({ id, name, identity, pairedAt, lastSeenAt, capabilities, pendingUntil, requestedCapability }) => ({
+        ({
           id,
           name,
           identity,
           pairedAt,
           lastSeenAt,
           capabilities,
-          ...(pendingUntil ? { pendingUntil } : {}),
+          pendingUntil,
+          requestedCapability,
+          setupTicketHash,
+        }) => ({
+          id,
+          name,
+          identity,
+          pairedAt,
+          lastSeenAt,
+          capabilities,
+          ...(pendingUntil ? { pendingUntil, setupTicket: setupTicketHash !== undefined } : {}),
           ...(requestedCapability ? { requestedCapability } : {}),
         }),
       );

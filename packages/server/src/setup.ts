@@ -154,8 +154,11 @@ export function selectGrants(
     );
     const approved = candidates.filter((r) => r.pendingUntil === undefined);
     if (approved.length > 1 || (approved.length === 0 && candidates.length > 1)) {
+      const ids = (approved.length > 1 ? approved : candidates).map(
+        (r) => `${r.id} (${r.name}, requested ${r.pairedAt})`,
+      );
       throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket; refusing to choose. Revoke the extra request and rerun.`,
+        `More than one ${capability} request matches this ticket: ${ids.join(', ')}; refusing to choose. The requesting Mac printed its own request id in its remedy (\`stim-server devices grant <id> --${capability}\`); the name and request time are whatever the requester sent. Revoke every other request with \`stim-server devices revoke <id>\`, then rerun.`,
       );
     }
     const record = approved[0] ?? candidates[0];
@@ -978,7 +981,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           }
         }
         if (deps.now() >= Date.parse(opts.expiresAt)) break;
-        if (!approved && deps.grant(record.id, [capability], deps.now()) !== 'granted')
+        if (!approved && deps.grant(record.id, [capability], deps.now(), opts.ticketHash) !== 'granted')
           throw new SetupRefusal(`Request ${record.id} lapsed or changed; rerun with a new request.`);
         journal.granted.push({ capability, id: record.id });
         output.granted.push({ capability, id: record.id, client: { nodeId: opts.nodeId, name: record.name } });

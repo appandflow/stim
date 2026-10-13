@@ -217,7 +217,9 @@ test.each([
 test('selector refuses ambiguous requests and keeps an approved ticket from granting a second record', () => {
   const first = record(),
     second = record({ id: 'second' });
-  expect(() => selectGrants([first, second], match)).toThrow('More than one');
+  expect(() => selectGrants([first, second], match)).toThrow(
+    /More than one build request matches this ticket: build-id .*second .*printed its own request id in its remedy \(`stim-server devices grant <id> --build`\)/,
+  );
   const approved = record({ pendingUntil: undefined, capabilities: ['build'] });
   expect(selectGrants([approved, second], match).map((g) => [g.record.id, g.approved])).toEqual([['build-id', true]]);
 });
