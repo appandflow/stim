@@ -396,6 +396,38 @@ describe('macOS build compatibility', () => {
   });
 });
 
+describe('a worker that is not a Mac', () => {
+  const linux = offer({
+    toolchain: {
+      os: 'linux',
+      arch: 'x64',
+      xcode: null,
+      simulatorSdk: null,
+      macosSdk: null,
+      cocoapods: null,
+      runtimes: [],
+    },
+  }).toolchain;
+  const macos: BuildTarget = {
+    platform: 'macos',
+    local: { stimBuild: 'b1', arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
+  };
+
+  it('refuses iOS and macOS builds with one platform reason instead of every missing Apple tool', () => {
+    expect(toolchainMismatches(IOS, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('linux') }]);
+    expect(toolchainMismatches(macos, linux)).toEqual([{ code: 'platform', reason: expect.stringContaining('macOS') }]);
+  });
+
+  it('still takes Android builds', () => {
+    expect(toolchainMismatches(ANDROID, linux)).toEqual([]);
+  });
+
+  it('judges a stim-server that reports no OS by its tools, as before', () => {
+    const { os: _os, ...unreported } = linux;
+    expect(toolchainMismatches(IOS, unreported).map((problem) => problem.code)).toContain('xcode');
+  });
+});
+
 it('fingerprints the same manifest in any order but detects changed content and executable kind', () => {
   const entries = [
     { path: 'a', kind: 'file', sha256: 'aa' },

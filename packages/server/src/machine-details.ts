@@ -8,7 +8,7 @@ import type { CommandOutcome } from './stim-command.ts';
  * inventory from the payload.
  */
 const GC_DRY_RUN = ['gc', '--json'];
-const DOCTOR = ['doctor', '--json', '--platform', 'ios'];
+const DOCTOR = ['doctor', '--json'];
 
 const MACHINE_DETAILS_TTL_MS = 60_000;
 
@@ -67,7 +67,7 @@ async function runDoctor(
 }
 
 /**
- * The build-machines part of `machine.details`, refreshed with `stim doctor --json --platform ios` in the
+ * The build-machines part of `machine.details`, refreshed with `stim doctor --json` in the
  * background instead of blocking the reply: doctor's offer to an unreachable machine can take about 13 seconds,
  * and the rest of `machine.details` has nothing to do with it. `snapshot` never awaits doctor. It returns the last
  * settled result immediately (with `buildMachinesPending: true` alongside it once that result is `ttlMs` old or

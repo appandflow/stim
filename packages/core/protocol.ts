@@ -899,6 +899,8 @@ export interface CachedBuildArtifact extends BuildArtifactIdentity {
 /** The toolchain a build must match exactly on both machines. */
 export interface BuildToolchain {
   stimBuild: string | null;
+  /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
+  os?: string;
   arch: string;
   xcode: string | null;
   simulatorSdk: string | null;
@@ -1116,7 +1118,7 @@ export interface MachineDetails {
   stats: Record<string, unknown> | null;
   statsError?: string;
   /**
-   * `remoteMachines` from `stim doctor --json --platform ios`; empty when `remote.machines` names none. The reply
+   * `remoteMachines` from `stim doctor --json`; empty when `remote.machines` names none. The reply
    * never waits for doctor: `buildMachines` and `buildMachinesError` are the last result a background doctor run
    * settled, `buildMachinesAt` is when it settled, and `buildMachinesPending` is true while that result is stale
    * (or absent) and a refresh is running. A client that wants the refreshed result asks `machine.details` again.

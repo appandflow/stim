@@ -34,6 +34,8 @@ export interface AndroidRequirements {
 
 /** A remote machine's toolchain, the simulator runtimes it can build for, and its JDK and Android SDK packages. */
 export interface WorkerToolchain extends IosToolchain {
+  /** The OS stim-server runs on, as Node names it; absent from a stim-server older than this field. */
+  os?: string;
   macosSdk: string | null;
   bundler: string | null;
   runtimes: string[];
@@ -262,6 +264,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
   if (native === 'gradle')
     return {
       ...androidToolchain(),
+      os: process.platform,
       xcode: null,
       simulatorSdk: null,
       cocoapods: null,
@@ -276,6 +279,7 @@ export function workerToolchain(rubyVersion: string | null = null, native?: 'xco
   } catch {}
   return {
     ...iosToolchainForRuby(rubyVersion, native),
+    os: process.platform,
     macosSdk: native ? null : (quiet('xcrun', ['--sdk', 'macosx', '--show-sdk-version'])?.trim() ?? null),
     bundler: native ? null : quiet('bundle', ['--version'])?.trim() || null,
     runtimes: iphoneRuntimes(listed),
@@ -306,7 +310,8 @@ export interface OffloadProblem {
     | 'build-tools'
     | 'compile-sdk'
     | 'disk'
-    | 'busy';
+    | 'busy'
+    | 'platform';
   reason: string;
 }
 
@@ -349,6 +354,10 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     });
   }
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];
+  if (worker.os !== undefined && worker.os !== 'darwin') {
+    const name = target.platform === 'ios' ? 'iOS' : 'macOS';
+    return [...out, { code: 'platform', reason: `${worker.os} there, and ${name} builds need a Mac` }];
+  }
   if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;

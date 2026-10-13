@@ -3999,7 +3999,7 @@ describe('machine.details', () => {
     }
     expect(reply).toMatchObject({
       result: {
-        buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json --platform ios' }],
+        buildMachines: [{ machine: 'mini', state: 'approved', args: 'doctor --json' }],
         buildMachinesAt: expect.any(String),
       },
     });
