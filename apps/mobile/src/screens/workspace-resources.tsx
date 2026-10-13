@@ -80,7 +80,7 @@ function ArchiveResources({ archive: id }: { archive: string }) {
           <ListRow title={t`Cache Hits`} value={String(page.totals.cacheHits)} />
         )}
         {page.totals.offloaded === null ? null : (
-          <ListRow title={t`On a Build Machine`} value={String(page.totals.offloaded)} />
+          <ListRow title={t`On a Remote Machine`} value={String(page.totals.offloaded)} />
         )}
         <ListRow title={t`Last Error Count`} value={String(page.totals.errors)} />
         {page.sessions.map(({ agent, durationMs }) => (

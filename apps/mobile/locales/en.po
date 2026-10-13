@@ -1064,10 +1064,6 @@ msgstr "Build failed"
 msgid "Build Logs"
 msgstr "Build Logs"
 
-#: src/screens/mac-status.tsx
-msgid "Build Machines"
-msgstr "Build Machines"
-
 #: src/lib/workspace-view.ts
 msgid "Build output"
 msgstr "Build output"
@@ -1158,8 +1154,8 @@ msgid "Built on {name}"
 msgstr "Built on {name}"
 
 #: src/lib/build-machines.ts
-msgid "Built on a build machine"
-msgstr "Built on a build machine"
+msgid "Built on a remote machine"
+msgstr "Built on a remote machine"
 
 #: src/lib/running-version.ts
 #: src/screens/about.tsx
@@ -1283,8 +1279,8 @@ msgid "Cancelled"
 msgstr "Cancelled"
 
 #: src/screens/mac-status.tsx
-msgid "Cannot check build machines: {machinesError}"
-msgstr "Cannot check build machines: {machinesError}"
+msgid "Cannot check remote machines: {machinesError}"
+msgstr "Cannot check remote machines: {machinesError}"
 
 #: src/screens/build-details.tsx
 msgid "Cannot plan: {planMessage}"
@@ -1350,13 +1346,13 @@ msgstr "Checked {sinceChecked} ago"
 msgid "Checked after the running build."
 msgstr "Checked after the running build."
 
-#: src/screens/mac-status.tsx
-msgid "Checking build machines\\u2026"
-msgstr "Checking build machines\\u2026"
-
 #: src/screens/menu.tsx
 msgid "Checking for updates…"
 msgstr "Checking for updates…"
+
+#: src/screens/mac-status.tsx
+msgid "Checking remote machines\\u2026"
+msgstr "Checking remote machines\\u2026"
 
 #: src/screens/build-details.tsx
 msgid "Checking the next build…"
@@ -1659,8 +1655,8 @@ msgid "Dexing"
 msgstr "Dexing"
 
 #: src/lib/build-machines.ts
-msgid "Different Mac"
-msgstr "Different Mac"
+msgid "Different machine"
+msgstr "Different machine"
 
 #: src/components/connection-banner.tsx
 #: src/components/mac-chip.tsx
@@ -2953,8 +2949,8 @@ msgid "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow con
 msgstr "On {where}, open Stim Desktop, Settings → Phones, and turn on Allow control for this phone. Or run `{command}`{lookup}. Then reconnect."
 
 #: src/screens/workspace-resources.tsx
-msgid "On a Build Machine"
-msgstr "On a Build Machine"
+msgid "On a Remote Machine"
+msgstr "On a Remote Machine"
 
 #: src/lib/format.ts
 msgid "on this Mac"
@@ -3385,6 +3381,10 @@ msgstr "Reloading the {name} app"
 #: src/screens/workspace-detail.tsx
 msgid "Reloading the web page"
 msgstr "Reloading the web page"
+
+#: src/screens/mac-status.tsx
+msgid "Remote Machines"
+msgstr "Remote Machines"
 
 #: src/screens/workspace-resources.tsx
 msgid "Removal"
@@ -4159,8 +4159,8 @@ msgid "Today"
 msgstr "Today"
 
 #: src/screens/mac-status.tsx
-msgid "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
-msgstr "Today: {here} here, {offloaded} on a build machine, {fellBack} here after trying one."
+msgid "Today: {here} here, {offloaded} on a remote machine, {fellBack} here after trying one."
+msgstr "Today: {here} here, {offloaded} on a remote machine, {fellBack} here after trying one."
 
 #: src/screens/workspace-resources.tsx
 msgid "Total"
@@ -4347,8 +4347,8 @@ msgid "Update stim-server to view full archived history and recordings"
 msgstr "Update stim-server to view full archived history and recordings"
 
 #: src/lib/build-machines.ts
-msgid "update the build machine"
-msgstr "update the build machine"
+msgid "update the remote machine"
+msgstr "update the remote machine"
 
 #: src/screens/workspace-work.tsx
 msgid "Upstream"
