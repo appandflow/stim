@@ -1631,6 +1631,15 @@ function agentDeviceOpenCommand(meta, appAlive) {
   return `${prefix} --platform ${platform} ${targetFlag} ${appAlive.simulator?.udid ?? '<missing-run-device>'}`;
 }
 
+function agentDeviceCaptureCommands(meta, appAlive) {
+  return {
+    command: agentDeviceOpenCommand(meta, appAlive),
+    snapshotCommand: meta.promptPolicy === 'minimal-v1' ? agentDeviceCommand(meta, 'snapshot -i') : undefined,
+    appId: 'com.appandflow.trailhead',
+    sessionState: agentDeviceSessionState(meta),
+  };
+}
+
 function nativeMarkerObserved(items, openCommand, expected) {
   let opened = false;
   for (const item of items) {
@@ -2129,11 +2138,7 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
-          agentDeviceLaunch: {
-            command: agentDeviceOpenCommand(meta, appAlive),
-            appId: 'com.appandflow.trailhead',
-            sessionState: agentDeviceSessionState(meta),
-          },
+          agentDeviceLaunch: agentDeviceCaptureCommands(meta, appAlive),
           setup: {
             worktree,
             avdConfig: meta.expectedControlAvdConfig,

@@ -171,6 +171,81 @@ describe('launch crash benchmark', () => {
       launchCrashDiagnosis([{ ...launch, id: 'source', command: 'cat app/_layout.tsx' }, launch, logs], options),
     ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
   });
+  it.each([
+    ['stim', 'ios'],
+    ['stim', 'android'],
+    ['control', 'ios'],
+    ['control', 'android'],
+  ])('attributes runtime error snapshots to the verified %s/%s session', (arm, platform) => {
+    const token = launchCrashToken('runtime-ui');
+    const prefix = 'env AGENT_DEVICE_STATE_DIR=/state AGENT_DEVICE_SESSION=run-1 agent-device';
+    const expected = {
+      command: `${prefix} open com.app --foreground --platform ${platform} ${platform === 'ios' ? '--udid U1' : '--serial emulator-5554'}`,
+      snapshotCommand: `${prefix} snapshot -i`,
+      appId: 'com.app',
+      sessionState: '/state/sessions/run-1',
+    };
+    const launch = {
+      id: 'open',
+      command: expected.command,
+      output: 'Opened: com.app\nSession state: /state/sessions/run-1',
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:01Z',
+      endedAt: '2026-09-04T12:00:05Z',
+    };
+    const snapshot = {
+      id: 'snapshot',
+      command: expected.snapshotCommand,
+      output: `App: com.app\n@e1 [other] "Render Error"\n@e2 [text] "${token}"\n@e3 [other] "RootLayout, _layout.tsx:27:18"`,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:06Z',
+      endedAt: '2026-09-04T12:00:10Z',
+    };
+    const options = { dispatchAt: '2026-09-04T12:00:00Z', token, arm, platform, agentDeviceLaunch: expected };
+    const source = {
+      id: 'source',
+      command: 'cat app/_layout.tsx',
+      output: token,
+      exitCode: 0,
+      startedAt: '2026-09-04T12:00:11Z',
+      endedAt: '2026-09-04T12:00:12Z',
+    };
+    for (const command of [snapshot.command, `/bin/zsh -lc '${snapshot.command}'`]) {
+      expect(launchCrashDiagnosis([launch, { ...snapshot, command }, source], options)).toMatchObject({
+        valid: true,
+        commandId: 'snapshot',
+        errorCaptureCommandId: 'snapshot',
+        dispatchToDiagnosisSeconds: 10,
+      });
+    }
+    for (const replacement of [
+      { ...snapshot, command: snapshot.command.replace('run-1', 'other') },
+      { ...snapshot, command: snapshot.command.replace('/state', '/other') },
+      { ...snapshot, command: `echo '${snapshot.command}'` },
+      { ...snapshot, command: `${snapshot.command} && true` },
+      { ...snapshot, exitCode: 1 },
+      { ...snapshot, exitCode: null },
+      { ...snapshot, output: snapshot.output.replace('App: com.app', 'App: com.other') },
+      { ...snapshot, output: snapshot.output.replace(token, 'other-error') },
+      { ...snapshot, output: snapshot.output.replace('Render Error', 'Details') },
+      { ...snapshot, output: snapshot.output.replace('RootLayout, _layout.tsx:27:18', 'unknown location') },
+      { ...snapshot, startedAt: '2026-09-04T12:00:04Z' },
+    ])
+      expect(launchCrashDiagnosis([launch, replacement], options).valid).toBe(false);
+    expect(
+      launchCrashDiagnosis([launch, snapshot], {
+        ...options,
+        agentDeviceLaunch: { ...expected, snapshotCommand: undefined },
+      }).valid,
+    ).toBe(false);
+    expect(launchCrashDiagnosis([{ ...launch, output: 'Opened: com.other' }, snapshot], options).valid).toBe(false);
+    expect(
+      launchCrashDiagnosis(
+        [launch, { ...source, startedAt: '2026-09-04T12:00:05Z', endedAt: '2026-09-04T12:00:06Z' }, snapshot],
+        options,
+      ),
+    ).toMatchObject({ valid: false, reason: 'launch-crash-pre-capture-command-not-allowed' });
+  });
   it('requires explicit coordinator review for diagnostics falsely flagged as source inspection', () => {
     const diagnostic = {
       id: 'diagnostic',
