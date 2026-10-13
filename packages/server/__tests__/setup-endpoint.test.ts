@@ -8,12 +8,9 @@ import { readBuildClients, readDeviceHostClients } from '../src/registry.ts';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { writeSetupJournal } from '../src/setup-journal.ts';
 import { probeDirectories } from '../src/startup.ts';
-import { whois } from '../src/tailscale.ts';
+import { tailscaleTransport, type TailnetIdentity } from '@stim-cli/transport-tailscale';
 
-vi.mock('../src/tailscale.ts', async (original) => ({
-  ...(await original<typeof import('../src/tailscale.ts')>()),
-  whois: vi.fn<typeof import('../src/tailscale.ts').whois>(),
-}));
+const whois = vi.fn<(address: string) => Promise<TailnetIdentity | null>>();
 vi.mock('../src/startup.ts', async (original) => {
   const actual = await original<typeof import('../src/startup.ts')>();
   return { ...actual, probeDirectories: vi.fn<typeof actual.probeDirectories>(actual.probeDirectories) };
@@ -45,9 +42,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-setup-http-'));
   process.env.STIM_HOME = home;
   server = null;
-  vi.mocked(whois)
-    .mockReset()
-    .mockImplementation(async (_binary, _env, address) => (address === peer ? identity : null));
+  whois.mockReset().mockImplementation(async (address) => (address === peer ? identity : null));
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -64,8 +59,18 @@ async function start(wait = true): Promise<string> {
     name: 'Test Mac',
     stimVersion: '1.2.3',
     serverVersion: '1.2.3',
-    tailscale: null,
-    tailscaleState: { state: 'not-running', backendState: 'Stopped' },
+    transports: [
+      {
+        ...tailscaleTransport({
+          env: process.env,
+          snapshot: { binary: null, state: { state: 'not-running', backendState: 'Stopped' } },
+        }),
+        async identify({ address }) {
+          const found = await whois(address);
+          return found && { id: found.nodeId, name: found.nodeName, user: found.user };
+        },
+      },
+    ],
     env: process.env,
     record: false,
     history: false,
@@ -129,7 +134,7 @@ test('serves only the bound node and exposes toolchain steps only after a build 
   const base = await start();
   const pending = journal();
   writeSetupJournal(hash, pending);
-  vi.mocked(whois).mockResolvedValueOnce({ ...identity, nodeId: 'other' });
+  whois.mockResolvedValueOnce({ ...identity, nodeId: 'other' });
   expect(await refusal(await fetch(`${base}/setup/${hash}`, { headers: { 'x-forwarded-for': '100.64.0.3' } }))).toEqual(
     notFound,
   );
@@ -151,7 +156,7 @@ test('serves only the bound node and exposes toolchain steps only after a build 
 test('coalesces a peer burst into one whois call and refreshes its identity after thirty seconds', async () => {
   const base = await start();
   writeSetupJournal(hash, journal());
-  vi.mocked(whois).mockImplementation(async () => {
+  whois.mockImplementation(async () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     return identity;
   });
@@ -169,7 +174,7 @@ test('coalesces a peer burst into one whois call and refreshes its identity afte
 test('counts node mismatches as failures and blocks repeated identity attempts without revealing journal data', async () => {
   const base = await start();
   writeSetupJournal(hash, journal());
-  vi.mocked(whois).mockResolvedValue({ ...identity, nodeId: 'other' });
+  whois.mockResolvedValue({ ...identity, nodeId: 'other' });
   for (let i = 0; i < 30; i++) {
     expect(await refusal(await fetch(`${base}/setup/${hash}`, { headers }))).toEqual(notFound);
   }
@@ -183,7 +188,7 @@ test('counts node mismatches as failures and blocks repeated identity attempts w
 test('a transient whois failure does not lock out the bound node', async () => {
   const base = await start();
   writeSetupJournal(hash, journal());
-  vi.mocked(whois).mockResolvedValueOnce(null).mockResolvedValue(identity);
+  whois.mockResolvedValueOnce(null).mockResolvedValue(identity);
   expect((await fetch(`${base}/setup/${hash}`, { headers })).status).toBe(404);
   for (let i = 0; i < 40; i++) expect((await fetch(`${base}/setup/${hash}`, { headers })).status).toBe(200);
   expect(whois).toHaveBeenCalledTimes(2);

@@ -17,7 +17,7 @@ import {
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
-import { tailscaleInstall } from '../src/tailscale.ts';
+import { tailscaleInstall } from '@stim-cli/transport-tailscale';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');

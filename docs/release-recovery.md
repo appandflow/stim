@@ -62,6 +62,8 @@ pnpm --filter @stim-cli/cache-s3 publish --access public --tag <dist-tag> --otp 
 pnpm --filter @stim-cli/metro publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter stim publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport-tailscale publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/server publish --access public --tag <dist-tag> --otp <code>
 ```
 

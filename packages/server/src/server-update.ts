@@ -15,7 +15,7 @@ import {
 } from './service.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
-const MAX_PACKAGES = 8;
+const MAX_PACKAGES = 16;
 const MAX_PACKAGE_BYTES = 64 * 1024 ** 2;
 const MAX_UPLOAD_BYTES = 128 * 1024 ** 2;
 const UPLOAD_IDLE_MS = 10 * 60_000;

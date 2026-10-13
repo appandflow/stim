@@ -40,16 +40,17 @@ import {
 import { hostFromExecutable, hostPermissionPanes } from '../src/stim-host.ts';
 import { defaultSetupDeps, runSetup } from '../src/setup.ts';
 import { startServer } from '../src/server.ts';
-import { watchTailscale } from '../src/tailscale-monitor.ts';
+import type { ServeRoute } from '@stim-cli/core/protocol';
+import { loadTransport } from '@stim-cli/transport';
 import {
   findTailscale,
   serveCommand,
   serveRoute,
   tailnetEndpoint,
   readTailscaleStatus,
-  type ServeRoute,
+  isTailscaleTransport,
   type TailscaleState,
-} from '../src/tailscale.ts';
+} from '@stim-cli/transport-tailscale';
 
 const USAGE = `Usage:
   stim-server [--port <n>] [--loopback-only] [--env KEY=VALUE]... [--path-prepend <dir>]...
@@ -128,10 +129,17 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   Object.assign(process.env, env);
 
   const launchdLabel = process.env.XPC_SERVICE_NAME;
-  const tailscaleBinary = findTailscale(env);
-  const tailscale = await readTailscaleStatus(tailscaleBinary, env);
+  const loaded = await loadTransport({
+    reference: '@stim-cli/transport-tailscale',
+    load: () => import('@stim-cli/transport-tailscale'),
+    input: { env, options: {} },
+  });
+  if ('unavailable' in loaded) fail(`the Tailscale transport is unavailable: ${loaded.unavailable}`);
+  if (!isTailscaleTransport(loaded.transport))
+    fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
+  const transport = loaded.transport;
+  const { state: tailscale } = transport.snapshot();
   const stim = bundledStim();
-  const monitor = watchTailscale({ env, initial: { binary: tailscaleBinary, state: tailscale } });
   let server;
   try {
     server = await startServer({
@@ -144,9 +152,7 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       stimVersion: stim.version,
       serverVersion: pkg.version,
       env,
-      tailscale: tailscaleBinary,
-      tailscaleState: tailscale,
-      tailscaleMonitor: monitor,
+      transports: [transport],
       service: {
         label: launchdLabel && !validateLabel(launchdLabel) ? launchdLabel : null,
         node: process.execPath,
@@ -163,10 +169,10 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
   for (const { host, port: bound } of server.addresses) {
     console.log(`listening on ws://${host.includes(':') ? `[${host}]` : host}:${bound}`);
   }
-  const announce = async (binary: string | null, state: TailscaleState) => {
+  const announce = async (state: TailscaleState) => {
     let note = tailscaleNote(state);
     if (state.state === 'running' && state.dnsName) {
-      const route = await serveRoute(binary, env, port, state.ips);
+      const route = await transport.serveRoute(port);
       if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(state.dnsName, route.port)}`);
       note = routeNote(route, port);
       if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
@@ -174,15 +180,15 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     if (note) console.error(note);
   };
   if (!loopbackOnly)
-    monitor.onChange((snapshot, previous) => {
+    transport.monitor?.onChange((snapshot, previous) => {
       const { state } = snapshot;
       if (state.state === 'running') console.log('Tailscale is running.');
       else if (previous.state.state === 'running') console.error('Tailscale stopped.');
-      if (state.state === 'running' || previous.state.state === 'running') void announce(snapshot.binary, state);
+      if (state.state === 'running' || previous.state.state === 'running') void announce(state);
     });
-  if (!loopbackOnly) await announce(tailscaleBinary, tailscale);
+  if (!loopbackOnly) await announce(tailscale);
   const shutdown = () => {
-    monitor.stop();
+    transport.close?.();
     void server
       .close()
       .catch((error: unknown) => {

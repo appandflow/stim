@@ -17,7 +17,18 @@ import { pathToFileURL } from 'node:url';
 
 const repositoryRoot = join(import.meta.dirname, '..');
 const require = createRequire(join(repositoryRoot, 'packages', 'stim-cli', 'package.json'));
-const packageDirs = ['stim-cli', 'core', 'cache', 'cache-s3', 'metro', 'expo-build-cache', 'ci', 'server'];
+const packageDirs = [
+  'stim-cli',
+  'core',
+  'cache',
+  'cache-s3',
+  'metro',
+  'expo-build-cache',
+  'ci',
+  'transport',
+  'transport-tailscale',
+  'server',
+];
 
 for (const directory of packageDirs) {
   const root = join(repositoryRoot, 'packages', directory);
@@ -44,6 +55,8 @@ const entrypoints = [
   ['@stim-cli/cache-s3', 'createS3FileCache', 'cache-s3'],
   ['@stim-cli/expo-build-cache', 'cacheRoot'],
   ['@stim-cli/metro', 'sharedCacheStores'],
+  ['@stim-cli/transport', 'loadTransport', 'server'],
+  ['@stim-cli/transport-tailscale', 'createTransport', 'server'],
   ['stim/cache-manifest', 'readManifest'],
 ];
 

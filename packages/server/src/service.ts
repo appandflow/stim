@@ -38,7 +38,7 @@ import {
   lastLines,
 } from './service-plist.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from './tailscale.ts';
+import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
 import type { StartupState } from './startup.ts';
 
 const LAUNCHCTL_TIMEOUT_MS = 15_000;
@@ -888,7 +888,21 @@ export async function installServer(
         2,
       )}\n`,
     );
-    const dir = join(versions, `${build.version}-${build.stimBuild}-${serverDigest}`);
+    const filesDigest = files.length
+      ? createHash('sha256')
+          .update(
+            files
+              .map((file) => file.sha256)
+              .toSorted()
+              .join('\n'),
+          )
+          .digest('hex')
+          .slice(0, 16)
+      : null;
+    const dir = join(
+      versions,
+      [build.version, build.stimBuild, serverDigest, ...(filesDigest ? [filesDigest] : [])].join('-'),
+    );
     if (!existsSync(dir)) renameSync(staging, dir);
     return { script: join(dir, ...SERVER_SCRIPT), build, dir };
   } finally {

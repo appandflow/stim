@@ -102,8 +102,8 @@ describe('server update requests', () => {
     const entry = { name: 'stim.tgz', size: 1, sha256: sha('x') };
     expect(parseUpdateStart({ packages: [entry, { ...entry, name: 'STIM.tgz' }] })).toContain('listed twice');
     expect(parseUpdateStart({ packages: [{ ...entry, size: 64 * 1024 ** 2 + 1 }] })).toContain('64 MiB');
-    const many = Array.from({ length: 9 }, (_, index) => ({ ...entry, name: `p${index}.tgz` }));
-    expect(parseUpdateStart({ packages: many })).toContain('1 to 8');
+    const many = Array.from({ length: 17 }, (_, index) => ({ ...entry, name: `p${index}.tgz` }));
+    expect(parseUpdateStart({ packages: many })).toContain('1 to 16');
     const large = Array.from({ length: 3 }, (_, index) => ({ ...entry, name: `p${index}.tgz`, size: 50 * 1024 ** 2 }));
     expect(parseUpdateStart({ packages: large })).toContain('128 MiB');
   });

@@ -33,6 +33,8 @@
   "dependencies": {
     "@stim-cli/cache": "workspace:^",
     "@stim-cli/core": "workspace:^",
+    "@stim-cli/transport": "workspace:^",
+    "@stim-cli/transport-tailscale": "workspace:^",
     "stim": "workspace:*",
     "ws": "^8.21.3"
   },

@@ -5,7 +5,7 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
-import type { BuildToolchain } from '@stim-cli/core/protocol';
+import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
@@ -45,9 +45,8 @@ import {
   readRawTailscaleStatus,
   serveRoute,
   tailscaleInstall,
-  type ServeRoute,
   type TailscaleInstall,
-} from './tailscale.ts';
+} from '@stim-cli/transport-tailscale';
 
 const SETUP_MIN_VERSION = '1.16.0';
 

@@ -16,13 +16,19 @@ vi.mock('../src/environment.ts', () => ({
 vi.mock('@stim-cli/core/toolchain', () => ({
   discoverToolchain: (env: NodeJS.ProcessEnv) => ({ env: { ...env }, entries: [] }),
 }));
-vi.mock('../src/tailscale.ts', () => ({
-  findTailscale: () => null,
-  readTailscaleStatus: async () => ({ state: 'unavailable', reason: 'fixture' }),
-}));
-vi.mock('../src/tailscale-monitor.ts', () => ({
-  watchTailscale: () => ({ stop: fixture.monitorStop, onChange: () => {} }),
-}));
+vi.mock('@stim-cli/transport-tailscale', async (original) => {
+  const actual = await original<typeof import('@stim-cli/transport-tailscale')>();
+  const snapshot = { binary: null, state: { state: 'unavailable' as const, reason: 'fixture' } };
+  return {
+    ...actual,
+    createTransport: async ({ env }: { env: NodeJS.ProcessEnv }) =>
+      actual.tailscaleTransport({
+        env,
+        snapshot,
+        monitor: { current: () => snapshot, stop: fixture.monitorStop, onChange: () => () => {} },
+      }),
+  };
+});
 
 test.each([false, true])('SIGTERM exits after close (kept claims: %s)', async (failed) => {
   const home = mkdtempSync(join(tmpdir(), 'stim-server-shutdown-'));
