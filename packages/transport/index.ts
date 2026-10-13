@@ -15,7 +15,6 @@ export interface TransportTraits {
 
 /** The machine a connection comes from, as the transport identifies it. `id` stays the same across renames. */
 export interface TransportIdentity {
-  transport: string;
   id: string;
   name: string;
   user: string;
@@ -65,8 +64,15 @@ function hasFactory(
   return typeof value.createTransport === 'function';
 }
 
+const CAPABILITIES = ['bindAddresses', 'watch', 'identify', 'close'] as const;
+
 function isTransport(value: unknown): value is Transport {
-  return isRecord(value) && typeof value.id === 'string' && isRecord(value.traits);
+  return (
+    isRecord(value) &&
+    typeof value.id === 'string' &&
+    isRecord(value.traits) &&
+    CAPABILITIES.every((name) => value[name] === undefined || typeof value[name] === 'function')
+  );
 }
 
 function moduleCandidate(namespace: unknown): unknown {
@@ -124,14 +130,15 @@ export async function loadTransport({
   timeoutMs?: number;
 }): Promise<LoadTransportResult> {
   let timer: NodeJS.Timeout | undefined;
-  const expired = new Promise<LoadTransportResult>((resolve) => {
-    timer = setTimeout(() => resolve({ unavailable: `${reference} did not load within ${timeoutMs}ms` }), timeoutMs);
+  const expired = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), timeoutMs);
   });
+  const loading = importTransport(reference, load, input).catch((error: unknown) => ({ unavailable: reason(error) }));
   try {
-    return await Promise.race([
-      importTransport(reference, load, input).catch((error: unknown) => ({ unavailable: reason(error) })),
-      expired,
-    ]);
+    const result = await Promise.race([loading, expired]);
+    if (result !== 'timeout') return result;
+    void loading.then((late) => ('transport' in late ? late.transport.close?.() : undefined));
+    return { unavailable: `${reference} did not load within ${timeoutMs}ms` };
   } finally {
     clearTimeout(timer);
   }

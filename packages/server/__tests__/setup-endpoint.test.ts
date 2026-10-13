@@ -67,7 +67,7 @@ async function start(wait = true): Promise<string> {
         }),
         async identify({ address }) {
           const found = await whois(address);
-          return found && { transport: 'tailscale', id: found.nodeId, name: found.nodeName, user: found.user };
+          return found && { id: found.nodeId, name: found.nodeName, user: found.user };
         },
       },
     ],

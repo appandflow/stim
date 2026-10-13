@@ -12,7 +12,7 @@ const SERVER_DIR = fileURLToPath(new URL('..', import.meta.url));
 
 let root: string;
 
-async function packAtUnpublishedVersion(out: string): Promise<void> {
+async function packAtUnpublishedVersion(out: string, change?: string): Promise<void> {
   const packages = workspacePackages(SERVER_DIR);
   if (!packages) throw new Error('This test runs from a Stim checkout.');
   const names = new Set(packages.keys());
@@ -31,6 +31,7 @@ async function packAtUnpublishedVersion(out: string): Promise<void> {
       }
     }
     writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    if (manifest.name === change) writeFileSync(join(work, 'package', 'README.md'), 'changed\n');
     execFileSync('/usr/bin/tar', ['-czf', join(out, file.name), '-C', work, 'package'], {
       env: { ...process.env, COPYFILE_DISABLE: '1' },
     });
@@ -67,5 +68,11 @@ describe('stim-server service update --from against real npm', () => {
     expect(fromRegistry.length).toBeGreaterThan(0);
     const report = execFileSync('npm', ['audit', 'signatures', '--prefix', installed.dir], { encoding: 'utf8' });
     expect(report).toContain(`${fromRegistry.length} packages have verified registry signatures`);
-  }, 300_000);
+
+    const changed = join(root, 'changed');
+    mkdirSync(changed);
+    await packAtUnpublishedVersion(changed, '@stim-cli/transport-tailscale');
+    const reinstalled = await installServer(versions, { from: changed }, process.execPath, () => {});
+    expect(reinstalled.dir).not.toBe(installed.dir);
+  }, 600_000);
 });

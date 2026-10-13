@@ -417,8 +417,8 @@ function peerAddress(request: IncomingMessage): string | null {
   return first || null;
 }
 
-function registryIdentity(identity: TransportIdentity | null): PeerIdentity | null {
-  if (identity?.transport !== 'tailscale') return null;
+function registryIdentity(transport: Transport, identity: TransportIdentity | null): PeerIdentity | null {
+  if (transport.id !== 'tailscale' || !identity) return null;
   return { kind: 'tailnet', nodeId: identity.id, nodeName: identity.name, user: identity.user };
 }
 
@@ -618,7 +618,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const { transports, tailscale } = serverTransports(options);
   async function identifyPeer(request: IncomingMessage, address: string): Promise<PeerIdentity | null> {
     for (const transport of transports) {
-      const identity = registryIdentity((await transport.identify?.({ address, request })) ?? null);
+      const identity = registryIdentity(transport, (await transport.identify?.({ address, request })) ?? null);
       if (identity) return identity;
     }
     return null;
@@ -3084,10 +3084,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     await close().catch(() => undefined);
     throw error;
   }
-  const watched = transports.filter((transport) => transport.watch);
+  const binding = transports.filter((transport) => transport.bindAddresses);
   const listenFailures = new Set<string>();
   const reconcile = async () => {
-    const extra = options.loopbackOnly ? [] : watched.flatMap((transport) => transport.bindAddresses?.() ?? []);
+    const extra = options.loopbackOnly ? [] : binding.flatMap((transport) => transport.bindAddresses?.() ?? []);
     const wanted = new Set([...options.hosts, ...extra]);
     for (const [host, listener] of servers) {
       if (wanted.has(host)) continue;
@@ -3121,11 +3121,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const queueReconcile = () => {
     if (retry) clearTimeout(retry);
     retry = null;
-    if (watched.length) reconciling = reconciling.then(reconcile);
+    if (binding.length) reconciling = reconciling.then(reconcile);
   };
   queueReconcile();
   await reconciling;
-  const stopWatching = watched.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
+  const stopWatching = binding.flatMap((transport) => (transport.watch ? [transport.watch(queueReconcile)] : []));
   let settle!: (state: StartupState) => void;
   const ready = new Promise<StartupState>((resolve) => {
     settle = resolve;

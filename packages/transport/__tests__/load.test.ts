@@ -50,3 +50,28 @@ test('reports a load that never settles as unavailable after the timeout', async
   const result = await loadTransport({ reference: 'fake', load: () => new Promise(() => {}), input, timeoutMs: 20 });
   expect(result).toEqual({ unavailable: 'fake did not load within 20ms' });
 });
+
+test('refuses a transport whose capability is not a function', async () => {
+  const module = {
+    apiVersion: TRANSPORT_API_VERSION,
+    createTransport: () => ({ ...transport, watch: true }),
+  };
+  expect(await load(module)).toEqual({ unavailable: 'fake: createTransport() did not return a transport' });
+});
+
+test('closes a transport that a factory creates after the load timed out', async () => {
+  let finish!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const module = {
+    apiVersion: TRANSPORT_API_VERSION,
+    createTransport: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return { ...transport, close: finish };
+    },
+  };
+  const result = await loadTransport({ reference: 'fake', load: async () => module, input, timeoutMs: 10 });
+  expect(result).toEqual({ unavailable: 'fake did not load within 10ms' });
+  await closed;
+});

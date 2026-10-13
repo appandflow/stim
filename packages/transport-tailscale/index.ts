@@ -61,15 +61,17 @@ export function tailscaleTransport({
     traits: { privateNetwork: true, tls: 'end-to-end', peerIdentity: true },
     monitor,
     snapshot: now,
-    bindAddresses() {
-      const { state } = now();
-      return state.state === 'running' ? state.ips : [];
-    },
-    watch: monitor ? (listener) => monitor.onChange(() => listener()) : undefined,
+    ...(monitor && {
+      bindAddresses() {
+        const { state } = monitor.current();
+        return state.state === 'running' ? state.ips : [];
+      },
+      watch: (listener: () => void) => monitor.onChange(() => listener()),
+    }),
     async identify({ address }) {
       if (!isIP(address)) return null;
       const identity = await whois(now().binary, env, address);
-      return identity && { transport: id, id: identity.nodeId, name: identity.nodeName, user: identity.user };
+      return identity && { id: identity.nodeId, name: identity.nodeName, user: identity.user };
     },
     rawStatus: () => readRawTailscaleStatus(now().binary, env),
     serveRoute(target, timeoutMs) {

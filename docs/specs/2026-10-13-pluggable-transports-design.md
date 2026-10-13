@@ -60,9 +60,8 @@ registry, and grant and revoke.
 ```ts
 export const apiVersion = 1;
 export const id: string;
-export const optionsSchema: JSONSchema; // x-stim annotations, rendered by Desktop
+export const optionsSchema: JSONSchema; // phase 3: x-stim annotations, rendered by Desktop
 export function createTransport(input: {
-  stimHome: string;
   env: NodeJS.ProcessEnv;
   options: Record<string, unknown>;
 }): Transport | Promise<Transport>;
@@ -70,17 +69,25 @@ export function createTransport(input: {
 interface Transport {
   id: string;
   traits: { privateNetwork: boolean; tls: 'end-to-end' | 'edge' | 'none'; peerIdentity: boolean };
-  status(): Promise<TransportStatus>;
-  watch?(listener: () => void): () => void;
-  expose?(input: { port: number; purpose: 'server' | 'metro' }): Promise<Exposure>;
-  setup?(input: { port: number; action: string }): Promise<TransportStatus>;
-  identify?(request: IncomingMessage): Promise<TransportIdentity | null>;
   bindAddresses?(): string[];
+  watch?(listener: () => void): () => void;
+  identify?(peer: { address: string; request: IncomingMessage }): Promise<TransportIdentity | null>;
+  close?(): void;
+  // Later phases:
+  status?(): Promise<TransportStatus>;
+  setup?(input: { port: number; action: string }): Promise<TransportStatus>;
+  expose?(input: { port: number; purpose: 'server' | 'metro' }): Promise<Exposure>;
   discover?(): Promise<TransportPeer[]>;
   resolve?(target: { machine: string; peerId: string }): Promise<Endpoint | string>;
-  close?(): void;
 }
 ```
+
+Phase 1 ships the members above the comment. The others are added as optional
+members while `apiVersion` stays 1, the way `@stim-cli/cache` added `files`.
+In phase 1, `address` is still the `X-Forwarded-For` peer that `tailscale serve`
+sets, and stim-server binds an identity to the transport that returned it. Phase 2
+gives each listener a single transport, so only the transport that owns the
+connection is asked.
 
 `TransportStatus` is a list of checks, each with a state (`waiting`,
 `working`, `ok`, `problem`), a title, an optional detail, and an optional

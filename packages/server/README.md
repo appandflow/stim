@@ -1135,14 +1135,16 @@ the job to it. `--release <version>` takes an exact version from the public npm
 registry (`https://registry.npmjs.org/`, never a registry `.npmrc` names), and
 npm checks each package against the registry's integrity. `--from <dir>`
 installs the `.tgz` packages in that directory, such as `pnpm pack` output of
-the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim` and
-`@stim-cli/server` packages of a checkout, and records each file's sha256.
+the `@stim-cli/core`, `@stim-cli/cache`, `@stim-cli/metro`, `stim`,
+`@stim-cli/transport`, `@stim-cli/transport-tailscale` and `@stim-cli/server`
+packages of a checkout, and records each file's sha256.
 Either way, `npm audit signatures` must verify the registry signature of every
 package that came from the registry, and the provenance attestation of each one
 that has it, or the update stops before it touches the job. Install scripts
 never run. Each install goes to
 `~/Library/Application Support/Stim/services/<label>/versions/`, in a directory
-named by its version, Stim build and server code, and must start with the job's
+named by its version, Stim build and server code, plus the package files for
+`--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
 report no offloaded build and no hosted session (a server older than `busy` in
 `/health` restarts without waiting), rewrites only the server script in the

@@ -335,6 +335,7 @@ async function start(
     actionLimits?: ServerOptions['actionLimits'];
     tailscaleState?: ServerOptions['tailscaleState'];
     tailscaleMonitor?: ServerOptions['tailscaleMonitor'];
+    transports?: ServerOptions['transports'];
     listenRetryMs?: number;
     frameLimits?: ServerOptions['frameLimits'];
     frameHelper?: string | null;
@@ -383,6 +384,7 @@ async function start(
       ...overrides.env,
     },
     tailscaleMonitor: overrides.tailscaleMonitor,
+    transports: overrides.transports,
     statusAtBoot: overrides.statusAtBoot ?? false,
     service: overrides.service,
     listenRetryMs: overrides.listenRetryMs,
@@ -2702,6 +2704,22 @@ setTimeout(() => console.log(JSON.stringify({ screenRecording: true, accessibili
     await dropped;
     expect(await health()).toEqual({ state: 'not-running', backendState: 'Stopped' });
     monitor.stop();
+  });
+
+  it('listens on the bind addresses of a transport that never reports a change', async () => {
+    const port = await start({
+      transports: [
+        {
+          id: 'static',
+          traits: { privateNetwork: true, tls: 'none', peerIdentity: false },
+          bindAddresses: () => ['::1'],
+        },
+      ],
+    });
+    expect(server?.addresses).toEqual([
+      { host: '127.0.0.1', port },
+      { host: '::1', port },
+    ]);
   });
 
   it('reports Tailscale but never listens on its addresses when loopback only', async () => {
