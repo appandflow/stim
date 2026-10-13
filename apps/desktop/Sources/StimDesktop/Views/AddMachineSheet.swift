@@ -460,6 +460,11 @@ struct AddMachineSheet: View {
       }
       if let command = model.command {
         CopyableCommand(command: command)
+      } else if let older = model.serverTooOldForSetup {
+        Text(
+          "stim-server \(older) on this Mac predates the setup command (\(setupTicketVariableVersion.description)). Update stim-server on this Mac, then reopen this window."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
       } else {
         Text("Resolving this Mac's stim-server version and tailnet node\u{2026}")
           .font(.stim(.caption, mono: true)).fixedSize(horizontal: false, vertical: true)

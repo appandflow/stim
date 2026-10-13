@@ -166,7 +166,7 @@
         dependencies: .init(
           status: { status }, health: { _, _ in nil }, journal: { _, _, _ in .notFound },
           doctor: { _, _, _ in throw FixtureError.unavailable }, readSettings: { payload }, writeSetting: { _, _ in },
-          version: { "1.16.0" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
+          version: { "1.20.3" }, now: { now }, ticket: { _ in ticket }), wizard: wizard,
         sample: SampleBuildModel(
           dependencies: .init(
             sample: WizardSample(applicationSupport: URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support")),

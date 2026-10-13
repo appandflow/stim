@@ -73,7 +73,7 @@ class SetupRefusal extends Error {
   }
 }
 
-export function parseSetupArgs(args: string[], now: number): SetupOptions {
+export function parseSetupArgs(args: string[], now: number, ticket: string | undefined): SetupOptions {
   const { values } = parseArgs({
     args,
     options: {
@@ -91,9 +91,13 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
       verbose: { type: 'boolean' },
     },
   });
+  if (values.ticket !== undefined)
+    throw new SetupRefusal(
+      'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
+    );
   if (!values.client?.trim()) throw new SetupRefusal('--client takes a tailnet node id.');
-  if (!values.ticket || !/^[A-Za-z0-9_-]{43}$/.test(values.ticket))
-    throw new SetupRefusal('--ticket takes 43 base64url characters.');
+  if (!ticket || !/^[A-Za-z0-9_-]{43}$/.test(ticket))
+    throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
   if (!capabilities.length) throw new SetupRefusal('setup needs --build or --device-host.');
   const expires = values.expires;
@@ -117,7 +121,7 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
   if (problem) throw new SetupRefusal(problem);
   return {
     nodeId: values.client.trim(),
-    ticketHash: createHash('sha256').update(values.ticket).digest('hex'),
+    ticketHash: createHash('sha256').update(ticket).digest('hex'),
     expiresAt: expires,
     capabilities,
     label,
@@ -210,6 +214,8 @@ export interface SetupDeps {
    * with no Stim Host.
    */
   platform: 'darwin' | 'linux' | 'win32';
+  /** The setup ticket, from `STIM_SETUP_TICKET`; other users can read a process's arguments, not its environment. */
+  ticket?: string;
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
@@ -769,7 +775,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     printer.step({ ...value, ...view });
   };
   try {
-    options = parseSetupArgs(args, deps.now());
+    options = parseSetupArgs(args, deps.now(), deps.ticket);
     Object.assign(output, { label: options.label, port: options.port });
     if (androidOnly && options.capabilities.includes('device-host'))
       throw new SetupRefusal(
