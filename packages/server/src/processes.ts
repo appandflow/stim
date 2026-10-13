@@ -8,7 +8,7 @@ function run(file: string, args: string[], timeout = 10_000): Promise<string> {
   });
 }
 
-export function listProcesses(columns = 'pid=,command='): Promise<string> {
+function listProcesses(columns = 'pid=,command='): Promise<string> {
   return run('/bin/ps', ['-A', '-ww', '-o', columns]);
 }
 
