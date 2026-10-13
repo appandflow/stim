@@ -116,11 +116,11 @@ If the server is not installed globally, use `npx --yes --package @stim-cli/serv
 in place of `stim-server`, with the exact version from the client machine.
 At least one capability is required. The expiry must be in the future and at
 most two hours ahead. The defaults are port 7787 and label `dev.stim.server`.
-Argument and preflight refusals change nothing. Preflight requires macOS or
-Linux, Node 22.12+, running Tailscale, the client node on this tailnet, and
+Argument and preflight refusals change nothing. Preflight requires macOS,
+Linux or Windows, Node 22.12+, running Tailscale, the client node on this tailnet, and
 this user's GUI login session on macOS or systemd user manager on Linux. On
-Linux, setup takes `--build` only and refuses `--device-host`, because hosting
-needs a Mac; see [On Linux](#on-linux). Off macOS, stim-server also refuses a
+Linux and Windows, setup takes `--build` only and refuses `--device-host`, because hosting
+needs a Mac; see [On Linux](#on-linux) and [On Windows](#on-windows). Off macOS, stim-server also refuses a
 device-host request at hello and `stim-server devices grant <id> --device-host`.
 
 Running setup on the worker is the worker-side approval. It pre-approves at
@@ -141,7 +141,7 @@ any change. Requests themselves lapse after 15 minutes.
 Setup installs its exact server release into the service's `versions/`
 directory (`~/Library/Application Support/Stim/services/<label>/versions/` on
 macOS), installs Stim Host on macOS, installs or reuses the managed
-LaunchAgent or systemd user service, and creates or reuses a
+LaunchAgent, systemd user service or scheduled task, and creates or reuses a
 tailnet-only HTTPS route on 7443 or the next free port. Older managed services
 use the service update busy-wait and rollback behavior. Newer versions stay
 installed; tools report a Stim build difference. A reused server must be at
@@ -1024,7 +1024,8 @@ before replacement. Automatic placement remains in
 ## Run as a service
 
 `stim-server service install` runs stim-server as a per-user LaunchAgent on
-macOS, or a systemd user service on Linux ([On Linux](#on-linux)), so a remote
+macOS, a systemd user service on Linux ([On Linux](#on-linux)), or a scheduled
+task on Windows ([On Windows](#on-windows)), so a remote
 machine or a phone-serving Mac keeps it running without a terminal. Other
 systems refuse; start stim-server from your own service manager there:
 
@@ -1225,6 +1226,53 @@ installs Stim Host and has no permission grants.
 - `stim-server setup` works on Linux for `--build`. It refuses
   `--device-host`, needs no GUI session, and skips Stim Host, the permission
   steps and the Xcode, iOS runtime and CocoaPods checks.
+
+### On Windows
+
+On Windows, `service` manages a per-user scheduled task with the same commands,
+flags and checks, and never needs elevation. A Windows machine takes offloaded
+Android builds only, so it never installs Stim Host and has no permission
+grants.
+
+- `install` writes the service file
+  `%LOCALAPPDATA%\Stim\services\<label>.json` (the server's `node`, script,
+  arguments and environment, `STIM_SERVICE_LABEL=<label>`, the serve route and
+  the previous server script), copies the supervisor
+  `stim-service-runner.mjs` into `%LOCALAPPDATA%\Stim\services\<label>\`, and
+  registers the task `\Stim\<label>` with `schtasks /Create`, then starts it.
+  It logs to `%LOCALAPPDATA%\Stim\Logs\<label>.log`.
+- The task starts at your logon and runs whether or not you are logged on
+  (Task Scheduler's S4U logon type, which an ordinary user can register), so it
+  keeps running after you sign out; after a reboot it starts at your next
+  logon. Task Scheduler restarts a task only when it fails to start, not when
+  its process exits, so the task runs the supervisor, which restarts the
+  server 30 seconds after it exits and reads the service file again each time.
+  The supervisor records its pid, the server's, the number of runs and the last
+  exit code in `supervisor.json`, which `status` reports, and its own errors,
+  such as an unreadable service file, in `supervisor.log` beside it. The task
+  runs at normal priority, so builds are not slowed by Task Scheduler's
+  below-normal default.
+- Stopping the service ends the supervisor's process tree with
+  `taskkill /T /F`; a remote update the server starts runs detached from that
+  tree, so restarting the service does not stop it.
+- `update` and `rollback` keep versions under
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` and rewrite only the
+  service file's arguments and previous script. `uninstall` stops the task,
+  deletes it and removes the service file.
+- The task's environment is your user environment, without a login shell.
+  Builds start tools such as Expo's config loader with the first `node.exe` on
+  `PATH`, and a version manager's `node.exe` shim, such as pnpm's, breaks their
+  Node IPC, so builds fail with `fingerprint-mismatch`. Stim keeps `PATH` as
+  you set it; `install` names a first `node.exe` that is not the Node running
+  the server, and `--path-prepend` puts the real Node first:
+
+  ```powershell
+  stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+    --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
+    --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+  ```
+
+- `stim-server setup` works on Windows for `--build`, as on Linux.
 
 ## Remote update
 

@@ -567,18 +567,33 @@ the Windows machine:
 
 1. Install Node 22.12.0 or later, Tailscale signed in to the same tailnet,
    JDK 17 and the Android SDK with the project's NDK, build-tools and compile
-   SDK, and set `JAVA_HOME` and `ANDROID_HOME`.
-2. Serve stim-server on a tailnet-only route once:
-   `tailscale serve --bg --https=7443 http://127.0.0.1:7787`.
-3. Install the server globally with `npm install --global @stim-cli/server@latest`
-   and start it yourself: `stim-server`
-   (`setup` and `service` are macOS and Linux only).
-   Start it with a real Node first on `PATH`. A version manager's `node.exe`
-   shim, such as pnpm's, breaks the Node IPC that Expo's config loader uses,
-   and the build then fails with `fingerprint-mismatch`.
-4. On your main machine, add it to `remote.machines` and run
+   SDK.
+2. Install the server globally and run it as a scheduled task with a
+   tailnet-only route. No administrator rights are needed:
+
+   ```powershell
+   npm install --global @stim-cli/server@latest
+   stim-server service install --serve --path-prepend "C:\Program Files\nodejs" `
+     --env JAVA_HOME="C:\Program Files\Eclipse Adoptium\jdk-17" `
+     --env ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"
+   stim-server service status
+   ```
+
+   The task starts at your logon and keeps running after you sign out; the
+   log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `service update`
+   and `service rollback` work as on macOS and Linux, and an approved client can update
+   the server remotely.
+   `--path-prepend` puts the real Node first on the server's `PATH`. A version
+   manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's
+   config loader uses, and the build then fails with `fingerprint-mismatch`;
+   `install` says so when the first `node.exe` on `PATH` is not the Node that
+   runs the server.
+
+3. On your main machine, add it to `remote.machines` and run
    `stim doctor --fix` as above. Approve the request on the Windows machine
-   with `stim-server devices grant <build-id> --build`.
+   with `stim-server devices grant <build-id> --build`, or run the setup
+   command Desktop generates there with `--build` only. Setup on Windows
+   refuses `--device-host` and skips Stim Host and the permission steps.
 
 The NDK's ninja on Windows cannot open a path longer than 260 characters, so
 a Windows worker keeps each checkout and each client's Gradle home in a short

@@ -324,15 +324,18 @@ outside it moves to its own issue and pull request.
   and stim-server stops it when the build is cancelled, the client loses
   `build`, or the machine's available memory runs low. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
-  reports and removes the worker's per-user service, a LaunchAgent on macOS
-  or a systemd user unit on Linux, and, only when asked, a tailnet-only serve
-  route; it never enables Funnel, never runs sudo and never touches pairings,
+  reports and removes the worker's per-user service, a LaunchAgent on macOS,
+  a systemd user unit on Linux or a scheduled task on Windows, whose action is
+  Stim's supervisor because Task Scheduler does not restart an exited process,
+  and, only when asked, a tailnet-only serve
+  route; it never enables Funnel, never runs sudo or elevates, and never touches pairings,
   `$STIM_HOME/server` or settings. `stim-server service update` and
   `rollback` install a server version beside the running one under
   `~/Library/Application Support/Stim/services/<label>/versions/` on macOS or
-  `~/.local/share/stim/services/<label>/versions/` on Linux, keeping the
+  `~/.local/share/stim/services/<label>/versions/` on Linux or
+  `%LOCALAPPDATA%\Stim\services\<label>\versions\` on Windows, keeping the
   running and the previous version, and repoint only the service's server
-  script; a failed health check switches back. A Linux worker takes Android
+  script; a failed health check switches back. A Linux or Windows worker takes Android
   builds only; setup there approves `build` and refuses `device-host`, and off macOS
   stim-server refuses device-host requests and grants. A client approved for `build` or
   `device-host` can run the same update on this machine over the tailnet, and no

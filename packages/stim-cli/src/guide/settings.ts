@@ -984,9 +984,9 @@ when a build is cancelled, the client is revoked, or the machine has less
 than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
-running as a login LaunchAgent on macOS or a systemd user service on Linux
+running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
-prints that command and never runs it); \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
+prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
 pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
 toolchain discovery does not find.
 \`stim-server service update --release <version>\` there moves the service to

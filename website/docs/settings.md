@@ -505,7 +505,9 @@ each client machine.
 On the remote machine, `server.workerRoot` (an absolute path; default
 `$STIM_HOME/build-worker`) holds each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
-home per client and repository and one Gradle home per client. Put it on a
+home per client and repository and one Gradle home per client. On a Windows
+machine, the checkouts and Gradle homes themselves live in short directories
+under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)). Put it on a
 large volume. It runs one offloaded build at a time and boots or installs
 nothing. It declines a build while that volume has less than 10 GB free,
 while its own Stim builds and the offloaded one fill its
@@ -531,9 +533,9 @@ client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
-that starts at login on macOS, or a systemd user service on Linux (with
-`sudo loginctl enable-linger $USER` so it starts at boot), and restarts the
-server if it exits. `--serve` adds the
+that starts at login on macOS, a systemd user service on Linux (with
+`sudo loginctl enable-linger $USER` so it starts at boot), or a scheduled task
+on Windows that starts at logon, and restarts the server if it exits. `--serve` adds the
 tailnet-only `tailscale serve` route (port 7443, or the next free one). `--path-prepend <dir>` and
 `--env KEY=VALUE` pin a PATH entry or a variable, such as a private CocoaPods
 install, that stim-server's toolchain discovery does not find.
