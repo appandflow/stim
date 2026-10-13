@@ -1477,6 +1477,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     recordRun({ failed: true, durationMs: now() - started });
     throw error;
   } finally {
-    preparedArtifact?.release();
+    await preparedArtifact?.release();
   }
 }

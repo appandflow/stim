@@ -124,8 +124,8 @@ export interface PreparedIosArtifact {
   failureFields: BuildFailureFields;
   /** Returns true when an abandoned provider requires command termination after cleanup. */
   completeUploads(): Promise<boolean>;
-  /** Removes only owned temporary copies; repeated calls are safe. */
-  release(): void;
+  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  release(): void | Promise<void>;
 }
 
 type IosArtifactResult =
@@ -898,7 +898,13 @@ export async function acquireIosArtifact(
       }
       return abandonedRemote || uploadWasAbandoned;
     },
-    release: acquired.release,
+    release: async () => {
+      try {
+        if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+      } finally {
+        acquired.release();
+      }
+    },
   };
   return { ok: true, artifact };
 }

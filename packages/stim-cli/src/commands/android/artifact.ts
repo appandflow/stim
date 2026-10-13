@@ -109,8 +109,8 @@ export interface PreparedAndroidArtifact {
   apkPath: string | null;
   handoff?: BuildHandoff | null;
   androidPackage: string | null;
-  /** Removes only owned temporary copies; repeated calls are safe. */
-  release(): void;
+  /** Waits for owned EAS uploads before removing temporary copies; repeated calls are safe. */
+  release(): void | Promise<void>;
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
@@ -867,7 +867,13 @@ export async function acquireAndroidArtifact(
       apkPath: acquired.artifact,
       handoff,
       androidPackage,
-      release: acquired.release,
+      release: async () => {
+        try {
+          if (remote?.provider && 'easCli' in remote.provider) await uploadPending;
+        } finally {
+          acquired.release();
+        }
+      },
       waitedForBuild,
       ccache: ccacheActivity,
       uploadPending,

@@ -5,6 +5,7 @@ import { isJsonObject } from '@stim-cli/core/state';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { runCancellationSignal } from './native-run.ts';
+import { operationState } from './operation-state.ts';
 
 interface EasCacheOptions {
   file: string;
@@ -56,7 +57,9 @@ export async function easCache(
   options: EasCacheOptions,
 ): Promise<{ appPath?: string; uploaded?: true; destination?: string; failed?: string } | null> {
   const { file, projectRoot, platform, context, timeoutMs, logWriter, note } = options;
-  const signal = runCancellationSignal(context) ?? context?.signal;
+  const runSignal = runCancellationSignal(context);
+  const signal = context && runSignal ? AbortSignal.any([context.signal, runSignal]) : context?.signal;
+  const state = operationState(context);
   const deadline = performance.now() + timeoutMs;
   const report = (line: string) => {
     logWriter?.write({ src: 'build', level: 'debug', event: 'provider', msg: line });
@@ -83,14 +86,20 @@ export async function easCache(
           : {}),
         onSpawn: (child) => {
           cancel = () => {
+            state.handled = true;
+            state.draining = true;
             child.kill('SIGKILL');
           };
+          state.exitCleanups.add(cancel);
           signal?.addEventListener('abort', cancel, { once: true });
           if (signal?.aborted) cancel();
         },
       });
     } finally {
-      if (cancel) signal?.removeEventListener('abort', cancel);
+      if (cancel) {
+        signal?.removeEventListener('abort', cancel);
+        state.exitCleanups.delete(cancel);
+      }
       signal?.throwIfAborted();
     }
   };
@@ -138,6 +147,7 @@ export async function easCache(
     report(`Build uploaded: ${destination}`);
     return { uploaded: true, destination };
   } catch (error) {
+    if (phase === 'upload' && signal?.aborted) return { failed: 'EAS cache upload cancelled' };
     signal?.throwIfAborted();
     if (isTimeoutError(error)) return { failed: `EAS cache ${phase} timed out after ${timeoutMs}ms` };
     const detail = error instanceof Error ? error.message : String(error);

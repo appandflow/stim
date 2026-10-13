@@ -8,6 +8,7 @@ import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../exec.ts';
 import { checkEasAuth, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import { makeWriter } from './_factories.ts';
+import { operationState } from '../engine/operation-state.ts';
 
 let root: string;
 
@@ -32,7 +33,7 @@ const args = process.argv.slice(2);
 const marker = process.env.CACHE_TEST_MARKER;
 fs.appendFileSync(path.join(process.cwd(), 'calls.ndjson'), JSON.stringify({ args, marker, home: process.env.STIM_HOME, cwd: process.cwd() }) + '\\n');
 if (args[0] === 'fingerprint:generate' && process.env.CACHE_TEST_HASH_FAIL) process.exit(1);
-if (args[0] === 'build:download' && process.env.CACHE_TEST_BLOCK) {
+if (args[0] === (process.env.CACHE_TEST_BLOCK === 'upload' ? 'upload' : 'build:download') && process.env.CACHE_TEST_BLOCK) {
   process.on('SIGTERM', () => {});
   setInterval(() => {}, 1000);
 } else {
@@ -282,6 +283,47 @@ test('cancellation kills only the owning cache child while another operation com
     await outcome;
   }
 });
+
+test.each(['SIGINT', 'SIGTERM'])(
+  'a background upload settles %s cancellation before deployment awaits it',
+  async (reason) => {
+    const a = context('upload', { CACHE_TEST_BLOCK: 'upload' });
+    const run = new AbortController();
+    operationState(a.ctx).runSignal = run.signal;
+    const loaded = await loadProjectProvider(root);
+    const children = captureChildren();
+    const pending = withAmbientContext(a.ctx, () =>
+      uploadRemote({
+        context: a.ctx,
+        provider: loaded.provider,
+        projectRoot: root,
+        platform: 'ios',
+        fingerprintHash: 'local',
+        buildPath: join(root, 'fixture.app'),
+        timeoutMs: 15000,
+      }),
+    );
+    try {
+      const deadline = Date.now() + 5000;
+      while (!children.some((child) => child.spawnargs.includes('upload')) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      const owningChild = children.find((child) => child.spawnargs.includes('upload'));
+      assert(owningChild);
+      a.controller.abort(reason);
+      if (reason === 'SIGINT') run.abort(reason);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(await pending).toEqual({ failed: 'EAS cache upload cancelled' });
+      expect(owningChild.signalCode).toBe('SIGKILL');
+      expect(operationState(a.ctx)).toMatchObject({ handled: true, draining: true });
+      expect(operationState(a.ctx).exitCleanups.size).toBe(0);
+    } finally {
+      a.controller.abort('fixture cleanup');
+      run.abort('fixture cleanup');
+      for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await pending.catch(() => {});
+    }
+  },
+);
 
 test('authentication is coalesced within an operation and cannot reuse another operation’s actor', async () => {
   const a = context('actor-a').ctx;

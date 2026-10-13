@@ -1733,6 +1733,42 @@ describe('the remote cache', () => {
     expect(errs.join('\n')).toMatch(/^  cache {7}uploaded \(eas\)$/m);
   });
 
+  test('an install failure waits for its EAS upload to settle before returning', async () => {
+    reserve();
+    let settleUpload: (value: { failed: string }) => void = () => {};
+    const upload = new Promise<{ failed: string }>((resolve) => {
+      settleUpload = resolve;
+    });
+    let markInstalled: () => void = () => {};
+    const installed = new Promise<void>((resolve) => {
+      markInstalled = resolve;
+    });
+    let returned = false;
+    const pending = run(
+      {},
+      {
+        detectIsExpo: () => true,
+        loadProjectProvider: async () => ({ provider: { easCli: '/fixture/eas' }, name: 'eas' }),
+        uploadRemote: () => upload,
+        installIosApp: () => {
+          markInstalled();
+          return { failed: true, code: 'STIM_INSTALL_FAILED', reason: 'fixture install refused' };
+        },
+      },
+    ).finally(() => {
+      returned = true;
+    });
+    try {
+      await installed;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(returned).toBe(false);
+    } finally {
+      settleUpload({ failed: 'EAS cache upload cancelled' });
+      await pending;
+    }
+    expect((await pending).exitCode).toBe(1);
+  });
+
   test('a provider that THROWS degrades to a local-only run with a note', async () => {
     reserve();
     const { exitCode, calls, errs } = await run(
