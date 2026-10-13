@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUpdateStart, ServerUpdates, type ServerUpdateOptions } from '../src/server-update.ts';
+import { serviceRoot } from '../src/service-manager.ts';
 
 const LABEL = 'dev.stim.test';
 
@@ -24,7 +25,7 @@ const files = args.includes('--from')
   ? Object.fromEntries(readdirSync(from).map((name) => [name, readFileSync(join(from, name), 'utf8')]))
   : null;
 writeFileSync(process.env.FAKE_UPDATER_OUT, JSON.stringify({ args, files }));
-const root = join(process.env.HOME, 'Library', 'Application Support', 'Stim', 'services', args[args.indexOf('--label') + 1]);
+const root = process.env.FAKE_UPDATER_ROOT;
 mkdirSync(root, { recursive: true });
 const ok = process.env.FAKE_UPDATER_FAIL !== '1';
 writeFileSync(join(root, 'last-update.json'), JSON.stringify({
@@ -52,7 +53,8 @@ function updates(overrides: Partial<ServerUpdateOptions> = {}) {
     build: { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' },
     node: process.execPath,
     script,
-    env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json') },
+    env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json'), FAKE_UPDATER_ROOT: serviceRoot(LABEL) },
+    detached: (file, rest) => ({ file, args: rest }),
     acceptsClientBuilds: () => false,
     drain: (reason) => drains.push(reason),
     audit: ({ phase, ok, message, target }) => {
@@ -137,7 +139,12 @@ describe('server update requests', () => {
 
   it('reports a failed update and takes new work again', async () => {
     const { instance, drains, settled } = updates({
-      env: { ...process.env, FAKE_UPDATER_OUT: join(dir, 'ran.json'), FAKE_UPDATER_FAIL: '1' },
+      env: {
+        ...process.env,
+        FAKE_UPDATER_OUT: join(dir, 'ran.json'),
+        FAKE_UPDATER_ROOT: serviceRoot(LABEL),
+        FAKE_UPDATER_FAIL: '1',
+      },
     });
     await instance.start(by, { release: '1.15.0' });
     expect(await settled()).toMatchObject([{ ok: false, message: 'did not answer' }]);
@@ -147,7 +154,7 @@ describe('server update requests', () => {
   it('refuses when the server does not run as a service', async () => {
     const { instance, drains } = updates({ runsAsService: async () => false });
     expect(await instance.start(by, { release: '1.15.0' })).toMatchObject({
-      error: { code: 'forbidden', message: expect.stringContaining('LaunchAgent') },
+      error: { code: 'forbidden', message: expect.stringContaining('stim-server service install') },
     });
     expect((await instance.status()).service).toBeNull();
     expect(drains).toEqual([]);
@@ -190,7 +197,7 @@ describe('server update requests', () => {
   });
 
   it('clears only uploads an earlier update already used or that sat for an hour', () => {
-    const root = join(dir, 'Library', 'Application Support', 'Stim', 'services', LABEL);
+    const root = serviceRoot(LABEL);
     const age = (minutes: number) => new Date(Date.now() - minutes * 60_000);
     for (const [name, minutes] of [
       ['used', 30],
@@ -263,7 +270,7 @@ describe('server update requests', () => {
       instance.close();
       await vi.advanceTimersByTimeAsync(11 * 60_000);
       expect(finished).toEqual([]);
-      const incoming = join(dir, 'Library', 'Application Support', 'Stim', 'services', LABEL, 'incoming');
+      const incoming = join(serviceRoot(LABEL), 'incoming');
       expect(readdirSync(incoming)).toEqual([]);
     } finally {
       instance.close();

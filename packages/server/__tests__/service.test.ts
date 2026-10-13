@@ -372,11 +372,11 @@ describe('service command line', () => {
   const stimServer = (...args: string[]) =>
     spawnSync(process.execPath, [BIN, ...args], { env: { ...process.env, PATH: '' }, encoding: 'utf8' });
 
-  it('refuses outside macOS before touching anything', () => {
-    if (process.platform === 'darwin') return;
+  it('refuses outside macOS and Linux before touching anything', () => {
+    if (process.platform !== 'win32') return;
     const result = stimServer('service', 'status');
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('runs only on macOS');
+    expect(result.stderr).toContain('does not run on win32');
   });
 
   it('rejects flags that do not apply', () => {
@@ -437,6 +437,7 @@ describe('host permissions', () => {
 describe('service status permissions', () => {
   const status: ServiceStatus = {
     label: SPEC.label,
+    manager: 'launchd',
     installed: true,
     plist: '/Users/me/Library/LaunchAgents/dev.stim.server.plist',
     loaded: false,
@@ -460,6 +461,7 @@ describe('service status permissions', () => {
     envNames: [],
     pathPrepend: [],
     stimBuild: { service: null, cli: null, match: null },
+    linger: null,
   };
 
   const line = (lines: string[], prefix: string) => lines.find((each) => each.startsWith(`  ${prefix}`)) ?? '';

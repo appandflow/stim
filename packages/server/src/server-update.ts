@@ -5,14 +5,8 @@ import { join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
 import type { ProtocolError, ServerUpdatePackage, ServerUpdateProgress, ServerUpdateStatus } from './protocol.ts';
 import { compareVersions, validateRelease, type ServerBuild } from './service-plist.ts';
-import {
-  describeSource,
-  readLastUpdate,
-  runsAsService,
-  serviceRoot,
-  type UpdateOutcome,
-  type UpdateSource,
-} from './service.ts';
+import { serviceManagerOrNull, serviceRoot } from './service-manager.ts';
+import { describeSource, readLastUpdate, runsAsService, type UpdateOutcome, type UpdateSource } from './service.ts';
 
 const UPDATE_CHUNK_CHARS = 32 * 1024;
 const MAX_PACKAGES = 16;
@@ -43,6 +37,8 @@ export interface ServerUpdateOptions {
     message: string;
   }) => void;
   runsAsService?: (label: string, port: number) => Promise<boolean>;
+  /** How to start the updater so it outlives this server's restart; the service manager's way by default. */
+  detached?: (node: string, args: string[]) => { file: string; args: string[] };
 }
 
 interface Upload {
@@ -179,7 +175,7 @@ export class ServerUpdates {
     if (!label || !(await (this.options.runsAsService ?? runsAsService)(label, this.options.port))) {
       return refused(
         'forbidden',
-        'This stim-server does not run as a `stim-server service` LaunchAgent, so it cannot update itself. Update it where it runs.',
+        'This stim-server was not started by `stim-server service install`, so it cannot update itself. Update it where it runs.',
       );
     }
     if ('packages' in parsed && !this.options.acceptsClientBuilds()) {
@@ -316,11 +312,19 @@ export class ServerUpdates {
       message: `Started the update to ${target}.`,
     });
     const args = [this.options.script, 'service', 'update', '--label', this.options.label!];
-    const child = spawn(
+    const detached =
+      this.options.detached ??
+      serviceManagerOrNull()?.detached ??
+      ((file: string, rest: string[]) => ({ file, args: rest }));
+    const command = detached(
       this.options.node,
       'release' in source ? [...args, '--release', source.release] : [...args, '--from', source.from],
-      { detached: true, stdio: ['ignore', out, out], env: this.options.env },
     );
+    const child = spawn(command.file, command.args, {
+      detached: true,
+      stdio: ['ignore', out, out],
+      env: this.options.env,
+    });
     closeSync(out);
     child.unref();
     const settle = (ok: boolean, message: string) => {
