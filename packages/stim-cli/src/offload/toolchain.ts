@@ -348,8 +348,8 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
       reason: `Stim build ${worker.stimBuild ?? 'unknown'} there, ${local.stimBuild ?? 'unknown'} here`,
     });
   }
-  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'android') return [...out, ...androidMismatches(target.local, target.requires, worker)];
+  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;
     if (!macos.xcode || worker.xcode !== macos.xcode)

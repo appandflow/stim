@@ -752,6 +752,23 @@ describe('buildAndroid', () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  test('without an SDK variable, the SDK is where Android Studio installs it on this host', () => {
+    const platform = process.platform;
+    const env = { HOME: '/home/dev', USERPROFILE: 'C:\\Users\\dev', LOCALAPPDATA: 'C:\\Users\\dev\\AppData\\Local' };
+    try {
+      for (const [host, expected] of [
+        ['darwin', join('/home/dev', 'Library', 'Android', 'sdk')],
+        ['linux', join('/home/dev', 'Android', 'Sdk')],
+        ['win32', join(env.LOCALAPPDATA, 'Android', 'Sdk')],
+      ] as const) {
+        Object.defineProperty(process, 'platform', { value: host });
+        expect(androidHome(env)).toBe(expected);
+      }
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+    }
+  });
+
   test('Gradle gets the SDK path Stim resolved when the caller set no SDK variable, and an explicit one untouched', async () => {
     makeAndroidProject();
     const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };

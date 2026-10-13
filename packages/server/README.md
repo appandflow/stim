@@ -1248,8 +1248,8 @@ connected since stim-server started keeps its directory when revoked.
   `xcrun --sdk macosx --show-sdk-version`); `cocoapods`; `runtimes`, the simulator
   runtimes with an iPhone simulator to build for; `jdk`, the major version of
   the JDK in `JAVA_HOME` or the macOS default; and `androidSdk`, the `ndk`,
-  `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME` or
-  `~/Library/Android/sdk`, null without one), `capacity` and `warm`
+  `buildTools` and `platforms` directories of the SDK in `ANDROID_HOME`, else `~/Library/Android/sdk` on macOS or
+  `~/Android/Sdk` on Linux, null without one), `capacity` and `warm`
   (`checkout`, `dependencies` when the last install used that lockfile, and
   `build` once a build ran there, including a non-empty repository `macos/`
   scratch directory) for that repository. `capacity` holds

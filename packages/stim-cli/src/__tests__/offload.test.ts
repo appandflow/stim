@@ -328,8 +328,9 @@ describe('pickOffer for Android', () => {
     pickOffer({ mode: 'force', here: IDLE, target: ANDROID, offers: [{ machine: 'mac0', offer: each }] }).order[0] ??
     null;
 
-  it('takes a machine whose JDK major and SDK packages match, whatever its Xcode or JDK vendor', () => {
+  it('takes a machine whose JDK major and SDK packages match, whatever its CPU, Xcode or JDK vendor', () => {
     expect(pickAndroid(offer({ toolchain: { xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
+    expect(pickAndroid(offer({ toolchain: { arch: 'x64', xcode: null, cocoapods: null, runtimes: [] } }))).toBe(0);
     expect(jdkMajor('JAVA_VERSION="17.0.19"\nIMPLEMENTOR="Homebrew"')).toBe('17');
   });
 

@@ -58,10 +58,10 @@ version. The tools Stim starts inherit the override.
 ## Android
 
 - macOS, Linux or Windows with the Android SDK. Stim reads its location from
-  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` (the
-  macOS Android Studio default) or `%LOCALAPPDATA%\Android\Sdk` on Windows, and
-  passes that path to Gradle as `ANDROID_HOME` when neither variable is set.
-  On Linux, set `ANDROID_HOME`.
+  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then Android Studio's default:
+  `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux or
+  `%LOCALAPPDATA%\Android\Sdk` on Windows. It passes that path to Gradle as
+  `ANDROID_HOME` when neither variable is set.
   With no SDK there and no `android/local.properties`, `stim doctor --platform
 android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
   before Gradle runs.

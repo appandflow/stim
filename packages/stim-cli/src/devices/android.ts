@@ -85,6 +85,7 @@ export function androidHome(env: NodeJS.ProcessEnv = process.env): string {
   if (process.platform === 'win32') {
     return join(env.LOCALAPPDATA || join(home, 'AppData', 'Local'), 'Android', 'Sdk');
   }
+  if (process.platform === 'linux') return join(home, 'Android', 'Sdk');
   return join(home, 'Library', 'Android', 'sdk');
 }
 

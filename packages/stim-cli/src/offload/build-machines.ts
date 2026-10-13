@@ -155,7 +155,7 @@ function problemFix(code: OffloadProblem['code'], entry: string): string {
     case 'ndk':
     case 'build-tools':
     case 'compile-sdk':
-      return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk).`;
+      return `Install the missing package with sdkmanager in the Android SDK stim-server on ${entry} uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux).`;
     case 'disk':
       return `Free space on ${entry}'s worker root (server.workerRoot there).`;
     case 'busy':

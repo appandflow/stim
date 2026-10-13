@@ -7,6 +7,7 @@ import {
   copyFileSync,
   cpSync,
   createReadStream,
+  createWriteStream,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -21,6 +22,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { createGzip } from 'node:zlib';
 import { fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
@@ -388,6 +391,40 @@ function destination(runtime: string): string | null {
   }
 }
 
+/**
+ * Writes `name` under `dir` to `archive` as a gzip tarball at compression level 1. Node does the gzip because tar's
+ * compression-level flags differ between bsdtar (macOS, Windows) and GNU tar (Linux).
+ */
+async function packArchive(archive: string, dir: string, name: string): Promise<void> {
+  const child = getExecutor().spawn('tar', ['-cf', '-', '-C', dir, name], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const tarball = child.stdout;
+  if (!tarball) throw new Error('tar opened no output stream.');
+  const stderr: string[] = [];
+  child.stderr?.on('data', (chunk: Buffer) => stderr.push(String(chunk)));
+  let spawnError: Error | null = null;
+  const exited = new Promise<number | null>((resolve) => {
+    child.once('error', (error) => {
+      spawnError = error;
+      resolve(null);
+    });
+    child.once('close', resolve);
+  });
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), 600_000);
+  try {
+    await pipeline(tarball, createGzip({ level: 1 }), createWriteStream(archive), { signal: timeout.signal });
+  } catch (error) {
+    child.kill('SIGKILL');
+    await exited;
+    throw timeout.signal.aborted ? new Error('Packing the artifact did not finish within 10 minutes.') : error;
+  } finally {
+    clearTimeout(timer);
+  }
+  const code = await exited;
+  if (spawnError) throw spawnError;
+  if (code !== 0) throw new Error(`tar exited with ${code}: ${stderr.join('').trim().slice(-500)}`);
+}
+
 async function sha256Of(path: string): Promise<string> {
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
@@ -615,13 +652,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
         verbatimSymlinks: true,
         mode: constants.COPYFILE_FICLONE,
       });
-    await time('packageMs', () =>
-      getExecutor().runFileAsync(
-        'tar',
-        ['-czf', archive, '--options', 'gzip:compression-level=1', '-C', dirname(compiled.path), name],
-        { timeoutMs: 600_000 },
-      ),
-    );
+    await time('packageMs', () => packArchive(archive, dirname(compiled.path), name));
     const sha256 = await time('packageMs', () => sha256Of(archive));
     return {
       ok: true,

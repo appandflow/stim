@@ -909,7 +909,7 @@ cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
 stim guide macos. macOS artifacts are not cached.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
-build matches this Mac and CPU matches the target simulator, with enough disk, that does not decline,
+build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,
 preferring the one that already holds this repository, then the least loaded,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
@@ -926,7 +926,8 @@ the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
 bundler, so the machine needs only Bundler on its stim-server PATH and
 installs the pinned gems itself on the first build. The comparison selects
 the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the Mac's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
-For Android its JDK major
+For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
+x86_64 Linux machine running stim-server can build for an Apple silicon Mac. Its JDK major
 version must match, and its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
 gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
@@ -971,7 +972,7 @@ Mac's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
 and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
-~/Library/Android/sdk). The client's Gradle daemon stays warm there for
+~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon stays warm there for
 \`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
 ends; a new value applies from the next daemon) and never holds a build
 slot. While none of the client's builds runs, stim-server stops it sooner

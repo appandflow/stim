@@ -64,7 +64,7 @@ export function androidSdkRefusal({
   return {
     code: BUILD_ERROR,
     reason: `No Android SDK at ${sdkPath}.`,
-    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
+    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk on macOS and ~/Android/Sdk on Linux), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
   };
 }
 
