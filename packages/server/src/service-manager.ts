@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +29,9 @@ import { installHostApp, type HostApp } from './stim-host.ts';
 
 const MANAGER_TIMEOUT_MS = 15_000;
 const SUPERVISOR_WAIT_MS = 30_000;
+const TASK_STATE_RUNNING = 4;
+/** Task Scheduler records `LastRunTime` to the second. */
+const TASK_CLOCK_SLACK_MS = 2000;
 
 export interface Run {
   ok: boolean;
@@ -260,19 +263,22 @@ const taskName = (label: string) => `Stim\\${label}`;
 const supervisorState = (label: string) => join(taskScheduler.root(label), 'supervisor.json');
 
 /**
- * The supervisor's state while the task runs. Task Scheduler runs one instance of the task, and that instance wrote
- * the state file `start` cleared, so its pids are current.
+ * The supervisor's state while the task runs: Task Scheduler runs one instance of the task, and only a state file
+ * written since that instance started describes it. This reads the task through the Task Scheduler COM API, whose
+ * state numbers, unlike the text `schtasks` prints, are not localized.
  */
 async function runningSupervisor(label: string): Promise<SupervisorState | null> {
   const task = await run('powershell.exe', [
     '-NoProfile',
     '-NonInteractive',
     '-Command',
-    `(Get-ScheduledTask -TaskPath '\\Stim\\' -TaskName '${label}' -ErrorAction SilentlyContinue).State`,
+    `$s = New-Object -ComObject Schedule.Service; $s.Connect(); $t = $s.GetFolder('\\Stim').GetTask('${label}'); "$($t.State) $(([DateTimeOffset]$t.LastRunTime).ToUnixTimeMilliseconds())"`,
   ]);
-  if (task.stdout.trim() !== 'Running') return null;
+  const [state, lastRun] = task.stdout.trim().split(' ').map(Number);
+  if (state !== TASK_STATE_RUNNING || lastRun === undefined || !Number.isFinite(lastRun)) return null;
   let value: unknown;
   try {
+    if (statSync(supervisorState(label)).mtimeMs < lastRun - TASK_CLOCK_SLACK_MS) return null;
     value = JSON.parse(readFileSync(supervisorState(label), 'utf8'));
   } catch {
     return null;
@@ -332,9 +338,10 @@ const taskScheduler: ServiceManager = {
     const runner = join(taskScheduler.root(label), 'stim-service-runner.mjs');
     mkdirSync(taskScheduler.root(label), { recursive: true });
     copyFileSync(join(dirname(fileURLToPath(import.meta.url)), 'stim-service-runner.mjs'), runner);
-    const whoami = await run('whoami', []);
-    if (!whoami.ok) return whoami;
-    const user = whoami.stdout.trim();
+    const whoami = await run('whoami', ['/user', '/fo', 'csv', '/nh']);
+    const user = /"(S-1-[\d-]+)"\s*$/.exec(whoami.stdout.trim())?.[1];
+    if (!user)
+      return { ok: false, stdout: '', stderr: `whoami /user did not print this user's SID: ${whoami.stderr.trim()}` };
     const definition = `${taskScheduler.file(label)}.${process.pid}.xml`;
     writeFileSync(
       definition,
@@ -364,7 +371,7 @@ const taskScheduler: ServiceManager = {
         return {
           ok: false,
           stdout: '',
-          stderr: `${taskName(label)} did not start its supervisor within ${SUPERVISOR_WAIT_MS / 1000} s; see \`schtasks /Query /TN ${taskName(label)} /V /FO LIST\`.`,
+          stderr: `${taskName(label)} did not start its supervisor within ${SUPERVISOR_WAIT_MS / 1000} s; see ${join(taskScheduler.root(label), 'supervisor.log')} and \`schtasks /Query /TN ${taskName(label)} /V /FO LIST\`.`,
         };
       await new Promise((resolve) => setTimeout(resolve, 250));
     }

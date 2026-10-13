@@ -581,7 +581,7 @@ the Windows machine:
 
    The task starts at your logon and keeps running after you sign out; the
    log is `%LOCALAPPDATA%\Stim\Logs\dev.stim.server.log`. `service update`
-   and `service rollback` work as on a Mac, and an approved client can update
+   and `service rollback` work as on macOS and Linux, and an approved client can update
    the server remotely.
    `--path-prepend` puts the real Node first on the server's `PATH`. A version
    manager's `node.exe` shim, such as pnpm's, breaks the Node IPC that Expo's

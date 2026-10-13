@@ -113,19 +113,23 @@ async function portFree(port: number): Promise<boolean> {
 
 async function listenerPids(port: number): Promise<string[]> {
   if (process.platform === 'win32') {
-    const listed = await run('netstat', ['-ano', '-p', 'TCP']);
+    const listed = await run('netstat', ['-ano']);
     return listed.ok ? netstatListeners(listed.stdout, port) : [];
   }
   const listener = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
   return listener.ok ? listener.stdout.trim().split(/\s+/).filter(Boolean) : [];
 }
 
-/** The pids listening on TCP `port` in `netstat -ano -p TCP` output. */
+/**
+ * The pids listening on TCP `port` in `netstat -ano` output. netstat localizes the state column, so a listener is a
+ * TCP row with no foreign address.
+ */
 export function netstatListeners(output: string, port: number): string[] {
   const pids = new Set<string>();
   for (const line of output.split(/\r?\n/)) {
-    const [protocol, local, , state, pid] = line.trim().split(/\s+/);
-    if (protocol === 'TCP' && state === 'LISTENING' && pid && local?.endsWith(`:${port}`)) pids.add(pid);
+    const [protocol, local, foreign, , pid] = line.trim().split(/\s+/);
+    if (protocol === 'TCP' && (foreign === '0.0.0.0:0' || foreign === '[::]:0') && pid && local?.endsWith(`:${port}`))
+      pids.add(pid);
   }
   return [...pids];
 }
@@ -796,7 +800,9 @@ async function localPackageSpecs(dir: string, names: string[]): Promise<Record<s
   for (const file of names) {
     const path = join(dir, file);
     const manifest = await run(
-      process.platform === 'win32' ? 'tar' : '/usr/bin/tar',
+      process.platform === 'win32'
+        ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+        : '/usr/bin/tar',
       ['-xzOf', path, 'package/package.json'],
       process.env,
       60_000,
@@ -876,7 +882,7 @@ export async function installServer(
       ],
       env,
       NPM_TIMEOUT_MS,
-      staging,
+      process.platform === 'win32' ? staging : undefined,
     );
     if (!installed.ok) throw new ServiceError(`npm install failed:\n${lastLines(installed.stderr)}`);
     const audit = await run(
@@ -884,7 +890,7 @@ export async function installServer(
       [...prefix, 'audit', 'signatures', '--json', '--prefix', staging, ...registry],
       env,
       NPM_TIMEOUT_MS,
-      staging,
+      process.platform === 'win32' ? staging : undefined,
     );
     const problem = signatureProblem(audit.stdout, audit.stderr);
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);

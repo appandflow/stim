@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 /**
@@ -48,27 +48,42 @@ async function supervise(file: string, statePath: string, throttleMs: number): P
     writeFileSync(partial, `${JSON.stringify(state)}\n`);
     renameSync(partial, statePath);
   };
+  record(null);
   for (;;) {
-    const { argv, environment, workingDirectory, logPath } = program(file);
-    const [node = '', ...args] = argv;
-    mkdirSync(dirname(logPath), { recursive: true });
-    const out = openSync(logPath, 'a');
-    const child = spawn(node, args, {
-      cwd: workingDirectory || undefined,
-      env: { ...process.env, ...environment },
-      stdio: ['ignore', out, out],
-      windowsHide: true,
-    });
-    closeSync(out);
-    runs += 1;
-    record(child.pid ?? null);
-    lastExitCode = await new Promise<string>((resolve) => {
-      child.once('error', (error) => resolve(error.message));
-      child.once('exit', (code, signal) => resolve(code === null ? `signal ${signal}` : String(code)));
-    });
+    try {
+      lastExitCode = await runOnce(file, (server) => {
+        runs += 1;
+        record(server);
+      });
+    } catch (error) {
+      lastExitCode = `supervisor: ${error instanceof Error ? error.message : String(error)}`;
+      try {
+        appendFileSync(join(dirname(statePath), 'supervisor.log'), `${new Date().toISOString()} ${lastExitCode}\n`);
+      } catch {}
+    }
     record(null);
     await sleep(throttleMs);
   }
+}
+
+/** Starts the server once from the service file and resolves with how it ended. */
+async function runOnce(file: string, started: (server: number | null) => void): Promise<string> {
+  const { argv, environment, workingDirectory, logPath } = program(file);
+  const [node = '', ...args] = argv;
+  mkdirSync(dirname(logPath), { recursive: true });
+  const out = openSync(logPath, 'a');
+  const child = spawn(node, args, {
+    cwd: workingDirectory || undefined,
+    env: { ...process.env, ...environment },
+    stdio: ['ignore', out, out],
+    windowsHide: true,
+  });
+  closeSync(out);
+  started(child.pid ?? null);
+  return new Promise<string>((resolve) => {
+    child.once('error', (error) => resolve(error.message));
+    child.once('exit', (code, signal) => resolve(code === null ? `signal ${signal}` : String(code)));
+  });
 }
 
 const [file, statePath, throttle] = process.argv.slice(2);

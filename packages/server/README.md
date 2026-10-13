@@ -1248,7 +1248,10 @@ grants.
   its process exits, so the task runs the supervisor, which restarts the
   server 30 seconds after it exits and reads the service file again each time.
   The supervisor records its pid, the server's, the number of runs and the last
-  exit code in `supervisor.json`, which `status` reports.
+  exit code in `supervisor.json`, which `status` reports, and its own errors,
+  such as an unreadable service file, in `supervisor.log` beside it. The task
+  runs at normal priority, so builds are not slowed by Task Scheduler's
+  below-normal default.
 - Stopping the service ends the supervisor's process tree with
   `taskkill /T /F`; a remote update the server starts runs detached from that
   tree, so restarting the service does not stop it.

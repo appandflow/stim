@@ -108,9 +108,10 @@ export function windowsArgument(value: string): string {
 }
 
 /**
- * The Task Scheduler definition that starts the supervisor `runner` with `node` at `user`'s logon. S4U runs it
- * without an interactive session, and a user registers it without elevation. Task Scheduler's restart-on-failure
- * reacts only to a task that fails to start, not to its process exiting, so the supervisor restarts the server.
+ * The Task Scheduler definition that starts the supervisor `runner` with `node` at the logon of `user`, a SID. S4U
+ * runs it without an interactive session, and a user registers it without elevation. Task Scheduler's
+ * restart-on-failure reacts only to a task that fails to start, not to its process exiting, so the supervisor
+ * restarts the server. Without `Priority` a task runs at 7, below normal CPU, I/O and memory priority; 4 is normal.
  */
 export function renderTaskXml(options: {
   label: string;
@@ -135,6 +136,7 @@ export function renderTaskXml(options: {
     '    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>',
     '    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>',
     '    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>',
+    '    <Priority>4</Priority>',
     '    <RestartOnFailure><Interval>PT1M</Interval><Count>999</Count></RestartOnFailure>',
     '    <Hidden>true</Hidden>',
     '  </Settings>',

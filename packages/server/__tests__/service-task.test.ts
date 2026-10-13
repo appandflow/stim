@@ -67,15 +67,16 @@ describe('Windows scheduled task', () => {
   it('runs the supervisor at the user logon without elevation, with XML-escaped paths', () => {
     const xml = renderTaskXml({
       label: 'dev.stim.server',
-      user: 'HOST\\me',
+      user: 'S-1-5-21-1-2-3-1001',
       node: 'C:\\R&D\\node.exe',
       runner: 'C:\\Users\\me\\AppData\\Local\\Stim\\services\\dev.stim.server\\stim-service-runner.mjs',
       file: 'C:\\Users\\me\\AppData\\Local\\Stim\\services\\dev.stim.server.json',
       state: 'C:\\Users\\me\\AppData\\Local\\Stim\\services\\dev.stim.server\\supervisor.json',
       workingDirectory: 'C:\\Users\\me',
     });
-    expect(xml).toContain('<LogonTrigger><Enabled>true</Enabled><UserId>HOST\\me</UserId></LogonTrigger>');
+    expect(xml).toContain('<LogonTrigger><Enabled>true</Enabled><UserId>S-1-5-21-1-2-3-1001</UserId></LogonTrigger>');
     expect(xml).toContain('<LogonType>S4U</LogonType><RunLevel>LeastPrivilege</RunLevel>');
+    expect(xml).toContain('<Priority>4</Priority>');
     expect(xml).toContain('<Command>C:\\R&#38;D\\node.exe</Command>');
     expect(xml).toMatch(
       /<Arguments>&#34;C:\\Users.*stim-service-runner\.mjs&#34; .*supervisor\.json&#34; &#34;30&#34;<\/Arguments>/,
@@ -83,7 +84,7 @@ describe('Windows scheduled task', () => {
   });
 });
 
-test('netstat listeners are the pids listening on exactly that port', () => {
+test('netstat listeners are the pids listening on exactly that port, whatever the locale calls the state', () => {
   const output = [
     '',
     'Active Connections',
@@ -94,7 +95,8 @@ test('netstat listeners are the pids listening on exactly that port', () => {
     '  TCP    127.0.0.1:7787         127.0.0.1:50000        ESTABLISHED     4242',
     '  TCP    100.100.38.114:7787    0.0.0.0:0              LISTENING       4242',
     '  TCP    127.0.0.1:17787        0.0.0.0:0              LISTENING       99',
-    '  TCP    [::]:7787              [::]:0                 LISTENING       4243',
+    '  TCP    [::]:7787              [::]:0                 ABH\u00d6REN         4243',
+    '  UDP    0.0.0.0:7787           *:*                                    77',
   ].join('\r\n');
   expect(netstatListeners(output, 7787)).toEqual(['4242', '4243']);
 });
