@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { resolveSimulatorAppFlag } from './support.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
@@ -124,6 +125,7 @@ export async function selectIosPlacement(
     runtime: string | null;
     noWait: boolean;
     env?: NodeJS.ProcessEnv;
+    operation?: StimContext;
     note: (line: string) => void;
     phase: (label: string, line: string) => void;
     log?: (record: PlacementRecord) => void;
@@ -161,6 +163,7 @@ export async function selectIosPlacement(
                 root,
                 platform: 'ios',
                 env: args.env,
+                operation: args.operation,
                 slot,
                 release,
                 isExpo: d.detectIsExpo(root),
@@ -287,6 +290,7 @@ export async function connectIosBackend(
   deviceType: string | undefined,
   d: IosDeps,
   env?: NodeJS.ProcessEnv,
+  operation?: StimContext,
 ): Promise<
   | {
       remote: ReturnType<IosDeps['remoteIosDeps']> | null;
@@ -299,6 +303,7 @@ export async function connectIosBackend(
     root,
     backend,
     env,
+    operation,
     easBin: d.resolveEasCliBin(root)?.file ?? null,
     deviceType: deviceType?.trim() || null,
   });

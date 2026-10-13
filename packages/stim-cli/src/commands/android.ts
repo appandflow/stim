@@ -898,6 +898,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               env: context.env,
+              operation: context,
               slot,
               release,
               isExpo,
@@ -953,6 +954,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         platform: PLATFORM,
         backend: remoteBackend,
         env: context.env,
+        operation: context,
         easBin: resolveEasBin(root)?.file ?? null,
       })
     : null;
@@ -1186,6 +1188,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
               root,
               platform: PLATFORM,
               sessionName: ownedSessionName(remoteDevice.ctx.label),
+              operation: context,
               startedAt: new Date(now()).toISOString(),
               boot,
               createdSessionId: remoteDevice.createdSessionId,

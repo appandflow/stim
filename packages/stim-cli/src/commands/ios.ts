@@ -613,6 +613,7 @@ async function runIos(
   const remoteSelection = await selectIosPlacement({
     root,
     env: context.env,
+    operation: context,
     slot,
     opts,
     settings,
@@ -689,7 +690,7 @@ async function runIos(
     );
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
-    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env);
+    const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env, context);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
     const remoteDevice = backendConnection.remote;
     const remoteArch = hostedTarget ? hostedTarget.choice.architecture : backendConnection.arch;
@@ -1007,6 +1008,7 @@ async function runIos(
                 root,
                 platform: PLATFORM,
                 sessionName: ownedSessionName(remoteDevice.ctx.label),
+                operation: context,
                 startedAt: new Date(d.now()).toISOString(),
                 deviceType: remoteDevice.ctx.deviceType ?? null,
                 boot,

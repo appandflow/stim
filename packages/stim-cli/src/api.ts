@@ -166,7 +166,7 @@ export function createStim(options: StimOptions): StimClient {
         const logs = workspaceLogsDir(root);
         let result: Awaited<ReturnType<typeof stopWorkspaceNow>>;
         try {
-          result = await stopWorkspaceNow({ root, slot: request.slot, report: note(operation) });
+          result = await stopWorkspaceNow({ root, slot: request.slot, report: note(operation), operation });
         } catch (error) {
           if (operation.signal.aborted) throw error;
           const failure = error as Partial<StimFailure>;

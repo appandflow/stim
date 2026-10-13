@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { debugLog } from '../debug-log.ts';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
@@ -251,25 +252,31 @@ interface TunnelOutcome {
   reason?: string;
 }
 
-function defaultTeardownRemoteSession(
+async function defaultTeardownRemoteSession(
   root: string,
   sessionId: string,
-): { status: 'torn-down' | 'failed'; reason?: string } {
-  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+  operation?: StimContext,
+): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-function endRemoteSession(
+async function endRemoteSession(
   root: string,
   sessionId: string,
   {
     teardownRemoteSession,
     report,
   }: {
-    teardownRemoteSession: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+    teardownRemoteSession: (
+      root: string,
+      sessionId: string,
+    ) =>
+      | { status: 'torn-down' | 'failed'; reason?: string }
+      | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
     report: (line: string) => void;
   },
-): DeviceOutcomeEntry {
-  const result = teardownRemoteSession(root, sessionId);
+): Promise<DeviceOutcomeEntry> {
+  const result = await teardownRemoteSession(root, sessionId);
   if (result.status === 'failed') {
     report(chalk.red(phaseLine('device', result.reason ?? `could not stop remote session ${sessionId}`)));
   } else {
@@ -407,6 +414,7 @@ async function stopWorkspaceMacos(
 
 async function stopWorkspace({
   root,
+  operation,
   project = undefined,
   state = undefined,
   collectors = undefined,
@@ -426,7 +434,7 @@ async function stopWorkspace({
   stopMacos,
   hostedSlot,
   remoteDevice = undefined,
-  teardownRemoteSession = defaultTeardownRemoteSession,
+  teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
   metroTunnel = undefined,
   stopMetroTunnel = stopTunnel,
   releaseLeases = releaseWorkspaceLeases,
@@ -436,6 +444,7 @@ async function stopWorkspace({
   report = (line: string) => console.error(line),
 }: {
   root: string;
+  operation?: StimContext;
   project?: ProjectRecord | null;
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
@@ -458,7 +467,12 @@ async function stopWorkspace({
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
   releaseLeases?: (root: string) => ReleasedLease[];
-  teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+  teardownRemoteSession?: (
+    root: string,
+    sessionId: string,
+  ) =>
+    | { status: 'torn-down' | 'failed'; reason?: string }
+    | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
   freePort?: (root: string, port: number) => boolean | void;
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
@@ -649,7 +663,7 @@ async function stopWorkspace({
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
-    outcomes.device.remote = endRemoteSession(root, sessionId, { teardownRemoteSession, report });
+    outcomes.device.remote = await endRemoteSession(root, sessionId, { teardownRemoteSession, report });
     if (!remoteEnded(outcomes.device.remote)) ok = false;
   }
 
@@ -1143,11 +1157,18 @@ function workspaceDeviceSlots(root: string): string[] {
   return slots;
 }
 
-function readRemoteSessionEntry(root: string, report: (line: string) => void): DeviceOutcomeEntry | null {
+async function readRemoteSessionEntry(
+  root: string,
+  report: (line: string) => void,
+  operation?: StimContext,
+): Promise<DeviceOutcomeEntry | null> {
   const sessionId = readRemoteSession(root)?.sessionId;
   if (typeof sessionId !== 'string') return null;
   report(chalk.dim(phaseLine('device', `ending remote session ${sessionId} without waiting on the build lock`)));
-  return endRemoteSession(root, sessionId, { teardownRemoteSession: defaultTeardownRemoteSession, report });
+  return endRemoteSession(root, sessionId, {
+    teardownRemoteSession: (projectRoot, id) => defaultTeardownRemoteSession(projectRoot, id, operation),
+    report,
+  });
 }
 
 function signalledHolder(holder: ClaimHolder): boolean {
@@ -1163,6 +1184,7 @@ function signalledHolder(holder: ClaimHolder): boolean {
  */
 export async function stopWorkspaceNow({
   root,
+  operation,
   slot,
   report = (line: string) => console.error(line),
   now = Date.now,
@@ -1171,12 +1193,13 @@ export async function stopWorkspaceNow({
   interruptWaitMs = INTERRUPT_WAIT_MS,
   inspectIdentity = inspectProcessIdentity,
   interrupt = (pid: number) => process.kill(pid, 'SIGINT'),
-  endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report),
+  endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report, operation),
   deviceSlots = workspaceDeviceSlots,
   recordedSlots = recordedDeviceSlots,
-  stop = (options: { root: string; slot?: string }) => runStop({ ...options, report }),
+  stop = (options: { root: string; slot?: string }) => runStop({ ...options, operation, report }),
 }: {
   root: string;
+  operation?: StimContext;
   slot?: string;
   report?: (line: string) => void;
   now?: () => number;
@@ -1185,7 +1208,7 @@ export async function stopWorkspaceNow({
   interruptWaitMs?: number;
   inspectIdentity?: typeof inspectProcessIdentity;
   interrupt?: (pid: number) => void;
-  endRemote?: (root: string) => DeviceOutcomeEntry | null;
+  endRemote?: (root: string) => DeviceOutcomeEntry | null | Promise<DeviceOutcomeEntry | null>;
   deviceSlots?: (root: string) => string[];
   recordedSlots?: (root: string) => string[];
   stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
@@ -1203,16 +1226,16 @@ export async function stopWorkspaceNow({
   };
   let remote: DeviceOutcomeEntry | null = null;
   let remoteHandled = slot !== undefined;
-  const endRemoteNow = () => {
+  const endRemoteNow = async () => {
     if (remoteHandled) return;
     remoteHandled = true;
-    remote = endRemote(root);
+    remote = await endRemote(root);
   };
   const notice = nativeRunWaitNotice({ write: (line) => report(chalk.dim(phaseLine('lock', line))), now });
   let seen: { claimId: string; action: StopHolderAction['action']; deadline: number } | null = null;
   const interrupted: string[] = [];
 
-  const onHeld = (holder: ClaimHolder): void => {
+  const onHeld = async (holder: ClaimHolder): Promise<void> => {
     const at = now();
     if (seen?.claimId === holder.claimId) {
       if (seen.action === 'interrupt' && at >= seen.deadline) {
@@ -1229,45 +1252,51 @@ export async function stopWorkspaceNow({
       notice(holder);
       return;
     }
-    endRemoteNow();
-    const target = nativeRunHolder(holder);
-    if (unknownSlot) {
-      const refusal = target.slot === slot ? null : stillUnknown();
-      if (refusal) throw refusal;
-      unknownSlot = false;
-    }
-    const { action } = decideStopAction({
-      stopSlot: slot,
-      holder: target,
-      ownerIdentity: inspectIdentity(holder.owner),
-      deviceSlots: deviceSlots(root),
-    });
-    seen = { claimId: holder.claimId, action, deadline: Number.POSITIVE_INFINITY };
-    const who = describeNativeRunHolder(holder, at);
-    if (action === 'proceed') {
-      notice(holder, `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`);
-      throw new LeaveBuildRunning();
-    }
-    if (action === 'refuse') throw ownerGoneRefusal(holder, at);
-    if (action === 'interrupt') {
-      requestNativeRunCancel(root, holder.claimId);
-      interrupted.push(holder.claimId);
-      seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
-      if (inspectIdentity(holder.owner) !== 'same') return;
-      const wait = `waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`;
-      if (!signalledHolder(holder)) {
-        notice(holder, `interrupting ${who}: asked it to stop, ${wait}`);
+    try {
+      const target = nativeRunHolder(holder);
+      if (unknownSlot) {
+        const refusal = target.slot === slot ? null : stillUnknown();
+        if (refusal) throw refusal;
+        unknownSlot = false;
+      }
+      const { action } = decideStopAction({
+        stopSlot: slot,
+        holder: target,
+        ownerIdentity: inspectIdentity(holder.owner),
+        deviceSlots: deviceSlots(root),
+      });
+      seen = { claimId: holder.claimId, action, deadline: Number.POSITIVE_INFINITY };
+      const who = describeNativeRunHolder(holder, at);
+      if (action === 'proceed') {
+        notice(
+          holder,
+          `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`,
+        );
+        throw new LeaveBuildRunning();
+      }
+      if (action === 'refuse') throw ownerGoneRefusal(holder, at);
+      if (action === 'interrupt') {
+        requestNativeRunCancel(root, holder.claimId);
+        interrupted.push(holder.claimId);
+        seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
+        if (inspectIdentity(holder.owner) !== 'same') return;
+        const wait = `waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`;
+        if (!signalledHolder(holder)) {
+          notice(holder, `interrupting ${who}: asked it to stop, ${wait}`);
+          return;
+        }
+        try {
+          interrupt(holder.owner.pid);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
+        }
+        notice(holder, `interrupting ${who}: sent SIGINT, ${wait}`);
         return;
       }
-      try {
-        interrupt(holder.owner.pid);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
-      }
-      notice(holder, `interrupting ${who}: sent SIGINT, ${wait}`);
-      return;
+      notice(holder);
+    } finally {
+      await endRemoteNow();
     }
-    notice(holder);
   };
 
   const withRemote = (result: Awaited<ReturnType<typeof runStop>>): Awaited<ReturnType<typeof runStop>> => {
@@ -1292,6 +1321,7 @@ export async function stopWorkspaceNow({
           waitMs,
           now,
           ...(sleep ? { sleep } : {}),
+          declareSpawnsFor: operation,
           details: { command: 'stop', ...(slot === undefined ? {} : { slot }) },
           onHeld,
         },
@@ -1300,7 +1330,7 @@ export async function stopWorkspaceNow({
   } catch (error) {
     if (error instanceof LeaveBuildRunning) return withRemote(await stop({ root, slot }));
     if (error instanceof StopBlocked) return { refusal: error.refusal, remote };
-    if (isClaimRefusal(error)) endRemoteNow();
+    if (isClaimRefusal(error)) await endRemoteNow();
     throw error;
   } finally {
     for (const claimId of interrupted) clearNativeRunCancel(root, claimId);

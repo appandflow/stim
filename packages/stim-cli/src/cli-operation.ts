@@ -1,12 +1,17 @@
-import { configDir, withAmbientContext, type StimContext } from '@stim-cli/core';
+import { ambientContext, configDir, withAmbientContext, type StimContext } from '@stim-cli/core';
 import { runId } from '@stim-cli/core/state';
 import { operationState } from './engine/operation-state.ts';
 
 const EXIT_CODES = { SIGINT: 130, SIGTERM: 143 } as const;
 type Interrupt = keyof typeof EXIT_CODES;
 
-/** The context of an operation this process runs for its own command line. */
-export function processContext(projectRoot: string, signal: AbortSignal): StimContext {
+/** A CLI context bound to `signal`; when omitted, reuse the current operation or create a fresh CLI context. */
+export function processContext(projectRoot: string, signal?: AbortSignal): StimContext {
+  if (!signal) {
+    const current = ambientContext();
+    if (current) return current;
+    signal = new AbortController().signal;
+  }
   return {
     home: configDir(),
     buildCache: process.env.STIM_BUILD_CACHE || null,

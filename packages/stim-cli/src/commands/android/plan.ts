@@ -206,6 +206,7 @@ function androidCompilerCache({
 }): { cas: ReturnType<typeof resolveAndroidCas>; optimizations: Optimizations; warning: string | null } {
   const { cas, optimizations: resolved } = resolveAndroidCompilerCache({
     optimizations,
+    env,
     use: (manifest) => resolveAndroidCas(root, { ...env, STIM_ANDROID_CAS_TOOLCHAIN: manifest }, layout),
   });
   const fallback = resolved.android.compilerCacheFallback;

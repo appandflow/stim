@@ -22,6 +22,19 @@ import { buildPlacementCandidates } from '../offload/client.ts';
 import { createDebugLog, getConcurrencyLimits, getParkedMax } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { planCacheEmptying } from '../commands/gc/caches.ts';
+import {
+  endRecordedSession,
+  remoteIosDeps,
+  resolveRemoteContext,
+  withRemoteSessionLock,
+} from '../engine/device-remote.ts';
+import { withNativeBuildRun } from '../engine/native-run.ts';
+import { operationState } from '../engine/operation-state.ts';
+import { cancellableSleep } from '../cancellation.ts';
+import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceDir } from '../workspace/paths.ts';
+import { readClaimSet } from '../ownership-claim.ts';
 import { resolveCcache } from '../engine/ccache.ts';
 
 let root: string;
@@ -294,3 +307,276 @@ test.skipIf(process.platform !== 'darwin')(
     expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   },
 );
+
+test.skipIf(process.platform === 'win32')('the EAS version probe lets host timers run', async () => {
+  const tool = join(root, 'eas');
+  executable(tool, `setTimeout(() => console.log('eas-cli/24.8.0'), 150);`);
+  let ticked = false;
+  const timer = setTimeout(() => {
+    ticked = true;
+  }, 20);
+  try {
+    const result = await withAmbientContext(context(), () =>
+      resolveRemoteContext({
+        root,
+        backend: 'eas',
+        easBin: tool,
+        lookupAgentDevice: () => '/fixture-agent-device',
+        operation: context(),
+      }),
+    );
+    expect('ctx' in result).toBe(true);
+    expect(ticked).toBe(true);
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+function abortAfterMarker(marker: string, controller: AbortController) {
+  const timer = setInterval(() => {
+    if (existsSync(marker)) controller.abort();
+  }, 5);
+  return () => clearInterval(timer);
+}
+
+function expectChildGone(pid: number) {
+  expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
+}
+
+test.skipIf(process.platform === 'win32')('a proxy install can be cancelled without blocking the host', async () => {
+  const tool = join(root, 'agent-device');
+  const marker = join(root, 'install-started.json');
+  vi.stubEnv('AGENT_DEVICE_DAEMON_AUTH_TOKEN', 'host-token');
+  executable(
+    tool,
+    `const fs = require('node:fs');
+if (process.argv[2] === 'install') {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, marker: process.env.STIM_CONTEXT_MARKER}));
+  setTimeout(() => {}, 2000);
+}`,
+  );
+  const controller = new AbortController();
+  const operation = { ...context(), signal: controller.signal };
+  const deps = remoteIosDeps({
+    root,
+    label: 'context-test',
+    backend: 'proxy',
+    easBin: '',
+    agentDeviceBin: tool,
+    operation,
+    existingDaemon: { baseUrl: 'http://127.0.0.1:4310', token: 'fixture' },
+  });
+  const cancel = abortAfterMarker(marker, controller);
+  try {
+    const result = await withAmbientContext(operation, () =>
+      withNativeBuildRun(
+        operation,
+        root,
+        { command: 'ios', platform: 'ios' },
+        async () => {
+          expect((await deps.ensureBooted()).ok).toBe(true);
+          return deps.installIosApp({ udid: 'fixture', appPath: '/fixture.app' });
+        },
+        { write: () => {} },
+      ),
+    );
+    expect(result.failed).toBe(true);
+    const child = JSON.parse(readFileSync(marker, 'utf8'));
+    expect(child.marker).toBe('client');
+    expectChildGone(child.pid);
+    expect(operationState(operation).running.size).toBe(0);
+  } finally {
+    cancel();
+  }
+});
+
+describe.skipIf(process.platform === 'win32')('EAS cancellation with an owned child', () => {
+  test.each(['create', 'daemon-wait'])(
+    'cancelling EAS during %s stops its returned session before releasing the operation',
+    async (stage) => {
+      const tool = join(root, 'eas');
+      const marker = join(root, 'session-started.json');
+      const stopped = join(root, 'session-stopped.json');
+      executable(
+        tool,
+        `const fs = require('node:fs');
+const command = process.argv[2];
+if (command === 'sim') {
+  console.log(JSON.stringify({ id: 'drs_context', name: 'stim-context-test', type: 'agent-device' }));
+  if (${JSON.stringify(stage)} === 'create') {
+    fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid }));
+    setTimeout(() => {}, 2000);
+  }
+} else if (command === 'simulator:get') {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ pid: process.pid }));
+  console.log(JSON.stringify({id: 'drs_context', status: 'IN_PROGRESS'}));
+} else if (command === 'simulator:stop') {
+  fs.writeFileSync(${JSON.stringify(stopped)}, JSON.stringify({id: process.argv[process.argv.indexOf('--id') + 1], marker: process.env.STIM_CONTEXT_MARKER}));
+  console.log(JSON.stringify({id: 'drs_context', status: 'STOPPED'}));
+}`,
+      );
+      const controller = new AbortController();
+      const operation = { ...context(), signal: controller.signal };
+      const deps = remoteIosDeps({
+        root,
+        label: 'context-test',
+        backend: 'eas',
+        easBin: tool,
+        agentDeviceBin: tool,
+        operation,
+      });
+      const cancel = abortAfterMarker(marker, controller);
+      try {
+        const result = await withAmbientContext(operation, () =>
+          withNativeBuildRun(operation, root, { command: 'ios', platform: 'ios' }, () => deps.ensureBooted(), {
+            write: () => {},
+          }),
+        );
+        expect(result.failed).toBe(true);
+        expect(result.reason).toContain('The session was stopped');
+        expect(JSON.parse(readFileSync(stopped, 'utf8'))).toEqual({ id: 'drs_context', marker: 'client' });
+        expectChildGone(JSON.parse(readFileSync(marker, 'utf8')).pid);
+        expect(operationState(operation).running.size).toBe(0);
+      } finally {
+        cancel();
+      }
+    },
+  );
+});
+
+test('stop requests cancellation before waiting for remote boot cleanup', async () => {
+  const controller = new AbortController();
+  const operation = { ...context(), signal: controller.signal };
+  operationState(operation).abortOperation = () => controller.abort();
+  let ready: () => void = () => {};
+  const booting = new Promise<void>((resolve) => {
+    ready = resolve;
+  });
+  const run = withAmbientContext(operation, () =>
+    withNativeBuildRun(
+      operation,
+      root,
+      { command: 'ios', platform: 'ios' },
+      async () => {
+        try {
+          await withRemoteSessionLock(root, async () => {
+            ready();
+            await cancellableSleep(5000, { signal: operation.signal });
+          });
+        } catch (error) {
+          if (!operation.signal.aborted) throw error;
+        }
+      },
+      { write: () => {} },
+    ),
+  );
+  await booting;
+  const stopContext = context();
+  try {
+    const result = await withAmbientContext(stopContext, () =>
+      stopWorkspaceNow({
+        root,
+        operation: stopContext,
+        report: () => {},
+        endRemote: () =>
+          withRemoteSessionLock(root, async () => ({ status: 'torn-down', label: 'fixture' }), { waitMs: 1000 }),
+        stop: () => runStop({ root, remoteDevice: null, report: () => {} }),
+      }),
+    );
+    expect(result).toMatchObject({ ok: true });
+    expect(controller.signal.aborted).toBe(true);
+  } finally {
+    controller.abort();
+    await run;
+  }
+});
+
+test.skipIf(process.platform === 'win32')('cancelling a reuse query preserves the recorded EAS session', async () => {
+  const tool = join(root, 'eas');
+  const marker = join(root, 'reuse-query.json');
+  const stopped = join(root, 'unexpected-stop');
+  executable(
+    tool,
+    `const fs = require('node:fs');
+if (process.argv[2] === 'simulator:get') {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid}));
+  console.log(JSON.stringify({id: 'drs_existing', name: 'stim-context-test', status: 'IN_PROGRESS'}));
+  setTimeout(() => {}, 2000);
+} else if (process.argv[2] === 'simulator:stop') {
+  fs.writeFileSync(${JSON.stringify(stopped)}, 'stopped');
+  console.log(JSON.stringify({id: 'drs_existing', status: 'STOPPED'}));
+}`,
+  );
+  const controller = new AbortController();
+  const operation = { ...context(), signal: controller.signal };
+  const deps = remoteIosDeps({
+    root,
+    label: 'context-test',
+    backend: 'eas',
+    easBin: tool,
+    agentDeviceBin: tool,
+    operation,
+  });
+  withAmbientContext(operation, () =>
+    writeWorkspaceState(root, {
+      remoteDevice: { sessionId: 'drs_existing', platform: 'ios', startedAt: new Date().toISOString() },
+    }),
+  );
+  const cancel = abortAfterMarker(marker, controller);
+  try {
+    await expect(
+      withAmbientContext(operation, () =>
+        withNativeBuildRun(operation, root, { command: 'ios', platform: 'ios' }, () => deps.ensureBooted(), {
+          write: () => {},
+        }),
+      ),
+    ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+    expect(existsSync(stopped)).toBe(false);
+    expectChildGone(JSON.parse(readFileSync(marker, 'utf8')).pid);
+  } finally {
+    cancel();
+  }
+});
+
+describe.skipIf(process.platform === 'win32')('session cleanup child ownership', () => {
+  test.each(['cli', 'client'])('%s cleanup declares its child on the ownership claim', async (mode) => {
+    const tool = join(root, 'eas');
+    const marker = join(root, 'cleanup-query.json');
+    const release = join(root, 'finish-query');
+    executable(
+      tool,
+      `const fs = require('node:fs');
+if (process.argv[2] === 'simulator:get') {
+  fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid: process.pid, marker: process.env.STIM_CONTEXT_MARKER ?? 'cli'}));
+  const timer = setInterval(() => {
+    if (!fs.existsSync(${JSON.stringify(release)})) return;
+    clearInterval(timer);
+    console.log(JSON.stringify({id: 'drs_existing', name: 'stim-context-test', status: 'STOPPED'}));
+  }, 10);
+}`,
+    );
+    vi.stubEnv('STIM_HOME', join(root, 'cli-home'));
+    const client = mode === 'client' ? context() : undefined;
+    const end = () =>
+      endRecordedSession({
+        root,
+        sessionId: 'drs_existing',
+        easBin: tool,
+        lookupAgentDevice: () => tool,
+        ledgerRoot: join(root, 'ledger'),
+      });
+    const cleanup = client ? withAmbientContext(client, end) : end();
+    try {
+      await vi.waitFor(() => expect(existsSync(marker)).toBe(true));
+      const child = JSON.parse(readFileSync(marker, 'utf8'));
+      const read = () => readClaimSet(join(workspaceDir(root), 'remote-session.lock'));
+      const claims = client ? withAmbientContext(client, read) : read();
+      expect(child.marker).toBe(mode === 'client' ? 'client' : 'cli');
+      expect(claims.live).toHaveLength(1);
+      expect(claims.live[0]?.child?.pid).toBe(child.pid);
+    } finally {
+      writeFileSync(release, 'done');
+      await cleanup;
+    }
+  });
+});
