@@ -65,7 +65,7 @@ const USAGE = `Usage:
   stim-server service install [--port <n>] [--label <name>] [--serve]
                               [--env KEY=VALUE]... [--path-prepend <dir>]...
                                     run stim-server as a macOS LaunchAgent that starts at login,
-                                    or a Linux systemd user service;
+                                    a Linux systemd user service, or a Windows scheduled task;
                                     --serve adds a tailnet-only \`tailscale serve\` route
   stim-server service status [--label <name>] [--json]
   stim-server service update [--label <name>] --release <version>|--from <dir>

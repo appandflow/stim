@@ -474,54 +474,60 @@ test('a new worker installs the exact release and records route ownership only a
   expect(JSON.parse(f.stdout[0]!).route.port).toBe(7449);
 });
 
-test('on Linux, setup approves builds under a systemd user service without Stim Host or Apple tools', async () => {
-  const f = fixture({
-    platform: 'linux',
-    installed: async () => ({
-      label: 'dev.stim.server',
-      host: null,
-      node: '/node',
-      script: '/server.mjs',
-      port: 7787,
-      env: [],
-      pathPrepend: [],
-      stimHome: home,
-      logPath: '/log',
-      managed: true,
-      serve: { port: 7447, created: false },
-      previousScript: null,
-      programArguments: [],
-    }),
-    installJob: async (_opts, setup) => {
-      expect(setup?.host).toBeNull();
-      f.actions.push('service');
-      return [];
-    },
-    toolchain: async () => ({
-      stimBuild: 'digest',
-      arch: 'x64',
-      xcode: null,
-      simulatorSdk: null,
-      macosSdk: null,
-      cocoapods: null,
-      runtimes: [],
-      jdk: '17',
-      androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
-    }),
-  });
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(f.actions).toEqual(['service']);
-  expect(f.grants).toEqual([{ id: 'build-id', capabilities: ['build'] }]);
-  const output = JSON.parse(f.stdout.join(''));
-  expect(
-    output.tools.filter((t: { state: string }) => t.state !== 'present').map((t: { tool: string }) => t.tool),
-  ).toEqual(['Xcode', 'iOS runtime', 'CocoaPods']);
-  expect(readSetupJournal(options.ticketHash)?.steps.some((s) => s.id === 'host')).toBe(false);
-});
+test.each(['linux', 'win32'] as const)(
+  'on %s, setup approves builds under its user service without Stim Host or Apple tools',
+  async (platform) => {
+    const f = fixture({
+      platform,
+      installed: async () => ({
+        label: 'dev.stim.server',
+        host: null,
+        node: '/node',
+        script: '/server.mjs',
+        port: 7787,
+        env: [],
+        pathPrepend: [],
+        stimHome: home,
+        logPath: '/log',
+        managed: true,
+        serve: { port: 7447, created: false },
+        previousScript: null,
+        programArguments: [],
+      }),
+      installJob: async (_opts, setup) => {
+        expect(setup?.host).toBeNull();
+        f.actions.push('service');
+        return [];
+      },
+      toolchain: async () => ({
+        stimBuild: 'digest',
+        arch: 'x64',
+        xcode: null,
+        simulatorSdk: null,
+        macosSdk: null,
+        cocoapods: null,
+        runtimes: [],
+        jdk: '17',
+        androidSdk: { ndk: ['27'], buildTools: ['36'], platforms: ['36'] },
+      }),
+    });
+    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
+    expect(f.actions).toEqual(['service']);
+    expect(f.grants).toEqual([{ id: 'build-id', capabilities: ['build'] }]);
+    const output = JSON.parse(f.stdout.join(''));
+    expect(
+      output.tools.filter((t: { state: string }) => t.state !== 'present').map((t: { tool: string }) => t.tool),
+    ).toEqual(['Xcode', 'iOS runtime', 'CocoaPods']);
+    expect(readSetupJournal(options.ticketHash)?.steps.some((s) => s.id === 'host')).toBe(false);
+  },
+);
 
-test('on Linux, setup refuses device hosting before preflight', async () => {
+test.each([
+  ['linux', 'On Linux'],
+  ['win32', 'On Windows'],
+] as const)('on %s, setup refuses device hosting before preflight', async (platform, where) => {
   const f = fixture({
-    platform: 'linux',
+    platform,
     preflight: async () => {
       throw new Error('Preflight must not run');
     },
@@ -529,7 +535,7 @@ test('on Linux, setup refuses device hosting before preflight', async () => {
   expect(await runSetup([...args, '--device-host', '--json'], '1.16.0', f.deps)).toBe(1);
   expect(f.actions).toEqual([]);
   expect(f.grants).toEqual([]);
-  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain('Hosting simulators needs a Mac');
+  expect(JSON.parse(f.stdout.join('')).warnings.join('\n')).toContain(`Hosting simulators needs a Mac. ${where}, run`);
 });
 
 test('a newer managed server stays installed and a different Stim build produces partial success', async () => {

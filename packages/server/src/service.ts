@@ -38,6 +38,7 @@ import {
   serviceRoot,
   type Run,
   type ServiceJob,
+  type ServiceManager,
 } from './service-manager.ts';
 import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
 import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
@@ -57,9 +58,14 @@ export interface ServiceOptions {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const fileNoun = () => (serviceManager().name === 'launchd' ? 'plist' : 'unit');
-const startCommand = () =>
-  serviceManager().name === 'launchd' ? 'launchctl bootstrap' : 'systemctl --user enable and start';
+const FILE_NOUNS = { launchd: 'plist', systemd: 'unit', taskscheduler: 'service file' } as const;
+const START_COMMANDS = {
+  launchd: 'launchctl bootstrap',
+  systemd: 'systemctl --user enable and start',
+  taskscheduler: 'schtasks /Create and /Run',
+} as const;
+const fileNoun = () => FILE_NOUNS[serviceManager().name];
+const startCommand = () => START_COMMANDS[serviceManager().name];
 
 const plistPath = (label: string) => serviceManager().file(label);
 const logPath = (label: string) => serviceManager().logPath(label);
@@ -73,7 +79,7 @@ export function stableNode(pathEnv: string | undefined): string {
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
     try {
-      const candidate = join(dir, 'node');
+      const candidate = join(dir, process.platform === 'win32' ? 'node.exe' : 'node');
       if (realpathSync(candidate) === real) return candidate;
     } catch {
       continue;
@@ -106,8 +112,22 @@ async function portFree(port: number): Promise<boolean> {
 }
 
 async function listenerPids(port: number): Promise<string[]> {
+  if (process.platform === 'win32') {
+    const listed = await run('netstat', ['-ano', '-p', 'TCP']);
+    return listed.ok ? netstatListeners(listed.stdout, port) : [];
+  }
   const listener = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
   return listener.ok ? listener.stdout.trim().split(/\s+/).filter(Boolean) : [];
+}
+
+/** The pids listening on TCP `port` in `netstat -ano -p TCP` output. */
+export function netstatListeners(output: string, port: number): string[] {
+  const pids = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const [protocol, local, , state, pid] = line.trim().split(/\s+/);
+    if (protocol === 'TCP' && state === 'LISTENING' && pid && local?.endsWith(`:${port}`)) pids.add(pid);
+  }
+  return [...pids];
 }
 
 async function unload(label: string, port: number | null): Promise<void> {
@@ -201,7 +221,7 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   const installed = await readInstalled(label);
   if (!installed && existsSync(plistPath(label))) {
     throw new ServiceError(
-      `${plistPath(label)} is not a ${serviceManager().name === 'launchd' ? 'plist' : 'unit'} that install wrote; not touching it. Use another --label.`,
+      `${plistPath(label)} is not a ${fileNoun()} that install wrote; not touching it. Use another --label.`,
     );
   }
   if (installed && !installed.managed) {
@@ -325,7 +345,8 @@ export async function installJob(
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
   const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
-  const noun = manager.name === 'launchd' ? 'LaunchAgent' : 'Service';
+  const noun =
+    manager.name === 'launchd' ? 'LaunchAgent' : manager.name === 'taskscheduler' ? 'Scheduled task' : 'Service';
   notes.push(
     !health
       ? `${noun} installed, but server readiness is unavailable on 127.0.0.1:${options.port}. ${follow}`
@@ -360,8 +381,23 @@ export async function installJob(
   } else {
     notes.push(`No tailnet route. Run \`${serveCommand(7443, options.port)}\` or install again with --serve.`);
   }
+  const shim = process.platform === 'win32' ? nodeShim(spec.node, spec.pathPrepend) : null;
+  if (shim) {
+    notes.push(
+      `The first node.exe on PATH, ${shim}, is not the Node that runs stim-server (${spec.node}). Builds start tools such as Expo's config loader with it, and a version manager's node.exe shim, such as pnpm's, breaks their Node IPC, so builds fail with fingerprint-mismatch. Install again with --path-prepend "${dirname(spec.node)}" to put the real Node first.`,
+    );
+  }
   notes.push(...(await manager.sessionNotes()));
   return notes;
+}
+
+/** The first `node.exe` the service's PATH finds, when it is not `node`; builds run their tools with that one. */
+function nodeShim(node: string, pathPrepend: string[]): string | null {
+  for (const dir of [...pathPrepend, ...(process.env.PATH ?? '').split(delimiter)]) {
+    const candidate = dir && join(dir, 'node.exe');
+    if (candidate && existsSync(candidate)) return sameFile(candidate, node) ? null : candidate;
+  }
+  return null;
 }
 
 export async function recordServiceRoute(label: string, port: number, record: ServeRecord): Promise<void> {
@@ -390,7 +426,7 @@ export async function recordServiceRoute(label: string, port: number, record: Se
 export interface ServiceStatus {
   label: string;
   /** The service manager: launchd on macOS, systemd on Linux. */
-  manager: 'launchd' | 'systemd';
+  manager: ServiceManager['name'];
   installed: boolean;
   /** The service file: the LaunchAgent plist, or the systemd user unit. */
   plist: string;
@@ -573,7 +609,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
         : `  linger: off, so the service stops when you log out; run \`sudo loginctl enable-linger <user>\``,
     );
   }
-  lines.push(`  ${status.manager === 'launchd' ? 'plist' : 'unit'}: ${status.plist}`);
+  lines.push(`  ${FILE_NOUNS[status.manager]}: ${status.plist}`);
   return lines;
 }
 
@@ -719,12 +755,21 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
-function npmFor(node: string): { npm: string; env: NodeJS.ProcessEnv } {
+/**
+ * How to run npm for `node`. On Windows npm is a `.cmd` shim, which Node runs only through a shell, so this runs its
+ * `npm-cli.js` with `node` instead.
+ */
+function npmFor(node: string): { npm: string; prefix: string[]; env: NodeJS.ProcessEnv } {
   const path = [dirname(node), ...(process.env.PATH ?? '').split(delimiter)].filter(Boolean);
   const env = { ...process.env, PATH: path.join(delimiter) };
   for (const dir of path) {
+    if (process.platform === 'win32') {
+      const cli = join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      if (existsSync(cli)) return { npm: node, prefix: [cli], env };
+      continue;
+    }
     const npm = join(dir, 'npm');
-    if (existsSync(npm)) return { npm, env };
+    if (existsSync(npm)) return { npm, prefix: [], env };
   }
   throw new ServiceError(`No npm next to ${node} or on PATH. Install npm for that node, then run update again.`);
 }
@@ -750,7 +795,12 @@ async function localPackageSpecs(dir: string, names: string[]): Promise<Record<s
   const specs: Record<string, string> = {};
   for (const file of names) {
     const path = join(dir, file);
-    const manifest = await run('/usr/bin/tar', ['-xzOf', path, 'package/package.json'], process.env, 60_000);
+    const manifest = await run(
+      process.platform === 'win32' ? 'tar' : '/usr/bin/tar',
+      ['-xzOf', path, 'package/package.json'],
+      process.env,
+      60_000,
+    );
     let name: unknown;
     try {
       name = (JSON.parse(manifest.stdout) as { name?: unknown }).name;
@@ -781,7 +831,7 @@ export async function installServer(
   const staging = join(versions, `.install-${process.pid}`);
   mkdirSync(staging);
   try {
-    const { npm, env } = npmFor(node);
+    const { npm, prefix, env } = npmFor(node);
     const registry = [`--registry=${REGISTRY}`, `--@stim-cli:registry=${REGISTRY}`];
     let files: { name: string; sha256: string }[] = [];
     let specs: string[];
@@ -806,9 +856,13 @@ export async function installServer(
     log(
       `Installing ${'release' in source ? `${SERVER_PACKAGE}@${source.release} from ${REGISTRY}` : `${files.length} package file(s) from ${source.from}`}.`,
     );
+    // npm 10 on Windows fails to save the root package.json of a project that only lists `file:` packages
+    // (TypeError reading 'spec' in arborist's reify), and with a working directory outside the project it looks
+    // for a package.json there; nothing needs saving, and npm runs from the project.
     const installed = await run(
       npm,
       [
+        ...prefix,
         'install',
         '--prefix',
         staging,
@@ -816,19 +870,21 @@ export async function installServer(
         '--no-audit',
         '--no-fund',
         '--omit=dev',
-        '--save-exact',
+        ...(localPackages && process.platform === 'win32' ? ['--no-save'] : ['--save-exact']),
         ...registry,
         ...specs,
       ],
       env,
       NPM_TIMEOUT_MS,
+      staging,
     );
     if (!installed.ok) throw new ServiceError(`npm install failed:\n${lastLines(installed.stderr)}`);
     const audit = await run(
       npm,
-      ['audit', 'signatures', '--json', '--prefix', staging, ...registry],
+      [...prefix, 'audit', 'signatures', '--json', '--prefix', staging, ...registry],
       env,
       NPM_TIMEOUT_MS,
+      staging,
     );
     const problem = signatureProblem(audit.stdout, audit.stderr);
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);

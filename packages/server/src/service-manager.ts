@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isJsonObject } from '@stim-cli/core/state';
 import {
   argumentsWithScript,
   parseInstalledPlist,
@@ -21,9 +23,12 @@ import {
   renderUnit,
   SHOW_PROPERTIES,
 } from './service-unit.ts';
+import type { SupervisorState } from './service-runner.ts';
+import { editTask, parseTask, renderTask, renderTaskXml } from './service-task.ts';
 import { installHostApp, type HostApp } from './stim-host.ts';
 
 const MANAGER_TIMEOUT_MS = 15_000;
+const SUPERVISOR_WAIT_MS = 30_000;
 
 export interface Run {
   ok: boolean;
@@ -36,12 +41,13 @@ export function run(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
   timeout: number = MANAGER_TIMEOUT_MS,
+  cwd?: string,
 ): Promise<Run> {
   return new Promise((resolve) => {
     execFile(
       file,
       args,
-      { env, timeout, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+      { env, timeout, cwd, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => resolve({ ok: !error, stdout, stderr: stderr || (error ? error.message : '') }),
     );
   });
@@ -58,8 +64,8 @@ type ServiceChange = { script: string; previousScript: string } | { serve: Serve
 
 /** What differs between running stim-server as a launchd LaunchAgent and as a systemd user unit. */
 export interface ServiceManager {
-  name: 'launchd' | 'systemd';
-  /** What the service is called in messages: "LaunchAgent" or "systemd user service". */
+  name: 'launchd' | 'systemd' | 'taskscheduler';
+  /** What the service is called in messages: "LaunchAgent", "systemd user service" or "scheduled task". */
   noun: string;
   file(label: string): string;
   logPath(label: string): string;
@@ -79,7 +85,7 @@ export interface ServiceManager {
   rewrite(installed: InstalledService, staged: string, change: ServiceChange): Promise<void>;
   /** The commands that start the service from its file by hand. */
   restartRemedy(label: string): string;
-  /** The launcher the server runs under, so macOS attributes its permissions to Stim Host; null on Linux. */
+  /** The launcher the server runs under, so macOS attributes its permissions to Stim Host; null elsewhere. */
   host(): Promise<HostApp | null>;
   /** How the service survives logout and reboot. */
   sessionNotes(): Promise<string[]>;
@@ -249,19 +255,169 @@ const systemd: ServiceManager = {
   runningLabel: (env) => labelFrom(env[LABEL_VARIABLE]),
 };
 
-/** Where `service update` keeps server versions and its outcome for `label`: the launchd layout off Linux. */
-export const serviceRoot = (label: string): string => (process.platform === 'linux' ? systemd : launchd).root(label);
+const localAppData = () => process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+const taskName = (label: string) => `Stim\\${label}`;
+const supervisorState = (label: string) => join(taskScheduler.root(label), 'supervisor.json');
+
+/**
+ * The supervisor's state while the task runs. Task Scheduler runs one instance of the task, and that instance wrote
+ * the state file `start` cleared, so its pids are current.
+ */
+async function runningSupervisor(label: string): Promise<SupervisorState | null> {
+  const task = await run('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-Command',
+    `(Get-ScheduledTask -TaskPath '\\Stim\\' -TaskName '${label}' -ErrorAction SilentlyContinue).State`,
+  ]);
+  if (task.stdout.trim() !== 'Running') return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(supervisorState(label), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!isJsonObject(value) || typeof value.supervisor !== 'number' || !serverAlive(value.supervisor)) return null;
+  return {
+    supervisor: value.supervisor,
+    server: typeof value.server === 'number' ? value.server : null,
+    runs: typeof value.runs === 'number' ? value.runs : 0,
+    lastExitCode: typeof value.lastExitCode === 'string' ? value.lastExitCode : null,
+  };
+}
+
+function serverAlive(pid: number | null): pid is number {
+  if (pid === null) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error instanceof Error && 'code' in error && error.code === 'EPERM';
+  }
+}
+
+/**
+ * Starts `node args` so it outlives `stop`, which ends the supervisor's process tree with `taskkill /T`: the middle
+ * process exits at once, and `taskkill /T` follows only live parents. This one waits for that process to exit.
+ */
+const ORPHAN =
+  "const c=require('node:child_process').spawn(process.argv[1],process.argv.slice(2),{detached:true,stdio:['ignore',2,2],windowsHide:true});process.stdout.write(String(c.pid));c.unref();";
+const WAIT = `const r=require('node:child_process').spawnSync(process.execPath,['-e',${JSON.stringify(ORPHAN)},...process.argv.slice(1)],{stdio:['ignore','pipe','inherit'],windowsHide:true});const pid=Number(String(r.stdout));if(!pid)process.exit(1);const t=setInterval(()=>{try{process.kill(pid,0)}catch{clearInterval(t)}},1000);`;
+
+const taskScheduler: ServiceManager = {
+  name: 'taskscheduler',
+  noun: 'scheduled task',
+  file: (label) => join(localAppData(), 'Stim', 'services', `${label}.json`),
+  logPath: (label) => join(localAppData(), 'Stim', 'Logs', `${label}.log`),
+  root: (label) => join(localAppData(), 'Stim', 'services', label),
+  async read(label, path = taskScheduler.file(label)) {
+    if (!existsSync(path)) return null;
+    return parseTask(readFileSync(path, 'utf8'));
+  },
+  async job(label) {
+    const state = await runningSupervisor(label);
+    if (!state) return null;
+    return {
+      state: 'running',
+      pid: serverAlive(state.server) ? state.server : null,
+      runs: state.runs,
+      lastExitCode: state.lastExitCode,
+    };
+  },
+  render: renderTask,
+  async start(label) {
+    const installed = await taskScheduler.read(label);
+    const [node] = installed?.programArguments ?? [];
+    if (!node) return { ok: false, stdout: '', stderr: `${taskScheduler.file(label)} names no server.` };
+    const runner = join(taskScheduler.root(label), 'stim-service-runner.mjs');
+    mkdirSync(taskScheduler.root(label), { recursive: true });
+    copyFileSync(join(dirname(fileURLToPath(import.meta.url)), 'stim-service-runner.mjs'), runner);
+    const whoami = await run('whoami', []);
+    if (!whoami.ok) return whoami;
+    const user = whoami.stdout.trim();
+    const definition = `${taskScheduler.file(label)}.${process.pid}.xml`;
+    writeFileSync(
+      definition,
+      `\ufeff${renderTaskXml({
+        label,
+        user,
+        node,
+        runner,
+        file: taskScheduler.file(label),
+        state: supervisorState(label),
+        workingDirectory: homedir(),
+      })}`,
+      'utf16le',
+    );
+    rmSync(supervisorState(label), { force: true });
+    try {
+      const created = await run('schtasks', ['/Create', '/TN', taskName(label), '/XML', definition, '/F']);
+      if (!created.ok) return created;
+    } finally {
+      rmSync(definition, { force: true });
+    }
+    const started = await run('schtasks', ['/Run', '/TN', taskName(label)]);
+    if (!started.ok) return started;
+    const deadline = Date.now() + SUPERVISOR_WAIT_MS;
+    while (!(await runningSupervisor(label))) {
+      if (Date.now() >= deadline)
+        return {
+          ok: false,
+          stdout: '',
+          stderr: `${taskName(label)} did not start its supervisor within ${SUPERVISOR_WAIT_MS / 1000} s; see \`schtasks /Query /TN ${taskName(label)} /V /FO LIST\`.`,
+        };
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return started;
+  },
+  async stop(label) {
+    const state = await runningSupervisor(label);
+    const killed = state ? await run('taskkill', ['/PID', String(state.supervisor), '/T', '/F']) : null;
+    const ended = await run('schtasks', ['/End', '/TN', taskName(label)]);
+    return killed ?? ended;
+  },
+  async remove(label) {
+    const deleted = await run('schtasks', ['/Delete', '/TN', taskName(label), '/F']);
+    if (!deleted.ok && (await run('schtasks', ['/Query', '/TN', taskName(label)])).ok)
+      throw new ServiceError(`schtasks /Delete ${taskName(label)} failed: ${deleted.stderr.trim()}`);
+    rmSync(taskScheduler.file(label), { force: true });
+  },
+  async rewrite(installed, staged, change) {
+    writeFileSync(
+      staged,
+      editTask(
+        readFileSync(staged, 'utf8'),
+        'serve' in change
+          ? change
+          : { programArguments: argumentsWithScript(installed, change.script), previousScript: change.previousScript },
+      ),
+    );
+  },
+  restartRemedy: (label) => `run \`schtasks /Run /TN ${taskName(label)}\``,
+  host: async () => null,
+  sessionNotes: async () => [
+    'The scheduled task starts stim-server when you log on to Windows and keeps it running after you sign out. After a reboot it starts at your next logon.',
+  ],
+  sessionProblem: async () => null,
+  linger: async () => null,
+  detached: (node, args) => ({ file: node, args: ['-e', WAIT, node, ...args] }),
+  runningLabel: (env) => labelFrom(env[LABEL_VARIABLE]),
+};
+
+/** Where `service update` keeps server versions and its outcome for `label`. */
+export const serviceRoot = (label: string): string =>
+  (process.platform === 'linux' ? systemd : process.platform === 'win32' ? taskScheduler : launchd).root(label);
 
 /** The service manager of this platform, or null where `stim-server service` does not run. */
 export function serviceManagerOrNull(platform: NodeJS.Platform = process.platform): ServiceManager | null {
-  return platform === 'darwin' ? launchd : platform === 'linux' ? systemd : null;
+  return platform === 'darwin' ? launchd : platform === 'linux' ? systemd : platform === 'win32' ? taskScheduler : null;
 }
 
 export function serviceManager(): ServiceManager {
   const manager = serviceManagerOrNull();
   if (!manager) {
     throw new ServiceError(
-      `stim-server service manages a launchd LaunchAgent on macOS or a systemd user service on Linux, and does not run on ${process.platform}. On this system, start stim-server from your own service manager.`,
+      `stim-server service manages a launchd LaunchAgent on macOS, a systemd user service on Linux or a scheduled task on Windows, and does not run on ${process.platform}. On this system, start stim-server from your own service manager.`,
     );
   }
   return manager;
