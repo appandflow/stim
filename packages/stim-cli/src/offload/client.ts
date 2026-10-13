@@ -37,6 +37,7 @@ import { git } from '../workspace/git.ts';
 import { readRubyVersion } from '../engine/deps.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
 import { throwIfCancelled } from '../cancellation.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { pairedMachines, pinnedEndpoint, type Endpoint } from './build-machines.ts';
 import { manifestDigest } from './manifest.ts';
@@ -309,22 +310,15 @@ type ProgressEvent = {
   outcome?: Record<string, unknown>;
 };
 
-const openSockets = new Set<WebSocket>();
-let closingOnExit = false;
-
-/**
- * A close frame on every connection still open when this process exits, as on an interrupt, so the machine cancels
- * its builds instead of keeping them for a new connection.
- */
-function closeOnExit(socket: WebSocket): void {
-  if (!closingOnExit) {
-    closingOnExit = true;
-    process.once('exit', () => {
-      for (const each of openSockets) each.close(1000);
-    });
-  }
-  openSockets.add(socket);
-  socket.once('close', () => openSockets.delete(socket));
+function closeOnExit(socket: WebSocket, context: StimContext | undefined): (() => void) | undefined {
+  if (!context) return;
+  const state = operationState(context);
+  if (!state.takesSignals) return;
+  const close = () => socket.close(1000);
+  const unregister = () => state.exitCleanups.delete(close);
+  state.exitCleanups.add(close);
+  socket.once('close', unregister);
+  return unregister;
 }
 
 /**
@@ -345,12 +339,13 @@ export class BuildConnection {
   private readonly socket: WebSocket;
   private readonly features: readonly string[];
   private readonly context: StimContext | undefined;
+  private readonly unregisterExitCleanup: (() => void) | undefined;
 
   private constructor(socket: WebSocket, features: readonly string[], context: StimContext | undefined) {
     this.socket = socket;
     this.features = features;
     this.context = context;
-    closeOnExit(socket);
+    this.unregisterExitCleanup = closeOnExit(socket, context);
     this.keepalive = setInterval(() => {
       if (this.watched && Date.now() - this.heard > SILENT_MS) return void socket.terminate();
       socket.ping();
@@ -591,7 +586,7 @@ export class BuildConnection {
     this.binary = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
-    openSockets.delete(this.socket);
+    this.unregisterExitCleanup?.();
   }
 }
 
